@@ -1,0 +1,106 @@
+"""Schema contract for order events: validate the plan, conform ingress, check keys.
+
+Copy into the consumer's data-processing adapter (for example
+'myapp/infrastructure/analytics/order_events.py').
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import polars as pl
+
+ORDER_EVENTS = pl.Schema(
+    {
+        "order_id": pl.Int64,
+        "customer_id": pl.Int64,
+        "status": pl.Enum(["created", "settled", "refunded"]),
+        "amount": pl.Decimal(precision=12, scale=2),
+        "occurred_at": pl.Datetime("us", time_zone="UTC"),
+    }
+)
+
+
+class SchemaContractError(ValueError):
+    """The input does not satisfy the declared schema contract."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class KeyReport:
+    """Counts of key problems found in a frame."""
+
+    null_keys: int
+    duplicate_keys: int
+
+    @property
+    def ok(self) -> bool:
+        """Return whether the key column is complete and unique."""
+        return self.null_keys == 0 and self.duplicate_keys == 0
+
+
+def schema_violations(
+    actual: pl.Schema, expected: pl.Schema, *, allow_extra: bool = False
+) -> list[str]:
+    """List every difference between two schemas in a stable order."""
+    problems = [f"missing column {name!r}" for name in expected if name not in actual]
+    problems.extend(
+        f"column {name!r} is {actual[name]}, expected {dtype}"
+        for name, dtype in expected.items()
+        if name in actual and actual[name] != dtype
+    )
+    if not allow_extra:
+        problems.extend(
+            f"unexpected column {name!r}" for name in actual if name not in expected
+        )
+    return problems
+
+
+def require_schema(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
+    """Fail before execution when the plan's schema breaks the contract."""
+    problems = schema_violations(frame.collect_schema(), expected)
+    if problems:
+        raise SchemaContractError("; ".join(problems))
+    return frame
+
+
+def conform(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
+    """Cast strictly to the contract and order columns; extra columns are dropped."""
+    available = frame.collect_schema()
+    missing = [name for name in expected if name not in available]
+    if missing:
+        raise SchemaContractError(f"missing columns: {', '.join(missing)}")
+    return frame.select(
+        pl.col(name).cast(dtype, strict=True) for name, dtype in expected.items()
+    )
+
+
+def key_report(frame: pl.LazyFrame, key: str) -> KeyReport:
+    """Count null and duplicated key values with a single lazy aggregate."""
+    counts = frame.select(
+        pl.col(key).null_count().alias("null_keys"),
+        pl.col(key).drop_nulls().is_duplicated().sum().alias("duplicate_keys"),
+    ).collect()
+    return KeyReport(
+        null_keys=int(counts["null_keys"][0]),
+        duplicate_keys=int(counts["duplicate_keys"][0]),
+    )
+
+
+def scan_order_events(path: str) -> pl.LazyFrame:
+    """Scan CSV order events with the contract applied at parse time."""
+    raw = pl.scan_csv(
+        path,
+        schema_overrides={
+            "order_id": pl.Int64,
+            "customer_id": pl.Int64,
+            "status": pl.String,
+            "amount": pl.String,
+            "occurred_at": pl.String,
+        },
+    )
+    parsed = raw.with_columns(
+        pl.col("occurred_at")
+        .str.to_datetime(format="%Y-%m-%dT%H:%M:%S", time_unit="us")
+        .dt.replace_time_zone("UTC"),
+    )
+    return require_schema(conform(parsed, ORDER_EVENTS), ORDER_EVENTS)

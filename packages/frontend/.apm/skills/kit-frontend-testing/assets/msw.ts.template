@@ -1,0 +1,41 @@
+// src/test/msw.ts
+// Per-file MSW lifecycle plus typed handler builders. Unhandled requests fail the
+// test so a missing handler is never mistaken for an empty response.
+import { http, HttpResponse, delay, type RequestHandler } from "msw";
+import { setupServer, type SetupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll } from "vitest";
+
+export function useMswServer(...initialHandlers: RequestHandler[]): SetupServer {
+  const server = setupServer(...initialHandlers);
+  beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+  return server;
+}
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+export const respond = {
+  json: (path: string, body: Json, status = 200) =>
+    http.get(path, () => HttpResponse.json(body, { status })),
+  problem: (path: string, status: number, title = "Simulated failure") =>
+    http.get(path, () => HttpResponse.json({ title, status }, { status })),
+  networkError: (path: string) => http.get(path, () => HttpResponse.error()),
+  /** Never resolves until released; for asserting pending UI and races. */
+  held: (path: string, body: Json) => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler = http.get(path, async () => {
+      await gate;
+      return HttpResponse.json(body);
+    });
+    return { handler, release };
+  },
+  slow: (path: string, body: Json, ms: number) =>
+    http.get(path, async () => {
+      await delay(ms);
+      return HttpResponse.json(body);
+    }),
+};

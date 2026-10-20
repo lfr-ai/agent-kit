@@ -1,0 +1,320 @@
+"""In-process event hub: fan-out, replay, backpressure, and producer lifecycle.
+
+Copy to 'streaming/hub.py'. One hub instance per process serves streams whose
+producer runs in the same process (for example a model generation task). For
+multiple replicas, put the same interface in front of a shared log such as a
+broker stream, and route reconnects to any replica.
+
+Backpressure policy: each subscriber has a bounded queue. A subscriber that
+falls a full queue behind is disconnected ('SlowConsumerError'); its client
+reconnects with 'Last-Event-ID' and catches up from the replay buffer. The
+producer is never blocked by a slow reader.
+"""
+
+import asyncio
+import contextlib
+import logging
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+
+from streaming.events import EndStatus, EventName, ReplayBuffer, StreamEvent
+
+logger = logging.getLogger(__name__)
+
+Emit = Callable[[EventName, Mapping[str, object]], StreamEvent]
+Producer = Callable[[Emit], Awaitable[None]]
+
+
+class StreamNotFoundError(Exception):
+    """The stream id is unknown or has expired."""
+
+
+class SlowConsumerError(Exception):
+    """The subscriber fell too far behind and was disconnected."""
+
+
+class CapacityError(Exception):
+    """The hub refuses new streams or subscribers beyond its limits."""
+
+
+@dataclass(kw_only=True, slots=True)
+class _Subscriber:
+    """Mutable per-connection state."""
+
+    queue: asyncio.Queue[StreamEvent]
+    overflowed: bool = False
+
+
+@dataclass(kw_only=True, slots=True)
+class _Stream:
+    """Mutable per-stream state."""
+
+    buffer: ReplayBuffer
+    subscribers: set[int] = field(default_factory=set)
+    closed: bool = False
+    producer: asyncio.Task[None] | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class HubLimits:
+    """Resource bounds.
+
+    Attributes:
+        replay_size: Events retained per stream for reconnects.
+        queue_size: Events buffered per subscriber before disconnecting it.
+        max_streams: Concurrent open streams.
+        max_subscribers: Concurrent subscribers per stream.
+        cancel_when_unobserved: Cancel the producer when the last subscriber leaves.
+    """
+
+    replay_size: int = 512
+    queue_size: int = 128
+    max_streams: int = 1000
+    max_subscribers: int = 8
+    cancel_when_unobserved: bool = False
+
+
+class EventHub:
+    """Publish events to replayable, bounded, multi-subscriber streams."""
+
+    def __init__(self, limits: HubLimits | None = None) -> None:
+        """Create an empty hub.
+
+        Args:
+            limits: Resource bounds; defaults to 'HubLimits()'.
+        """
+        self._limits = limits or HubLimits()
+        self._streams: dict[str, _Stream] = {}
+        self._subscribers: dict[int, _Subscriber] = {}
+        self._next_subscriber = 0
+
+    def _get(self, stream_id: str) -> _Stream:
+        stream = self._streams.get(stream_id)
+        if stream is None:
+            raise StreamNotFoundError(stream_id)
+        return stream
+
+    def exists(self, stream_id: str) -> bool:
+        """Return whether the stream is known."""
+        return stream_id in self._streams
+
+    def is_closed(self, stream_id: str) -> bool:
+        """Return whether the stream has published its 'end' event."""
+        return self._get(stream_id).closed
+
+    def last_seq(self, stream_id: str) -> int:
+        """Return the newest sequence number of the stream."""
+        return self._get(stream_id).buffer.last_seq
+
+    def admit(self, stream_id: str, after: int) -> None:
+        """Check, before a response starts, that a subscription can be served.
+
+        Args:
+            stream_id: Stream to follow.
+            after: Last sequence the client saw.
+
+        Raises:
+            StreamNotFoundError: If the stream is unknown.
+            ReplayGapError: If needed events were evicted.
+            CapacityError: If the stream has too many subscribers.
+        """
+        stream = self._get(stream_id)
+        stream.buffer.after(after)
+        if len(stream.subscribers) >= self._limits.max_subscribers:
+            raise CapacityError("too many subscribers")
+
+    def open(self, stream_id: str) -> None:
+        """Register a new stream.
+
+        Raises:
+            ValueError: If the id is already in use.
+            CapacityError: If the stream limit is reached.
+        """
+        if stream_id in self._streams:
+            raise ValueError(f"stream {stream_id} already exists")
+        if len(self._streams) >= self._limits.max_streams:
+            raise CapacityError("too many open streams")
+        self._streams[stream_id] = _Stream(
+            buffer=ReplayBuffer(capacity=self._limits.replay_size)
+        )
+
+    def forget(self, stream_id: str) -> None:
+        """Drop a closed stream's state, for example after its retention period."""
+        stream = self._streams.pop(stream_id, None)
+        if stream is not None and not stream.closed:
+            logger.warning("stream.forgot_open_stream", extra={"stream_id": stream_id})
+
+    def publish(
+        self, stream_id: str, event: EventName, data: Mapping[str, object] | None = None
+    ) -> StreamEvent:
+        """Append an event and fan it out without ever blocking the producer.
+
+        Args:
+            stream_id: Target stream.
+            event: Event name.
+            data: JSON-serializable payload.
+
+        Returns:
+            The sequenced event.
+
+        Raises:
+            ValueError: If the stream is already closed.
+        """
+        stream = self._get(stream_id)
+        if stream.closed:
+            raise ValueError(f"stream {stream_id} is closed")
+        sequenced = StreamEvent(
+            seq=stream.buffer.last_seq + 1, event=event, data=dict(data or {})
+        )
+        stream.buffer.append(sequenced)
+        if sequenced.is_terminal:
+            stream.closed = True
+        for subscriber_id in stream.subscribers:
+            subscriber = self._subscribers[subscriber_id]
+            try:
+                subscriber.queue.put_nowait(sequenced)
+            except asyncio.QueueFull:
+                subscriber.overflowed = True
+        return sequenced
+
+    def close(
+        self, stream_id: str, *, status: EndStatus, error: str | None = None
+    ) -> StreamEvent | None:
+        """Publish the single terminal event unless the stream is already closed.
+
+        Args:
+            stream_id: Stream to close.
+            status: Terminal outcome.
+            error: Safe error category for failed streams.
+
+        Returns:
+            The 'end' event, or None if the stream was already closed.
+        """
+        if self._get(stream_id).closed:
+            return None
+        data: dict[str, object] = {"status": status.value}
+        if error:
+            data["error"] = error
+        return self.publish(stream_id, EventName.END, data)
+
+    def start(
+        self, stream_id: str, producer: Producer, *, max_duration_s: float
+    ) -> None:
+        """Open a stream and run its producer as a bounded background task.
+
+        The producer receives an 'emit' function. Its outcome becomes the end
+        status: return is 'completed', timeout is 'timeout', cancellation is
+        'cancelled', and any other exception is 'failed' with a safe category.
+
+        Args:
+            stream_id: New stream id.
+            producer: Coroutine function that emits events.
+            max_duration_s: Upper bound on producer run time.
+        """
+        self.open(stream_id)
+
+        def emit(event: EventName, data: Mapping[str, object]) -> StreamEvent:
+            if event is EventName.END:
+                raise ValueError(
+                    "producers end streams by returning, not by emitting 'end'"
+                )
+            return self.publish(stream_id, event, data)
+
+        async def run() -> None:
+            self.publish(stream_id, EventName.START, {})
+            try:
+                async with asyncio.timeout(max_duration_s):
+                    await producer(emit)
+            except TimeoutError:
+                self.close(stream_id, status=EndStatus.TIMEOUT)
+            except asyncio.CancelledError:
+                self.close(stream_id, status=EndStatus.CANCELLED)
+                raise
+            except Exception as error:
+                logger.exception(
+                    "stream.producer_failed", extra={"stream_id": stream_id}
+                )
+                self.close(
+                    stream_id, status=EndStatus.FAILED, error=type(error).__name__
+                )
+            else:
+                self.close(stream_id, status=EndStatus.COMPLETED)
+
+        self._streams[stream_id].producer = asyncio.create_task(
+            run(), name=f"stream:{stream_id}"
+        )
+
+    async def cancel(self, stream_id: str) -> bool:
+        """Cancel a running producer and wait for it to publish 'end'.
+
+        Args:
+            stream_id: Stream to cancel.
+
+        Returns:
+            True if a running producer was cancelled.
+        """
+        stream = self._get(stream_id)
+        task = stream.producer
+        if task is None or task.done():
+            self.close(stream_id, status=EndStatus.CANCELLED)
+            return False
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return True
+
+    async def subscribe(
+        self, stream_id: str, *, after: int = 0
+    ) -> AsyncGenerator[StreamEvent]:
+        """Yield events newer than 'after', then live events until 'end'.
+
+        Replay snapshot and live registration happen without an intervening
+        await, so no event can fall between them.
+
+        Args:
+            stream_id: Stream to follow.
+            after: Last sequence the client saw.
+
+        Yields:
+            Events in sequence order, ending with 'end' when the stream closes.
+
+        Raises:
+            StreamNotFoundError: If the stream is unknown.
+            ReplayGapError: If needed events were evicted.
+            CapacityError: If the stream has too many subscribers.
+            SlowConsumerError: If this subscriber fell a full queue behind.
+        """
+        stream = self._get(stream_id)
+        replay = stream.buffer.after(after)
+        closed_before_subscribing = stream.closed
+        if len(stream.subscribers) >= self._limits.max_subscribers:
+            raise CapacityError("too many subscribers")
+        subscriber_id = self._next_subscriber
+        self._next_subscriber += 1
+        subscriber = _Subscriber(queue=asyncio.Queue(maxsize=self._limits.queue_size))
+        self._subscribers[subscriber_id] = subscriber
+        stream.subscribers.add(subscriber_id)
+        try:
+            for event in replay:
+                yield event
+                if event.is_terminal:
+                    return
+            if closed_before_subscribing:
+                return
+            while True:
+                if subscriber.overflowed:
+                    raise SlowConsumerError(stream_id)
+                event = await subscriber.queue.get()
+                yield event
+                if event.is_terminal:
+                    return
+        finally:
+            stream.subscribers.discard(subscriber_id)
+            del self._subscribers[subscriber_id]
+            if (
+                self._limits.cancel_when_unobserved
+                and not stream.subscribers
+                and stream.producer is not None
+                and not stream.producer.done()
+            ):
+                stream.producer.cancel()

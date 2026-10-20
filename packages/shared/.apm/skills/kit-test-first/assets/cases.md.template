@@ -1,0 +1,16 @@
+# Behavioral regression
+
+- Public boundary and requested outcome:
+- Owning existing test layer:
+
+| Case | Given | When | Observable result/effect |
+| --- | --- | --- | --- |
+| Ordinary | | | |
+| Invalid/boundary | | | |
+| Failure/recovery | | | |
+
+- Synthetic fixtures and isolated effects:
+- Red command/result and intended failure:
+- Green command/result:
+- Related checks after refactor:
+- Unavailable integration checks:

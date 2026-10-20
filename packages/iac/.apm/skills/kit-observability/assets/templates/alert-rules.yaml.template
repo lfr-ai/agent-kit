@@ -1,0 +1,115 @@
+# Prometheus alerting template for an HTTP service SLO.
+# Copy to alerts/orders-api.rules.yaml and check with:
+#   promtool check rules alerts/orders-api.rules.yaml
+#   promtool test rules alerts/orders-api.rules.test.yaml
+# SLO: 99.9% of requests succeed (non-5xx) over 30 days -> error budget 0.001.
+# Metrics come from the OpenTelemetry histogram 'http.server.request.duration'
+# exported to Prometheus as http_server_request_duration_seconds_*.
+groups:
+  - name: orders-api-slo-recording
+    interval: 30s
+    rules:
+      - record: job:slo_errors_per_request:ratio_rate5m
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[5m]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[5m]))
+      - record: job:slo_errors_per_request:ratio_rate30m
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[30m]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[30m]))
+      - record: job:slo_errors_per_request:ratio_rate1h
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[1h]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[1h]))
+      - record: job:slo_errors_per_request:ratio_rate2h
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[2h]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[2h]))
+      - record: job:slo_errors_per_request:ratio_rate6h
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[6h]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[6h]))
+      - record: job:slo_errors_per_request:ratio_rate1d
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[1d]))
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{job="orders-api"}[1d]))
+
+  - name: orders-api-slo-alerts
+    rules:
+      # Multi-window, multi-burn-rate: page when the budget burns fast enough
+      # to be gone within days, ticket when it erodes slowly. The short window
+      # makes the alert reset quickly once the problem stops.
+      - alert: OrdersApiErrorBudgetFastBurn
+        expr: |
+          job:slo_errors_per_request:ratio_rate1h{job="orders-api"} > (14.4 * 0.001)
+          and
+          job:slo_errors_per_request:ratio_rate5m{job="orders-api"} > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+          slo: orders-api-availability
+        annotations:
+          summary: orders-api is burning its 30-day error budget 14x too fast
+          description: >-
+            {{ $value | humanizePercentage }} of requests failed over the last hour.
+            At this rate 2% of the monthly budget is consumed every hour.
+          runbook_url: https://runbooks.example.invalid/orders-api/error-budget
+
+      - alert: OrdersApiErrorBudgetSlowBurn
+        expr: |
+          job:slo_errors_per_request:ratio_rate6h{job="orders-api"} > (6 * 0.001)
+          and
+          job:slo_errors_per_request:ratio_rate30m{job="orders-api"} > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: page
+          slo: orders-api-availability
+        annotations:
+          summary: orders-api is burning its error budget 6x too fast
+          description: Sustained elevated errors over 6 hours; budget at risk this week.
+          runbook_url: https://runbooks.example.invalid/orders-api/error-budget
+
+      - alert: OrdersApiErrorBudgetErosion
+        expr: |
+          job:slo_errors_per_request:ratio_rate1d{job="orders-api"} > (3 * 0.001)
+          and
+          job:slo_errors_per_request:ratio_rate2h{job="orders-api"} > (3 * 0.001)
+        for: 1h
+        labels:
+          severity: ticket
+          slo: orders-api-availability
+        annotations:
+          summary: orders-api error budget is eroding
+          description: Error rate has exceeded 3x the SLO allowance for a day.
+          runbook_url: https://runbooks.example.invalid/orders-api/error-budget
+
+      - alert: OrdersApiHighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket{job="orders-api"}[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: orders-api p99 latency above 500 ms
+          description: p99 is {{ $value | humanizeDuration }} over 10 minutes.
+          runbook_url: https://runbooks.example.invalid/orders-api/latency
+
+      - alert: OrdersApiTelemetryMissing
+        expr: |
+          absent_over_time(http_server_request_duration_seconds_count{job="orders-api"}[15m])
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: No request metrics from orders-api for 15 minutes
+          description: Either the service is down or the telemetry pipeline is broken.
+          runbook_url: https://runbooks.example.invalid/orders-api/telemetry

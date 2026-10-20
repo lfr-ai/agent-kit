@@ -1,0 +1,94 @@
+"""Driven adapter: implement the notifier port with standard-library SMTP.
+
+Copy to 'app/adapters/notifications/smtp_notifier.py'. The adapter owns every
+transport detail (host, TLS, message format, address lookup) and translates
+transport failures into the port's 'NotificationError'. Nothing in the domain or
+application imports this module; the composition root constructs it.
+"""
+
+import smtplib
+import ssl
+from collections.abc import Callable
+from email.message import EmailMessage
+
+from app.application.ports.notifications import (
+    InvoiceNotifier,
+    InvoicePaidNotice,
+    NotificationError,
+)
+
+type SmtpFactory = Callable[[], smtplib.SMTP]
+type AddressLookup = Callable[[str], str]
+
+
+def starttls_factory(*, host: str, port: int, timeout: float) -> SmtpFactory:
+    """Build a factory that opens a verified STARTTLS connection per message.
+
+    Args:
+        host: SMTP server host name.
+        port: SMTP submission port, usually 587.
+        timeout: Socket timeout in seconds for connect and each command.
+
+    Returns:
+        A zero-argument callable returning a connected, encrypted client.
+    """
+
+    def connect() -> smtplib.SMTP:
+        client = smtplib.SMTP(host, port, timeout=timeout)
+        client.starttls(context=ssl.create_default_context())
+        return client
+
+    return connect
+
+
+class SmtpInvoiceNotifier(InvoiceNotifier):
+    """Send invoice notices as plain-text e-mail."""
+
+    def __init__(
+        self,
+        *,
+        connect: SmtpFactory,
+        sender: str,
+        address_of: AddressLookup,
+    ) -> None:
+        """Store collaborators; no connection is opened until a message is sent.
+
+        Args:
+            connect: Opens an authenticated SMTP client.
+            sender: Envelope and header sender address.
+            address_of: Resolves a customer identifier to an e-mail address.
+        """
+        self._connect = connect
+        self._sender = sender
+        self._address_of = address_of
+
+    def invoice_paid(self, notice: InvoicePaidNotice) -> None:
+        """Format and send the payment confirmation.
+
+        Args:
+            notice: What happened, in application terms.
+
+        Raises:
+            NotificationError: If address lookup or SMTP delivery fails.
+        """
+        try:
+            recipient = self._address_of(notice.customer_id)
+        except LookupError as error:
+            raise NotificationError(
+                f"no address for customer {notice.customer_id}"
+            ) from error
+        message = EmailMessage()
+        message["From"] = self._sender
+        message["To"] = recipient
+        message["Subject"] = f"Invoice {notice.invoice_id} is paid"
+        message.set_content(
+            f"We received {notice.amount} {notice.currency} for invoice "
+            f"{notice.invoice_id}. Payment reference: {notice.payment_reference}."
+        )
+        try:
+            with self._connect() as client:
+                client.send_message(message)
+        except (smtplib.SMTPException, OSError) as error:
+            raise NotificationError(
+                f"could not deliver notice for invoice {notice.invoice_id}"
+            ) from error

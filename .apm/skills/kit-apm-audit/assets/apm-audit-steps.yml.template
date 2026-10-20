@@ -1,0 +1,8 @@
+# Integrate into the consumer's existing CI after checkout and locked tool setup.
+# Run this BEFORE any step that installs or compiles agent content.
+steps:
+  - name: Explicit APM policy and existing output drift
+    run: uv run --locked apm audit --ci --policy ./apm-policy.yml --no-fail-fast
+# Add consumer-owned reproduction checks in a disposable directory; retain the
+# existing audit baseline and compare the expected native artifacts.
+# Do not add a reinstall of checkout content before the audit step.

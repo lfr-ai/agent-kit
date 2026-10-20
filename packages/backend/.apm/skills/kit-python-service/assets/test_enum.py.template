@@ -1,0 +1,64 @@
+"""Behavior tests for the StrEnum template.
+
+Replace 'shop.core.status' with the module that holds the copied enum.
+"""
+
+import pytest
+from shop.core.status import OrderStatus
+
+
+def test_values_are_stable_wire_strings() -> None:
+    """Persisted and serialized values never depend on member names."""
+    assert [member.value for member in OrderStatus] == [
+        "draft",
+        "confirmed",
+        "shipped",
+        "cancelled",
+    ]
+
+
+def test_members_compare_equal_to_their_values() -> None:
+    """StrEnum members can be written to JSON and databases as plain strings."""
+    assert OrderStatus.DRAFT == "draft"
+    assert f"{OrderStatus.SHIPPED}" == "shipped"
+
+
+@pytest.mark.parametrize("text", ["draft", " DRAFT ", "Draft"])
+def test_parse_accepts_case_and_whitespace_variants(text: str) -> None:
+    """Untrusted text is normalized before lookup."""
+    assert OrderStatus.parse(text) is OrderStatus.DRAFT
+
+
+def test_parse_lists_accepted_values_on_failure() -> None:
+    """The error message tells the caller what is allowed."""
+    with pytest.raises(ValueError, match="expected one of: draft, confirmed"):
+        OrderStatus.parse("archived")
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "allowed"),
+    [
+        (OrderStatus.DRAFT, OrderStatus.CONFIRMED, True),
+        (OrderStatus.CONFIRMED, OrderStatus.SHIPPED, True),
+        (OrderStatus.SHIPPED, OrderStatus.DRAFT, False),
+        (OrderStatus.CANCELLED, OrderStatus.CONFIRMED, False),
+    ],
+)
+def test_transitions_follow_the_lifecycle(
+    source: OrderStatus, target: OrderStatus, allowed: bool
+) -> None:
+    """Only documented transitions are permitted."""
+    assert source.can_transition_to(target) is allowed
+
+
+def test_every_member_has_a_transition_entry() -> None:
+    """Adding a member without lifecycle rules fails here, not in production."""
+    for member in OrderStatus:
+        assert isinstance(member.can_transition_to(OrderStatus.DRAFT), bool)
+
+
+def test_terminal_states_allow_no_transition() -> None:
+    """Terminal members have no outgoing transition."""
+    for member in OrderStatus:
+        if member.is_terminal:
+            assert not any(member.can_transition_to(target) for target in OrderStatus)

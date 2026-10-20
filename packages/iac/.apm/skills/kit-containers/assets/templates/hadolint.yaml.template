@@ -1,0 +1,35 @@
+# Hadolint configuration. Copy to .hadolint.yaml at the repository root.
+# Run: hadolint Dockerfile   (or the hadolint container image in CI)
+failure-threshold: warning
+format: tty
+
+# Promote rules that protect runtime identity and reproducibility to errors.
+override:
+  error:
+    - DL3002 # last USER should not be root
+    - DL3006 # always tag the image version explicitly
+    - DL3007 # do not use the 'latest' tag
+    - DL3020 # use COPY instead of ADD for files and folders
+    - DL3025 # use JSON (exec form) for CMD and ENTRYPOINT
+    - DL4006 # set -o pipefail before RUN with a pipe
+  warning:
+    - DL3008 # pin versions in apt-get install
+    - DL3013 # pin versions in pip install
+    - DL3016 # pin versions in npm install
+    - DL3059 # consolidate consecutive RUN instructions
+
+# Every suppression needs a reason in review; prefer inline
+# '# hadolint ignore=DL3008' on the single line it applies to.
+ignored: []
+
+# Only pull base images from registries the organization trusts.
+trustedRegistries:
+  - docker.io
+  - mcr.microsoft.com
+  - ghcr.io
+
+# Require OCI provenance labels on final images.
+label-schema:
+  org.opencontainers.image.source: url
+  org.opencontainers.image.revision: text
+strict-labels: false

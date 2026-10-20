@@ -1,0 +1,14 @@
+// Prod parameters. Copy to infra/parameters/prod.bicepparam.
+using '../main.bicep'
+extends './base.bicepparam'
+
+param environment = 'prod'
+
+param storageSkuName = 'Standard_GZRS'
+
+// Overriding an object replaces it entirely; repeat the required keys.
+param tags = {
+  owner: 'platform-team'
+  costCenter: 'cc-0000'
+  criticality: 'high'
+}

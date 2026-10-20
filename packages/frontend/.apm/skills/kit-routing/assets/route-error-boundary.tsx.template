@@ -1,0 +1,73 @@
+// src/app/route-error-boundary.tsx
+// One boundary for expected route responses (404, 403, 401) and unexpected errors.
+// The heading receives focus so keyboard and screen-reader users land on it.
+import { useEffect, useRef, type ReactElement } from "react";
+import { isRouteErrorResponse, Link, useRevalidator, useRouteError } from "react-router";
+
+type ErrorCopy = Readonly<{ title: string; body: string; retryable: boolean }>;
+
+function describe(error: unknown): ErrorCopy {
+  if (isRouteErrorResponse(error)) {
+    switch (error.status) {
+      case 401:
+        return { title: "Please sign in again", body: "Your session has ended.", retryable: false };
+      case 403:
+        return {
+          title: "You do not have access to this page",
+          body: "Ask an administrator if you need access.",
+          retryable: false,
+        };
+      case 404:
+        return {
+          title: "Page not found",
+          body: "Check the address, or go back to the start page.",
+          retryable: false,
+        };
+      default:
+        return {
+          title: "This page could not be loaded",
+          body: "The service did not respond as expected.",
+          retryable: error.status >= 500,
+        };
+    }
+  }
+  return {
+    title: "Something went wrong",
+    body: "An unexpected error occurred. Try again, or come back later.",
+    retryable: true,
+  };
+}
+
+export function RouteErrorBoundary(): ReactElement {
+  const error = useRouteError();
+  const revalidator = useRevalidator();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const copy = describe(error);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+    if (!isRouteErrorResponse(error)) {
+      // Report unexpected errors to the project's monitoring here; never render stack traces.
+      console.error(error);
+    }
+  }, [error]);
+
+  return (
+    <section className="route-error">
+      <h1 ref={headingRef} tabIndex={-1}>
+        {copy.title}
+      </h1>
+      <p>{copy.body}</p>
+      {copy.retryable ? (
+        <button
+          type="button"
+          onClick={() => void revalidator.revalidate()}
+          disabled={revalidator.state === "loading"}
+        >
+          {revalidator.state === "loading" ? "Retrying…" : "Try again"}
+        </button>
+      ) : null}{" "}
+      <Link to="/">Go to the start page</Link>
+    </section>
+  );
+}

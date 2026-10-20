@@ -1,0 +1,69 @@
+// src/shared/ui/debounced-search.test.tsx
+// Time is controlled, not waited for: fake timers plus user-event's advanceTimers.
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DebouncedSearch } from "./debounced-search";
+
+describe("DebouncedSearch", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function setup(initialValue = "") {
+    const onSearch = vi.fn();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { unmount } = render(
+      <DebouncedSearch label="Search orders" initialValue={initialValue} onSearch={onSearch} />,
+    );
+    return { user, onSearch, unmount, input: screen.getByRole("searchbox", { name: "Search orders" }) };
+  }
+
+  it("reports once after the user pauses, with trimmed text", async () => {
+    const { user, onSearch, input } = setup();
+
+    await user.type(input, "  shoes ");
+    expect(onSearch).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(299));
+    expect(onSearch).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+
+    expect(onSearch).toHaveBeenCalledTimes(1);
+    expect(onSearch).toHaveBeenCalledWith("shoes");
+  });
+
+  it("restarts the delay on every keystroke", async () => {
+    const { user, onSearch, input } = setup();
+
+    await user.type(input, "a");
+    act(() => vi.advanceTimersByTime(200));
+    await user.type(input, "b");
+    act(() => vi.advanceTimersByTime(200));
+    expect(onSearch).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(100));
+    expect(onSearch).toHaveBeenCalledWith("ab");
+  });
+
+  it("does not report the unchanged initial value and clears on Escape", async () => {
+    const { user, onSearch, input } = setup("paid");
+
+    act(() => vi.runAllTimers());
+    expect(onSearch).not.toHaveBeenCalled();
+
+    await user.type(input, "{Escape}");
+    act(() => vi.runAllTimers());
+    expect(input).toHaveValue("");
+    expect(onSearch).toHaveBeenCalledWith("");
+  });
+
+  it("cancels the pending report when unmounted", async () => {
+    const { user, onSearch, input, unmount } = setup();
+    await user.type(input, "x");
+
+    unmount();
+    act(() => vi.runAllTimers());
+
+    expect(onSearch).toHaveBeenCalledTimes(0);
+  });
+});

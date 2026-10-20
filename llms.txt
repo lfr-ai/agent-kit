@@ -1,0 +1,25 @@
+# Agent Kit
+
+> APM-first, opt-in capabilities with strict source validation.
+
+## Start
+
+- [AGENTS.md](AGENTS.md): Operating policy.
+- [PROJECT.md](PROJECT.md): Identity, toolchain, and commands.
+- [projects.md](projects.md): Project ownership.
+- [README.md](README.md): Installation and use.
+
+## Contracts
+
+- [Hexagonal Architecture](.agents/knowledge-base/architecture.md): Boundaries and data flow.
+- [Decisions](memories/decisions.md): Verified design choices.
+- [Compatibility](docs/compatibility.md): Runtime and APM limitations.
+- [Policy](docs/policy.md): Explicit governance and trust boundaries.
+- [Migration](docs/migration.md): Adoption, audit ordering, and rollback.
+- [Sources](docs/sources.md): Research and provenance.
+- [Governance](GOVERNANCE.md): Approved ownership and contribution authority.
+- [Releasing](docs/releasing.md): Artifact and protected-publication contracts.
+- [Agentic setup](.agents/agentic-setup/README.md): Coverage and selected delivery.
+- [Setup review](docs/setup-review.md): Original capability mapping and limits.
+- [Complete setup](docs/setup-completeness.md): Acceptance plan, resource depth,
+  consumer knowledge/guards, native certification and optional MCP adoption.

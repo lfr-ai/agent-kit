@@ -1,0 +1,184 @@
+"""Driven adapter: implement the payment port over HTTPS with JSON.
+
+Copy to 'app/adapters/payments/http_payment_gateway.py'. This adapter owns the
+wire format, authentication header, timeout and error translation. The transport
+is injected so contract tests can drive every branch without a network.
+
+Error translation table (adapt to the provider's documented responses):
+
+| Provider answer                  | Port exception           |
+| -------------------------------- | ------------------------ |
+| 200/201 with valid JSON          | (receipt)                |
+| 402, 409, 422                    | PaymentDeclinedError     |
+| 408, 429, 5xx, timeout, DNS, TLS | PaymentUnavailableError  |
+| any other status, invalid JSON   | PaymentProtocolError     |
+"""
+
+import json
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Mapping
+from decimal import Decimal, InvalidOperation
+from http import HTTPStatus
+
+from app.application.ports.payment_errors import (
+    PaymentDeclinedError,
+    PaymentProtocolError,
+    PaymentUnavailableError,
+)
+from app.application.ports.payments import PaymentGateway, PaymentReceipt
+
+type Transport = Callable[[urllib.request.Request, float], bytes]
+type TokenProvider = Callable[[], str]
+
+_DECLINED = frozenset({HTTPStatus.PAYMENT_REQUIRED, HTTPStatus.CONFLICT, 422})
+_TRANSIENT = frozenset({HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS})
+
+
+def urllib_transport(request: urllib.request.Request, timeout: float) -> bytes:
+    """Send one request with the standard library and return the body.
+
+    Args:
+        request: Fully built request including method, headers and body.
+        timeout: Seconds to wait for connect and for each read.
+
+    Returns:
+        The raw response body of a 2xx response.
+
+    Raises:
+        urllib.error.HTTPError: For non-2xx responses.
+        urllib.error.URLError: For DNS, connection and TLS failures.
+        TimeoutError: When the socket timed out.
+    """
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - base URL is validated in __init__
+        return response.read()
+
+
+class HttpPaymentGateway(PaymentGateway):
+    """Charge invoices through a JSON-over-HTTPS payment provider."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        token: TokenProvider,
+        timeout: float = 10.0,
+        transport: Transport = urllib_transport,
+    ) -> None:
+        """Validate configuration once; no request is made here.
+
+        Args:
+            base_url: Provider API root, for example 'https://payments.example/v1'.
+            token: Returns a current bearer token; called per request.
+            timeout: Per-request timeout in seconds.
+            transport: Sends a request and returns the body; injected in tests.
+
+        Raises:
+            ValueError: If the base URL is not HTTPS or the timeout is not positive.
+        """
+        if not base_url.startswith("https://"):
+            raise ValueError("payment provider base_url must use https")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._timeout = timeout
+        self._transport = transport
+
+    def charge(
+        self,
+        *,
+        invoice_id: str,
+        amount: Decimal,
+        currency: str,
+        idempotency_key: str,
+    ) -> PaymentReceipt:
+        """Capture a payment; see the port for the full contract.
+
+        Args:
+            invoice_id: Invoice being paid.
+            amount: Positive amount to capture.
+            currency: ISO 4217 code of the amount.
+            idempotency_key: Forwarded so the provider deduplicates retries.
+
+        Returns:
+            The provider receipt mapped to the port's value type.
+        """
+        body = json.dumps(
+            {"invoice_id": invoice_id, "amount": str(amount), "currency": currency}
+        ).encode("utf-8")
+        request = urllib.request.Request(  # noqa: S310 - https enforced in __init__
+            f"{self._base_url}/charges",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._token()}",
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotency_key,
+            },
+        )
+        try:
+            raw = self._transport(request, self._timeout)
+        except urllib.error.HTTPError as error:
+            raise self._translate(error, invoice_id=invoice_id) from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise PaymentUnavailableError(invoice_id=invoice_id) from error
+        return _receipt(raw)
+
+    @staticmethod
+    def _translate(
+        error: urllib.error.HTTPError, *, invoice_id: str
+    ) -> PaymentDeclinedError | PaymentUnavailableError | PaymentProtocolError:
+        """Map an HTTP error response to the port's exception vocabulary."""
+        if error.code in _DECLINED:
+            return PaymentDeclinedError(
+                invoice_id=invoice_id, reason=_decline_reason(error.read())
+            )
+        if error.code in _TRANSIENT or error.code >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            return PaymentUnavailableError(
+                invoice_id=invoice_id,
+                retry_after=float(retry_after)
+                if retry_after and retry_after.isdigit()
+                else None,
+            )
+        return PaymentProtocolError(f"unexpected HTTP status {error.code}")
+
+
+def _json_object(raw: bytes) -> Mapping[str, object]:
+    """Decode a JSON object or raise the port's protocol error."""
+    try:
+        decoded: object = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PaymentProtocolError("provider returned invalid JSON") from error
+    if not isinstance(decoded, dict):
+        raise PaymentProtocolError("provider returned a non-object JSON body")
+    return decoded
+
+
+def _field(data: Mapping[str, object], name: str, *, default: str | None = None) -> str:
+    """Read a required (or defaulted) string field from a provider object."""
+    value = data.get(name, default)
+    if not isinstance(value, str) or not value:
+        raise PaymentProtocolError(f"provider field {name!r} is missing or not text")
+    return value
+
+
+def _decline_reason(raw: bytes) -> str:
+    """Prefer the provider's reason, but a decline stays a decline without one."""
+    try:
+        return _field(_json_object(raw), "reason", default="declined")
+    except PaymentProtocolError:
+        return "declined"
+
+
+def _receipt(raw: bytes) -> PaymentReceipt:
+    """Map the provider success body to the port value type."""
+    data = _json_object(raw)
+    try:
+        amount = Decimal(_field(data, "amount"))
+    except InvalidOperation as error:
+        raise PaymentProtocolError("provider amount is not a decimal") from error
+    return PaymentReceipt(
+        reference=_field(data, "id"), amount=amount, currency=_field(data, "currency")
+    )

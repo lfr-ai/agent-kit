@@ -1,0 +1,37 @@
+[
+  {
+    "key": "ctrl+k ctrl+alt+v",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Verify",
+    "when": "!inDebugMode"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+t",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Test",
+    "when": "!inDebugMode"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+l",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Lint"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+r",
+    "command": "workbench.action.tasks.reRunTask"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+x",
+    "command": "workbench.action.tasks.terminate"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+d",
+    "command": "workbench.action.debug.selectandstart"
+  },
+  {
+    "key": "ctrl+k ctrl+alt+p",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {"text": "task --list\u000D"},
+    "when": "terminalFocus"
+  }
+]

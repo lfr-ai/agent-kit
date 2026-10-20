@@ -1,0 +1,24 @@
+# Trivy misconfiguration and secret scan for Terraform. Copy to infra/trivy.yaml.
+# Use: trivy config --config trivy.yaml .
+# Record accepted risks in .trivyignore with an owner, reason, and expiry.
+severity:
+  - HIGH
+  - CRITICAL
+exit-code: 1
+ignorefile: .trivyignore
+
+scan:
+  scanners:
+    - misconfig
+    - secret
+  skip-dirs:
+    - .terraform
+
+misconfiguration:
+  scanners:
+    - terraform
+  terraform:
+    # Scan only first-party modules; registry modules are reviewed upstream.
+    exclude-downloaded-modules: true
+    vars:
+      - environments/dev/terraform.tfvars

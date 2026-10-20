@@ -1,0 +1,51 @@
+# Change plan
+
+- Observable outcome:
+- Requester and approver:
+- Existing behavior to preserve:
+- Owning source and affected callers:
+- Non-goals:
+- Plan size (one-line fix / several slices / phased rollout) and why:
+
+## Acceptance criteria
+
+| ID | Criterion (observable, binary) | Proving test |
+| --- | --- | --- |
+| AC1 | | |
+| AC2 | Invalid input: | |
+
+## Slices
+
+| Slice | Outcome | Criteria | Paths/owner | Prerequisites | Failing regression | Completion command |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 (tracer) | | | | none | | |
+| 2 | | | | | | |
+
+Detail larger slices with one slice record each.
+
+## Risk register
+
+| ID | Risk | Likelihood | Impact | Response | Owner | Signal | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R1 | | | | | | | open |
+
+## Rollback
+
+| Slice | Undo action | Point of no return | Trigger and decider | Verified by |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+## Boundaries
+
+- Invalid input and error contract:
+- Data/security/compatibility risks (see register):
+- External approvals and unavailable prerequisites:
+- Stop conditions:
+
+## Evidence
+
+- Baseline command and result:
+- Rollback rehearsal (if data or deployment order changes):
+- Final command and result:
+- Remaining operator actions:
+- Plan changes made after new evidence:

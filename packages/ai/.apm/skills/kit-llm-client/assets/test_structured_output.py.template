@@ -1,0 +1,89 @@
+"""Tests for 'llm.structured'; copy to 'tests/llm/test_structured_output.py'."""
+
+import asyncio
+
+import pytest
+from pydantic import BaseModel, Field
+
+from llm.fakes import ScriptedLlmClient, completion
+from llm.port import (
+    ChatMessage,
+    CompletionRequest,
+    LlmContentFilteredError,
+    Role,
+    StructuredOutputError,
+)
+from llm.structured import complete_structured, extract_json
+
+
+class InvoiceSummary(BaseModel):
+    invoice_id: str
+    total_cents: int = Field(ge=0)
+    overdue: bool
+
+
+_REQUEST = CompletionRequest(
+    operation="summarize-invoice",
+    model="summarizer",
+    messages=(ChatMessage(role=Role.USER, content="Summarize invoice 42."),),
+)
+_VALID = '{"invoice_id": "42", "total_cents": 1250, "overdue": false}'
+
+
+def test_valid_json_is_parsed_and_schema_is_sent() -> None:
+    client = ScriptedLlmClient([completion(_VALID)])
+
+    summary, _ = asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))
+
+    assert summary == InvoiceSummary(invoice_id="42", total_cents=1250, overdue=False)
+    sent_schema = client.requests[0].json_schema
+    assert sent_schema is not None
+    assert sent_schema["title"] == "InvoiceSummary"
+
+
+def test_code_fences_are_tolerated() -> None:
+    assert extract_json(f"```json\n{_VALID}\n```") == _VALID
+    assert extract_json(f"  {_VALID}  ") == _VALID
+
+
+def test_one_repair_round_shows_errors_without_values() -> None:
+    client = ScriptedLlmClient(
+        [
+            completion('{"invoice_id": "42", "total_cents": -5, "overdue": false}'),
+            completion(_VALID),
+        ]
+    )
+
+    summary, _ = asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))
+
+    assert summary.total_cents == 1250
+    repair = client.requests[1].messages[-1].content
+    assert "total_cents: greater_than_equal" in repair
+    assert "-5" not in repair
+
+
+def test_still_invalid_after_repairs_raises_typed_error() -> None:
+    client = ScriptedLlmClient([completion("not json"), completion("{}")])
+
+    with pytest.raises(StructuredOutputError, match="failed validation"):
+        asyncio.run(
+            complete_structured(client, _REQUEST, InvoiceSummary, max_repairs=1)
+        )
+    assert len(client.requests) == 2
+
+
+def test_truncated_output_is_not_repaired() -> None:
+    client = ScriptedLlmClient(
+        [completion('{"invoice_id": "4', finish_reason="length")]
+    )
+
+    with pytest.raises(StructuredOutputError, match="truncated"):
+        asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))
+    assert len(client.requests) == 1
+
+
+def test_filtered_output_raises_content_filtered() -> None:
+    client = ScriptedLlmClient([completion("", finish_reason="content_filter")])
+
+    with pytest.raises(LlmContentFilteredError):
+        asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))

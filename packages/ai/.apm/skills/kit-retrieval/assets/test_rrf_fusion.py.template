@@ -1,0 +1,90 @@
+"""Tests for 'retrieval.fusion'; copy to 'tests/retrieval/test_rrf_fusion.py'."""
+
+from datetime import UTC, datetime
+
+import pytest
+
+from retrieval.contracts import Chunk, ScoredChunk
+from retrieval.fusion import reciprocal_rank_fusion
+
+
+def _hit(chunk_id: str, rank: int, retriever: str) -> ScoredChunk:
+    chunk = Chunk(
+        chunk_id=chunk_id,
+        source_id=f"src-{chunk_id}",
+        source_version="v1",
+        tenant="t1",
+        text=f"text {chunk_id}",
+        start_char=0,
+        end_char=10,
+        acl=frozenset({"group:staff"}),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    return ScoredChunk(chunk=chunk, score=100.0 - rank, retriever=retriever, rank=rank)
+
+
+def _ranking(retriever: str, *ids: str) -> list[ScoredChunk]:
+    return [
+        _hit(chunk_id, rank, retriever) for rank, chunk_id in enumerate(ids, start=1)
+    ]
+
+
+def test_documents_found_by_both_strategies_rise_to_the_top() -> None:
+    fused = reciprocal_rank_fusion(
+        {
+            "bm25": _ranking("bm25", "a", "b", "c"),
+            "dense": _ranking("dense", "c", "d", "a"),
+        }
+    )
+
+    assert [hit.chunk.chunk_id for hit in fused][:2] == ["a", "c"]
+    assert [hit.rank for hit in fused] == list(range(1, len(fused) + 1))
+    assert {hit.retriever for hit in fused} == {"rrf"}
+
+
+def test_score_matches_the_formula() -> None:
+    fused = reciprocal_rank_fusion(
+        {"x": _ranking("x", "a"), "y": _ranking("y", "b", "a")}, k=60
+    )
+
+    scores = {hit.chunk.chunk_id: hit.score for hit in fused}
+    assert scores["a"] == pytest.approx(1 / 61 + 1 / 62)
+    assert scores["b"] == pytest.approx(1 / 61)
+
+
+def test_duplicates_inside_one_ranking_count_once() -> None:
+    fused = reciprocal_rank_fusion({"x": _ranking("x", "a", "a", "b")})
+
+    assert [hit.chunk.chunk_id for hit in fused] == ["a", "b"]
+    assert fused[0].score == pytest.approx(1 / 61)
+
+
+def test_weights_shift_the_order() -> None:
+    rankings = {"bm25": _ranking("bm25", "a"), "dense": _ranking("dense", "b")}
+
+    fused = reciprocal_rank_fusion(rankings, weights={"dense": 2.0})
+
+    assert [hit.chunk.chunk_id for hit in fused] == ["b", "a"]
+
+
+def test_ties_are_broken_deterministically() -> None:
+    first = reciprocal_rank_fusion({"x": _ranking("x", "b"), "y": _ranking("y", "a")})
+    second = reciprocal_rank_fusion({"y": _ranking("y", "a"), "x": _ranking("x", "b")})
+
+    assert [hit.chunk.chunk_id for hit in first] == ["a", "b"]
+    assert [hit.chunk.chunk_id for hit in second] == ["a", "b"]
+
+
+def test_limit_and_empty_input() -> None:
+    assert reciprocal_rank_fusion({}) == []
+    fused = reciprocal_rank_fusion({"x": _ranking("x", "a", "b", "c")}, limit=2)
+    assert len(fused) == 2
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"k": 0}, {"limit": 0}, {"weights": {"missing": 1.0}}, {"weights": {"x": -1.0}}],
+)
+def test_invalid_arguments_are_rejected(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):  # noqa: PT011 - message varies by argument
+        reciprocal_rank_fusion({"x": _ranking("x", "a")}, **kwargs)  # type: ignore[arg-type]

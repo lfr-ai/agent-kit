@@ -1,0 +1,57 @@
+# Accessible component checklist
+
+Component: {{name}} | Pattern: {{native element or ARIA pattern}} | Reviewer: {{role}}
+
+## Semantics
+
+- [ ] Native element used where one exists (`button`, `a[href]`, `input`, `select`, `dialog`, `details`).
+- [ ] Role matches behavior; ARIA added only where native semantics are missing.
+- [ ] Accessible name comes from visible text or a label; icon-only controls have `aria-label`.
+- [ ] Name in code matches the visible label (WCAG 2.5.3 Label in Name).
+- [ ] States exposed: {{aria-expanded / aria-selected / aria-pressed / aria-invalid / aria-busy}}.
+- [ ] Relationships exposed: {{aria-controls / aria-describedby / aria-labelledby}}.
+
+## Keyboard
+
+| Key | Expected behavior | Verified (test or manual) |
+| --- | --- | --- |
+| Tab / Shift+Tab | {{enters and leaves the component once}} | {{evidence}} |
+| Enter / Space | {{activates}} | {{evidence}} |
+| Arrow keys | {{moves within composite widget, if any}} | {{evidence}} |
+| Home / End | {{first / last item, if pattern requires}} | {{evidence}} |
+| Escape | {{closes overlay and returns focus}} | {{evidence}} |
+
+## Focus
+
+- [ ] Visible focus indicator in light, dark, and forced-colors modes.
+- [ ] Focus is not obscured by sticky headers or overlays (WCAG 2.4.11).
+- [ ] On open: focus moves to {{target}}. On close: focus returns to {{opener}}.
+- [ ] Removing the focused element moves focus to {{neighbor or container}}.
+- [ ] No keyboard trap outside modal dialogs.
+
+## Perception
+
+- [ ] Text contrast at least 4.5:1 (3:1 for large text); UI boundaries and focus 3:1.
+- [ ] Meaning is not conveyed by color alone.
+- [ ] Content reflows at 320 CSS px width and 400% zoom without loss.
+- [ ] Text spacing overrides do not clip content (WCAG 1.4.12).
+- [ ] Motion respects `prefers-reduced-motion`; nothing flashes more than three times per second.
+
+## Pointer and touch
+
+- [ ] Targets at least 24 by 24 CSS px or sufficiently spaced (WCAG 2.5.8).
+- [ ] Drag interactions have a single-pointer alternative (WCAG 2.5.7).
+- [ ] Actions fire on pointer up and can be cancelled by moving away (WCAG 2.5.2).
+
+## Feedback
+
+- [ ] Asynchronous results announced via a polite live region without moving focus.
+- [ ] Errors identified in text and associated with their control.
+- [ ] Pending state communicated (`aria-busy`, label change) without losing focus.
+
+## Evidence
+
+- Automated: {{component axe scan result, browser axe scan result}}
+- Keyboard walkthrough: {{browser, result}}
+- Screen reader: {{reader + browser, scenario, result, or "not available"}}
+- Open issues: {{issue, severity, owner}}

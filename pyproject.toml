@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-kit"
+version = "0.1.0"
+description = "Small, policy-checked APM capability bundles and verification tools."
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Agent Kit contributors" }]
+dependencies = ["PyYAML>=6.0.2,<7"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.scripts]
+agent-kit = "agent_kit.main:main"
+
+[dependency-groups]
+dev = [
+  "apm-cli==0.33.0",
+  "commitizen>=4.19,<5",
+  "hypothesis>=6.150,<7",
+  "import-linter>=2.4,<3",
+  "pre-commit>=4.5,<5",
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "pytest-xdist>=3.8,<4",
+  "ruff>=0.17.1,<0.18",
+  "tox>=4.28,<5",
+  "tox-uv-bare>=1.37,<2",
+  "ty>=0.0.85,<0.1",
+]
+
+[tool.uv]
+# One uv for the CLI, tox and pre-commit: tox-uv-bare uses the uv on PATH instead
+# of installing a second, possibly newer copy into the project environment.
+required-version = ">=0.10.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_kit"]

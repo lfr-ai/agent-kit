@@ -1,0 +1,113 @@
+"""Typed, immutable settings loaded once from the environment.
+
+Copy into 'src/<package>/settings.py'. Only the composition root calls
+'Settings.from_environ'; everything else receives the built record. The loader
+takes a mapping so tests never mutate the real process environment.
+"""
+
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Self
+
+_PREFIX = "SHOP_"
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
+
+
+class Environment(StrEnum):
+    """Deployment environment name."""
+
+    DEVELOPMENT = "development"
+    TEST = "test"
+    PRODUCTION = "production"
+
+
+class SettingsError(ValueError):
+    """Configuration is missing or invalid; the message names every bad key."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Settings:
+    """Validated process configuration.
+
+    Attributes:
+        environment: Deployment environment.
+        database_dsn: Connection string; excluded from 'repr'.
+        request_timeout_seconds: Outbound HTTP timeout, greater than zero.
+        log_level: Root log level name.
+        json_logs: Whether logs are emitted as JSON lines.
+    """
+
+    environment: Environment
+    database_dsn: str = field(repr=False)
+    request_timeout_seconds: float = 10.0
+    log_level: str = "INFO"
+    json_logs: bool = True
+
+    @classmethod
+    def from_environ(cls, environ: Mapping[str, str] | None = None) -> Self:
+        """Build settings from environment variables with the project prefix.
+
+        Args:
+            environ: Variables to read; defaults to the process environment.
+
+        Returns:
+            Validated settings.
+
+        Raises:
+            SettingsError: If any required key is missing or any value is invalid.
+                All problems are reported together.
+        """
+        source = os.environ if environ is None else environ
+        problems: list[str] = []
+        environment = _parse(
+            source, "ENVIRONMENT", Environment, problems, default=Environment.DEVELOPMENT
+        )
+        dsn = source.get(f"{_PREFIX}DATABASE_DSN", "").strip()
+        if not dsn:
+            problems.append(f"{_PREFIX}DATABASE_DSN is required")
+        timeout = _parse(source, "REQUEST_TIMEOUT_SECONDS", float, problems, default=10.0)
+        if timeout <= 0:
+            problems.append(f"{_PREFIX}REQUEST_TIMEOUT_SECONDS must be greater than zero")
+        log_level = source.get(f"{_PREFIX}LOG_LEVEL", "INFO").strip().upper()
+        if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            problems.append(f"{_PREFIX}LOG_LEVEL has unknown level {log_level!r}")
+        json_logs = _parse(source, "JSON_LOGS", _boolean, problems, default=True)
+        if problems:
+            raise SettingsError("; ".join(problems))
+        return cls(
+            environment=environment,
+            database_dsn=dsn,
+            request_timeout_seconds=timeout,
+            log_level=log_level,
+            json_logs=json_logs,
+        )
+
+
+def _parse[T](
+    source: Mapping[str, str],
+    key: str,
+    convert: Callable[[str], T],
+    problems: list[str],
+    *,
+    default: T,
+) -> T:
+    raw = source.get(f"{_PREFIX}{key}")
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return convert(raw.strip())
+    except ValueError:
+        problems.append(f"{_PREFIX}{key} has invalid value {raw.strip()!r}")
+        return default
+
+
+def _boolean(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered in _TRUE:
+        return True
+    if lowered in _FALSE:
+        return False
+    raise ValueError(raw)

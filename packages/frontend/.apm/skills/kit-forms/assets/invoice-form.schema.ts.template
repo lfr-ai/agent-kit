@@ -1,0 +1,89 @@
+// src/features/invoices/model/invoice-form.schema.ts
+// Zod 4 schema shared by client validation and request mapping. The server stays
+// authoritative; these rules give fast feedback, not security.
+import { z } from "zod";
+
+export const invoiceLineSchema = z.object({
+  description: z
+    .string()
+    .trim()
+    .min(1, { error: "Describe the item." })
+    .max(200, { error: "Keep the description under 200 characters." }),
+  quantity: z
+    .number({ error: "Enter a quantity." })
+    .int({ error: "Use a whole number." })
+    .min(1, { error: "Quantity must be at least 1." }),
+  unitPrice: z
+    .number({ error: "Enter a price." })
+    .min(0, { error: "Price cannot be negative." })
+    .max(1_000_000, { error: "Price is too large." }),
+});
+
+export const invoiceFormSchema = z
+  .object({
+    customerEmail: z.email({ error: "Enter an email address like name@example.com." }),
+    issueDate: z.iso.date({ error: "Enter the issue date." }),
+    dueDate: z.iso.date({ error: "Enter the due date." }),
+    lines: z
+      .array(invoiceLineSchema)
+      .min(1, { error: "Add at least one line." })
+      .max(50, { error: "An invoice can have at most 50 lines." }),
+    notes: z.string().max(1000, { error: "Keep notes under 1000 characters." }),
+  })
+  .refine((value) => value.dueDate >= value.issueDate, {
+    error: "The due date must be on or after the issue date.",
+    path: ["dueDate"],
+  });
+
+export type InvoiceFormValues = z.infer<typeof invoiceFormSchema>;
+export type InvoiceLineValues = z.infer<typeof invoiceLineSchema>;
+
+export const emptyLine: InvoiceLineValues = { description: "", quantity: 1, unitPrice: 0 };
+
+export function blankInvoice(today: string): InvoiceFormValues {
+  return {
+    customerEmail: "",
+    issueDate: today,
+    dueDate: today,
+    lines: [emptyLine],
+    notes: "",
+  };
+}
+
+/** Request body sent to the API: money in minor units, trimmed text. */
+export type CreateInvoiceRequest = Readonly<{
+  customerEmail: string;
+  issueDate: string;
+  dueDate: string;
+  lines: readonly Readonly<{ description: string; quantity: number; unitPriceMinor: number }>[];
+  notes: string | null;
+}>;
+
+export function toCreateInvoiceRequest(values: InvoiceFormValues): CreateInvoiceRequest {
+  return {
+    customerEmail: values.customerEmail,
+    issueDate: values.issueDate,
+    dueDate: values.dueDate,
+    lines: values.lines.map((line) => ({
+      description: line.description,
+      quantity: line.quantity,
+      unitPriceMinor: Math.round(line.unitPrice * 100),
+    })),
+    notes: values.notes.trim() === "" ? null : values.notes.trim(),
+  };
+}
+
+const fieldPattern = /^(customerEmail|issueDate|dueDate|notes|lines(\.\d+\.(description|quantity|unitPrice))?)$/;
+
+/** Narrow server-provided field names to paths this form can display. */
+export function isInvoiceField(name: string): name is
+  | "customerEmail"
+  | "issueDate"
+  | "dueDate"
+  | "notes"
+  | "lines"
+  | `lines.${number}.description`
+  | `lines.${number}.quantity`
+  | `lines.${number}.unitPrice` {
+  return fieldPattern.test(name);
+}

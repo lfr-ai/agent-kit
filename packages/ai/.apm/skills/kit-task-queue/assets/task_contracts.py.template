@@ -1,0 +1,264 @@
+"""Broker-neutral task contracts: envelope, delivery, errors, and ports.
+
+Copy to 'tasks/contracts.py'. Producers, workers and broker adapters depend on
+this module; it depends on the standard library only. Delivery is assumed to
+be at-least-once: every handler must tolerate duplicates.
+"""
+
+import json
+import uuid
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Protocol
+
+MAX_ENVELOPE_BYTES = 64 * 1024
+SENSITIVE_KEYS = frozenset({"password", "secret", "token", "api_key", "authorization"})
+
+
+class TaskError(Exception):
+    """Base class for task failures a worker classifies."""
+
+
+class RetryableTaskError(TaskError):
+    """The task may succeed if retried later (timeouts, throttling, outages)."""
+
+
+class PermanentTaskError(TaskError):
+    """Retrying cannot succeed (validation, missing entity, business rule)."""
+
+
+class IncompatibleTaskError(PermanentTaskError):
+    """No handler supports this task type and version."""
+
+
+class LeaseLostError(Exception):
+    """The receipt is stale: the lease expired and the message was redelivered."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TaskEnvelope:
+    """Versioned message wrapper shared by every task type.
+
+    Attributes:
+        task_id: Unique id of this message, for tracing and operator tooling.
+        task_type: Stable handler name, for example 'invoice.render'.
+        version: Payload schema version for the task type.
+        idempotency_key: Business key; duplicates with the same key run once.
+        payload: Small JSON object; references, not documents or secrets.
+        created_at: Timezone-aware enqueue time.
+        correlation_id: Request or trace id that caused the task.
+    """
+
+    task_id: str
+    task_type: str
+    version: int
+    idempotency_key: str
+    payload: Mapping[str, object]
+    created_at: datetime
+    correlation_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject envelopes a worker could not process safely."""
+        if not (self.task_id and self.task_type and self.idempotency_key):
+            raise ValueError("task_id, task_type and idempotency_key are required")
+        if self.version < 1:
+            raise ValueError("version starts at 1")
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
+        leaked = sorted(key for key in self.payload if key.casefold() in SENSITIVE_KEYS)
+        if leaked:
+            raise ValueError(f"payload must not carry secrets: {', '.join(leaked)}")
+        if len(self.to_json()) > MAX_ENVELOPE_BYTES:
+            raise ValueError(f"envelope exceeds {MAX_ENVELOPE_BYTES} bytes")
+
+    def to_json(self) -> bytes:
+        """Serialize deterministically for the broker.
+
+        Returns:
+            UTF-8 JSON bytes.
+        """
+        return json.dumps(
+            {
+                "task_id": self.task_id,
+                "task_type": self.task_type,
+                "version": self.version,
+                "idempotency_key": self.idempotency_key,
+                "payload": dict(self.payload),
+                "created_at": self.created_at.isoformat(),
+                "correlation_id": self.correlation_id,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+
+
+def parse_envelope(raw: bytes) -> TaskEnvelope:
+    """Decode and validate a broker message body.
+
+    Args:
+        raw: Message bytes.
+
+    Returns:
+        The validated envelope.
+
+    Raises:
+        PermanentTaskError: If the body is malformed; such messages go
+            straight to the dead-letter queue.
+    """
+    if len(raw) > MAX_ENVELOPE_BYTES:
+        raise PermanentTaskError("message too large")
+    try:
+        data = json.loads(raw)
+    except ValueError as error:
+        raise PermanentTaskError("malformed envelope: invalid JSON") from error
+    if not isinstance(data, dict) or not isinstance(data.get("payload"), dict):
+        raise PermanentTaskError(
+            "malformed envelope: envelope and payload must be objects"
+        )
+    try:
+        return TaskEnvelope(
+            task_id=str(data["task_id"]),
+            task_type=str(data["task_type"]),
+            version=int(data["version"]),
+            idempotency_key=str(data["idempotency_key"]),
+            payload=data["payload"],
+            created_at=datetime.fromisoformat(str(data["created_at"])),
+            correlation_id=str(data.get("correlation_id", "")),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise PermanentTaskError(
+            f"malformed envelope: {type(error).__name__}"
+        ) from error
+
+
+def utc_now() -> datetime:
+    """Return the current time with UTC tzinfo."""
+    return datetime.now(UTC)
+
+
+def new_envelope(
+    *,
+    task_type: str,
+    version: int,
+    idempotency_key: str,
+    payload: Mapping[str, object],
+    correlation_id: str = "",
+) -> TaskEnvelope:
+    """Create an envelope with a fresh task id and the current time.
+
+    Derive 'idempotency_key' from the business operation (for example
+    'invoice.render:INV-42:v3'), never from the task id, so a re-submitted
+    request produces the same key.
+
+    Args:
+        task_type: Handler name.
+        version: Payload schema version.
+        idempotency_key: Business key.
+        payload: Small JSON object of references.
+        correlation_id: Upstream trace id.
+
+    Returns:
+        The validated envelope.
+    """
+    return TaskEnvelope(
+        task_id=uuid.uuid4().hex,
+        task_type=task_type,
+        version=version,
+        idempotency_key=idempotency_key,
+        payload=payload,
+        created_at=utc_now(),
+        correlation_id=correlation_id,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Delivery:
+    """One receipt of a message by a worker.
+
+    Attributes:
+        body: Raw message bytes, parsed by the worker.
+        receipt: Broker handle used to ack, retry, extend or dead-letter.
+        receive_count: How many times the broker has delivered this message.
+    """
+
+    body: bytes
+    receipt: str
+    receive_count: int
+
+
+class ClaimState(StrEnum):
+    """Outcome of claiming an idempotency key."""
+
+    ACQUIRED = "acquired"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TaskContext:
+    """Information a handler may use; never the raw broker handle.
+
+    Attributes:
+        task_id: Message id.
+        idempotency_key: Business key, for downstream idempotent calls.
+        attempt: One-based delivery attempt.
+        correlation_id: Upstream trace id.
+        deadline_s: Seconds the handler has before it is timed out.
+    """
+
+    task_id: str
+    idempotency_key: str
+    attempt: int
+    correlation_id: str
+    deadline_s: float
+
+
+Handler = Callable[[Mapping[str, object], TaskContext], Awaitable[None]]
+
+
+class Broker(Protocol):
+    """Port over a queue with visibility timeouts and a dead-letter queue."""
+
+    async def enqueue(self, body: bytes, *, delay_s: float = 0.0) -> None:
+        """Publish a message, optionally invisible for 'delay_s' seconds."""
+        ...
+
+    async def receive(
+        self, *, max_messages: int, visibility_timeout_s: float
+    ) -> list[Delivery]:
+        """Lease up to 'max_messages' visible messages."""
+        ...
+
+    async def ack(self, delivery: Delivery) -> None:
+        """Delete a successfully processed message; raise 'LeaseLostError' if stale."""
+        ...
+
+    async def retry(self, delivery: Delivery, *, delay_s: float) -> None:
+        """Make the message visible again after 'delay_s' seconds."""
+        ...
+
+    async def extend(self, delivery: Delivery, *, visibility_timeout_s: float) -> None:
+        """Extend the lease of a message that is still being processed."""
+        ...
+
+    async def dead_letter(self, delivery: Delivery, *, reason: str) -> None:
+        """Move the message to the dead-letter queue with a safe reason."""
+        ...
+
+
+class IdempotencyStore(Protocol):
+    """Port that records which business keys have been processed."""
+
+    async def claim(self, key: str, *, lease_s: float) -> ClaimState:
+        """Acquire the key for processing unless it is done or leased."""
+        ...
+
+    async def complete(self, key: str) -> None:
+        """Mark the key done; later duplicates are acknowledged without work."""
+        ...
+
+    async def release(self, key: str) -> None:
+        """Release a lease after a failed attempt so a retry can claim it."""
+        ...

@@ -1,0 +1,26 @@
+// src/shared/i18n/pseudo-locale.ts
+// Pseudo-localization for review builds: accented look-alike characters reveal
+// hard-coded strings, padding simulates longer translations (often 30-40% for
+// short UI strings), and brackets reveal truncation or concatenation.
+const accents: Readonly<Record<string, string>> = {
+  a: "á", e: "é", i: "í", o: "ö", u: "ü", c: "ç", n: "ñ", y: "ý",
+  A: "Å", E: "É", I: "Î", O: "Ø", U: "Û", C: "Ç", N: "Ñ", Y: "Ý",
+};
+
+/** Placeholders like {count} or {{name}} and HTML-like tags stay untouched. */
+const protectedToken = /(\{\{?[^{}]+\}?\}|<[^>]+>)/g;
+
+export function pseudoLocalize(text: string, expansion = 0.35): string {
+  const parts = text.split(protectedToken);
+  const transformed = parts
+    .map((part, index) => (index % 2 === 1 ? part : [...part].map((char) => accents[char] ?? char).join("")))
+    .join("");
+  const visibleLength = parts.filter((_, index) => index % 2 === 0).join("").length;
+  const padding = "~".repeat(Math.ceil(visibleLength * expansion));
+  return `[${transformed}${padding}]`;
+}
+
+/** Wraps a message catalog so every value is pseudo-localized. */
+export function pseudoCatalog(catalog: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(catalog).map(([key, value]) => [key, pseudoLocalize(value)]));
+}

@@ -1,0 +1,19 @@
+// src/vite-env.d.ts
+// Build-time values. Vite exposes only VITE_-prefixed variables to client code,
+// and every exposed value is public. Use these for local development defaults;
+// deployed environments use runtime /config.json instead.
+/// <reference types="vite/client" />
+
+interface ViteTypeOptions {
+  // Makes unknown import.meta.env keys a type error instead of 'any'.
+  strictImportMetaEnv: unknown;
+}
+
+interface ImportMetaEnv {
+  readonly VITE_CONFIG_URL?: string;
+  readonly VITE_APP_NAME: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

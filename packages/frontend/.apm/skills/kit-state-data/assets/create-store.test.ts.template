@@ -1,0 +1,31 @@
+// src/shared/state/create-store.test.ts
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { createStore, useStore } from "./create-store";
+
+describe("createStore", () => {
+  it("notifies subscribers only when the value changes", () => {
+    const store = createStore({ count: 0 });
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+
+    store.set((current) => ({ count: current.count + 1 }));
+    store.set(store.get());
+    unsubscribe();
+    store.set({ count: 5 });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.get()).toEqual({ count: 5 });
+  });
+
+  it("re-renders a hook consumer with the selected slice and resets", () => {
+    const store = createStore({ count: 0, label: "a" });
+    const { result } = renderHook(() => useStore(store, (state) => state.count));
+
+    act(() => store.set((current) => ({ ...current, count: 2 })));
+    expect(result.current).toBe(2);
+
+    act(() => store.reset());
+    expect(result.current).toBe(0);
+  });
+});

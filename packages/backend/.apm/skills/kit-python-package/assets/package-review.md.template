@@ -1,0 +1,17 @@
+# Python package evidence
+
+- Declared build backend, supported interpreters and lockfile:
+- Exact locked build command and new output directory:
+- Version source (including supported dynamic metadata):
+- Wheel/sdist file inventory and license notices:
+- Runtime dependencies vs development tools:
+- Console entry points and package data:
+- Isolated install command and installed module-byte check:
+- Import/CLI smoke outside the source checkout:
+- Missing configuration/data and invalid-argument behavior:
+- Supported interpreter/platform matrix actually exercised:
+- Checksums and approved publication owner:
+- Unavailable checks and rollback:
+
+Use the consumer's existing build/metadata validation tools. Namespace packages
+and dynamic metadata are legitimate when the declared backend supports them.

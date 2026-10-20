@@ -1,0 +1,15 @@
+{
+  "chat.useAgentSkills": true,
+  "chat.useAgentsMdFile": true,
+  "chat.useClaudeMdFile": false,
+  "chat.useClaudeHooks": false,
+  "chat.mcp.autostart": "never",
+  "editor.formatOnSave": true,
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/node_modules/**": true,
+    "**/apm_modules/**": true,
+    "**/build/**": true,
+    "**/__pycache__/**": true
+  }
+}

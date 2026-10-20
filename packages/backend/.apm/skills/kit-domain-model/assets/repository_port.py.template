@@ -1,0 +1,84 @@
+"""Repository port for the order aggregate, declared in domain language.
+
+Copy into 'src/<package>/core/ports.py'. Infrastructure provides adapters
+(SQL, document store) and tests use the in-memory adapter; both satisfy this
+Protocol structurally and run the same contract tests.
+"""
+
+from typing import Protocol
+
+from shop.core.orders import Order
+from shop.core.values import OrderId
+
+
+class OrderNotFoundError(LookupError):
+    """No order exists for the identifier."""
+
+    def __init__(self, *, order_id: OrderId) -> None:
+        """Record the missing identifier.
+
+        Args:
+            order_id: Identifier that was looked up.
+        """
+        super().__init__(f"order {order_id.value!r} was not found")
+        self.order_id = order_id
+
+
+class ConcurrencyError(Exception):
+    """The stored aggregate changed since it was loaded."""
+
+    def __init__(self, *, order_id: OrderId, expected: int, actual: int) -> None:
+        """Record both versions for diagnostics.
+
+        Args:
+            order_id: Aggregate whose save was rejected.
+            expected: Version the caller loaded.
+            actual: Version currently stored.
+        """
+        super().__init__(
+            f"order {order_id.value!r} is at version {actual}, expected {expected}"
+        )
+        self.order_id = order_id
+        self.expected = expected
+        self.actual = actual
+
+
+class OrderRepository(Protocol):
+    """Collection-like access to order aggregates."""
+
+    def get(self, order_id: OrderId, /) -> Order | None:
+        """Return the order or 'None' when it does not exist."""
+        ...
+
+    def add(self, order: Order, /) -> None:
+        """Store a new order.
+
+        Raises:
+            ValueError: If an order with the same identity already exists.
+        """
+        ...
+
+    def save(self, order: Order, /) -> None:
+        """Store changes to an existing order and advance its version.
+
+        Raises:
+            OrderNotFoundError: If the order was never added.
+            ConcurrencyError: If the stored version differs from 'order.version'.
+        """
+        ...
+
+    def list_for_customer(self, customer_id: str, /) -> list[Order]:
+        """Return the customer's orders, newest first."""
+        ...
+
+
+def require(repository: OrderRepository, order_id: OrderId, /) -> Order:
+    """Load an order or raise a documented error.
+
+    Raises:
+        OrderNotFoundError: If the order does not exist.
+    """
+    order = repository.get(order_id)
+    if order is None:
+        raise OrderNotFoundError(order_id=order_id)
+    return order

@@ -1,0 +1,212 @@
+"""OpenTelemetry instrumentation template for a Python service.
+
+Copy to 'src/<package>/telemetry.py'. Requires:
+    opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc
+
+Configuration follows the standard OTEL_* environment variables, for example
+OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_RESOURCE_ATTRIBUTES and OTEL_TRACES_SAMPLER;
+explicit arguments below only supply defaults.
+
+Usage:
+    telemetry = configure_telemetry(service_name="orders-api", service_version="1.4.2")
+    with telemetry.tracer.start_as_current_span("orders.process") as span:
+        span.set_attribute("orders.item_count", 3)
+    telemetry.record_request(route="/orders/{id}", method="GET", status_code=200,
+                             duration_s=0.042)
+    telemetry.shutdown()
+"""
+
+import json
+import logging
+import os
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+    OTLPMetricExporter,
+)
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import Status, StatusCode
+
+# Seconds; aligned with typical web latency SLO thresholds.
+_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+
+# Keys that must never appear in log records or span attributes.
+_REDACTED_KEYS = frozenset(
+    {"authorization", "cookie", "password", "secret", "token", "api_key"}
+)
+
+
+class JsonFormatter(logging.Formatter):
+    """Emit one JSON object per record with trace correlation fields.
+
+    Structured context is passed as 'extra={"fields": {...}}' so that keys are
+    explicit and redaction can see them.
+    """
+
+    converter = time.gmtime
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Render the record as JSON, redacting sensitive extra fields.
+
+        Args:
+            record: The log record to format.
+
+        Returns:
+            A single-line JSON document.
+        """
+        context = trace.get_current_span().get_span_context()
+        payload: dict[str, object] = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "severity": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if context.is_valid:
+            payload["trace_id"] = format(context.trace_id, "032x")
+            payload["span_id"] = format(context.span_id, "016x")
+        for key, value in getattr(record, "fields", {}).items():
+            payload[key] = "[REDACTED]" if key.lower() in _REDACTED_KEYS else value
+        if record.exc_info:
+            payload["exception.type"] = record.exc_info[0].__name__
+            payload["exception.stacktrace"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Telemetry:
+    """Configured providers and the instruments a service records with.
+
+    Attributes:
+        tracer: Tracer for manual spans.
+        meter: Meter for additional instruments.
+        tracer_provider: Provider to flush and shut down on exit.
+        meter_provider: Provider to flush and shut down on exit.
+        request_duration: Histogram following 'http.server.request.duration'.
+    """
+
+    tracer: trace.Tracer
+    meter: metrics.Meter
+    tracer_provider: TracerProvider
+    meter_provider: MeterProvider
+    request_duration: metrics.Histogram
+
+    def record_request(
+        self, *, route: str, method: str, status_code: int, duration_s: float
+    ) -> None:
+        """Record one server request with bounded-cardinality attributes.
+
+        Args:
+            route: Route template such as '/orders/{id}', never the raw path.
+            method: HTTP method; unknown methods are recorded as '_OTHER'.
+            status_code: HTTP response status code.
+            duration_s: Request duration in seconds.
+        """
+        known = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+        attributes = {
+            "http.route": route,
+            "http.request.method": method if method in known else "_OTHER",
+            "http.response.status_code": status_code,
+        }
+        if status_code >= 500:  # noqa: PLR2004 - HTTP server error class
+            attributes["error.type"] = str(status_code)
+        self.request_duration.record(duration_s, attributes)
+
+    @contextmanager
+    def operation(self, name: str) -> Iterator[trace.Span]:
+        """Trace a unit of work and mark the span as an error on exceptions.
+
+        Args:
+            name: Low-cardinality span name such as 'orders.process'.
+
+        Yields:
+            The active span, for adding attributes and events.
+        """
+        with self.tracer.start_as_current_span(name) as span:
+            try:
+                yield span
+            except Exception as error:
+                span.record_exception(error)
+                span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+                raise
+
+    def shutdown(self) -> None:
+        """Flush buffered telemetry; call once during graceful shutdown."""
+        self.tracer_provider.shutdown()
+        self.meter_provider.shutdown()
+
+
+def configure_telemetry(
+    *,
+    service_name: str,
+    service_version: str,
+    sample_ratio: float = 1.0,
+    export_interval_ms: int = 60_000,
+) -> Telemetry:
+    """Install global tracer and meter providers and JSON logging.
+
+    Args:
+        service_name: Logical service name ('service.name').
+        service_version: Deployed version ('service.version').
+        sample_ratio: Head sampling ratio for new root traces (0.0-1.0).
+        export_interval_ms: Metric export interval in milliseconds.
+
+    Returns:
+        The configured telemetry handle.
+    """
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": service_version,
+            "deployment.environment.name": os.getenv("DEPLOYMENT_ENVIRONMENT", "dev"),
+        }
+    )
+
+    tracer_provider = TracerProvider(
+        resource=resource, sampler=ParentBased(TraceIdRatioBased(sample_ratio))
+    )
+    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(tracer_provider)
+
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[
+            PeriodicExportingMetricReader(
+                OTLPMetricExporter(), export_interval_millis=export_interval_ms
+            )
+        ],
+        views=[
+            View(
+                instrument_name="http.server.request.duration",
+                aggregation=ExplicitBucketHistogramAggregation(_DURATION_BUCKETS),
+            )
+        ],
+    )
+    metrics.set_meter_provider(meter_provider)
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+
+    meter = metrics.get_meter(service_name, service_version)
+    return Telemetry(
+        tracer=trace.get_tracer(service_name, service_version),
+        meter=meter,
+        tracer_provider=tracer_provider,
+        meter_provider=meter_provider,
+        request_duration=meter.create_histogram(
+            name="http.server.request.duration",
+            unit="s",
+            description="Duration of HTTP server requests.",
+        ),
+    )

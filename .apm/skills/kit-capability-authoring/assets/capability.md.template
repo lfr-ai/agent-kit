@@ -1,0 +1,14 @@
+# Capability change evidence
+
+- Existing topic/source and why extension is needed:
+- Audience, owning bundle and trigger:
+- Procedure and linked reference:
+- Usable asset and placeholder semantics:
+- Checker input/output/error contract and runnable regression:
+- Profile selection and unchanged context-budget result:
+- Role permission/delegation changes, if any:
+- License/source grounding:
+- Source/resource/coverage checks:
+- Pre-regeneration drift audit:
+- Projection refresh and post-refresh drift:
+- Pinned APM smoke and unavailable native tests:

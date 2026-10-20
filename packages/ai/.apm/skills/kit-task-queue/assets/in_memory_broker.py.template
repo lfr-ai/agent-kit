@@ -1,0 +1,198 @@
+"""In-memory broker and idempotency store with real lease semantics.
+
+Copy to 'tasks/memory.py'. Both classes implement the ports in
+'tasks.contracts' with an injected clock, so tests can expire leases and
+delays deterministically. They are also handy for local development; they
+are not durable and must not be used across processes.
+"""
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from tasks.contracts import ClaimState, Delivery, LeaseLostError
+
+
+@dataclass(kw_only=True, slots=True)
+class _Message:
+    """Mutable broker-side message state."""
+
+    message_id: int
+    body: bytes
+    visible_at: float
+    receive_count: int = 0
+    receipt: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DeadLetter:
+    """A message parked for operator review.
+
+    Attributes:
+        body: Original message bytes, for replay after a fix.
+        reason: Safe, content-free reason.
+        receive_count: Deliveries before parking.
+    """
+
+    body: bytes
+    reason: str
+    receive_count: int
+
+
+class InMemoryBroker:
+    """Queue with delays, visibility timeouts, receipts and a dead-letter list."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        """Create an empty queue.
+
+        Args:
+            clock: Monotonic clock in seconds.
+        """
+        self._clock = clock
+        self._messages: dict[int, _Message] = {}
+        self._next_id = 0
+        self.dead_letters: list[DeadLetter] = []
+
+    @property
+    def depth(self) -> int:
+        """Messages not yet acknowledged or dead-lettered, visible or not."""
+        return len(self._messages)
+
+    async def enqueue(self, body: bytes, *, delay_s: float = 0.0) -> None:
+        """Publish a message.
+
+        Args:
+            body: Serialized envelope.
+            delay_s: Seconds before the message becomes visible.
+        """
+        self._next_id += 1
+        self._messages[self._next_id] = _Message(
+            message_id=self._next_id, body=body, visible_at=self._clock() + delay_s
+        )
+
+    async def receive(
+        self, *, max_messages: int, visibility_timeout_s: float
+    ) -> list[Delivery]:
+        """Lease visible messages in arrival order.
+
+        Args:
+            max_messages: Upper bound on returned deliveries.
+            visibility_timeout_s: Lease length.
+
+        Returns:
+            Deliveries with fresh receipts.
+        """
+        now = self._clock()
+        ready = sorted(
+            (
+                message
+                for message in self._messages.values()
+                if message.visible_at <= now
+            ),
+            key=lambda message: (message.visible_at, message.message_id),
+        )[:max_messages]
+        deliveries: list[Delivery] = []
+        for message in ready:
+            message.receive_count += 1
+            message.receipt = f"{message.message_id}:{message.receive_count}"
+            message.visible_at = now + visibility_timeout_s
+            deliveries.append(
+                Delivery(
+                    body=message.body,
+                    receipt=message.receipt,
+                    receive_count=message.receive_count,
+                )
+            )
+        return deliveries
+
+    def _leased(self, delivery: Delivery) -> _Message:
+        """Return the message only if this receipt still holds its lease."""
+        message_id = int(delivery.receipt.split(":", 1)[0])
+        message = self._messages.get(message_id)
+        if (
+            message is None
+            or message.receipt != delivery.receipt
+            or message.visible_at <= self._clock()
+        ):
+            raise LeaseLostError(delivery.receipt)
+        return message
+
+    async def ack(self, delivery: Delivery) -> None:
+        """Delete the message.
+
+        Raises:
+            LeaseLostError: If the lease expired or the message was redelivered.
+        """
+        del self._messages[self._leased(delivery).message_id]
+
+    async def retry(self, delivery: Delivery, *, delay_s: float) -> None:
+        """Make the message visible again after a delay."""
+        message = self._leased(delivery)
+        message.visible_at = self._clock() + delay_s
+        message.receipt = None
+
+    async def extend(self, delivery: Delivery, *, visibility_timeout_s: float) -> None:
+        """Extend the lease of a message still being processed."""
+        self._leased(delivery).visible_at = self._clock() + visibility_timeout_s
+
+    async def dead_letter(self, delivery: Delivery, *, reason: str) -> None:
+        """Move the message to the dead-letter list."""
+        message = self._leased(delivery)
+        del self._messages[message.message_id]
+        self.dead_letters.append(
+            DeadLetter(
+                body=message.body, reason=reason, receive_count=message.receive_count
+            )
+        )
+
+    async def redrive(self) -> int:
+        """Re-enqueue every dead letter, for operator replay after a fix.
+
+        Returns:
+            Number of messages re-enqueued.
+        """
+        parked, self.dead_letters = self.dead_letters, []
+        for letter in parked:
+            await self.enqueue(letter.body)
+        return len(parked)
+
+
+class InMemoryIdempotencyStore:
+    """Idempotency keys with leases; 'done' keys never run again."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        """Create an empty store.
+
+        Args:
+            clock: Monotonic clock in seconds.
+        """
+        self._clock = clock
+        self._done: set[str] = set()
+        self._leases: dict[str, float] = {}
+
+    async def claim(self, key: str, *, lease_s: float) -> ClaimState:
+        """Claim a key unless it is done or leased by someone else.
+
+        Args:
+            key: Idempotency key.
+            lease_s: How long the claim blocks duplicates.
+
+        Returns:
+            The claim outcome.
+        """
+        if key in self._done:
+            return ClaimState.DONE
+        now = self._clock()
+        if self._leases.get(key, float("-inf")) > now:
+            return ClaimState.IN_PROGRESS
+        self._leases[key] = now + lease_s
+        return ClaimState.ACQUIRED
+
+    async def complete(self, key: str) -> None:
+        """Mark the key done."""
+        self._done.add(key)
+        self._leases.pop(key, None)
+
+    async def release(self, key: str) -> None:
+        """Drop a lease after a failed attempt."""
+        self._leases.pop(key, None)

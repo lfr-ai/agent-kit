@@ -1,0 +1,23 @@
+# Release candidate evidence
+
+- Version, source revision, supported targets:
+- Owner and approved private reporting route:
+- Locked build command and environment:
+- Artifact inventory, license notices and checksums:
+- Relocated install/use check:
+- Capability selection/provenance/drift checks:
+- Exact completion gate:
+
+## Hosted operator verification
+
+- Required review/check rules:
+- Workflow token permissions and immutable pins:
+- Private vulnerability reporting enabled:
+- Signing/attestation and protected publication:
+- Approval and publication record:
+
+## Limits and recovery
+
+- Untested runtime/cloud/platform surfaces:
+- Previous supported release and rollback:
+- Known compatibility changes:

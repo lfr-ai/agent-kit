@@ -1,0 +1,22 @@
+# API compatibility review
+
+- Owning route/schema and supported OpenAPI version:
+- Released contract snapshot and generated candidate:
+- Existing locked schema/diff validator and exact command:
+- Reference resolution and external-fetch policy:
+
+| Surface | Old contract | New contract | Real consumer/test | Compatibility decision |
+| --- | --- | --- | --- | --- |
+| Path/method/status | | | | |
+| Parameter/header/auth | | | | |
+| Body/schema/nullability | | | | |
+| Responses/errors | | | | |
+| Pagination/retry/idempotency | | | | |
+
+- Invalid/missing/unauthorized/unknown-value regressions:
+- Additive vs breaking decision and published versioning policy:
+- Required consumer migration, rollout and rollback:
+- Exact checks and unavailable runtime coverage:
+
+A path-only text diff cannot certify compatibility. Use the consumer's existing
+OpenAPI validator/diff tooling and actual client contract tests.

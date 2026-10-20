@@ -1,0 +1,41 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- New capability, described by its effect for users.
+
+### Changed
+
+- Changed behavior or default, and what users must do if anything.
+
+### Deprecated
+
+- Feature that will be removed, and the version planned for removal.
+
+### Removed
+
+- Removed feature and its replacement.
+
+### Fixed
+
+- User-visible defect that no longer occurs.
+
+### Security
+
+- Vulnerability fix, without exploit details before disclosure.
+
+## [0.1.0] - YYYY-MM-DD
+
+### Added
+
+- Initial release.
+
+[Unreleased]: https://example.com/your-org/project/compare/v0.1.0...HEAD
+[0.1.0]: https://example.com/your-org/project/releases/tag/v0.1.0

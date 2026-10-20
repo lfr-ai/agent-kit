@@ -1,0 +1,22 @@
+// e2e/auth.setup.ts
+// Signs in once per run and stores the browser state for dependent projects.
+// Credentials come from the environment and belong to a dedicated test account.
+import { expect, test as setup } from "@playwright/test";
+
+const authFile = "playwright/.auth/user.json";
+
+setup("authenticate", async ({ page }) => {
+  const email = process.env["E2E_USER_EMAIL"];
+  const password = process.env["E2E_USER_PASSWORD"];
+  if (!email || !password) {
+    throw new Error("Set E2E_USER_EMAIL and E2E_USER_PASSWORD for the test account.");
+  }
+
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  await page.context().storageState({ path: authFile });
+});

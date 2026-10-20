@@ -1,0 +1,25 @@
+name: Agent Kit source and dependency policy
+version: "1.0.0"
+enforcement: block
+fetch_failure: block
+dependencies:
+  allow: []
+mcp:
+  allow: []
+  self_defined: deny
+  trust_transitive: false
+manifest:
+  required_fields:
+    - name
+    - version
+    - includes
+    - license
+  require_explicit_includes: true
+  scripts: deny
+executables:
+  deny_all: true
+security:
+  integrity:
+    require_hashes: true
+  audit:
+    fail_on_drift: true

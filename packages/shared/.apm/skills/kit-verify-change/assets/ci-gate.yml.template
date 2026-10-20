@@ -1,0 +1,110 @@
+# CI quality gate template. Copy to '.github/workflows/gate.yml'.
+#
+# The jobs call the same 'scripts/run_gate.py' that developers run locally, so
+# "green locally" and "green in CI" mean the same checks. Fast checks run first
+# and gate the slower jobs. Actions are pinned to full commit SHAs; update them
+# with Dependabot or a reviewed pull request, never by moving to a tag.
+
+name: gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LOCKED: "1"
+  PYTHONUTF8: "1"
+  HYPOTHESIS_PROFILE: ci
+
+jobs:
+  fast:
+    name: fast checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Fast gate (check-only)
+        run: >-
+          uv run --locked python scripts/run_gate.py
+          --skip unit-tests --keep-going --report gate-fast.json
+      - name: Keep evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-fast
+          path: gate-fast.json
+          if-no-files-found: error
+
+  tests:
+    name: tests (${{ matrix.os }})
+    needs: fast
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Unit and property tests
+        run: >-
+          uv run --locked python scripts/run_gate.py
+          --only unit-tests --report gate-tests-${{ matrix.os }}.json
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-tests-${{ matrix.os }}
+          path: gate-tests-${{ matrix.os }}.json
+          if-no-files-found: error
+
+  slow:
+    name: slow checks
+    needs: fast
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history so a history-wide secrets scan can see old commits.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Integration tests and link check
+        run: >-
+          uv run --locked python scripts/run_gate.py
+          --only integration-tests --only links --keep-going
+          --report gate-slow.json
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-slow
+          path: gate-slow.json
+          if-no-files-found: error

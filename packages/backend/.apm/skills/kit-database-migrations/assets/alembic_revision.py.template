@@ -1,0 +1,60 @@
+"""Add customer_note to orders (expand phase).
+
+Phase: expand
+Release dependency: none; release 2 starts dual-writing customer_note.
+Rollback mode: reversible (drops the new, still unused column)
+Point of no return: none in this revision
+Expected duration: < 1 s; brief ACCESS EXCLUSIVE lock guarded by lock_timeout
+
+Revision ID: 3f9c2a1b7d10
+Revises: 8e41b0c5a2f3
+Create Date: 2026-01-15 10:00:00
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "3f9c2a1b7d10"  # pragma: allowlist secret
+down_revision: str | None = "8e41b0c5a2f3"  # pragma: allowlist secret
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+LOCK_TIMEOUT = "3s"
+STATEMENT_TIMEOUT = "60s"
+
+
+def _guard_locks() -> None:
+    """Fail fast instead of queueing traffic behind a blocked lock."""
+    if op.get_context().dialect.name == "postgresql":
+        op.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+        op.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+
+
+def upgrade() -> None:
+    """Add a nullable column and its index without blocking writers."""
+    _guard_locks()
+    op.add_column("orders", sa.Column("customer_note", sa.Text(), nullable=True))
+
+    with op.get_context().autocommit_block():
+        op.create_index(
+            "ix_orders_customer_note_present",
+            "orders",
+            ["id"],
+            postgresql_concurrently=True,
+            postgresql_where=sa.text("customer_note IS NOT NULL"),
+        )
+
+
+def downgrade() -> None:
+    """Reverse the expand step; data written to customer_note is discarded."""
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_orders_customer_note_present",
+            table_name="orders",
+            postgresql_concurrently=True,
+        )
+    _guard_locks()
+    # Dropping a column this revision created is expected in downgrade.
+    op.drop_column("orders", "customer_note")

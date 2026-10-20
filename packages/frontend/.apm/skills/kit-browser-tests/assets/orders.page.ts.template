@@ -1,0 +1,49 @@
+// e2e/pages/orders.page.ts
+// Page object: locators by role and accessible name, user-level actions, and no
+// assertions about implementation details. Tests read like the user journey.
+import { expect, type Locator, type Page } from "@playwright/test";
+
+export class OrdersPage {
+  readonly heading: Locator;
+  readonly search: Locator;
+  readonly statusFilter: Locator;
+  readonly list: Locator;
+  readonly emptyState: Locator;
+  readonly errorAlert: Locator;
+  readonly retryButton: Locator;
+  readonly #page: Page;
+
+  /** @param page The Playwright page this object drives. */
+  constructor(page: Page) {
+    this.#page = page;
+    this.heading = page.getByRole("heading", { level: 1, name: "Orders" });
+    this.search = page.getByRole("searchbox", { name: "Search orders" });
+    this.statusFilter = page.getByRole("combobox", { name: "Status" });
+    this.list = page.getByRole("list", { name: "Orders" });
+    this.emptyState = page.getByText("No orders match these filters.");
+    this.errorAlert = page.getByRole("alert");
+    this.retryButton = page.getByRole("button", { name: "Try again" });
+  }
+
+  async goto(search = ""): Promise<void> {
+    await this.#page.goto(`/orders${search}`);
+    await expect(this.heading).toBeVisible();
+  }
+
+  row(reference: string): Locator {
+    return this.list.getByRole("listitem").filter({ hasText: reference });
+  }
+
+  async filterByStatus(label: string): Promise<void> {
+    await this.statusFilter.selectOption({ label });
+  }
+
+  async searchFor(text: string): Promise<void> {
+    await this.search.fill(text);
+  }
+
+  async open(reference: string): Promise<void> {
+    await this.row(reference).getByRole("link", { name: reference }).click();
+    await expect(this.#page.getByRole("heading", { level: 1, name: `Order ${reference}` })).toBeVisible();
+  }
+}

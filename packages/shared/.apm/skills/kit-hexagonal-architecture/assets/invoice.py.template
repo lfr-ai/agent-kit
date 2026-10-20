@@ -1,0 +1,93 @@
+"""Invoice domain model: pure policy with no I/O.
+
+Copy to 'app/domain/invoice.py'. The domain imports only the standard library
+value types it needs; it never imports application, adapter or framework code.
+"""
+
+from dataclasses import dataclass, replace
+from decimal import Decimal
+from enum import StrEnum
+from typing import Self
+
+_CURRENCY_LENGTH = 3
+
+
+class InvoiceStatus(StrEnum):
+    """Lifecycle states an invoice can be in."""
+
+    OPEN = "open"
+    PAID = "paid"
+    VOID = "void"
+
+
+class InvoiceError(ValueError):
+    """Raised when an operation would break an invoice invariant."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Invoice:
+    """An amount a customer owes, with the rules for changing its status.
+
+    Attributes:
+        invoice_id: Stable identifier chosen by the application.
+        customer_id: Identifier of the customer who owes the amount.
+        amount: Positive amount in the invoice currency.
+        currency: ISO 4217 alphabetic code such as 'EUR'.
+        status: Current lifecycle state.
+        payment_reference: Provider reference recorded when the invoice is paid.
+    """
+
+    invoice_id: str
+    customer_id: str
+    amount: Decimal
+    currency: str
+    status: InvoiceStatus = InvoiceStatus.OPEN
+    payment_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject values that no valid invoice can hold."""
+        if not self.invoice_id or not self.customer_id:
+            raise InvoiceError("invoice and customer identifiers are required")
+        if self.amount <= 0:
+            raise InvoiceError(f"amount must be positive, got {self.amount}")
+        if len(self.currency) != _CURRENCY_LENGTH or not self.currency.isupper():
+            raise InvoiceError(
+                f"currency must be a 3-letter code, got {self.currency!r}"
+            )
+        if (self.status is InvoiceStatus.PAID) != (self.payment_reference is not None):
+            raise InvoiceError("a paid invoice needs exactly one payment reference")
+
+    @property
+    def is_payable(self) -> bool:
+        """Return whether a payment may be attempted for this invoice."""
+        return self.status is InvoiceStatus.OPEN
+
+    def mark_paid(self, *, payment_reference: str) -> Self:
+        """Return a paid copy; paying twice or paying a void invoice is an error.
+
+        Args:
+            payment_reference: Provider reference for the successful charge.
+
+        Returns:
+            A new invoice in the 'paid' state.
+
+        Raises:
+            InvoiceError: If the invoice is not open or the reference is empty.
+        """
+        if not self.is_payable:
+            raise InvoiceError(f"invoice {self.invoice_id} is {self.status}, not open")
+        if not payment_reference:
+            raise InvoiceError("payment reference must not be empty")
+        return replace(
+            self, status=InvoiceStatus.PAID, payment_reference=payment_reference
+        )
+
+    def void(self) -> Self:
+        """Return a void copy of an open invoice.
+
+        Raises:
+            InvoiceError: If the invoice is already paid or void.
+        """
+        if not self.is_payable:
+            raise InvoiceError(f"invoice {self.invoice_id} is {self.status}, not open")
+        return replace(self, status=InvoiceStatus.VOID)

@@ -1,0 +1,97 @@
+"""Contract tests for order repositories, run against the in-memory adapter.
+
+Replace the 'shop' and 'tests.fakes' imports with the project's modules. To
+reuse the suite for the production adapter, parametrize the 'repository'
+fixture with a factory per adapter; the same assertions must hold for both.
+"""
+
+from datetime import UTC, datetime
+
+import pytest
+from shop.core.orders import Order
+from shop.core.ports import ConcurrencyError, OrderNotFoundError, OrderRepository, require
+from shop.core.values import Money, OrderId
+from tests.fakes.orders import InMemoryOrderRepository
+
+_NOW = datetime(2026, 3, 1, tzinfo=UTC)
+
+
+@pytest.fixture
+def repository() -> OrderRepository:
+    return InMemoryOrderRepository()
+
+
+def _order(customer_id: str = "customer-1") -> Order:
+    return Order.open(order_id=OrderId.new(), customer_id=customer_id, currency="EUR", now=_NOW)
+
+
+def test_added_order_round_trips(repository: OrderRepository) -> None:
+    """A stored aggregate is returned with the same identity and state."""
+    order = _order()
+    repository.add(order)
+    loaded = require(repository, order.id)
+    assert loaded == order
+    assert loaded.version == 1
+
+
+def test_missing_order_returns_none_and_require_raises(repository: OrderRepository) -> None:
+    """'get' reports absence; 'require' turns it into a documented error."""
+    missing = OrderId.new()
+    assert repository.get(missing) is None
+    with pytest.raises(OrderNotFoundError):
+        require(repository, missing)
+
+
+def test_duplicate_add_is_rejected(repository: OrderRepository) -> None:
+    """Identity is unique within the repository."""
+    order = _order()
+    repository.add(order)
+    with pytest.raises(ValueError, match="already exists"):
+        repository.add(order)
+
+
+def test_loaded_copies_are_detached(repository: OrderRepository) -> None:
+    """Changing a loaded aggregate does not change storage until 'save'."""
+    order = _order()
+    repository.add(order)
+    loaded = require(repository, order.id)
+    loaded.add_line(sku="SKU-1", quantity=1, unit_price=Money.of("1", "EUR"), now=_NOW)
+    assert require(repository, order.id).lines == ()
+
+
+def test_save_advances_the_version(repository: OrderRepository) -> None:
+    """Each successful save increments the stored version."""
+    order = _order()
+    repository.add(order)
+    loaded = require(repository, order.id)
+    loaded.cancel()
+    repository.save(loaded)
+    assert require(repository, order.id).version == 2
+
+
+def test_stale_save_is_rejected(repository: OrderRepository) -> None:
+    """Optimistic concurrency: the second writer with an old version loses."""
+    order = _order()
+    repository.add(order)
+    first = require(repository, order.id)
+    second = require(repository, order.id)
+    repository.save(first)
+    with pytest.raises(ConcurrencyError) as caught:
+        repository.save(second)
+    assert (caught.value.expected, caught.value.actual) == (1, 2)
+
+
+def test_save_of_unknown_order_is_rejected(repository: OrderRepository) -> None:
+    """Saving requires a prior add."""
+    with pytest.raises(OrderNotFoundError):
+        repository.save(_order())
+
+
+def test_list_for_customer_filters_and_orders_newest_first(
+    repository: OrderRepository,
+) -> None:
+    """Queries return only the customer's orders, most recent first."""
+    older, other, newer = _order(), _order("customer-2"), _order()
+    for order in (older, other, newer):
+        repository.add(order)
+    assert repository.list_for_customer("customer-1") == [newer, older]

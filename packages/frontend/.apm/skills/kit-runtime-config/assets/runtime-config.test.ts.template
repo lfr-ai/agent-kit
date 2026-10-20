@@ -1,0 +1,77 @@
+// src/config/runtime-config.test.ts
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getRuntimeConfig,
+  loadRuntimeConfig,
+  parseRuntimeConfig,
+  RuntimeConfigError,
+} from "./runtime-config";
+
+const valid = {
+  apiBaseUrl: "https://api.example.test/v1",
+  environment: "staging",
+  features: { "bulk-export": true },
+};
+
+function fetchReturning(body: unknown, status = 200): typeof fetch {
+  return vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status }),
+  );
+}
+
+describe("parseRuntimeConfig", () => {
+  it("normalizes the base URL and freezes the result", () => {
+    const config = parseRuntimeConfig(valid);
+
+    expect(config.apiBaseUrl).toBe("https://api.example.test/v1/");
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.features)).toBe(true);
+  });
+
+  it.each([
+    [{ ...valid, apiBaseUrl: "not a url" }, "apiBaseUrl"],
+    [{ ...valid, apiBaseUrl: "http://api.example.test" }, "apiBaseUrl"],
+    [{ ...valid, environment: "prod" }, "environment"],
+    [{ ...valid, features: { "Bad Name": true } }, "features"],
+    [{ ...valid, clientSecret: "should-not-be-here" }, "(root)"], // pragma: allowlist secret
+  ])("rejects %j with an issue at %s", (input, path) => {
+    const error = (() => {
+      try {
+        parseRuntimeConfig(input);
+      } catch (caught) {
+        return caught;
+      }
+      return null;
+    })();
+
+    expect(error).toBeInstanceOf(RuntimeConfigError);
+    expect((error as RuntimeConfigError).issues.some((issue) => issue.startsWith(path))).toBe(true);
+  });
+
+  it("allows plain http only for localhost", () => {
+    expect(parseRuntimeConfig({ ...valid, apiBaseUrl: "http://localhost:8000" }).apiBaseUrl).toBe(
+      "http://localhost:8000/",
+    );
+  });
+});
+
+describe("loadRuntimeConfig", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("fetches without cache and stores the validated config", async () => {
+    const fetchImpl = fetchReturning(valid);
+
+    await loadRuntimeConfig({ fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledWith("/config.json", expect.objectContaining({ cache: "no-store" }));
+    expect(getRuntimeConfig().environment).toBe("staging");
+  });
+
+  it.each([
+    ["HTTP failure", fetchReturning({}, 404), /status 404/],
+    ["non-JSON body", fetchReturning("<html>"), /not valid JSON/],
+    ["network error", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")), /could not be fetched/],
+  ])("fails clearly on %s", async (_name, fetchImpl, message) => {
+    await expect(loadRuntimeConfig({ fetchImpl })).rejects.toThrow(message);
+  });
+});

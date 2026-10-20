@@ -1,0 +1,53 @@
+"""Exceptions every payment gateway adapter must raise, owned by the port.
+
+Copy to 'app/application/ports/payment_errors.py'. Adapters translate transport
+and vendor failures into these types so the application can decide policy
+(retry, give up, alert) without importing an HTTP client or vendor SDK.
+
+Classify by what the caller should do, not by where the failure came from:
+
+- 'PaymentDeclinedError': the provider answered and said no. Do not retry with
+  the same input; tell the user.
+- 'PaymentUnavailableError': the outcome is unknown or the provider is down.
+  Retrying with the same idempotency key is safe.
+- 'PaymentProtocolError': the provider answered with something the adapter does
+  not understand. This is a contract drift or a bug; alert, do not retry blindly.
+"""
+
+
+class PaymentError(Exception):
+    """Base class for all payment gateway failures."""
+
+
+class PaymentDeclinedError(PaymentError):
+    """The provider refused the charge for a business reason."""
+
+    def __init__(self, *, invoice_id: str, reason: str) -> None:
+        """Record which charge was declined and why.
+
+        Args:
+            invoice_id: Invoice the charge was for.
+            reason: Provider-supplied, user-presentable decline reason.
+        """
+        super().__init__(f"payment for invoice {invoice_id} declined: {reason}")
+        self.invoice_id = invoice_id
+        self.reason = reason
+
+
+class PaymentUnavailableError(PaymentError):
+    """The provider could not be reached or reported a transient failure."""
+
+    def __init__(self, *, invoice_id: str, retry_after: float | None = None) -> None:
+        """Record the affected charge and an optional provider back-off hint.
+
+        Args:
+            invoice_id: Invoice the charge was for.
+            retry_after: Seconds the provider asked callers to wait, if any.
+        """
+        super().__init__(f"payment provider unavailable for invoice {invoice_id}")
+        self.invoice_id = invoice_id
+        self.retry_after = retry_after
+
+
+class PaymentProtocolError(PaymentError):
+    """The provider response did not match the documented contract."""

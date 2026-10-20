@@ -1,0 +1,109 @@
+"""Contract tests for the payment union, strictness, and JSON output."""
+
+from __future__ import annotations
+
+import json
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from myapp.presentation.contracts.payments import (
+    PAYMENT_LIST,
+    BankTransfer,
+    CardPayment,
+    InvoicePayments,
+)
+
+_CARD = {"kind": "card", "amount": "12.50", "currency": "EUR", "last4": "4242"}
+_BANK = {
+    "kind": "bank_transfer",
+    "amount": "100",
+    "currency": "EUR",
+    "iban": "DE89370400440532013000",
+}
+
+
+def _invoice(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "invoice_number": "INV-1001",
+        "received_at": "2026-01-15T10:00:00+01:00",
+        "payments": [_CARD, _BANK],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_discriminator_selects_one_member_per_item() -> None:
+    invoice = InvoicePayments.model_validate_json(json.dumps(_invoice()))
+
+    assert [type(item) for item in invoice.payments] == [CardPayment, BankTransfer]
+    assert invoice.total == Decimal("112.50")
+
+
+def test_missing_and_unknown_tags_report_specific_errors() -> None:
+    with pytest.raises(ValidationError) as missing:
+        PAYMENT_LIST.validate_python([{"amount": "1", "currency": "EUR"}])
+    with pytest.raises(ValidationError) as unknown:
+        PAYMENT_LIST.validate_python([{**_CARD, "kind": "voucher"}])
+
+    assert missing.value.errors()[0]["type"] == "union_tag_not_found"
+    assert unknown.value.errors()[0]["type"] == "union_tag_invalid"
+
+
+def test_member_errors_are_reported_for_the_selected_member_only() -> None:
+    with pytest.raises(ValidationError) as caught:
+        PAYMENT_LIST.validate_python([{**_CARD, "last4": "42"}])
+
+    locations = [error["loc"] for error in caught.value.errors()]
+    assert locations == [(0, "card", "last4")]
+
+
+@pytest.mark.parametrize("value", ["7", 7.0, True])
+def test_strict_identifier_rejects_coercible_input(value: object) -> None:
+    payload = {"kind": "stored_credit", "amount": "5", "currency": "EUR"}
+
+    with pytest.raises(ValidationError):
+        PAYMENT_LIST.validate_python([{**payload, "credit_id": value}])
+
+
+def test_strict_string_field_rejects_numbers() -> None:
+    with pytest.raises(ValidationError):
+        InvoicePayments.model_validate(_invoice(invoice_number=1001))
+
+
+def test_extra_fields_and_negative_amounts_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        CardPayment.model_validate({**_CARD, "cvv": "123"})
+    with pytest.raises(ValidationError):
+        CardPayment.model_validate({**_CARD, "amount": "-1"})
+
+
+def test_json_output_uses_wire_formats() -> None:
+    invoice = InvoicePayments.model_validate_json(json.dumps(_invoice()))
+
+    dumped = json.loads(invoice.model_dump_json())
+
+    assert dumped["received_at"] == "2026-01-15T09:00:00Z"
+    assert dumped["payments"][0]["amount"] == "12.50"
+    assert dumped["total"] == "112.50"
+    assert invoice.model_dump()["payments"][0]["amount"] == Decimal("12.50")
+
+
+def test_json_round_trip_preserves_value() -> None:
+    invoice = InvoicePayments.model_validate_json(json.dumps(_invoice()))
+    data = invoice.model_dump(mode="json", exclude={"total"})
+
+    assert InvoicePayments.model_validate(data) == invoice
+
+
+def test_json_schema_publishes_discriminator_mapping() -> None:
+    schema = InvoicePayments.model_json_schema()
+    items = schema["properties"]["payments"]["items"]
+
+    assert items["discriminator"]["propertyName"] == "kind"
+    assert set(items["discriminator"]["mapping"]) == {
+        "card",
+        "bank_transfer",
+        "stored_credit",
+    }

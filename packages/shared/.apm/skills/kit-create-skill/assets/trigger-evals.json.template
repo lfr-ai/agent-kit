@@ -1,0 +1,24 @@
+{
+  "skill": "kit-replace-topic",
+  "description_under_test": "Use when replace this with the specific task trigger.",
+  "should_trigger": [
+    {"id": "t1", "request": "Replace with a request a real user would type that needs this skill."},
+    {"id": "t2", "request": "Replace with a differently worded request for the same task."},
+    {"id": "t3", "request": "Replace with a request that names the task's artifact instead of the task."}
+  ],
+  "should_not_trigger": [
+    {"id": "n1", "request": "Replace with a near-miss that belongs to a neighboring skill.", "expected": "kit-neighbor-skill"},
+    {"id": "n2", "request": "Replace with a request that needs no skill at all.", "expected": null}
+  ],
+  "tasks": [
+    {
+      "id": "task1",
+      "prompt": "Replace with a realistic task prompt using synthetic data.",
+      "fixture": "path/to/disposable/fixture",
+      "checks": [
+        "Replace with a command that must exit 0, a file that must exist, or a fact the answer must contain.",
+        "Replace with an action that must not happen."
+      ]
+    }
+  ]
+}

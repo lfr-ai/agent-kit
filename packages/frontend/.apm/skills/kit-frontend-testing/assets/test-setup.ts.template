@@ -1,0 +1,63 @@
+// src/test/setup.ts
+// Runs before every test file. Keep it small: matchers, cleanup, deterministic
+// environment, and test runtime configuration. No network handlers here.
+import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach, beforeAll, vi } from "vitest";
+import { setRuntimeConfigForTests } from "@/config/runtime-config";
+
+// Testing Library settles every user-event call with setTimeout(0) and advances
+// fake clocks only through a Jest-style global, so user-event hangs under
+// vi.useFakeTimers() without this bridge to Vitest's clock.
+Object.defineProperty(globalThis, "jest", {
+  configurable: true,
+  value: { advanceTimersByTime: (ms: number) => vi.advanceTimersByTime(ms) },
+});
+
+beforeAll(() => {
+  // Same origin as jsdom's default URL so MSW handlers like "*/api/orders" match.
+  setRuntimeConfigForTests({
+    apiBaseUrl: "http://localhost:3000/",
+    environment: "test",
+    features: {},
+  });
+});
+
+afterEach(() => {
+  // Required because globals: false disables Testing Library's automatic cleanup.
+  cleanup();
+  vi.useRealTimers();
+  localStorage.clear();
+  sessionStorage.clear();
+});
+
+// jsdom lacks matchMedia; components that read prefers-reduced-motion need it.
+if (!window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string): MediaQueryList => {
+      const list: MediaQueryList = {
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      };
+      return list;
+    },
+  });
+}
+
+// Fail loudly on React act() warnings: they mean a state update escaped the test's
+// awaited interactions. Tests that expect other console errors spy on console.error.
+const originalError = console.error;
+console.error = (...args: unknown[]): void => {
+  const message = args.map(String).join(" ");
+  originalError(...args);
+  if (message.includes("not wrapped in act(")) {
+    throw new Error(`act() warning during test: ${message}`);
+  }
+};

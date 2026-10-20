@@ -1,0 +1,20 @@
+# Module outputs. Copy to infra/modules/storage/outputs.tf.
+output "id" {
+  description = "Resource ID of the storage account."
+  value       = azurerm_storage_account.this.id
+}
+
+output "name" {
+  description = "Name of the storage account."
+  value       = azurerm_storage_account.this.name
+}
+
+output "primary_blob_endpoint" {
+  description = "Primary blob service endpoint URL."
+  value       = azurerm_storage_account.this.primary_blob_endpoint
+}
+
+output "public_network_access_enabled" {
+  description = "Whether the account accepts traffic from public networks."
+  value       = azurerm_storage_account.this.public_network_access_enabled
+}

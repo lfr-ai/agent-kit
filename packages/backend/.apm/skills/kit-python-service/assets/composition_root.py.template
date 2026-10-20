@@ -1,0 +1,107 @@
+"""Composition root: the only module that knows every concrete adapter.
+
+Copy into 'src/<package>/composition.py'. Entry points (ASGI lifespan, CLI
+'main', worker start-up) call 'build_container' once and pass the resulting
+services to the transport. Tests call 'build_container' with fakes through the
+'overrides' argument instead of patching modules.
+"""
+
+import logging
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
+
+from shop.application.invoicing import (
+    Clock,
+    InvoiceRepository,
+    InvoiceService,
+    OrderReader,
+    SystemClock,
+)
+from shop.infrastructure.database import Database, SqlInvoiceRepository, SqlOrderReader
+from shop.logging_setup import configure_logging
+from shop.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Overrides:
+    """Optional replacements for adapters, used by tests and local tooling.
+
+    Attributes:
+        orders: Replacement order reader.
+        invoices: Replacement invoice repository.
+        clock: Replacement clock.
+    """
+
+    orders: OrderReader | None = None
+    invoices: InvoiceRepository | None = None
+    clock: Clock | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Container:
+    """Fully wired services handed to transports.
+
+    Attributes:
+        settings: Validated configuration the graph was built from.
+        invoicing: Invoice use cases.
+    """
+
+    settings: Settings
+    invoicing: InvoiceService
+
+
+@contextmanager
+def build_container(
+    settings: Settings, *, overrides: Overrides | None = None
+) -> Iterator[Container]:
+    """Build the object graph and release its resources on exit.
+
+    Args:
+        settings: Validated configuration.
+        overrides: Adapters to use instead of the production ones.
+
+    Yields:
+        The wired container. Resources opened here are closed in reverse order
+        when the context exits, even if start-up fails halfway.
+    """
+    chosen = overrides or Overrides()
+    with ExitStack() as resources:
+        orders = chosen.orders
+        invoices = chosen.invoices
+        if orders is None or invoices is None:
+            database = resources.enter_context(
+                Database.connect(
+                    settings.database_dsn, timeout_seconds=settings.request_timeout_seconds
+                )
+            )
+            if orders is None:
+                orders = SqlOrderReader(database=database)
+            if invoices is None:
+                invoices = SqlInvoiceRepository(database=database)
+        container = Container(
+            settings=settings,
+            invoicing=InvoiceService(
+                orders=orders, invoices=invoices, clock=chosen.clock or SystemClock()
+            ),
+        )
+        logger.info("container built", extra={"environment": settings.environment})
+        yield container
+
+
+def main(run: Callable[[Container], int]) -> int:
+    """Process entry point: load settings, configure logging, wire, and run.
+
+    Args:
+        run: Transport that serves requests with the container, for example an
+            HTTP server start function or a CLI dispatcher. Returns an exit code.
+
+    Returns:
+        The transport's exit code.
+    """
+    settings = Settings.from_environ()
+    configure_logging(level=settings.log_level, json_lines=settings.json_logs)
+    with build_container(settings) as container:
+        return run(container)

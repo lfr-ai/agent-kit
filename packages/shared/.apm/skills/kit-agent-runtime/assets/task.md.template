@@ -1,0 +1,21 @@
+# Task
+
+## Outcome
+
+<One observable result and why it matters.>
+
+## Scope
+
+- Owning package/paths: <bounded paths>
+- Selected skills/role: <only the capabilities this task needs>
+- Constraints: <existing behavior, toolchain, approvals and forbidden side effects>
+
+## Acceptance and verification
+
+- <Required success and failure behavior>
+- <Smallest test/build commands that prove it>
+
+## Stop
+
+<Finish after verified acceptance; report blockers rather than expand scope.
+Return changed paths, exact checks, remaining limits and a short tldr.>

@@ -1,0 +1,136 @@
+"""Contract tests for typed settings; copy next to the consumer's settings tests."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from myapp.composition.settings import AppSettings, format_errors, load_settings
+
+_REQUIRED = {
+    "ORDERS_DATABASE__URL": "postgresql://db.example.test:5432/orders",
+    "ORDERS_DATABASE__PASSWORD": "db-placeholder",  # pragma: allowlist secret
+    "ORDERS_BILLING__BASE_URL": "https://billing.example.test",
+    "ORDERS_BILLING__API_KEY": "api-placeholder",  # pragma: allowlist secret
+}
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Remove inherited ORDERS_ variables and run outside any real dotenv file."""
+    for name in list(os.environ):
+        if name.startswith("ORDERS_"):
+            monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path)
+    load_settings.cache_clear()
+
+
+def _set_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in _REQUIRED.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_valid_environment_produces_typed_facets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required(monkeypatch)
+    settings = AppSettings()
+
+    assert settings.database.pool_size == 5
+    assert settings.billing.timeout_seconds == 10.0
+    assert settings.tls.enabled is False
+
+
+def test_missing_required_value_names_the_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required(monkeypatch)
+    monkeypatch.delenv("ORDERS_DATABASE__URL")
+
+    with pytest.raises(ValidationError) as caught:
+        AppSettings()
+
+    assert "ORDERS_DATABASE__URL" in format_errors(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ORDERS_DATABASE__POOL_SIZE", "0"),
+        ("ORDERS_DATABASE__POOL_SIZE", "many"),
+        ("ORDERS_BILLING__BASE_URL", "not a url"),
+        ("ORDERS_LOG_FORMAT", "xml"),
+    ],
+)
+def test_malformed_values_fail_startup(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    _set_required(monkeypatch)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        AppSettings()
+
+
+def test_cross_field_rule_rejects_enabled_tls_without_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required(monkeypatch)
+    monkeypatch.setenv("ORDERS_TLS__ENABLED", "true")
+
+    with pytest.raises(ValidationError, match="certificate_path"):
+        AppSettings()
+
+
+def test_precedence_arguments_then_environment_then_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_required(monkeypatch)
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("ORDERS_LOG_LEVEL=ERROR\nORDERS_LOG_FORMAT=text\n", "utf-8")
+    monkeypatch.setenv("ORDERS_LOG_LEVEL", "WARNING")
+
+    from_sources = AppSettings(_env_file=dotenv)
+    overridden = AppSettings(_env_file=dotenv, log_level="DEBUG")
+
+    assert from_sources.log_level == "WARNING"
+    assert from_sources.log_format == "text"
+    assert overridden.log_level == "DEBUG"
+
+
+def test_secrets_are_masked_in_repr_dump_and_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required(monkeypatch)
+    settings = AppSettings()
+
+    assert "api-placeholder" not in repr(settings)
+    assert "api-placeholder" not in settings.model_dump_json()
+    assert settings.billing.api_key.get_secret_value() == "api-placeholder"
+
+    monkeypatch.setenv("ORDERS_DATABASE__POOL_SIZE", "invalid")
+    with pytest.raises(ValidationError) as caught:
+        AppSettings()
+    assert "db-placeholder" not in format_errors(caught.value)
+
+
+def test_settings_are_immutable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required(monkeypatch)
+    settings = AppSettings()
+
+    with pytest.raises(ValidationError):
+        settings.log_level = "DEBUG"  # type: ignore[misc]
+
+
+def test_loader_is_cached_and_resettable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required(monkeypatch)
+    first = load_settings()
+
+    assert load_settings() is first
+    load_settings.cache_clear()
+    assert load_settings() is not first

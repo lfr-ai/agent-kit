@@ -1,0 +1,12 @@
+name: agent-kit
+version: "0.1.0"
+license: MIT
+description: First-party governance workflows for the Agent Kit repository.
+targets:
+  - copilot
+  - claude
+includes:
+  - .apm/instructions/
+  - .apm/skills/
+dependencies: {}
+executables: {}

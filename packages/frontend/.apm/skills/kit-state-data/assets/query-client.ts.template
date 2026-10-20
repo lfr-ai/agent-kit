@@ -1,0 +1,70 @@
+// src/app/query-client.ts
+// One QueryClient per application (and per test). Defaults encode the retry and
+// freshness policy once instead of per component.
+import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
+import { ApiError, ResponseShapeError } from "@/shared/api/http-client";
+
+const maxAttempts = 3;
+const retryableStatuses = new Set([408, 425, 429, 502, 503, 504]);
+
+/** Retry transient failures only; contract and client errors never improve on retry. */
+export function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (failureCount + 1 >= maxAttempts) {
+    return false;
+  }
+  if (error instanceof ResponseShapeError) {
+    return false;
+  }
+  if (error instanceof ApiError) {
+    return retryableStatuses.has(error.status);
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return false;
+  }
+  // Network failures (TypeError from fetch) and timeouts are transient.
+  return true;
+}
+
+export type QueryClientHooks = Readonly<{
+  /** Background failures with data already on screen; surface as a toast, not a page error. */
+  onBackgroundError?: (error: unknown) => void;
+  /** Mutation failures not handled by the caller; log or report them. */
+  onMutationError?: (error: unknown) => void;
+}>;
+
+export function createQueryClient(hooks: QueryClientHooks = {}): QueryClient {
+  return new QueryClient({
+    queryCache: new QueryCache({
+      onError: (error, query) => {
+        if (query.state.data !== undefined) {
+          hooks.onBackgroundError?.(error);
+        }
+      },
+    }),
+    mutationCache: new MutationCache({
+      onError: (error, _variables, _context, mutation) => {
+        if (mutation.options.onError === undefined) {
+          hooks.onMutationError?.(error);
+        }
+      },
+    }),
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        gcTime: 5 * 60_000,
+        retry: shouldRetry,
+        retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 15_000),
+        refetchOnWindowFocus: true,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  });
+}
+
+/** Call on sign-out or account switch so no cached data crosses identities. */
+export async function resetForIdentityChange(client: QueryClient): Promise<void> {
+  await client.cancelQueries();
+  client.clear();
+}

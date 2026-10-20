@@ -1,0 +1,7 @@
+[
+  {"seq": 1, "event": "start", "data": {}},
+  {"seq": 2, "event": "delta", "data": {"text": "Invoice 42 "}},
+  {"seq": 3, "event": "progress", "data": {"stage": "summarizing", "percent": 50}},
+  {"seq": 4, "event": "delta", "data": {"text": "is paid."}},
+  {"seq": 5, "event": "end", "data": {"status": "completed"}}
+]

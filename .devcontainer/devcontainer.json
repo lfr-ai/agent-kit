@@ -1,0 +1,46 @@
+{
+  "name": "agent-kit",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.13-trixie",
+  "features": {
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "moby": false
+    },
+    "ghcr.io/devcontainers-extra/features/uv:1": {
+      "version": "0.13.3"
+    },
+    "ghcr.io/devcontainers-extra/features/go-task:1": {
+      "version": "3.48.0"
+    },
+    "ghcr.io/devcontainers-extra/features/bun:1": {
+      "version": "1.3.11"
+    }
+  },
+  "containerEnv": {
+    "APM_NO_SCRIPTS": "1",
+    "APM_NON_INTERACTIVE": "1",
+    "UV_LINK_MODE": "copy"
+  },
+  "postCreateCommand": "uv sync --locked",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "astral-sh.ty",
+        "charliermarsh.ruff",
+        "davidanson.vscode-markdownlint",
+        "editorconfig.editorconfig",
+        "github.vscode-github-actions",
+        "ms-python.debugpy",
+        "ms-python.python",
+        "ms-python.vscode-python-envs",
+        "redhat.vscode-yaml",
+        "streetsidesoftware.code-spell-checker",
+        "tamasfe.even-better-toml",
+        "task.vscode-task",
+        "timonwong.shellcheck"
+      ]
+    }
+  }
+}

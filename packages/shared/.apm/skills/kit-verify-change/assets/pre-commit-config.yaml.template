@@ -1,0 +1,107 @@
+# pre-commit configuration template. Copy to '.pre-commit-config.yaml'.
+#
+# Principles:
+# - Hooks in the default stage are fast and check-only where a tool offers it,
+#   so a commit never silently rewrites code you did not review. The few
+#   whitespace fixers below are safe, idempotent and easy to review.
+# - Python tools pinned in the project lockfile run through 'uv run --locked'
+#   so pre-commit, CI and the editor use one version.
+# - Slow or network-bound hooks use the 'manual' stage and run in CI or with
+#   'pre-commit run --hook-stage manual --all-files'.
+# - Update pinned 'rev' values with 'pre-commit autoupdate' and review the diff.
+
+minimum_pre_commit_version: "4.4"
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit, manual]
+exclude: |
+  (?x)^(
+    .*\.lock|
+    dist/.*|
+    build/.*
+  )$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        # Create the baseline once with 'detect-secrets scan > .secrets.baseline'
+        # and audit it with 'detect-secrets audit .secrets.baseline'.
+        args: [--baseline, .secrets.baseline]
+
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: v10.3.0
+    hooks:
+      - id: cspell
+        args: [--no-must-find-files, --no-progress, --no-summary]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: local
+    hooks:
+      - id: lockfile-current
+        name: lockfile matches pyproject
+        entry: uv lock --check
+        language: unsupported
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+      - id: ruff-format-check
+        name: ruff format (check only)
+        entry: uv run --locked ruff format --check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff lint (check only)
+        entry: uv run --locked ruff check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: type-check
+        name: type check
+        entry: uv run --locked mypy src
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+      - id: import-contracts
+        name: import contracts
+        entry: uv run --locked lint-imports
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+      - id: unit-tests
+        name: unit and property tests
+        entry: uv run --locked pytest -m "unit or property" -q
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+      - id: full-gate
+        name: full gate including slow steps (manual)
+        entry: uv run --locked python scripts/run_gate.py --include-slow --keep-going
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes
+      - id: check-hooks-apply

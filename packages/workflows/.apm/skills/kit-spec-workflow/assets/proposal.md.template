@@ -1,0 +1,53 @@
+# Proposal: TBD change title
+
+Status: draft
+Owner: TBD
+Reviewers: TBD
+Exploration notes: notes/explore.md
+
+## Why
+
+TBD - the observed problem, who experiences it, and the evidence (links to
+tickets, logs, metrics or the exploration notes).
+
+## What changes
+
+Each bullet is an observable behavior change and becomes one or more
+requirements in requirements.md.
+
+- TBD
+
+## Non-goals
+
+Adjacent work this change deliberately does not do.
+
+- TBD
+
+## Impact
+
+| Area | Item | Breaking or compatible | Notes |
+| --- | --- | --- | --- |
+| Capability | TBD | TBD | TBD |
+| Public contract (API, event, file, CLI) | TBD | TBD | TBD |
+| Data and migrations | TBD | TBD | TBD |
+| Configuration | TBD | TBD | TBD |
+| Documentation and runbooks | TBD | TBD | TBD |
+| Consumers to notify | TBD | TBD | TBD |
+
+## Risks and rollback
+
+- Risk: TBD
+  - Detection: TBD (alert, dashboard, log query)
+  - Mitigation: TBD
+- Rollback procedure: TBD (revert, feature flag off, down migration), and
+  whether it remains safe after data has been written in the new shape.
+
+## Acceptance
+
+- Scope accepted by: TBD (name or handle, date, link to review)
+
+## History
+
+Dated entries for sync, update and close operations.
+
+- TBD

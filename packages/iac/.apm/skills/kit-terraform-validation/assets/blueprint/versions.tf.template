@@ -1,0 +1,20 @@
+# Root module version constraints and backend type.
+# Copy to infra/versions.tf. Commit the generated .terraform.lock.hcl so every
+# run installs the same provider builds; refresh it deliberately with
+# 'terraform init -upgrade' and 'terraform providers lock -platform=...'.
+terraform {
+  # Allow patch and minor releases of the CLI series the team has tested.
+  required_version = ">= 1.10.0, < 2.0.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+  }
+
+  # Partial configuration: values come from environments/<env>/backend.hcl
+  # at 'terraform init -backend-config=...' time, so no environment is
+  # hard-coded here. Azure Blob storage locks state with a blob lease.
+  backend "azurerm" {}
+}

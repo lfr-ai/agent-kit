@@ -1,0 +1,62 @@
+"""Tests for the settings template; they never touch the real environment.
+
+Replace 'shop.settings' with the module that holds the copied settings.
+"""
+
+import pytest
+from shop.settings import Environment, Settings, SettingsError
+
+_MINIMAL = {"SHOP_DATABASE_DSN": "postgresql://db.example.test/shop"}
+
+
+def test_defaults_apply_when_only_required_keys_are_set() -> None:
+    """Optional keys fall back to documented defaults."""
+    settings = Settings.from_environ(_MINIMAL)
+    assert settings.environment is Environment.DEVELOPMENT
+    assert settings.request_timeout_seconds == 10.0
+    assert settings.log_level == "INFO"
+    assert settings.json_logs is True
+
+
+def test_values_are_parsed_and_normalized() -> None:
+    """Text values are converted to typed fields."""
+    settings = Settings.from_environ(
+        {
+            **_MINIMAL,
+            "SHOP_ENVIRONMENT": "production",
+            "SHOP_REQUEST_TIMEOUT_SECONDS": "2.5",
+            "SHOP_LOG_LEVEL": "debug",
+            "SHOP_JSON_LOGS": "off",
+        }
+    )
+    assert settings.environment is Environment.PRODUCTION
+    assert settings.request_timeout_seconds == 2.5
+    assert settings.log_level == "DEBUG"
+    assert settings.json_logs is False
+
+
+def test_all_problems_are_reported_together() -> None:
+    """Operators fix every bad key in one deployment, not one per restart."""
+    with pytest.raises(SettingsError) as caught:
+        Settings.from_environ(
+            {
+                "SHOP_ENVIRONMENT": "staging-ish",
+                "SHOP_REQUEST_TIMEOUT_SECONDS": "-1",
+                "SHOP_JSON_LOGS": "maybe",
+            }
+        )
+    message = str(caught.value)
+    for key in ("DATABASE_DSN", "ENVIRONMENT", "REQUEST_TIMEOUT_SECONDS", "JSON_LOGS"):
+        assert f"SHOP_{key}" in message
+
+
+def test_secret_is_excluded_from_repr() -> None:
+    """Connection strings never appear in logs or tracebacks via repr."""
+    assert "db.example.test" not in repr(Settings.from_environ(_MINIMAL))
+
+
+def test_settings_are_immutable() -> None:
+    """Configuration cannot drift after startup."""
+    settings = Settings.from_environ(_MINIMAL)
+    with pytest.raises(AttributeError):
+        setattr(settings, "log_level", "DEBUG")  # noqa: B010

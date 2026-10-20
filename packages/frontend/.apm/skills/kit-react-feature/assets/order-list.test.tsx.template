@@ -1,0 +1,100 @@
+// src/features/orders/ui/order-list.test.tsx
+// Behavior tests through the public component contract. The network is faked at
+// the HTTP boundary with MSW so the real query options, client, and schema run.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import type { ReactElement } from "react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { OrderList } from "./order-list";
+
+const ordersUrl = "*/api/orders";
+
+const firstOrder = {
+  id: "ord_1",
+  reference: "ORD-1001",
+  status: "paid",
+  totalMinor: 1250,
+  currency: "EUR",
+  updatedAt: "2026-01-15T10:00:00Z",
+} as const;
+
+const server = setupServer();
+
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function renderWithClient(ui: ReactElement): ReturnType<typeof render> {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
+describe("OrderList", () => {
+  it("announces loading, then lists orders with formatted totals", async () => {
+    server.use(
+      http.get(ordersUrl, () => HttpResponse.json({ items: [firstOrder], nextCursor: null })),
+    );
+
+    renderWithClient(<OrderList filters={{}} locale="en-US" onSelect={vi.fn()} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(/loading orders/i);
+    expect(await screen.findByRole("button", { name: "ORD-1001" })).toBeVisible();
+    expect(screen.getByText("Paid")).toBeVisible();
+    expect(screen.getByText("€12.50")).toBeVisible();
+  });
+
+  it("renders an actionable empty state", async () => {
+    server.use(http.get(ordersUrl, () => HttpResponse.json({ items: [], nextCursor: null })));
+
+    renderWithClient(<OrderList filters={{ status: "draft" }} locale="en-US" onSelect={vi.fn()} />);
+
+    expect(await screen.findByText(/no orders match/i)).toBeVisible();
+  });
+
+  it("recovers from a failed request when the user retries", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(ordersUrl, () => new HttpResponse(null, { status: 503 }), { once: true }),
+      http.get(ordersUrl, () => HttpResponse.json({ items: [firstOrder], nextCursor: null })),
+    );
+
+    renderWithClient(<OrderList filters={{}} locale="en-US" onSelect={vi.fn()} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/could not be loaded/i);
+    await user.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByRole("button", { name: "ORD-1001" })).toBeVisible();
+  });
+
+  it("treats a malformed payload as an error instead of rendering partial data", async () => {
+    server.use(
+      http.get(ordersUrl, () =>
+        HttpResponse.json({ items: [{ ...firstOrder, totalMinor: "12.50" }], nextCursor: null }),
+      ),
+    );
+
+    renderWithClient(<OrderList filters={{}} locale="en-US" onSelect={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "ORD-1001" })).not.toBeInTheDocument();
+  });
+
+  it("reports the selected order id", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    server.use(
+      http.get(ordersUrl, () => HttpResponse.json({ items: [firstOrder], nextCursor: null })),
+    );
+
+    renderWithClient(<OrderList filters={{}} locale="en-US" onSelect={onSelect} />);
+
+    await user.click(await screen.findByRole("button", { name: "ORD-1001" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("ord_1");
+  });
+});

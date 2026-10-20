@@ -1,0 +1,47 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Verify",
+      "detail": "Run the repository completion gate (task verify).",
+      "type": "process",
+      "command": "task",
+      "args": ["verify"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "group": {"kind": "build", "isDefault": true},
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Test",
+      "detail": "Run the fast test tier (task test).",
+      "type": "process",
+      "command": "task",
+      "args": ["test"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "group": {"kind": "test", "isDefault": true},
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Lint",
+      "detail": "Read-only lint (task lint).",
+      "type": "process",
+      "command": "task",
+      "args": ["lint"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
+    },
+    {
+      "label": "Format",
+      "detail": "Apply the repository formatter (task format); writes files.",
+      "type": "process",
+      "command": "task",
+      "args": ["format"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
+    }
+  ]
+}

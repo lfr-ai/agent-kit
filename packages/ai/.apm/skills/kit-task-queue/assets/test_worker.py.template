@@ -1,0 +1,327 @@
+"""Tests for 'tasks.worker' and 'tasks.memory'; copy to 'tests/tasks/test_worker.py'.
+
+A fake clock drives visibility timeouts and delays; jitter is fixed; lease
+renewal uses an injected sleep. Nothing waits on wall-clock time.
+"""
+
+import asyncio
+from collections.abc import Mapping
+
+import pytest
+
+from tasks.contracts import (
+    PermanentTaskError,
+    RetryableTaskError,
+    TaskContext,
+    new_envelope,
+)
+from tasks.memory import InMemoryBroker, InMemoryIdempotencyStore
+from tasks.worker import HandlerSpec, Outcome, Worker, WorkerSettings, retry_delay
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class RecordingHandler:
+    """Applies a side effect per idempotency key and can fail on demand."""
+
+    def __init__(self, *failures: Exception) -> None:
+        self._failures = list(failures)
+        self.calls: list[TaskContext] = []
+        self.applied: list[str] = []
+
+    async def __call__(
+        self, payload: Mapping[str, object], context: TaskContext
+    ) -> None:
+        self.calls.append(context)
+        if self._failures:
+            raise self._failures.pop(0)
+        self.applied.append(str(payload["invoice_id"]))
+
+
+_SETTINGS = WorkerSettings(
+    visibility_timeout_s=30.0, renew_every_s=10.0, base_delay_s=2.0
+)
+
+
+def _setup(
+    handler: RecordingHandler, *, max_attempts: int = 3, timeout_s: float = 5.0
+) -> tuple[Worker, InMemoryBroker, FakeClock]:
+    clock = FakeClock()
+    broker = InMemoryBroker(clock=clock)
+    store = InMemoryIdempotencyStore(clock=clock)
+    spec = HandlerSpec(
+        handler=handler,
+        versions=frozenset({1}),
+        timeout_s=timeout_s,
+        max_attempts=max_attempts,
+    )
+    worker = Worker(
+        broker, store, {"invoice.render": spec}, settings=_SETTINGS, rng=lambda: 1.0
+    )
+    return worker, broker, clock
+
+
+def _body(
+    key: str = "invoice.render:INV-42",
+    *,
+    version: int = 1,
+    task_type: str = "invoice.render",
+) -> bytes:
+    return new_envelope(
+        task_type=task_type,
+        version=version,
+        idempotency_key=key,
+        payload={"invoice_id": "INV-42"},
+        correlation_id="req-1",
+    ).to_json()
+
+
+def test_success_acks_and_marks_the_key_done() -> None:
+    handler = RecordingHandler()
+    worker, broker, _ = _setup(handler)
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.ACKED]
+    assert handler.applied == ["INV-42"]
+    assert broker.depth == 0
+
+
+def test_duplicate_delivery_runs_the_side_effect_once() -> None:
+    handler = RecordingHandler()
+    worker, broker, _ = _setup(handler)
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        await broker.enqueue(_body())
+        return await worker.run_once()
+
+    outcomes = asyncio.run(scenario())
+
+    assert sorted(outcomes) == sorted([Outcome.ACKED, Outcome.DEFERRED])
+    assert handler.applied == ["INV-42"]
+
+
+def test_redelivered_completed_key_is_acknowledged_without_work() -> None:
+    handler = RecordingHandler()
+    worker, broker, clock = _setup(handler)
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        await worker.run_once()
+        await broker.enqueue(_body())
+        clock.now += 1
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.DUPLICATE]
+    assert handler.applied == ["INV-42"]
+
+
+def test_retryable_failure_backs_off_then_succeeds() -> None:
+    handler = RecordingHandler(RetryableTaskError("busy"))
+    worker, broker, clock = _setup(handler)
+
+    async def scenario() -> list[list[Outcome]]:
+        await broker.enqueue(_body())
+        first = await worker.run_once()
+        clock.now += retry_delay(1, _SETTINGS, lambda: 1.0) - 0.5
+        early = await worker.run_once()
+        clock.now += 1.0
+        second = await worker.run_once()
+        return [first, early, second]
+
+    assert asyncio.run(scenario()) == [[Outcome.RETRIED], [], [Outcome.ACKED]]
+    assert [context.attempt for context in handler.calls] == [1, 2]
+
+
+def test_exhausted_retries_are_dead_lettered() -> None:
+    handler = RecordingHandler(*(RetryableTaskError("busy") for _ in range(3)))
+    worker, broker, clock = _setup(handler, max_attempts=3)
+
+    async def scenario() -> None:
+        await broker.enqueue(_body())
+        for _ in range(3):
+            await worker.run_once()
+            clock.now += _SETTINGS.max_delay_s
+
+    asyncio.run(scenario())
+
+    assert broker.depth == 0
+    assert [letter.reason for letter in broker.dead_letters] == [
+        "retries exhausted: RetryableTaskError"
+    ]
+    assert broker.dead_letters[0].receive_count == 3
+
+
+def test_permanent_failure_is_dead_lettered_immediately_and_can_be_redriven() -> None:
+    handler = RecordingHandler(PermanentTaskError("invoice missing"))
+    worker, broker, clock = _setup(handler)
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        await worker.run_once()
+        assert await broker.redrive() == 1
+        clock.now += 1
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.ACKED]
+    assert len(handler.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (b"not json", "malformed envelope"),
+        (_body(version=2), "unsupported invoice.render v2"),
+        (_body(task_type="report.build"), "unsupported report.build v1"),
+    ],
+)
+def test_unprocessable_messages_are_dead_lettered(body: bytes, reason: str) -> None:
+    worker, broker, _ = _setup(RecordingHandler())
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(body)
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.DEAD_LETTERED]
+    assert broker.dead_letters[0].reason.startswith(reason)
+
+
+def test_handler_timeout_is_retried() -> None:
+    class Stuck:
+        async def __call__(
+            self, payload: Mapping[str, object], context: TaskContext
+        ) -> None:
+            await asyncio.Event().wait()
+
+    clock = FakeClock()
+    broker = InMemoryBroker(clock=clock)
+    spec = HandlerSpec(handler=Stuck(), versions=frozenset({1}), timeout_s=0.01)
+    worker = Worker(
+        broker,
+        InMemoryIdempotencyStore(clock=clock),
+        {"invoice.render": spec},
+        settings=_SETTINGS,
+    )
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.RETRIED]
+
+
+def test_crashed_worker_lease_expires_and_message_is_redelivered() -> None:
+    handler = RecordingHandler()
+    worker, broker, clock = _setup(handler)
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        crashed = await broker.receive(max_messages=1, visibility_timeout_s=30.0)
+        assert crashed
+        assert await broker.receive(max_messages=1, visibility_timeout_s=30.0) == []
+        clock.now += 31.0
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.ACKED]
+    assert handler.calls[0].attempt == 2
+
+
+def test_lease_is_renewed_while_the_handler_runs() -> None:
+    clock = FakeClock()
+    broker = InMemoryBroker(clock=clock)
+    renewals: list[float] = []
+    release = asyncio.Event()
+
+    async def fake_sleep(seconds: float) -> None:
+        renewals.append(seconds)
+        clock.now += seconds
+        if len(renewals) >= 4:
+            release.set()
+        await asyncio.sleep(0)
+
+    class LongRunning:
+        async def __call__(
+            self, payload: Mapping[str, object], context: TaskContext
+        ) -> None:
+            await release.wait()
+
+    spec = HandlerSpec(handler=LongRunning(), versions=frozenset({1}), timeout_s=60.0)
+    worker = Worker(
+        broker,
+        InMemoryIdempotencyStore(clock=clock),
+        {"invoice.render": spec},
+        settings=_SETTINGS,
+        sleep=fake_sleep,
+    )
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.ACKED]
+    assert sum(renewals) > _SETTINGS.visibility_timeout_s
+
+
+def test_ack_after_lost_lease_is_reported() -> None:
+    clock = FakeClock()
+    broker = InMemoryBroker(clock=clock)
+
+    class Slow:
+        async def __call__(
+            self, payload: Mapping[str, object], context: TaskContext
+        ) -> None:
+            clock.now += 31.0
+
+    async def no_renewal(seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    spec = HandlerSpec(handler=Slow(), versions=frozenset({1}))
+    worker = Worker(
+        broker,
+        InMemoryIdempotencyStore(clock=clock),
+        {"invoice.render": spec},
+        settings=_SETTINGS,
+        sleep=no_renewal,
+    )
+
+    async def scenario() -> list[Outcome]:
+        await broker.enqueue(_body())
+        return await worker.run_once()
+
+    assert asyncio.run(scenario()) == [Outcome.LEASE_LOST]
+
+
+def test_run_stops_when_asked() -> None:
+    worker, broker, _ = _setup(RecordingHandler())
+
+    async def scenario() -> int:
+        stop = asyncio.Event()
+        await broker.enqueue(_body())
+        task = asyncio.create_task(worker.run(stop))
+        await asyncio.sleep(0)
+        stop.set()
+        await asyncio.wait_for(task, timeout=5.0)
+        return broker.depth
+
+    assert asyncio.run(scenario()) == 0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"visibility_timeout_s": 10.0, "renew_every_s": 10.0}, "renew_every_s"),
+        ({"concurrency": 0}, "positive"),
+    ],
+)
+def test_invalid_settings_are_rejected(kwargs: dict[str, float], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        WorkerSettings(**kwargs)  # type: ignore[arg-type]

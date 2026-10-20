@@ -1,0 +1,139 @@
+{
+  "python.languageServer": "None",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.cwd": "${workspaceFolder}",
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+
+  "ruff.configuration": "${workspaceFolder}/ruff.toml",
+  "ruff.nativeServer": "on",
+  "ruff.importStrategy": "fromEnvironment",
+  "ruff.configurationPreference": "filesystemFirst",
+  "ty.importStrategy": "fromEnvironment",
+  "ty.diagnosticMode": "workspace",
+
+  "editor.formatOnSave": true,
+  "editor.rulers": [
+    88
+  ],
+
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.tabSize": 4,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
+  },
+  "[shellscript]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll.shellcheck": "explicit"
+    }
+  },
+
+  "files.eol": "\n",
+  "files.encoding": "utf8",
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  "files.trimTrailingWhitespace": true,
+  "files.associations": {
+    "*.md.template": "markdown",
+    "*.py.template": "python",
+    "*.json.template": "json",
+    "*.yml.template": "yaml",
+    "*.yaml.template": "yaml",
+    "*.toml.template": "toml",
+    "*.ini.template": "ini",
+    "llms.txt": "markdown",
+    ".coveragerc": "ini"
+  },
+  "files.readonlyInclude": {
+    "**/.agents/skills/**": true,
+    "**/.claude/skills/**": true
+  },
+  "files.exclude": {
+    "**/.venv": true,
+    "**/.tox": true,
+    "**/__pycache__": true,
+    "**/*.egg-info": true,
+    "**/.ruff_cache": true,
+    "**/.pytest_cache": true,
+    "**/.hypothesis": true,
+    "**/.import_linter_cache": true,
+    "**/htmlcov": true,
+    "**/apm_modules": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/.coverage": true,
+    "**/.coverage.*": true,
+    "**/coverage.xml": true
+  },
+
+  "yaml.disableSchemaDetection": [
+    "**/.github/workflows/*.yml",
+    "**/.github/workflows/*.yaml"
+  ],
+  "evenBetterToml.formatter.arrayAutoCollapse": true,
+  "evenBetterToml.formatter.arrayAutoExpand": true,
+
+  "chat.useAgentsMdFile": true,
+  "chat.useAgentSkills": true,
+  "chat.useClaudeMdFile": false,
+  "chat.useClaudeHooks": false,
+  "chat.mcp.autostart": "never",
+
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/.tox/**": true,
+    "**/__pycache__/**": true,
+    "**/.ruff_cache/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.hypothesis/**": true,
+    "**/.import_linter_cache/**": true,
+    "**/htmlcov/**": true,
+    "**/apm_modules/**": true,
+    "**/build/**": true,
+    "**/dist/**": true,
+    "**/node_modules/**": true,
+    "**/*.egg-info/**": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/.tox": true,
+    "**/__pycache__": true,
+    "**/.ruff_cache": true,
+    "**/.pytest_cache": true,
+    "**/.hypothesis": true,
+    "**/htmlcov": true,
+    "**/apm_modules": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/*.egg-info": true,
+    "**/.import_linter_cache": true,
+    "**/.coverage": true,
+    "**/.coverage.*": true,
+    "**/coverage.xml": true,
+    "**/.agents/skills": true,
+    "**/.claude/skills": true
+  }
+}

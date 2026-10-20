@@ -1,0 +1,52 @@
+// src/features/orders/model/order.ts
+// Domain model for the orders feature (Zod 4). Transport data is parsed here once,
+// at the adapter boundary, so UI code only ever sees validated values.
+import { z } from "zod";
+
+export const orderStatusSchema = z.enum(["draft", "submitted", "paid", "cancelled"]);
+export type OrderStatus = z.infer<typeof orderStatusSchema>;
+
+export const orderSchema = z.object({
+  id: z.string().min(1),
+  reference: z.string().min(1),
+  status: orderStatusSchema,
+  // Minor units (for example cents) avoid floating point drift in totals.
+  totalMinor: z.number().int().nonnegative(),
+  currency: z.string().length(3),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+export type Order = z.infer<typeof orderSchema>;
+
+export const orderPageSchema = z.object({
+  items: z.array(orderSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type OrderPage = z.infer<typeof orderPageSchema>;
+
+export type OrderFilters = Readonly<{
+  status?: OrderStatus;
+  search?: string;
+}>;
+
+const statusLabels: Readonly<Record<OrderStatus, string>> = {
+  draft: "Draft",
+  submitted: "Submitted",
+  paid: "Paid",
+  cancelled: "Cancelled",
+};
+
+export function orderStatusLabel(status: OrderStatus): string {
+  return statusLabels[status];
+}
+
+export function formatOrderTotal(
+  order: Pick<Order, "totalMinor" | "currency">,
+  locale: string,
+): string {
+  const formatter = new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: order.currency,
+  });
+  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+  return formatter.format(order.totalMinor / 10 ** digits);
+}

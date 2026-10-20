@@ -1,0 +1,8 @@
+name: agent-kit-ai
+version: "0.1.0"
+license: MIT
+description: Optional AI orchestration, model client, retrieval, queue, and streaming guidance.
+targets: [copilot, claude]
+includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
+dependencies: {}
+executables: {}

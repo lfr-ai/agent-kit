@@ -1,0 +1,229 @@
+// src/shared/realtime/reconnecting-socket.ts
+// Framework-free WebSocket owner: bounded exponential backoff with full jitter,
+// heartbeat-based staleness, terminal close codes, explicit stop, and a status
+// snapshot suitable for useSyncExternalStore.
+
+export type ConnectionStatus =
+  | Readonly<{ kind: "idle" }>
+  | Readonly<{ kind: "connecting"; attempt: number }>
+  | Readonly<{ kind: "open" }>
+  | Readonly<{ kind: "stale"; sinceMs: number }>
+  | Readonly<{ kind: "reconnecting"; attempt: number; delayMs: number }>
+  | Readonly<{ kind: "closed" }>
+  | Readonly<{ kind: "failed"; reason: string }>;
+
+export type SocketHandlers = Readonly<{
+  open: () => void;
+  message: (data: string) => void;
+  close: (code: number, reason: string) => void;
+  error: () => void;
+}>;
+
+export type SocketLike = Readonly<{
+  send: (data: string) => void;
+  close: (code?: number, reason?: string) => void;
+}>;
+
+export type SocketFactory = (url: string, handlers: SocketHandlers) => SocketLike;
+
+export const browserSocketFactory: SocketFactory = (url, handlers) => {
+  const socket = new WebSocket(url);
+  socket.addEventListener("open", () => handlers.open());
+  socket.addEventListener("message", (event: MessageEvent<unknown>) => {
+    if (typeof event.data === "string") {
+      handlers.message(event.data);
+    }
+  });
+  socket.addEventListener("close", (event) => handlers.close(event.code, event.reason));
+  socket.addEventListener("error", () => handlers.error());
+  return {
+    send: (data) => socket.send(data),
+    close: (code, reason) => socket.close(code, reason),
+  };
+};
+
+export type ReconnectPolicy = Readonly<{
+  baseDelayMs: number;
+  maxDelayMs: number;
+  maxAttempts: number;
+  /** No message (including heartbeats) for this long marks the connection stale. */
+  staleAfterMs: number;
+  /** Close codes after which retrying cannot succeed (auth, policy, protocol). */
+  terminalCloseCodes: ReadonlySet<number>;
+}>;
+
+export const defaultReconnectPolicy: ReconnectPolicy = {
+  baseDelayMs: 500,
+  maxDelayMs: 30_000,
+  maxAttempts: 10,
+  staleAfterMs: 45_000,
+  terminalCloseCodes: new Set([1002, 1003, 1008, 4401, 4403]),
+};
+
+export type ReconnectingSocketOptions = Readonly<{
+  /** Called per attempt so a short-lived connection ticket can be fetched fresh. */
+  url: () => string;
+  onMessage: (payload: unknown) => void;
+  onInvalidMessage?: (raw: string) => void;
+  /** Runs after every successful (re)connect; resynchronize missed state here. */
+  onOpen?: () => void;
+  policy?: Partial<ReconnectPolicy>;
+  factory?: SocketFactory;
+  random?: () => number;
+  now?: () => number;
+}>;
+
+/** Full jitter: uniform in [0, min(cap, base * 2^attempt)). */
+export function backoffDelay(attempt: number, policy: ReconnectPolicy, random: () => number): number {
+  const ceiling = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** attempt);
+  return Math.floor(random() * ceiling);
+}
+
+export class ReconnectingSocket {
+  readonly #options: ReconnectingSocketOptions;
+  readonly #policy: ReconnectPolicy;
+  readonly #listeners = new Set<() => void>();
+  #status: ConnectionStatus = { kind: "idle" };
+  #socket: SocketLike | null = null;
+  #generation = 0;
+  #attempt = 0;
+  #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  #staleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * @param options Connection URL provider, message callbacks, and optional policy,
+   *   socket factory, random source, and clock (injected for deterministic tests).
+   */
+  constructor(options: ReconnectingSocketOptions) {
+    this.#options = options;
+    this.#policy = { ...defaultReconnectPolicy, ...options.policy };
+  }
+
+  getStatus = (): ConnectionStatus => this.#status;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  };
+
+  start(): void {
+    if (this.#socket !== null || this.#retryTimer !== undefined) {
+      return;
+    }
+    this.#attempt = 0;
+    this.#connect();
+  }
+
+  /** User-initiated retry: skip the remaining backoff delay. */
+  reconnectNow(): void {
+    if (this.#status.kind === "open" || this.#status.kind === "connecting") {
+      return;
+    }
+    this.#clearTimers();
+    this.#attempt = 0;
+    this.#connect();
+  }
+
+  stop(): void {
+    this.#generation += 1;
+    this.#clearTimers();
+    this.#socket?.close(1000, "client closed");
+    this.#socket = null;
+    this.#setStatus({ kind: "closed" });
+  }
+
+  send(data: string): boolean {
+    if (this.#status.kind !== "open" && this.#status.kind !== "stale") {
+      return false;
+    }
+    this.#socket?.send(data);
+    return true;
+  }
+
+  #connect(): void {
+    this.#generation += 1;
+    const generation = this.#generation;
+    const current = (): boolean => generation === this.#generation;
+    this.#retryTimer = undefined;
+    this.#setStatus({ kind: "connecting", attempt: this.#attempt });
+    const factory = this.#options.factory ?? browserSocketFactory;
+    this.#socket = factory(this.#options.url(), {
+      open: () => {
+        if (!current()) return;
+        this.#attempt = 0;
+        this.#setStatus({ kind: "open" });
+        this.#armStaleTimer();
+        this.#options.onOpen?.();
+      },
+      message: (data) => {
+        if (!current()) return;
+        this.#armStaleTimer();
+        if (this.#status.kind === "stale") {
+          this.#setStatus({ kind: "open" });
+        }
+        let payload: unknown;
+        try {
+          payload = JSON.parse(data);
+        } catch {
+          this.#options.onInvalidMessage?.(data);
+          return;
+        }
+        this.#options.onMessage(payload);
+      },
+      close: (code, reason) => {
+        if (!current()) return;
+        this.#socket = null;
+        this.#clearTimers();
+        if (this.#policy.terminalCloseCodes.has(code)) {
+          this.#setStatus({ kind: "failed", reason: reason || `closed with code ${code}` });
+          return;
+        }
+        this.#scheduleReconnect();
+      },
+      error: () => {
+        // Browsers always follow an error with a close event; recovery happens there.
+      },
+    });
+  }
+
+  #scheduleReconnect(): void {
+    if (this.#attempt >= this.#policy.maxAttempts) {
+      this.#setStatus({ kind: "failed", reason: "retry budget exhausted" });
+      return;
+    }
+    const delayMs = backoffDelay(this.#attempt, this.#policy, this.#options.random ?? Math.random);
+    this.#attempt += 1;
+    this.#setStatus({ kind: "reconnecting", attempt: this.#attempt, delayMs });
+    this.#retryTimer = setTimeout(() => this.#connect(), delayMs);
+  }
+
+  #armStaleTimer(): void {
+    if (this.#staleTimer !== undefined) {
+      clearTimeout(this.#staleTimer);
+    }
+    this.#staleTimer = setTimeout(() => {
+      const now = this.#options.now ?? Date.now;
+      this.#setStatus({ kind: "stale", sinceMs: now() });
+    }, this.#policy.staleAfterMs);
+  }
+
+  #clearTimers(): void {
+    if (this.#retryTimer !== undefined) {
+      clearTimeout(this.#retryTimer);
+      this.#retryTimer = undefined;
+    }
+    if (this.#staleTimer !== undefined) {
+      clearTimeout(this.#staleTimer);
+      this.#staleTimer = undefined;
+    }
+  }
+
+  #setStatus(status: ConnectionStatus): void {
+    this.#status = status;
+    for (const listener of this.#listeners) {
+      listener();
+    }
+  }
+}

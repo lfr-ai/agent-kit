@@ -1,0 +1,101 @@
+// src/features/orders/api/orders.queries.ts
+// Query key factory plus queryOptions: one definition reused by components,
+// route loaders, prefetching, and cache updates.
+import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+  type UseMutationResult,
+} from "@tanstack/react-query";
+import type { Order, OrderFilters, OrderStatus } from "../model/order";
+import { ordersApi } from "./orders.api";
+
+/** Stable key shape: drop empty values so equivalent filters share one cache entry. */
+export function normalizeFilters(filters: OrderFilters): OrderFilters {
+  const search = filters.search?.trim();
+  return {
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(search ? { search } : {}),
+  };
+}
+
+const all = ["orders"] as const;
+
+export const orderKeys = {
+  all,
+  lists: () => [...all, "list"] as const,
+  list: (filters: OrderFilters) => [...all, "list", normalizeFilters(filters)] as const,
+  infinite: (filters: OrderFilters) =>
+    [...all, "list", normalizeFilters(filters), "infinite"] as const,
+  details: () => [...all, "detail"] as const,
+  detail: (id: string) => [...all, "detail", id] as const,
+};
+
+export const ordersQueries = {
+  list: (filters: OrderFilters) =>
+    queryOptions({
+      queryKey: orderKeys.list(filters),
+      queryFn: ({ signal }) => ordersApi.list(normalizeFilters(filters), null, signal),
+      // Keep the previous page visible while a new filter loads; the view marks it busy.
+      placeholderData: keepPreviousData,
+    }),
+  infinite: (filters: OrderFilters) =>
+    infiniteQueryOptions({
+      queryKey: orderKeys.infinite(filters),
+      queryFn: ({ pageParam, signal }) =>
+        ordersApi.list(normalizeFilters(filters), pageParam, signal),
+      initialPageParam: null as string | null,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }),
+  detail: (id: string) =>
+    queryOptions({
+      queryKey: orderKeys.detail(id),
+      queryFn: ({ signal }) => ordersApi.get(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+export type UpdateStatusVariables = Readonly<{ id: string; status: OrderStatus }>;
+type UpdateStatusContext = Readonly<{ previous: Order | undefined }>;
+
+/**
+ * Optimistically updates the detail entry, rolls back on failure, and always
+ * reconciles with the server afterwards.
+ */
+export function useUpdateOrderStatus(): UseMutationResult<
+  Order,
+  Error,
+  UpdateStatusVariables,
+  UpdateStatusContext
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: UpdateStatusVariables) => ordersApi.updateStatus(id, status),
+    onMutate: async ({ id, status }): Promise<UpdateStatusContext> => {
+      const { queryKey } = ordersQueries.detail(id);
+      // Stop in-flight reads so they cannot overwrite the optimistic value.
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData(queryKey);
+      if (previous) {
+        queryClient.setQueryData(queryKey, { ...previous, status });
+      }
+      return { previous };
+    },
+    onError: (_error, { id }, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(ordersQueries.detail(id).queryKey, context.previous);
+      }
+    },
+    onSuccess: (order) => {
+      queryClient.setQueryData(ordersQueries.detail(order.id).queryKey, order);
+    },
+    onSettled: async (_data, _error, { id }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: orderKeys.lists() }),
+        queryClient.invalidateQueries({ queryKey: orderKeys.detail(id) }),
+      ]);
+    },
+  });
+}

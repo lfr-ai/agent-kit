@@ -1,0 +1,68 @@
+// e2e/debug/capture-evidence.spec.ts
+// Reproduction harness for one reported defect. It replays the user's steps on
+// synthetic data and attaches console output, page errors, failed requests, and
+// timing to the report. Values that may carry credentials are redacted first.
+import { expect, test, type Request } from "@playwright/test";
+import { redactUrl } from "../../src/shared/debug/redact";
+
+type Evidence = {
+  console: string[];
+  pageErrors: string[];
+  failedRequests: string[];
+  slowRequests: string[];
+};
+
+const slowThresholdMs = 1_000;
+
+// Recording options are worker-scoped, so Playwright accepts them only at file level.
+test.use({ trace: "on", video: "off", screenshot: "on" });
+
+test.describe("defect reproduction: {{short defect title}}", () => {
+  test("reproduces the reported sequence", async ({ page }, testInfo) => {
+    const evidence: Evidence = { console: [], pageErrors: [], failedRequests: [], slowRequests: [] };
+    const started = new Map<Request, number>();
+
+    page.on("console", (message) => {
+      if (message.type() === "error" || message.type() === "warning") {
+        evidence.console.push(`${message.type()}: ${message.text()}`);
+      }
+    });
+    page.on("pageerror", (error) => evidence.pageErrors.push(`${error.name}: ${error.message}\n${error.stack ?? ""}`));
+    page.on("request", (request) => started.set(request, Date.now()));
+    page.on("requestfailed", (request) => {
+      evidence.failedRequests.push(`${request.method()} ${redactUrl(request.url())}: ${request.failure()?.errorText ?? "failed"}`);
+    });
+    page.on("requestfinished", async (request) => {
+      const response = await request.response();
+      const elapsed = Date.now() - (started.get(request) ?? Date.now());
+      if (response && response.status() >= 400) {
+        evidence.failedRequests.push(`${request.method()} ${redactUrl(request.url())}: HTTP ${response.status()}`);
+      }
+      if (elapsed > slowThresholdMs) {
+        evidence.slowRequests.push(`${request.method()} ${redactUrl(request.url())}: ${elapsed} ms`);
+      }
+    });
+
+    // 1. Replace with the reported steps; keep them minimal and synthetic.
+    await page.goto("/orders");
+    await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "Paid" });
+    await page.getByRole("link", { name: "ORD-1001" }).click();
+
+    // 2. Capture navigation timing for the final page.
+    const timing = await page.evaluate(() => {
+      const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+      return navigation
+        ? { domContentLoaded: navigation.domContentLoadedEventEnd, load: navigation.loadEventEnd }
+        : null;
+    });
+
+    await testInfo.attach("evidence.json", {
+      body: JSON.stringify({ ...evidence, timing, viewport: page.viewportSize(), browser: testInfo.project.name }, null, 2),
+      contentType: "application/json",
+    });
+
+    // 3. Assert the expected behavior; the test fails while the defect exists.
+    await expect(page.getByRole("heading", { level: 1, name: "Order ORD-1001" })).toBeVisible();
+    expect(evidence.pageErrors).toEqual([]);
+  });
+});

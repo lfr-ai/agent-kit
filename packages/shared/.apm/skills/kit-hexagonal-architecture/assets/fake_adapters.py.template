@@ -1,0 +1,184 @@
+"""In-memory fakes for the invoice, payment and notification ports.
+
+Copy to 'tests/fakes.py' (or 'app/adapters/memory/' if production also uses
+them). A fake is a real, simplified implementation, not a mock: it keeps state,
+enforces the port's documented errors and passes the same contract tests as the
+production adapter. Use it to test application services quickly and offline.
+"""
+
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from decimal import Decimal
+from types import TracebackType
+from typing import Self
+
+from app.application.ports.invoices import (
+    DuplicateInvoiceError,
+    InvoiceNotFoundError,
+    InvoiceRepository,
+    UnitOfWork,
+)
+from app.application.ports.notifications import (
+    InvoiceNotifier,
+    InvoicePaidNotice,
+    NotificationError,
+)
+from app.application.ports.payment_errors import (
+    PaymentDeclinedError,
+    PaymentUnavailableError,
+)
+from app.application.ports.payments import PaymentGateway, PaymentReceipt
+from app.domain.invoice import Invoice, InvoiceStatus
+
+
+class InMemoryInvoiceRepository(InvoiceRepository):
+    """Dictionary-backed repository bound to a unit of work's staging area."""
+
+    def __init__(self, rows: dict[str, Invoice]) -> None:
+        """Operate on the given mapping; the unit of work decides visibility.
+
+        Args:
+            rows: Mutable staging copy owned by the unit of work.
+        """
+        self._rows = rows
+
+    def get(self, invoice_id: str) -> Invoice:
+        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        try:
+            return self._rows[invoice_id]
+        except KeyError:
+            raise InvoiceNotFoundError(invoice_id) from None
+
+    def add(self, invoice: Invoice) -> None:
+        """Stage a new invoice; duplicates are rejected like the real store."""
+        if invoice.invoice_id in self._rows:
+            raise DuplicateInvoiceError(invoice.invoice_id)
+        self._rows[invoice.invoice_id] = invoice
+
+    def save(self, invoice: Invoice) -> None:
+        """Stage a changed invoice; unknown ids are rejected like the real store."""
+        if invoice.invoice_id not in self._rows:
+            raise InvoiceNotFoundError(invoice.invoice_id)
+        self._rows[invoice.invoice_id] = invoice
+
+    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        matches = sorted(
+            (
+                invoice
+                for invoice in self._rows.values()
+                if invoice.customer_id == customer_id
+                and invoice.status is InvoiceStatus.OPEN
+            ),
+            key=lambda invoice: invoice.invoice_id,
+        )
+        return matches[:limit]
+
+
+class InMemoryUnitOfWork(UnitOfWork):
+    """Copy-on-enter unit of work: commit publishes, exit discards the rest.
+
+    Invoices are immutable, so copying the mapping is enough to isolate staging.
+    """
+
+    invoices: InvoiceRepository
+
+    def __init__(self, initial: Iterable[Invoice] = ()) -> None:
+        """Seed committed state.
+
+        Args:
+            initial: Invoices that exist before the first unit of work.
+        """
+        self.committed: dict[str, Invoice] = {item.invoice_id: item for item in initial}
+        self.commit_count = 0
+        self._staged: dict[str, Invoice] | None = None
+
+    def __enter__(self) -> Self:
+        """Start from a private copy of committed state."""
+        self._staged = dict(self.committed)
+        self.invoices = InMemoryInvoiceRepository(self._staged)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Drop anything that was not committed."""
+        self._staged = None
+
+    def commit(self) -> None:
+        """Publish staged state atomically."""
+        if self._staged is None:
+            raise RuntimeError("unit of work used outside its 'with' block")
+        self.committed = dict(self._staged)
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        """Reset staging to the last committed state."""
+        if self._staged is None:
+            raise RuntimeError("unit of work used outside its 'with' block")
+        self._staged.clear()
+        self._staged.update(dict(self.committed))
+
+
+@dataclass(kw_only=True, slots=True)
+class FakePaymentGateway(PaymentGateway):
+    """Configurable gateway that honors idempotency keys.
+
+    Attributes:
+        declined_invoices: Invoice ids whose charges are declined.
+        unavailable_attempts: Number of next calls that fail as transient.
+        charges: Every successful charge, keyed by idempotency key.
+        calls: Number of 'charge' calls, including failures.
+    """
+
+    declined_invoices: set[str] = field(default_factory=set)
+    unavailable_attempts: int = 0
+    charges: dict[str, PaymentReceipt] = field(default_factory=dict)
+    calls: int = 0
+
+    def charge(
+        self,
+        *,
+        invoice_id: str,
+        amount: Decimal,
+        currency: str,
+        idempotency_key: str,
+    ) -> PaymentReceipt:
+        """Follow the script, then return a stable receipt per key."""
+        self.calls += 1
+        if self.unavailable_attempts > 0:
+            self.unavailable_attempts -= 1
+            raise PaymentUnavailableError(invoice_id=invoice_id)
+        if invoice_id in self.declined_invoices:
+            raise PaymentDeclinedError(
+                invoice_id=invoice_id, reason="insufficient funds"
+            )
+        if idempotency_key not in self.charges:
+            self.charges[idempotency_key] = PaymentReceipt(
+                reference=f"pay-{len(self.charges) + 1}",
+                amount=amount,
+                currency=currency,
+            )
+        return self.charges[idempotency_key]
+
+
+@dataclass(kw_only=True, slots=True)
+class RecordingNotifier(InvoiceNotifier):
+    """Notifier that records notices and can be told to fail.
+
+    Attributes:
+        sent: Notices delivered so far, in order.
+        fail: When true, every delivery raises 'NotificationError'.
+    """
+
+    sent: list[InvoicePaidNotice] = field(default_factory=list)
+    fail: bool = False
+
+    def invoice_paid(self, notice: InvoicePaidNotice) -> None:
+        """Record the notice or fail as configured."""
+        if self.fail:
+            raise NotificationError("notification channel is down")
+        self.sent.append(notice)

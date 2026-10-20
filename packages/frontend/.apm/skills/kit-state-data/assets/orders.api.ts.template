@@ -1,0 +1,44 @@
+// src/features/orders/api/orders.api.ts
+// Transport calls for one feature. Each function accepts an AbortSignal so the
+// query layer can cancel obsolete work, and parses with the model schemas.
+import { z } from "zod";
+import { httpClient } from "@/shared/api/client";
+import type { HttpClient } from "@/shared/api/http-client";
+import {
+  orderPageSchema,
+  orderSchema,
+  type Order,
+  type OrderFilters,
+  type OrderPage,
+  type OrderStatus,
+} from "../model/order";
+
+export type OrdersApi = Readonly<{
+  list(filters: OrderFilters, cursor: string | null, signal?: AbortSignal): Promise<OrderPage>;
+  get(id: string, signal?: AbortSignal): Promise<Order>;
+  updateStatus(id: string, status: OrderStatus): Promise<Order>;
+  remove(id: string): Promise<void>;
+}>;
+
+export function createOrdersApi(http: HttpClient): OrdersApi {
+  return {
+    list: (filters, cursor, signal) =>
+      http.get("api/orders", orderPageSchema, {
+        query: { status: filters.status, search: filters.search, cursor },
+        ...(signal ? { signal } : {}),
+      }),
+    get: (id, signal) =>
+      http.get(`api/orders/${encodeURIComponent(id)}`, orderSchema, signal ? { signal } : {}),
+    updateStatus: (id, status) =>
+      http.request(`api/orders/${encodeURIComponent(id)}`, orderSchema, {
+        method: "PATCH",
+        body: { status },
+      }),
+    remove: (id) =>
+      http.request(`api/orders/${encodeURIComponent(id)}`, z.undefined(), { method: "DELETE" }),
+  };
+}
+
+// src/shared/api/client.ts holds the configured instance, for example:
+//   export const httpClient = createHttpClient({ baseUrl: () => getRuntimeConfig().apiBaseUrl });
+export const ordersApi: OrdersApi = createOrdersApi(httpClient);

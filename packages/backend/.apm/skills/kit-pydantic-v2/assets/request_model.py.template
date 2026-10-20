@@ -1,0 +1,24 @@
+"""Validated transport input kept outside the domain layer."""
+
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+_MIN_NAME_LENGTH = 1
+_MAX_NAME_LENGTH = 120
+
+
+class CreateRecordRequest(BaseModel):
+    """Validated request fields for creating one record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=_MIN_NAME_LENGTH,
+            max_length=_MAX_NAME_LENGTH,
+        ),
+    ]
+    labels: list[str] = Field(default_factory=list)

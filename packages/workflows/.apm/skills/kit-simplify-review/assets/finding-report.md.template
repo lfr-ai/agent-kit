@@ -1,0 +1,38 @@
+# Over-engineering review: <scope>
+
+Reviewer: <handle>
+Revision: <commit or branch>
+Invariants preserved: <outputs, error types, telemetry names>
+
+## Findings (ranked by maintenance cost removed)
+
+One line each: location - cut - replacement - evidence - decision.
+
+| # | Location | Cut | Replace with | Evidence | Decision |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `src/orders/pricing.py:42` | `PricingStrategy` interface and factory | the single `StandardPricing` function | 1 implementation, 1 caller, no test double | inline |
+| 2 | `src/orders/export.py:10` | custom CSV quoting helper | `csv.writer` | helper handles 3 cases, all covered by `csv` | replace |
+| 3 | `src/orders/config.py:77` | `export_format` option | constant `"csv"` | only value in all environments | narrow |
+| 4 | `<path:line>` | `<what>` | `<what>` | `<count, caller, API link>` | delete / inline / replace / narrow / keep |
+
+## Kept on purpose
+
+| Location | Flexibility kept | Reason | Debt marker |
+| --- | --- | --- | --- |
+| `<path:line>` | `<what>` | `<dated, owned need>` | yes / no |
+
+## Dependencies
+
+- Removed: `<package>` - replaced by `<native API>`
+- Added: none, or `<package>` - why the native option is insufficient
+
+## Verification
+
+- Characterization tests added: `<test ids>`
+- Commands and results before: `<command>` - `<result>`
+- Commands and results after: `<command>` - `<result>`
+- Debt ledger: `<collector command>` - exit `<code>`
+
+## Follow-ups
+
+- `<item, owner>`

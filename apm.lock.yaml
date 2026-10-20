@@ -1,0 +1,459 @@
+lockfile_version: '1'
+dependencies: []
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/rules/kit-authoring.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:25f62a6a352db1cf2a6479a2fd15ad86baff0aadef2e7b732662870fe5455db8
+- kind: project-relative
+  target: claude
+  value: .claude/rules/kit-python.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:4e76aec5513b43865945336772e3b53dd7a3279dfb6dc4547def9b3ecdf7a12f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:88a98746b481d4875b946a99ecc66d0d2cc1e4505e75d0d0f030a4aef5b04740
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/assets/PROJECT.template.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:688d956292fe60cfe3c2482527005689b2fb329ee0ac4dfc69491daddb21d24f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/assets/adoption.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:a83acb2707dd3546ccb2b37097fb0e2b091a009dee429fe11e411d27c0900176
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/assets/apm-policy.yml.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:57992dd1c8e3453a0edf19e6e016141225310f93e1dbfca73e0cc54966129a91
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/assets/llms.template.txt
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:34e543f16308d920e915102643ddaa63a087f8ff4e38ae4f1384a1a8f42bf573
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-adopt/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:82f39db444adc9da35b419dab9bbdf10e13e540c83aba3284bd48c3dab42393e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-audit
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-audit/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:111cf3e8cec4e161f93430bdc881a1cf15a065b79c644f4a0e3bda21be6fe77b
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-audit/assets/apm-audit-steps.yml.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:76c426afdeb8f5af239bbb28dd1ada0c544ba978903296af1de1029b9634b21f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-apm-audit/references/gates.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-capability-authoring
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-capability-authoring/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-capability-authoring/assets/capability.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-capability-authoring/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-config-review
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-config-review/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-config-review/assets/review.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
+- kind: project-relative
+  target: claude
+  value: .claude/skills/kit-config-review/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
+- kind: project-relative
+  target: copilot
+  value: .github/instructions/kit-authoring.instructions.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:2a3f6aa845a19b2d40c20bb519f3f53baf15f0a2520728fdb01ab8b336de8fb4
+- kind: project-relative
+  target: copilot
+  value: .github/instructions/kit-python.instructions.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:cd64b7b667039ab4def991594e9a0cdfc68ed4f3b282dca504212b2c0a52e0db
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:88a98746b481d4875b946a99ecc66d0d2cc1e4505e75d0d0f030a4aef5b04740
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/assets/PROJECT.template.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:688d956292fe60cfe3c2482527005689b2fb329ee0ac4dfc69491daddb21d24f
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/assets/adoption.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:a83acb2707dd3546ccb2b37097fb0e2b091a009dee429fe11e411d27c0900176
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/assets/apm-policy.yml.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:57992dd1c8e3453a0edf19e6e016141225310f93e1dbfca73e0cc54966129a91
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/assets/llms.template.txt
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:34e543f16308d920e915102643ddaa63a087f8ff4e38ae4f1384a1a8f42bf573
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-adopt/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:82f39db444adc9da35b419dab9bbdf10e13e540c83aba3284bd48c3dab42393e
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-audit
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-audit/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:111cf3e8cec4e161f93430bdc881a1cf15a065b79c644f4a0e3bda21be6fe77b
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-audit/assets/apm-audit-steps.yml.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:76c426afdeb8f5af239bbb28dd1ada0c544ba978903296af1de1029b9634b21f
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-apm-audit/references/gates.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-capability-authoring
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-capability-authoring/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-capability-authoring/assets/capability.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-capability-authoring/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-config-review
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-config-review/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-config-review/assets/review.md.template
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
+- kind: project-relative
+  target: legacy
+  value: .agents/skills/kit-config-review/references/guide.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
+local_deployed_files:
+- .agents/skills/kit-apm-adopt
+- .agents/skills/kit-apm-adopt/SKILL.md
+- .agents/skills/kit-apm-adopt/assets/PROJECT.template.md
+- .agents/skills/kit-apm-adopt/assets/adoption.md.template
+- .agents/skills/kit-apm-adopt/assets/apm-policy.yml.template
+- .agents/skills/kit-apm-adopt/assets/llms.template.txt
+- .agents/skills/kit-apm-adopt/references/guide.md
+- .agents/skills/kit-apm-audit
+- .agents/skills/kit-apm-audit/SKILL.md
+- .agents/skills/kit-apm-audit/assets/apm-audit-steps.yml.template
+- .agents/skills/kit-apm-audit/references/gates.md
+- .agents/skills/kit-capability-authoring
+- .agents/skills/kit-capability-authoring/SKILL.md
+- .agents/skills/kit-capability-authoring/assets/capability.md.template
+- .agents/skills/kit-capability-authoring/references/guide.md
+- .agents/skills/kit-config-review
+- .agents/skills/kit-config-review/SKILL.md
+- .agents/skills/kit-config-review/assets/review.md.template
+- .agents/skills/kit-config-review/references/guide.md
+- .claude/rules/kit-authoring.md
+- .claude/rules/kit-python.md
+- .claude/skills/kit-apm-adopt
+- .claude/skills/kit-apm-adopt/SKILL.md
+- .claude/skills/kit-apm-adopt/assets/PROJECT.template.md
+- .claude/skills/kit-apm-adopt/assets/adoption.md.template
+- .claude/skills/kit-apm-adopt/assets/apm-policy.yml.template
+- .claude/skills/kit-apm-adopt/assets/llms.template.txt
+- .claude/skills/kit-apm-adopt/references/guide.md
+- .claude/skills/kit-apm-audit
+- .claude/skills/kit-apm-audit/SKILL.md
+- .claude/skills/kit-apm-audit/assets/apm-audit-steps.yml.template
+- .claude/skills/kit-apm-audit/references/gates.md
+- .claude/skills/kit-capability-authoring
+- .claude/skills/kit-capability-authoring/SKILL.md
+- .claude/skills/kit-capability-authoring/assets/capability.md.template
+- .claude/skills/kit-capability-authoring/references/guide.md
+- .claude/skills/kit-config-review
+- .claude/skills/kit-config-review/SKILL.md
+- .claude/skills/kit-config-review/assets/review.md.template
+- .claude/skills/kit-config-review/references/guide.md
+- .github/instructions/kit-authoring.instructions.md
+- .github/instructions/kit-python.instructions.md
+local_deployed_file_hashes:
+  .agents/skills/kit-apm-adopt/SKILL.md: sha256:88a98746b481d4875b946a99ecc66d0d2cc1e4505e75d0d0f030a4aef5b04740
+  .agents/skills/kit-apm-adopt/assets/PROJECT.template.md: sha256:688d956292fe60cfe3c2482527005689b2fb329ee0ac4dfc69491daddb21d24f
+  .agents/skills/kit-apm-adopt/assets/adoption.md.template: sha256:a83acb2707dd3546ccb2b37097fb0e2b091a009dee429fe11e411d27c0900176
+  .agents/skills/kit-apm-adopt/assets/apm-policy.yml.template: sha256:57992dd1c8e3453a0edf19e6e016141225310f93e1dbfca73e0cc54966129a91
+  .agents/skills/kit-apm-adopt/assets/llms.template.txt: sha256:34e543f16308d920e915102643ddaa63a087f8ff4e38ae4f1384a1a8f42bf573
+  .agents/skills/kit-apm-adopt/references/guide.md: sha256:82f39db444adc9da35b419dab9bbdf10e13e540c83aba3284bd48c3dab42393e
+  .agents/skills/kit-apm-audit/SKILL.md: sha256:111cf3e8cec4e161f93430bdc881a1cf15a065b79c644f4a0e3bda21be6fe77b
+  .agents/skills/kit-apm-audit/assets/apm-audit-steps.yml.template: sha256:76c426afdeb8f5af239bbb28dd1ada0c544ba978903296af1de1029b9634b21f
+  .agents/skills/kit-apm-audit/references/gates.md: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
+  .agents/skills/kit-capability-authoring/SKILL.md: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
+  .agents/skills/kit-capability-authoring/assets/capability.md.template: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
+  .agents/skills/kit-capability-authoring/references/guide.md: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  .agents/skills/kit-config-review/SKILL.md: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
+  .agents/skills/kit-config-review/assets/review.md.template: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
+  .agents/skills/kit-config-review/references/guide.md: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
+  .claude/rules/kit-authoring.md: sha256:25f62a6a352db1cf2a6479a2fd15ad86baff0aadef2e7b732662870fe5455db8
+  .claude/rules/kit-python.md: sha256:4e76aec5513b43865945336772e3b53dd7a3279dfb6dc4547def9b3ecdf7a12f
+  .claude/skills/kit-apm-adopt/SKILL.md: sha256:88a98746b481d4875b946a99ecc66d0d2cc1e4505e75d0d0f030a4aef5b04740
+  .claude/skills/kit-apm-adopt/assets/PROJECT.template.md: sha256:688d956292fe60cfe3c2482527005689b2fb329ee0ac4dfc69491daddb21d24f
+  .claude/skills/kit-apm-adopt/assets/adoption.md.template: sha256:a83acb2707dd3546ccb2b37097fb0e2b091a009dee429fe11e411d27c0900176
+  .claude/skills/kit-apm-adopt/assets/apm-policy.yml.template: sha256:57992dd1c8e3453a0edf19e6e016141225310f93e1dbfca73e0cc54966129a91
+  .claude/skills/kit-apm-adopt/assets/llms.template.txt: sha256:34e543f16308d920e915102643ddaa63a087f8ff4e38ae4f1384a1a8f42bf573
+  .claude/skills/kit-apm-adopt/references/guide.md: sha256:82f39db444adc9da35b419dab9bbdf10e13e540c83aba3284bd48c3dab42393e
+  .claude/skills/kit-apm-audit/SKILL.md: sha256:111cf3e8cec4e161f93430bdc881a1cf15a065b79c644f4a0e3bda21be6fe77b
+  .claude/skills/kit-apm-audit/assets/apm-audit-steps.yml.template: sha256:76c426afdeb8f5af239bbb28dd1ada0c544ba978903296af1de1029b9634b21f
+  .claude/skills/kit-apm-audit/references/gates.md: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
+  .claude/skills/kit-capability-authoring/SKILL.md: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
+  .claude/skills/kit-capability-authoring/assets/capability.md.template: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
+  .claude/skills/kit-capability-authoring/references/guide.md: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  .claude/skills/kit-config-review/SKILL.md: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
+  .claude/skills/kit-config-review/assets/review.md.template: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
+  .claude/skills/kit-config-review/references/guide.md: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
+  .github/instructions/kit-authoring.instructions.md: sha256:2a3f6aa845a19b2d40c20bb519f3f53baf15f0a2520728fdb01ab8b336de8fb4
+  .github/instructions/kit-python.instructions.md: sha256:cd64b7b667039ab4def991594e9a0cdfc68ed4f3b282dca504212b2c0a52e0db

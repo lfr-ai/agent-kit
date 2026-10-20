@@ -1,0 +1,28 @@
+# Tasks: TBD change title
+
+Approach: TBD one paragraph, or "see design.md".
+
+Every list item is a checkbox. Cite the requirement identifiers each task
+serves. When ticking, append the evidence after a dash.
+
+## 1. Contract and tests
+
+- [ ] 1.1 Write the failing test for TBD scenario (REQ-001)
+- [ ] 1.2 Add TBD additive contract change with compatibility handling (REQ-001)
+
+## 2. Implementation
+
+- [ ] 2.1 Implement TBD behavior until 1.1 passes (REQ-001)
+- [ ] 2.2 Handle the TBD failure case with a stable error identifier (REQ-001)
+- [ ] 2.3 Update TBD for the modified obligation (REQ-002)
+- [ ] 2.4 Remove or disable TBD legacy behavior (REQ-003)
+
+## 3. Operability and documentation
+
+- [ ] 3.1 Add TBD telemetry for the new behavior (REQ-001)
+- [ ] 3.2 Update TBD user or operator documentation (REQ-001, REQ-002)
+- [ ] 3.3 Document the rollback switch and its default (REQ-001)
+
+## 4. Rollout
+
+- [ ] 4.1 Enable TBD in the first environment and record the check (REQ-001)

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en",
+  "useGitignore": true,
+  "dictionaries": ["python", "bash", "powershell", "softwareTerms", "companies", "misc", "project-terms"],
+  "dictionaryDefinitions": [
+    {
+      "name": "project-terms",
+      "path": "./.cspell/project-terms.txt",
+      "addWords": true
+    }
+  ],
+  "ignorePaths": [
+    ".cspell/**",
+    "cspell.json",
+    ".venv/**",
+    ".tox/**",
+    "build/**",
+    "dist/**",
+    "apm_modules/**",
+    "htmlcov/**",
+    "node_modules/**",
+    ".agents/skills/**",
+    ".claude/skills/**",
+    ".claude/rules/**",
+    ".github/instructions/**",
+    "*.lock",
+    "apm.lock.yaml",
+    ".secrets.baseline",
+    "coverage.xml",
+    ".coverage*"
+  ],
+  "ignoreRegExpList": [
+    "/sha256:[0-9a-f]{64}/g",
+    "/\\b[0-9a-f]{40,64}\\b/g",
+    "/color: [0-9a-f]{6}/g",
+    "/\\\\u[0-9a-fA-F]{4}/g",
+    "/%[0-9A-F]{2}/g",
+    "/\\\\[nrt](?=[a-z])/g"
+  ]
+}

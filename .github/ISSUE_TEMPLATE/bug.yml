@@ -1,0 +1,24 @@
+name: Bug
+description: Report a reproducible toolkit failure without private information.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Do not attach credentials or company repository contents.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Toolkit, APM, Python, platform, and native runtime versions
+    validations:
+      required: true

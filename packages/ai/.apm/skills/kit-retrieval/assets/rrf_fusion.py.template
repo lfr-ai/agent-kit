@@ -1,0 +1,92 @@
+"""Reciprocal rank fusion for combining heterogeneous rankings.
+
+Copy to 'retrieval/fusion.py'. RRF uses only ranks, so it can merge lexical,
+dense, and graph results whose raw scores live on incomparable scales. Each
+input ranking contributes 'weight / (k + rank)' for every chunk it contains.
+"""
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+from retrieval.contracts import ScoredChunk
+
+DEFAULT_RRF_K = 60
+
+
+@dataclass(kw_only=True, slots=True)
+class _Accumulator:
+    """Running fused score for one chunk."""
+
+    hit: ScoredChunk
+    score: float
+    best_rank: int
+
+
+def reciprocal_rank_fusion(
+    rankings: Mapping[str, Sequence[ScoredChunk]],
+    *,
+    k: int = DEFAULT_RRF_K,
+    weights: Mapping[str, float] | None = None,
+    limit: int | None = None,
+) -> list[ScoredChunk]:
+    """Fuse named rankings into one deterministic ranking.
+
+    Duplicates inside one ranking count once, at their best position. Ties are
+    broken by the best original rank, then by chunk id, so equal inputs always
+    produce equal output.
+
+    Args:
+        rankings: Strategy name mapped to hits in rank order.
+        k: Smoothing constant; larger values flatten the head of each list.
+        weights: Optional per-strategy multipliers; missing names weigh 1.0.
+        limit: Maximum number of fused hits to return.
+
+    Returns:
+        Fused hits with 'retriever' set to 'rrf' and one-based ranks.
+
+    Raises:
+        ValueError: If 'k', 'limit' or a weight is invalid, or a weight names
+            an unknown strategy.
+    """
+    if k < 1:
+        raise ValueError("k must be at least 1")
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
+    active_weights = dict(weights or {})
+    unknown = set(active_weights) - set(rankings)
+    if unknown:
+        raise ValueError(f"weights name unknown rankings: {sorted(unknown)}")
+    if any(weight < 0 for weight in active_weights.values()):
+        raise ValueError("weights must be non-negative")
+
+    fused: dict[str, _Accumulator] = {}
+    for name, hits in rankings.items():
+        weight = active_weights.get(name, 1.0)
+        seen: set[str] = set()
+        for position, hit in enumerate(hits, start=1):
+            chunk_id = hit.chunk.chunk_id
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            contribution = weight / (k + position)
+            current = fused.get(chunk_id)
+            if current is None:
+                fused[chunk_id] = _Accumulator(
+                    hit=hit, score=contribution, best_rank=position
+                )
+            else:
+                current.score += contribution
+                current.best_rank = min(current.best_rank, position)
+
+    ordered = sorted(
+        fused.values(),
+        key=lambda entry: (-entry.score, entry.best_rank, entry.hit.chunk.chunk_id),
+    )
+    if limit is not None:
+        ordered = ordered[:limit]
+    return [
+        ScoredChunk(
+            chunk=entry.hit.chunk, score=entry.score, retriever="rrf", rank=rank
+        )
+        for rank, entry in enumerate(ordered, start=1)
+    ]

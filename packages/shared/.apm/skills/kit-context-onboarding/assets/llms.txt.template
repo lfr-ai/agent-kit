@@ -1,0 +1,11 @@
+# Consumer context entry
+
+Replace these entries with relative links to the consumer's actual files:
+
+- Repository operating policy: invariant and approval boundaries.
+- Project facts: supported toolchain, exact commands and working directories.
+- Project inventory: package ownership and entry points.
+- Knowledge index: architecture, decisions, operations and recovery.
+
+Load detailed references only for the active task. This index is not another
+policy copy, a complete repository dump, or a record of private session history.

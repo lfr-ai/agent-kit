@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "editorconfig.editorconfig",
+    "task.vscode-task",
+    "redhat.vscode-yaml",
+    "davidanson.vscode-markdownlint",
+    "streetsidesoftware.code-spell-checker",
+    "ms-python.python",
+    "ms-python.debugpy",
+    "charliermarsh.ruff"
+  ],
+  "unwantedRecommendations": [
+    "ms-python.black-formatter",
+    "ms-python.isort",
+    "ms-python.flake8",
+    "ms-python.pylint",
+    "ms-python.autopep8"
+  ]
+}

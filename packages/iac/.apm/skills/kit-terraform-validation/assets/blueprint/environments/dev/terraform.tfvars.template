@@ -1,0 +1,13 @@
+# Non-secret dev inputs. Copy to infra/environments/dev/terraform.tfvars.
+# Use: terraform plan -var-file=environments/dev/terraform.tfvars
+# Never place credentials here; secrets come from a vault at runtime.
+environment              = "dev"
+location                 = "westeurope"
+workload                 = "orders"
+instance                 = "001"
+storage_replication_type = "LRS"
+
+tags = {
+  owner       = "platform-team"
+  cost_center = "cc-0000"
+}

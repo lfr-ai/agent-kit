@@ -1,0 +1,119 @@
+// src/features/orders/api/orders.queries.test.tsx
+// Verifies the key contract and the optimistic update lifecycle against MSW.
+// Assumes the shared test setup has loaded a runtime config whose API base URL
+// resolves on the test origin (see the frontend testing capability).
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import type { ReactNode } from "react";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { Order } from "../model/order";
+import { orderKeys, ordersQueries, useUpdateOrderStatus } from "./orders.queries";
+
+const order: Order = {
+  id: "ord_7",
+  reference: "ORD-1007",
+  status: "submitted",
+  totalMinor: 4200,
+  currency: "EUR",
+  updatedAt: "2026-02-01T09:30:00Z",
+};
+
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function setup(): { client: QueryClient; wrapper: (props: { children: ReactNode }) => ReactNode } {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY }, mutations: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return { client, wrapper };
+}
+
+function deferred(): { promise: Promise<void>; release: () => void } {
+  let release: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+describe("orderKeys", () => {
+  it("normalizes equivalent filters to one key", () => {
+    expect(orderKeys.list({ search: "  shoes " })).toEqual(
+      orderKeys.list({ search: "shoes" }),
+    );
+    expect(orderKeys.list({ search: "   " })).toEqual(["orders", "list", {}]);
+  });
+
+  it("nests every list key below lists() so one invalidation reaches all of them", async () => {
+    const { client } = setup();
+    client.setQueryData(ordersQueries.list({}).queryKey, { items: [order], nextCursor: null });
+    client.setQueryData(ordersQueries.detail(order.id).queryKey, order);
+
+    await client.invalidateQueries({ queryKey: orderKeys.lists(), refetchType: "none" });
+
+    expect(client.getQueryState(orderKeys.list({}))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(orderKeys.detail(order.id))?.isInvalidated).toBe(false);
+  });
+});
+
+describe("useUpdateOrderStatus", () => {
+  it("applies the change optimistically and keeps the server result", async () => {
+    const { client, wrapper } = setup();
+    client.setQueryData(ordersQueries.detail(order.id).queryKey, order);
+    const gate = deferred();
+    server.use(
+      http.patch("*/api/orders/:id", async () => {
+        await gate.promise;
+        return HttpResponse.json({ ...order, status: "paid", updatedAt: "2026-02-01T09:31:00Z" });
+      }),
+      http.get("*/api/orders/:id", () => HttpResponse.json({ ...order, status: "paid" })),
+      http.get("*/api/orders", () => HttpResponse.json({ items: [], nextCursor: null })),
+    );
+
+    const { result } = renderHook(() => useUpdateOrderStatus(), { wrapper });
+    act(() => result.current.mutate({ id: order.id, status: "paid" }));
+
+    await waitFor(() =>
+      expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("paid"),
+    );
+    gate.release();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("paid");
+  });
+
+  it("rolls back to the previous value when the server rejects the change", async () => {
+    const { client, wrapper } = setup();
+    client.setQueryData(ordersQueries.detail(order.id).queryKey, order);
+    const gate = deferred();
+    server.use(
+      http.patch("*/api/orders/:id", async () => {
+        await gate.promise;
+        return HttpResponse.json(
+          { title: "Conflict", detail: "Order changed elsewhere", code: "version_conflict" },
+          { status: 409 },
+        );
+      }),
+      http.get("*/api/orders/:id", () => HttpResponse.json(order)),
+      http.get("*/api/orders", () => HttpResponse.json({ items: [], nextCursor: null })),
+    );
+
+    const { result } = renderHook(() => useUpdateOrderStatus(), { wrapper });
+    act(() => result.current.mutate({ id: order.id, status: "cancelled" }));
+    await waitFor(() =>
+      expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("cancelled"),
+    );
+
+    gate.release();
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toMatchObject({ status: 409, code: "version_conflict" });
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("submitted");
+  });
+});

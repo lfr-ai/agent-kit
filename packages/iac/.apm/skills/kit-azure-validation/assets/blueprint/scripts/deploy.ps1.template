@@ -1,0 +1,109 @@
+#Requires -Version 7.2
+<#
+.SYNOPSIS
+    Validate, preview, and (optionally) deploy the Bicep template to one environment.
+
+.DESCRIPTION
+    Copy to infra/scripts/deploy.ps1. The script never deploys without an
+    explicit -Deploy switch and a reviewed what-if. Authentication comes from
+    the caller ('az login' locally, azure/login with OIDC in CI).
+
+    Steps: bicep build and lint, parameter build, 'az deployment group
+    validate', what-if to JSON, local review with review_whatif.py, and only
+    then 'az deployment group create' when -Deploy is passed.
+
+.EXAMPLE
+    ./scripts/deploy.ps1 -Environment dev -ResourceGroup rg-orders-dev-westeurope-001
+
+.EXAMPLE
+    ./scripts/deploy.ps1 -Environment prod -ResourceGroup rg-orders-prod-westeurope-001 -Deploy
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidateSet('dev', 'test', 'prod')]
+    [string] $Environment,
+
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[-\w\._\(\)]{1,90}$')]
+    [string] $ResourceGroup,
+
+    [string] $TemplateFile = (Join-Path $PSScriptRoot '..' 'main.bicep'),
+
+    [string] $ReviewScript = (Join-Path $PSScriptRoot '..' '..' 'tools' 'review_whatif.py'),
+
+    [string] $OutputDirectory = (Join-Path $PSScriptRoot '..' 'out'),
+
+    [switch] $Deploy
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+
+function Invoke-Step {
+    param([string] $Name, [scriptblock] $Action)
+    Write-Host "==> $Name"
+    & $Action
+}
+
+$parameterFile = Join-Path $PSScriptRoot '..' 'parameters' "$Environment.bicepparam"
+foreach ($path in @($TemplateFile, $parameterFile, $ReviewScript)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required file not found: $path"
+    }
+}
+New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+
+$account = az account show --output json | ConvertFrom-Json
+Write-Host "Subscription: $($account.name) ($($account.id))"
+Write-Host "Resource group: $ResourceGroup"
+
+$deploymentName = "main-$Environment-$(Get-Date -AsUTC -Format 'yyyyMMddHHmmss')"
+$whatIfFile = Join-Path $OutputDirectory "whatif-$Environment.json"
+
+Invoke-Step 'Build and lint' {
+    az bicep build --file $TemplateFile --stdout | Out-Null
+    az bicep lint --file $TemplateFile
+    az bicep build-params --file $parameterFile --stdout | Out-Null
+}
+
+Invoke-Step 'Validate deployment' {
+    az deployment group validate `
+        --resource-group $ResourceGroup `
+        --name $deploymentName `
+        --parameters $parameterFile `
+        --output none
+}
+
+Invoke-Step 'What-if' {
+    az deployment group what-if `
+        --resource-group $ResourceGroup `
+        --name $deploymentName `
+        --parameters $parameterFile `
+        --result-format FullResourcePayloads `
+        --no-pretty-print `
+        --output json | Set-Content -LiteralPath $whatIfFile -Encoding utf8NoBOM
+    $hash = (Get-FileHash -LiteralPath $whatIfFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "What-if saved to $whatIfFile (sha256 $hash)"
+}
+
+Invoke-Step 'Review what-if' {
+    # Exit 3 (delete) and 4 (recreate or unresolved) stop the script here.
+    python $ReviewScript --file $whatIfFile
+}
+
+if (-not $Deploy) {
+    Write-Host 'Preview complete. Re-run with -Deploy after the what-if is approved.'
+    return
+}
+
+Invoke-Step 'Deploy' {
+    az deployment group create `
+        --resource-group $ResourceGroup `
+        --name $deploymentName `
+        --parameters $parameterFile `
+        --output none
+}
+
+Write-Host "Deployment $deploymentName completed."

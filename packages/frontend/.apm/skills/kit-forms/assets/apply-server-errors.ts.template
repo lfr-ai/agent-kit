@@ -1,0 +1,50 @@
+// src/shared/forms/apply-server-errors.ts
+// Maps an API rejection onto form fields. Known fields get inline messages;
+// everything else becomes one readable summary. Values are never cleared.
+import type { FieldValues, Path, UseFormSetError } from "react-hook-form";
+import { ApiError } from "@/shared/api/http-client";
+
+export type ServerErrorOutcome = Readonly<{
+  mappedFields: readonly string[];
+  summary: string | null;
+  /** True when the request may have reached the server (retry must be safe). */
+  ambiguous: boolean;
+}>;
+
+export function applyServerErrors<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  isField: (name: string) => name is Path<T>,
+): ServerErrorOutcome {
+  if (!(error instanceof ApiError)) {
+    // Network failure or timeout: the server may or may not have processed it.
+    return {
+      mappedFields: [],
+      summary: "We could not confirm that your changes were saved. Your input is kept; try again.",
+      ambiguous: true,
+    };
+  }
+
+  const mappedFields: string[] = [];
+  const unmapped: string[] = [];
+  for (const [name, messages] of Object.entries(error.fieldErrors)) {
+    const message = messages.join(" ");
+    if (isField(name)) {
+      setError(name, { type: "server", message });
+      mappedFields.push(name);
+    } else {
+      unmapped.push(message);
+    }
+  }
+
+  let summary: string | null = null;
+  if (unmapped.length > 0) {
+    summary = unmapped.join(" ");
+  } else if (mappedFields.length === 0) {
+    summary =
+      error.status === 409
+        ? "This record changed since you opened it. Review the latest version and try again."
+        : error.message;
+  }
+  return { mappedFields, summary, ambiguous: error.status >= 500 };
+}

@@ -1,0 +1,67 @@
+// playwright.config.ts
+// Runs end-to-end tests against a production build served by `vite preview`.
+// CI is strict (no .only, bounded retries, traces kept for retried failures).
+import { defineConfig, devices } from "@playwright/test";
+
+const port = Number(process.env["E2E_PORT"] ?? 4173);
+const baseURL = process.env["E2E_BASE_URL"] ?? `http://localhost:${port}`;
+const isCI = Boolean(process.env["CI"]);
+
+export default defineConfig({
+  testDir: "./e2e",
+  outputDir: "./test-results",
+  fullyParallel: true,
+  forbidOnly: isCI,
+  retries: isCI ? 2 : 0,
+  // Spread instead of 'undefined' so exactOptionalPropertyTypes stays satisfied.
+  ...(isCI ? { workers: 2 } : {}),
+  timeout: 30_000,
+  expect: {
+    timeout: 5_000,
+    toHaveScreenshot: { maxDiffPixelRatio: 0.01, animations: "disabled" },
+  },
+  reporter: isCI ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: "test-results/junit.xml" }]] : [["list"], ["html"]],
+  use: {
+    baseURL,
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
+    locale: "en-US",
+    timezoneId: "UTC",
+    testIdAttribute: "data-testid",
+  },
+  projects: [
+    { name: "setup", testMatch: /.*\.setup\.ts/ },
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"], storageState: "playwright/.auth/user.json" },
+      dependencies: ["setup"],
+    },
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"], storageState: "playwright/.auth/user.json" },
+      dependencies: ["setup"],
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"], storageState: "playwright/.auth/user.json" },
+      dependencies: ["setup"],
+    },
+    {
+      name: "mobile-chromium",
+      use: { ...devices["Pixel 7"], storageState: "playwright/.auth/user.json" },
+      dependencies: ["setup"],
+    },
+  ],
+  // No local server when E2E_BASE_URL points at an already running environment.
+  ...(process.env["E2E_BASE_URL"]
+    ? {}
+    : {
+        webServer: {
+          command: `npm run build && npm run preview -- --port ${port} --strictPort`,
+          url: baseURL,
+          reuseExistingServer: !isCI,
+          timeout: 120_000,
+        },
+      }),
+});

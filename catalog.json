@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "version": "0.1.0",
+  "supported_runtimes": ["copilot", "claude"],
+  "budgets": {
+    "policy_lines": 120,
+    "skill_body_lines": 300,
+    "description_chars": 350,
+    "profile_description_chars": 6500
+  },
+  "bundles": {
+    "toolkit": {"path": ".", "kind": "project"},
+    "shared": {"path": "packages/shared", "kind": "portable"},
+    "backend": {"path": "packages/backend", "kind": "portable"},
+    "frontend": {"path": "packages/frontend", "kind": "portable"},
+    "iac": {"path": "packages/iac", "kind": "portable"},
+    "workflows": {"path": "packages/workflows", "kind": "portable"},
+    "ai": {"path": "packages/ai", "kind": "portable"},
+    "coordination": {"path": "packages/coordination", "kind": "portable"}
+  },
+  "profiles": {
+    "toolkit": {"extends": [], "bundles": ["toolkit", "shared"]},
+    "shared": {"extends": [], "bundles": ["shared"]},
+    "backend": {"extends": ["shared"], "bundles": ["backend"]},
+    "frontend": {"extends": ["shared"], "bundles": ["frontend"]},
+    "fullstack": {"extends": ["backend", "frontend"], "bundles": ["coordination"]},
+    "iac": {"extends": ["shared"], "bundles": ["iac"]},
+    "workflows": {"extends": ["shared"], "bundles": ["workflows"]},
+    "ai": {"extends": ["backend"], "bundles": ["ai"]}
+  }
+}

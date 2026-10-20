@@ -1,0 +1,60 @@
+# Import Linter contracts for a hexagonal layout. Copy to '.importlinter'
+# (or translate to [tool.importlinter] in pyproject.toml) and run 'lint-imports'.
+# Package names are placeholders: 'app' is the root package; rename to yours.
+#
+# Layout assumed:
+#   app/domain/         policy and invariants, no I/O
+#   app/application/    use cases and the ports they own (application/ports/)
+#   app/adapters/       driven adapters (persistence, payments, notifications)
+#   app/entrypoints/    driving adapters (CLI, HTTP handlers, workers)
+#   app/composition.py  the composition root; the only module that imports adapters
+#
+# Prove each contract can fail: add a deliberate bad import in a scratch branch,
+# confirm 'lint-imports' reports it, then remove it.
+
+[importlinter]
+root_package = app
+# Needed so the forbidden contract below can name third-party packages.
+include_external_packages = True
+
+[importlinter:contract:hexagonal-layers]
+name = Source dependencies point inward
+type = layers
+# Higher layers may import lower ones, never the reverse. Pipe-separated items
+# share a layer and are independent: entrypoints must not import adapters.
+layers =
+    app.composition
+    app.entrypoints | app.adapters
+    app.application
+    app.domain
+
+[importlinter:contract:ports-not-use-cases]
+name = Ports do not import use cases
+type = forbidden
+source_modules =
+    app.application.ports
+forbidden_modules =
+    app.application.use_cases
+
+[importlinter:contract:core-free-of-io-libraries]
+name = Domain and application stay free of I/O frameworks
+type = forbidden
+source_modules =
+    app.domain
+    app.application
+# Replace with the frameworks your adapters actually use. External packages must
+# be listed by their top-level name.
+forbidden_modules =
+    sqlalchemy
+    httpx
+    requests
+    boto3
+    fastapi
+
+[importlinter:contract:adapters-independent]
+name = Adapters do not depend on each other
+type = independence
+modules =
+    app.adapters.persistence
+    app.adapters.payments
+    app.adapters.notifications

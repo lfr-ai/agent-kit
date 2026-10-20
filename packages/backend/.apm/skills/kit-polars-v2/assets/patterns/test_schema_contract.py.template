@@ -1,0 +1,95 @@
+"""Contract tests for order event schemas, casts, and key checks."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import polars as pl
+import pytest
+from polars.testing import assert_frame_equal
+
+from myapp.infrastructure.analytics.order_events import (
+    ORDER_EVENTS,
+    SchemaContractError,
+    conform,
+    key_report,
+    require_schema,
+    scan_order_events,
+    schema_violations,
+)
+
+
+def _raw(**overrides: list[object]) -> pl.LazyFrame:
+    data: dict[str, list[object]] = {
+        "order_id": [1, 2],
+        "customer_id": [10, 20],
+        "status": ["created", "settled"],
+        "amount": ["12.50", "0.99"],
+        "occurred_at": [
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
+        ],
+    }
+    data.update(overrides)
+    return pl.LazyFrame(data)
+
+
+def test_conform_produces_contract_schema_and_order() -> None:
+    frame = conform(_raw().select(pl.all().reverse()), ORDER_EVENTS)
+
+    assert frame.collect_schema() == ORDER_EVENTS
+    assert frame.collect()["amount"].to_list() == [Decimal("0.99"), Decimal("12.50")]
+
+
+def test_violations_list_every_problem_at_once() -> None:
+    actual = pl.Schema({"order_id": pl.String, "note": pl.String})
+
+    problems = schema_violations(actual, ORDER_EVENTS)
+
+    assert "column 'order_id' is String, expected Int64" in problems
+    assert "missing column 'status'" in problems
+    assert "unexpected column 'note'" in problems
+
+
+def test_require_schema_fails_before_execution() -> None:
+    with pytest.raises(SchemaContractError, match="missing column"):
+        require_schema(_raw().drop("status"), ORDER_EVENTS)
+
+
+def test_strict_cast_rejects_unknown_category() -> None:
+    frame = conform(_raw(status=["created", "lost"]), ORDER_EVENTS)
+
+    with pytest.raises(pl.exceptions.PolarsError):
+        frame.collect()
+
+
+def test_key_report_counts_nulls_and_duplicates() -> None:
+    report = key_report(_raw(order_id=[1, 1]), "order_id")
+    clean = key_report(_raw(), "order_id")
+
+    assert (report.null_keys, report.duplicate_keys, report.ok) == (0, 2, False)
+    assert clean.ok
+
+
+def test_empty_input_keeps_schema() -> None:
+    empty = conform(_raw().head(0), ORDER_EVENTS).collect()
+
+    assert empty.height == 0
+    assert empty.schema == ORDER_EVENTS
+
+
+def test_scan_path_parses_csv_into_contract(tmp_path: Path) -> None:
+    source = tmp_path / "events.csv"
+    source.write_text(
+        "order_id,customer_id,status,amount,occurred_at,extra\n"
+        "2,20,settled,0.99,2026-01-02T00:00:00,x\n"
+        "1,10,created,12.50,2026-01-01T00:00:00,y\n",
+        encoding="utf-8",
+    )
+
+    actual = scan_order_events(str(source)).sort("order_id").collect()
+    expected = conform(_raw(), ORDER_EVENTS).collect()
+
+    assert_frame_equal(actual, expected)

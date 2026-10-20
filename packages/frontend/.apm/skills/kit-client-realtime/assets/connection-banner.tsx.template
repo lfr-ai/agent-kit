@@ -1,0 +1,47 @@
+// src/shared/realtime/connection-banner.tsx
+// Accessible connection feedback: polite status text for state changes, an
+// explicit retry action, and no announcement while everything is healthy.
+import type { ReactElement } from "react";
+import type { ConnectionStatus } from "./reconnecting-socket";
+
+export type ConnectionBannerProps = Readonly<{
+  status: ConnectionStatus;
+  onRetry: () => void;
+}>;
+
+function describe(status: ConnectionStatus): string | null {
+  switch (status.kind) {
+    case "idle":
+    case "open":
+    case "closed":
+      return null;
+    case "connecting":
+      return status.attempt === 0 ? null : "Reconnecting to live updates…";
+    case "stale":
+      return "Live updates paused. Data may be out of date.";
+    case "reconnecting":
+      return `Connection lost. Retrying in ${Math.ceil(status.delayMs / 1000)} seconds.`;
+    case "failed":
+      return "Live updates are unavailable. Data shown may be out of date.";
+  }
+}
+
+export function ConnectionBanner({ status, onRetry }: ConnectionBannerProps): ReactElement {
+  const message = describe(status);
+  const canRetry = status.kind === "reconnecting" || status.kind === "failed" || status.kind === "stale";
+  // The live region stays mounted so screen readers observe changes to its content.
+  return (
+    <div role="status" aria-live="polite" className="connection-banner">
+      {message ? (
+        <p>
+          {message}{" "}
+          {canRetry ? (
+            <button type="button" onClick={onRetry}>
+              Retry now
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}

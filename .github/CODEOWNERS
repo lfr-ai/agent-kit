@@ -1,0 +1,4 @@
+# Default owner for all repository files, including CODEOWNERS itself.
+# Keep owners aligned with .github/maintainers.json.
+# Required approval must be enforced by the hosted branch ruleset.
+* @lfr-ai

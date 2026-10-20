@@ -1,0 +1,71 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Bootstrap locked environment",
+      "type": "process",
+      "command": "task",
+      "args": ["bootstrap"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Verify toolkit",
+      "type": "process",
+      "command": "task",
+      "args": ["verify"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "group": {"kind": "build", "isDefault": true}
+    },
+    {
+      "label": "Test",
+      "type": "process",
+      "command": "task",
+      "args": ["test"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "group": {"kind": "test", "isDefault": true}
+    },
+    {
+      "label": "Lint",
+      "type": "process",
+      "command": "task",
+      "args": ["lint"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Format",
+      "type": "process",
+      "command": "task",
+      "args": ["format"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Type check",
+      "type": "process",
+      "command": "task",
+      "args": ["typecheck"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Pre-commit (all files)",
+      "type": "process",
+      "command": "task",
+      "args": ["precommit"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "APM smoke",
+      "type": "process",
+      "command": "task",
+      "args": ["apm:smoke"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    }
+  ]
+}

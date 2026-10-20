@@ -1,0 +1,91 @@
+"""Behavior tests for the frozen record template.
+
+Replace 'shop.core.models' with the module that holds the copied record.
+"""
+
+import dataclasses
+from collections.abc import Callable
+
+import pytest
+from shop.core.models import LineItem
+
+
+def _line(
+    *,
+    sku: str = "ABC-1",
+    quantity: int = 2,
+    unit_price_minor: int = 150,
+    tags: tuple[str, ...] = (),
+    note: str = "",
+) -> LineItem:
+    return LineItem(
+        sku=sku,
+        quantity=quantity,
+        unit_price_minor=unit_price_minor,
+        tags=tags,
+        note=note,
+    )
+
+
+def test_valid_line_exposes_derived_total() -> None:
+    """The total multiplies quantity by the unit price."""
+    assert _line().total_minor == 300
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: _line(sku="abc"), "sku"),
+        (lambda: _line(quantity=0), "quantity"),
+        (lambda: _line(unit_price_minor=-1), "unit_price_minor"),
+        (lambda: _line(tags=("a", "a")), "unique"),
+    ],
+)
+def test_invalid_values_are_rejected(build: Callable[[], LineItem], message: str) -> None:
+    """Each invariant names the offending field."""
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+def test_record_is_immutable() -> None:
+    """Attributes cannot be rebound after validation; 'setattr' avoids a static error."""
+    line = _line()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(line, "quantity", 5)  # noqa: B010
+
+
+def test_positional_construction_is_rejected() -> None:
+    """Keyword-only fields protect call sites from field reordering."""
+    positional: tuple[object, ...] = ("ABC-1", 1, 100)
+    with pytest.raises(TypeError):
+        LineItem(*positional)
+
+
+def test_updates_are_revalidated() -> None:
+    """A copy with an invalid quantity fails like direct construction."""
+    line = _line()
+    assert line.with_quantity(3).total_minor == 450
+    with pytest.raises(ValueError, match="quantity"):
+        line.with_quantity(0)
+
+
+def test_parse_normalizes_untrusted_text() -> None:
+    """Parsing trims the SKU, normalizes its case, and converts numbers."""
+    parsed = LineItem.parse(sku=" abc-1 ", quantity="2", unit_price_minor="150")
+    assert parsed == _line()
+
+
+def test_parse_rejects_non_numeric_text() -> None:
+    """Conversion failures surface as ValueError for the boundary to translate."""
+    with pytest.raises(ValueError, match="invalid literal"):
+        LineItem.parse(sku="ABC-1", quantity="two", unit_price_minor="150")
+
+
+def test_equal_records_hash_equally() -> None:
+    """Value equality makes records usable as set members and mapping keys."""
+    assert len({_line(), _line()}) == 1
+
+
+def test_note_is_excluded_from_repr() -> None:
+    """Free text that may contain user input stays out of logs and tracebacks."""
+    assert "private text" not in repr(_line(note="private text"))

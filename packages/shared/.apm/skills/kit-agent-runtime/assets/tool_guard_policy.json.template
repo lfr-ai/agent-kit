@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "description": "Opt-in tool guard policy. Defense in depth only: native approvals, permission rules, and sandboxing remain the authorization boundary. Patterns use Python re.search with IGNORECASE against casefolded, normalized views.",
+  "fail_mode": "closed",
+  "mode": "enforce",
+  "max_input_bytes": 2097152,
+  "rules": [
+    {
+      "id": "secret-files",
+      "decision": "deny",
+      "match": "path",
+      "pattern": "(^|/)(\\.env(\\.(?!example$|sample$|template$|dist$|defaults$)[^/]*)?|\\.envrc|\\.netrc|_netrc|\\.pgpass|\\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|secrets?\\.(json|ya?ml|toml|env|ini))$|\\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$|(^|/)(\\.ssh|\\.gnupg|\\.aws|\\.azure|\\.kube|\\.docker)(/|$)",
+      "reason": "reads or writes credential material; use the approved secret store instead"
+    },
+    {
+      "id": "credential-config",
+      "decision": "ask",
+      "match": "path",
+      "pattern": "(^|/)(\\.npmrc|\\.pypirc|\\.yarnrc(\\.yml)?|\\.terraformrc|[^/]*\\.tfvars|[^/]*\\.tfstate(\\.backup)?|\\.vault-token)$",
+      "reason": "file commonly holds tokens or state with secrets; confirm before access"
+    },
+    {
+      "id": "force-push",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\bgit\\b.*\\bpush\\b.*(\\s--force(?![-\\w])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s]+)",
+      "reason": "force push rewrites shared history; an operator performs it outside the agent"
+    },
+    {
+      "id": "recursive-root-delete",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\brm\\b(?=.*\\s-(-recursive\\b|[a-z]*r))(\\s+-{1,2}[\\w=-]*)*\\s+(/|/\\*|~|~/|~/\\*|\\$home|\\$\\{home\\}|\\$home/\\*|[a-z]:[\\\\/]?\\*?)(\\s|$)|\\brm\\b.*\\s--no-preserve-root\\b|\\b(remove-item|ri|del|erase|rd|rmdir)\\b(?=.*\\s-(recurse|r)\\b).*\\s(-(literal)?path\\s+)?([a-z]:[\\\\/]?\\*?|[\\\\/]\\*?|~[\\\\/]?\\*?|\\$home[\\\\/]?\\*?|\\$env:(userprofile|systemdrive|homedrive)[\\\\/]?\\*?)(\\s|$)|\\b(rd|rmdir)\\b(?=.*\\s/s\\b).*\\s[a-z]:[\\\\/]?(\\s|$)",
+      "reason": "recursively deletes a filesystem or home root"
+    },
+    {
+      "id": "disk-destroy",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\b(mkfs(\\.\\w+)?|wipefs|diskpart)\\b|\\bdd\\b.*\\bof=/dev/(sd|nvme|hd|disk|xvd)|\\bformat(\\.com)?\\s+[a-z]:|\\bclear-disk\\b",
+      "reason": "formats or overwrites a block device"
+    },
+    {
+      "id": "remote-script-exec",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\b(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\\b[^|;&\\n]*\\|\\s*(sudo\\s+)?(sh|bash|zsh|dash|ksh|fish|pwsh|powershell|python[0-9.]*|node|perl|ruby|iex|invoke-expression)\\b|\\b(iex|invoke-expression)\\b.*\\b(iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|net\\.webclient)\\b|\\b(sh|bash|zsh)\\s+(-c\\s+)?<\\(\\s*(curl|wget)\\b",
+      "reason": "executes a downloaded script without review; download, inspect, and pin it first"
+    },
+    {
+      "id": "encoded-payload",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\b(pwsh|powershell)(\\.exe)?\\b.*\\s-(e|ec|enc|enco|encod|encode|encoded|encodedc\\w*)\\s+\\S{8,}|\\bbase64\\b.*\\s(-d|--decode)\\b.*\\|\\s*(sh|bash|zsh|pwsh|powershell|iex)\\b",
+      "reason": "runs an encoded payload that reviewers and this guard cannot read"
+    },
+    {
+      "id": "verification-bypass",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\s--no-verify\\b|\\bgit\\b.*\\s-c\\s+http\\.sslverify=(false|0)\\b|\\bhttp\\.sslverify\\s+(false|0)\\b|\\bcurl\\b.*\\s(-[a-z]*k[a-z]*|--insecure)\\b|\\bwget\\b.*\\s--no-check-certificate\\b|\\b(node_tls_reject_unauthorized=0|pythonhttpsverify=0|git_ssl_no_verify=(1|true))|\\bstrict-ssl\\s+false\\b|\\s--trusted-host\\b|\\s-skipcertificatecheck\\b|\\bsslverify\\s*=\\s*false\\b|\\s--allow-unauthenticated\\b",
+      "reason": "disables a verification hook or TLS/signature verification"
+    },
+    {
+      "id": "execution-policy-bypass",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "\\bset-executionpolicy\\b.*\\b(bypass|unrestricted)\\b|\\s-(ep|executionpolicy)\\s+(bypass|unrestricted)\\b",
+      "reason": "relaxes the PowerShell script execution policy"
+    },
+    {
+      "id": "history-rewrite",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "\\bgit\\b.*\\b(reset\\s+--hard|clean\\s+-[a-z]*f|filter-branch|filter-repo|push\\b.*\\s--force-(with-lease|if-includes)|push\\b.*\\s(--delete|-d)\\b|branch\\s+-d\\b|tag\\s+-d\\b|stash\\s+(drop|clear)|update-ref\\s+-d\\b|reflog\\s+expire)",
+      "reason": "discards local work or rewrites history; confirm the target first"
+    },
+    {
+      "id": "remote-publication",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "\\bgit\\b.*\\bpush\\b|\\b(npm|pnpm|yarn)\\s+publish\\b|\\b(twine|uv)\\s+(upload|publish)\\b|\\b(poetry|cargo|dotnet\\s+nuget)\\s+(publish|push)\\b|\\b(docker|podman)\\s+push\\b|\\bgh\\s+(release\\s+(create|upload|delete)|pr\\s+merge|repo\\s+(create|delete|edit))\\b|\\bterraform\\s+(apply|destroy|import)\\b|\\bkubectl\\s+(apply|delete|replace|patch|scale)\\b|\\bhelm\\s+(install|upgrade|uninstall|rollback)\\b|\\baz\\b.*\\s(create|delete|deploy|update)\\b|\\bbicep\\b.*\\bdeploy\\b",
+      "reason": "publishes or changes remote resources; this is an operator-approved action"
+    },
+    {
+      "id": "privilege-escalation",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "(^|\\s)(sudo|doas|su|runas|pkexec)(\\s|$)|\\bstart-process\\b.*\\s-verb\\s+runas\\b|\\bchmod\\b.*\\s(-r|--recursive)\\b.*\\b(777|a\\+rwx)\\b|\\bchmod\\s+(777|a\\+rwx)\\b",
+      "reason": "elevates privileges or makes files world-writable"
+    },
+    {
+      "id": "environment-dump",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "^(env|printenv|export\\s+-p)$|\\b(get-childitem|gci|dir|ls)\\s+env:\\s*$",
+      "reason": "prints every environment variable, which may include credentials"
+    },
+    {
+      "id": "agent-control-files",
+      "decision": "ask",
+      "match": "path",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)(\\.github/(hooks|workflows|copilot)/|\\.claude/(settings(\\.local)?\\.json$|hooks/)|\\.vscode/(settings|mcp)\\.json$|\\.mcp\\.json$|\\.agents/hooks/)",
+      "reason": "changes hook, workflow, or agent configuration that later runs automatically"
+    }
+  ]
+}

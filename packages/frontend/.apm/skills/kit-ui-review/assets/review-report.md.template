@@ -1,0 +1,34 @@
+# UI review report: {{feature or change}}
+
+- Build / commit: {{identifier}}
+- Reviewed routes: {{paths}}
+- Environment: {{browsers, versions, OS, assistive technology if any}}
+- Matrix used: {{viewports, preferences, locales from review-matrix.json}}
+- States seen: {{list}} | States not seen: {{list and reason}}
+
+## Findings
+
+| ID | Severity | Area | Observation (what, where, state) | Impact on the user task | Suggested repair | Evidence | Retest |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| UI-1 | {{blocker / major / minor / polish}} | {{states / layout / content / interaction / accessibility / consistency}} | {{factual description}} | {{who is affected and how}} | {{specific change}} | {{redacted screenshot or test name}} | {{pending / passed}} |
+
+Severity scale:
+
+- **Blocker**: a user cannot complete the task, loses data, or an accessibility
+  barrier blocks a whole group of users.
+- **Major**: task completion is error-prone or confusing; a required state is
+  missing; WCAG AA failure with a workaround.
+- **Minor**: friction or inconsistency that users work around easily.
+- **Polish**: visual refinement with no task impact.
+
+## Positive observations
+
+- {{patterns worth keeping or reusing}}
+
+## Not verified
+
+- {{checks not performed, for example screen reader, right-to-left, slow network}}
+
+## Summary
+
+{{one paragraph: can this ship, with which blockers fixed first}}

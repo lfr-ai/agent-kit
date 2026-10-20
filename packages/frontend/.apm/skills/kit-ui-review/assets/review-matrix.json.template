@@ -1,0 +1,27 @@
+{
+  "$comment": "Review matrix for rendered UI checks. Each screen is reviewed in every state listed; viewports and preferences multiply only for screens marked full.",
+  "viewports": [
+    { "name": "narrow", "width": 320, "height": 640, "reason": "WCAG 1.4.10 reflow width" },
+    { "name": "mobile", "width": 390, "height": 844, "reason": "common phone" },
+    { "name": "tablet", "width": 768, "height": 1024, "reason": "breakpoint boundary" },
+    { "name": "desktop", "width": 1280, "height": 800, "reason": "default layout" },
+    { "name": "wide", "width": 1920, "height": 1080, "reason": "line length and empty space" }
+  ],
+  "preferences": [
+    { "name": "light", "colorScheme": "light", "reducedMotion": "no-preference" },
+    { "name": "dark", "colorScheme": "dark", "reducedMotion": "no-preference" },
+    { "name": "reduced-motion", "colorScheme": "light", "reducedMotion": "reduce" },
+    { "name": "forced-colors", "colorScheme": "light", "forcedColors": "active" }
+  ],
+  "locales": [
+    { "name": "en-US", "direction": "ltr" },
+    { "name": "pseudo", "direction": "ltr", "note": "expanded text from the pseudo-locale helper" },
+    { "name": "ar", "direction": "rtl", "note": "only if the product supports right-to-left" }
+  ],
+  "states": ["loading", "empty", "populated", "long-content", "validation-error", "permission-denied", "network-failure", "success"],
+  "screens": [
+    { "path": "/orders", "coverage": "full" },
+    { "path": "/orders/ord_1001", "coverage": "full" },
+    { "path": "/invoices/new", "coverage": "states-only" }
+  ]
+}

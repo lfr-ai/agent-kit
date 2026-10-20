@@ -1,0 +1,73 @@
+"""Test data factories: valid by default, explicit about what each test varies.
+
+Copy to 'tests/factories.py'. A factory returns a fully valid object; a test
+overrides only the fields its behavior depends on, so the reader sees the
+relevant input and nothing else. Prefer plain functions with keyword-only
+overrides over factory libraries until you need sequences or relationships.
+"""
+
+import itertools
+from decimal import Decimal
+
+from app.domain.invoice import Invoice, InvoiceStatus
+
+_SEQUENCE = itertools.count(1)
+
+
+def next_id(prefix: str) -> str:
+    """Return a unique, readable identifier such as 'inv-0007'.
+
+    Args:
+        prefix: Short entity prefix.
+
+    Returns:
+        An identifier unique within the test session.
+    """
+    return f"{prefix}-{next(_SEQUENCE):04d}"
+
+
+def build_invoice(
+    *,
+    invoice_id: str | None = None,
+    customer_id: str = "cus-0001",
+    amount: Decimal = Decimal("100.00"),
+    currency: str = "EUR",
+    status: InvoiceStatus = InvoiceStatus.OPEN,
+    payment_reference: str | None = None,
+) -> Invoice:
+    """Build a valid invoice; pass only the fields the test is about.
+
+    Args:
+        invoice_id: Identifier; a fresh unique one when omitted.
+        customer_id: Owning customer.
+        amount: Positive amount.
+        currency: ISO 4217 code.
+        status: Lifecycle state; 'PAID' gets a reference automatically.
+        payment_reference: Explicit reference for paid invoices.
+
+    Returns:
+        A domain object that satisfies every invariant.
+    """
+    if status is InvoiceStatus.PAID and payment_reference is None:
+        payment_reference = next_id("pay")
+    return Invoice(
+        invoice_id=invoice_id or next_id("inv"),
+        customer_id=customer_id,
+        amount=amount,
+        currency=currency,
+        status=status,
+        payment_reference=payment_reference,
+    )
+
+
+def build_invoices(count: int, *, customer_id: str = "cus-0001") -> list[Invoice]:
+    """Build several open invoices for one customer with distinct identifiers.
+
+    Args:
+        count: Number of invoices.
+        customer_id: Owning customer shared by all of them.
+
+    Returns:
+        Invoices in creation order.
+    """
+    return [build_invoice(customer_id=customer_id) for _ in range(count)]

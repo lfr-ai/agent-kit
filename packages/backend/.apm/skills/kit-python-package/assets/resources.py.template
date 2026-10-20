@@ -1,0 +1,58 @@
+"""Locate packaged resources in installed, editable, and frozen (PyInstaller) runs.
+
+Copy to 'src/order_tools/resources.py'. Package data must be declared for the
+build backend and collected in the PyInstaller spec with 'collect_data_files'.
+"""
+
+from __future__ import annotations
+
+import sys
+from importlib import metadata, resources
+from importlib.resources.abc import Traversable
+from pathlib import Path
+
+PACKAGE = "order_tools"
+DISTRIBUTION = "order-tools"
+
+
+def is_frozen() -> bool:
+    """Return whether the process runs from a PyInstaller bundle."""
+    return bool(getattr(sys, "frozen", False)) and hasattr(sys, "_MEIPASS")
+
+
+def resource(*parts: str) -> Traversable:
+    """Return a packaged resource; works from wheels, zips, and bundles."""
+    return resources.files(PACKAGE).joinpath(*parts)
+
+
+def read_text(*parts: str) -> str:
+    """Read a packaged text resource as UTF-8."""
+    return resource(*parts).read_text(encoding="utf-8")
+
+
+def bundle_root() -> Path | None:
+    """Return the bundle data folder when frozen, else None."""
+    if not is_frozen():
+        return None
+    return Path(getattr(sys, "_MEIPASS"))
+
+
+def version() -> str:
+    """Return the installed distribution version (needs copied metadata when frozen)."""
+    try:
+        return metadata.version(DISTRIBUTION)
+    except metadata.PackageNotFoundError:
+        return "0+unknown"
+
+
+def user_data_dir(app_name: str = DISTRIBUTION) -> Path:
+    """Return a writable per-user directory; never write inside the bundle."""
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path.home() / ".local" / "share"
+    path = base / app_name
+    path.mkdir(parents=True, exist_ok=True)
+    return path

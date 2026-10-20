@@ -1,0 +1,55 @@
+"""Domain events: immutable, past-tense facts recorded by aggregates.
+
+Copy into 'src/<package>/core/events.py'. Events carry an identifier for
+de-duplication and a timezone-aware timestamp; payloads hold only what
+consumers need, never secrets.
+"""
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from shop.core.values import Money, OrderId
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DomainEvent:
+    """Common event metadata.
+
+    Attributes:
+        occurred_at: When the fact happened; must be timezone-aware.
+        event_id: Unique identifier used by consumers to drop duplicates.
+    """
+
+    occurred_at: datetime
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+
+    def __post_init__(self) -> None:
+        """Reject naive timestamps, which are ambiguous across services."""
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("occurred_at must be timezone-aware")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderOpened(DomainEvent):
+    """A new order was opened for a customer."""
+
+    order_id: OrderId
+    customer_id: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderLineAdded(DomainEvent):
+    """A line was added to a draft order."""
+
+    order_id: OrderId
+    sku: str
+    quantity: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderConfirmed(DomainEvent):
+    """A draft order was confirmed with its final total."""
+
+    order_id: OrderId
+    total: Money

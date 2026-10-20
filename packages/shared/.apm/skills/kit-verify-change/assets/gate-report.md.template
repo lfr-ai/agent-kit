@@ -1,0 +1,51 @@
+# Quality gate report
+
+- Change summary (one sentence):
+- Requested outcome and behavior that must not change:
+- Revision / working-tree state checked (commit, dirty files):
+- Environment (OS, Python, tool versions from lockfile):
+- Mode: check-only / fix-then-check (list files the fixers changed):
+
+## Gate results in run order
+
+| # | Step | Exact command | Status | Duration | What a pass proves |
+| --- | --- | --- | --- | --- | --- |
+| 1 | lockfile | | passed / failed / unavailable / skipped | | |
+| 2 | format | | | | |
+| 3 | lint | | | | |
+| 4 | types | | | | |
+| 5 | import contracts | | | | |
+| 6 | spelling | | | | |
+| 7 | markdown | | | | |
+| 8 | secrets | | | | |
+| 9 | unit and property tests | | | | |
+| 10 | integration tests | | | | |
+| 11 | links | | | | |
+
+Machine-readable evidence file (for example `gate-report.json`):
+
+## Behavioral evidence
+
+| Case | Command or test id | Before the change | After the change |
+| --- | --- | --- | --- |
+| Original symptom / requested behavior | | | |
+| Highest-risk negative case | | | |
+| Recovery or rollback case | | | |
+
+## Failures and how they were handled
+
+| Step | Diagnostic (first relevant line) | Classification: caused / coupled / pre-existing | Action |
+| --- | --- | --- | --- |
+| | | | |
+
+## Not verified
+
+- Unavailable tools or credentials, and why:
+- Live runtime, cloud, IDE or model behavior not exercised by these checks:
+- Platforms or versions not covered by the matrix:
+
+## Hand-off
+
+- Thresholds, assertions and gate configuration unchanged: yes / no (explain)
+- Fixers run and their diffs reviewed: yes / no
+- Next operator action and stop condition:

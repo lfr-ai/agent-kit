@@ -1,0 +1,32 @@
+// src/test/axe.ts
+// Runs axe-core against rendered component output in jsdom. jsdom has no layout,
+// so rules that need rendering (color contrast, target size) are disabled here
+// and covered by browser scans instead.
+import axe, { type AxeResults, type Result, type RunOptions } from "axe-core";
+import { expect } from "vitest";
+
+const jsdomUnsupportedRules: RunOptions["rules"] = {
+  "color-contrast": { enabled: false },
+  "color-contrast-enhanced": { enabled: false },
+  "target-size": { enabled: false },
+  // Page-level landmark rule; components render outside landmarks in isolation.
+  region: { enabled: false },
+};
+
+function describeViolation(violation: Result): string {
+  const targets = violation.nodes.map((node) => node.target.join(" ")).join(", ");
+  return `${violation.id} [${violation.impact ?? "unknown"}] ${violation.help} -> ${targets}`;
+}
+
+export async function axeScan(container: Element, options: RunOptions = {}): Promise<AxeResults> {
+  return axe.run(container, {
+    runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] },
+    ...options,
+    rules: { ...jsdomUnsupportedRules, ...options.rules },
+  });
+}
+
+export async function expectNoAxeViolations(container: Element, options: RunOptions = {}): Promise<void> {
+  const results = await axeScan(container, options);
+  expect(results.violations.map(describeViolation)).toEqual([]);
+}

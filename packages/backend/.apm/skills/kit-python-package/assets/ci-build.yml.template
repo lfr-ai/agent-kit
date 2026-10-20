@@ -1,0 +1,87 @@
+# GitHub Actions workflow: build and verify wheels, sdist, and frozen executables.
+# Copy to .github/workflows/build.yml. Publishing and signing are separate,
+# operator-approved jobs that consume these artifacts.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  distributions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Check pyproject metadata
+        run: uv run --no-project python tools/check_pyproject.py pyproject.toml
+      - name: Build sdist and wheel
+        run: uv build --out-dir dist/
+      - name: Inspect artifact contents
+        run: |
+          uv run --no-project python -m zipfile -l dist/*.whl
+          tar -tzf dist/*.tar.gz
+      - name: Install wheel outside the checkout and smoke test
+        run: |
+          smoke="$RUNNER_TEMP/smoke-env"
+          uv venv "$smoke"
+          uv pip install --python "$smoke" dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$smoke/bin/order-tools" --version
+          "$smoke/bin/python" -c "import order_tools.resources as r; r.read_text('templates', 'invoice.html')"
+      - name: Record checksums
+        run: sha256sum dist/* > SHA256SUMS && mv SHA256SUMS dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  frozen:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Build on the oldest supported OS image for each platform.
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: uv sync --locked --group freeze
+      - name: Build one-folder bundle
+        run: uv run --locked pyinstaller app.spec --clean --noconfirm
+      - name: Smoke test frozen executable
+        shell: bash
+        run: |
+          ./dist/order-tools/order-tools --version
+          ./dist/order-tools/order-tools export --dry-run --format csv
+      - name: Archive bundle
+        shell: bash
+        run: |
+          cd dist
+          uv run --no-project python -c "import shutil; shutil.make_archive('order-tools-${{ runner.os }}', 'zip', 'order-tools')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frozen-${{ runner.os }}
+          path: dist/order-tools-*.zip
+          if-no-files-found: error

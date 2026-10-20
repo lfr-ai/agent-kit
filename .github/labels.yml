@@ -1,0 +1,38 @@
+# Declarative label inventory. Apply with the GitHub UI or `gh label create`;
+# `task verify -- governance` keeps issue forms and release-note categories aligned.
+- name: bug
+  description: A reproducible toolkit failure
+  color: d73a4a
+- name: enhancement
+  description: A focused new capability or improvement
+  color: a2eeef
+- name: skill
+  description: Skill source, resources, or selection
+  color: 0e8a16
+- name: instruction
+  description: Scoped instruction source
+  color: 0e8a16
+- name: agent
+  description: Native role definition or delegation contract
+  color: 0e8a16
+- name: quality-gate
+  description: Verification, policy, or guard behavior
+  color: 5319e7
+- name: ci
+  description: GitHub workflow or repository automation
+  color: 5319e7
+- name: release
+  description: Versioning, artifacts, or publication
+  color: 5319e7
+- name: breaking
+  description: Contract-breaking change
+  color: b60205
+- name: dependencies
+  description: Dependabot dependency, action, or hook update
+  color: 0366d6
+- name: documentation
+  description: Documentation-only change
+  color: 0075ca
+- name: skip-changelog
+  description: Exclude from generated release notes
+  color: ededed

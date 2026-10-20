@@ -1,0 +1,113 @@
+"""Value objects: immutable, compared by value, valid on construction.
+
+Copy into 'src/<package>/core/values.py' and rename. 'Money' shows a composite
+value with arithmetic that refuses to mix units; 'OrderId' shows a validated
+single-field identifier.
+"""
+
+import re
+import uuid
+from dataclasses import dataclass
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+from typing import Self
+
+_CURRENCY = re.compile(r"[A-Z]{3}")
+_CENT = Decimal("0.01")
+
+
+class CurrencyMismatchError(ValueError):
+    """Two amounts in different currencies were combined."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Money:
+    """Amount of money in one currency with two decimal places.
+
+    Attributes:
+        amount: Exact decimal amount, quantized to cents.
+        currency: ISO 4217 alphabetic code.
+    """
+
+    amount: Decimal
+    currency: str
+
+    def __post_init__(self) -> None:
+        """Validate the currency and the amount's precision."""
+        if not _CURRENCY.fullmatch(self.currency):
+            raise ValueError(f"currency must be three uppercase letters, got {self.currency!r}")
+        if not self.amount.is_finite():
+            raise ValueError("amount must be finite")
+        if self.amount != self.amount.quantize(_CENT):
+            raise ValueError(f"amount must have at most two decimals, got {self.amount}")
+
+    @classmethod
+    def of(cls, amount: str | int, currency: str) -> Self:
+        """Build money from exact text or an integer, rounding half to even.
+
+        Raises:
+            ValueError: If the amount is not a number or the currency is invalid.
+        """
+        try:
+            exact = Decimal(amount)
+        except InvalidOperation as error:
+            raise ValueError(f"amount is not a number: {amount!r}") from error
+        return cls(amount=exact.quantize(_CENT, rounding=ROUND_HALF_EVEN), currency=currency)
+
+    @classmethod
+    def zero(cls, currency: str) -> Self:
+        """Return zero in the given currency."""
+        return cls(amount=Decimal("0.00"), currency=currency)
+
+    def __add__(self, other: Self) -> Self:
+        """Add two amounts in the same currency."""
+        self._require_same_currency(other)
+        return type(self)(amount=self.amount + other.amount, currency=self.currency)
+
+    def __sub__(self, other: Self) -> Self:
+        """Subtract an amount in the same currency."""
+        self._require_same_currency(other)
+        return type(self)(amount=self.amount - other.amount, currency=self.currency)
+
+    def times(self, factor: int, /) -> Self:
+        """Multiply by a whole quantity."""
+        return type(self)(amount=self.amount * factor, currency=self.currency)
+
+    @property
+    def is_negative(self) -> bool:
+        """Whether the amount is below zero."""
+        return self.amount < 0
+
+    def __str__(self) -> str:
+        """Display form such as '12.50 EUR'."""
+        return f"{self.amount} {self.currency}"
+
+    def _require_same_currency(self, other: Self) -> None:
+        if other.currency != self.currency:
+            raise CurrencyMismatchError(
+                f"cannot combine {self.currency} with {other.currency}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderId:
+    """Identifier of an order aggregate; a canonical lowercase UUID string."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        """Reject anything that is not a canonical UUID."""
+        try:
+            canonical = str(uuid.UUID(self.value))
+        except ValueError as error:
+            raise ValueError(f"order id must be a UUID, got {self.value!r}") from error
+        if canonical != self.value:
+            raise ValueError(f"order id must be canonical lowercase, got {self.value!r}")
+
+    @classmethod
+    def new(cls) -> Self:
+        """Generate a fresh random identifier."""
+        return cls(value=str(uuid.uuid4()))
+
+    def __str__(self) -> str:
+        """Return the raw identifier for transport and storage adapters."""
+        return self.value

@@ -1,0 +1,9 @@
+[environment]
+python-version = "3.13"
+
+[src]
+include = ["src", "tests", "scripts", ".agents/guard"]
+exclude = ["**/__pycache__", ".venv", ".tox", "build", "dist", "apm_modules"]
+
+[terminal]
+error-on-warning = true

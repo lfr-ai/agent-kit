@@ -1,0 +1,244 @@
+"""Provider-neutral language-model client contract.
+
+Copy to 'llm/port.py'. Application code depends on this module only. Provider
+SDKs and gateways (LiteLLM, vendor SDKs, a self-hosted proxy) live in
+'llm/adapters/' and translate their errors into the typed errors below.
+"""
+
+import hashlib
+import string
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Protocol
+
+
+class LlmError(Exception):
+    """Base class for model-call failures callers can handle."""
+
+
+class LlmTransientError(LlmError):
+    """Retrying the same request later may succeed."""
+
+
+class LlmTimeoutError(LlmTransientError):
+    """The provider did not answer within the deadline."""
+
+
+class LlmUnavailableError(LlmTransientError):
+    """Connection failure or provider-side outage."""
+
+
+class LlmRateLimitedError(LlmTransientError):
+    """The provider throttled the request.
+
+    Attributes:
+        retry_after_s: Provider-suggested wait, when supplied.
+    """
+
+    def __init__(self, message: str, *, retry_after_s: float | None = None) -> None:
+        """Store the provider's suggested wait.
+
+        Args:
+            message: Safe, content-free description.
+            retry_after_s: Seconds to wait before retrying, if known.
+        """
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class LlmPermanentError(LlmError):
+    """Retrying the same request cannot succeed."""
+
+
+class LlmInvalidRequestError(LlmPermanentError):
+    """The request was malformed or used unsupported parameters."""
+
+
+class LlmContextTooLongError(LlmPermanentError):
+    """Input plus requested output exceed the model's context window."""
+
+
+class LlmContentFilteredError(LlmPermanentError):
+    """The provider refused or filtered the content."""
+
+
+class LlmAuthError(LlmPermanentError):
+    """Credentials are missing, invalid, or lack permission."""
+
+
+class LlmBudgetExceededError(LlmPermanentError):
+    """The call would exceed a token or spend budget."""
+
+
+class LlmCircuitOpenError(LlmTransientError):
+    """Calls are short-circuited after repeated provider failures."""
+
+
+class StructuredOutputError(LlmPermanentError):
+    """The model output did not satisfy the requested schema."""
+
+
+class Role(StrEnum):
+    """Chat message roles understood by every adapter."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ChatMessage:
+    """One message in a chat request.
+
+    Attributes:
+        role: Message role.
+        content: Message text; treat as sensitive.
+    """
+
+    role: Role
+    content: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PromptTemplate:
+    """Versioned prompt with explicit placeholders.
+
+    Attributes:
+        name: Stable prompt identifier, for example 'invoice-summary'.
+        version: Human-assigned version, bumped on every wording change.
+        system: System instructions.
+        user: User message template using '$name' placeholders.
+    """
+
+    name: str
+    version: str
+    system: str
+    user: str
+
+    @property
+    def fingerprint(self) -> str:
+        """Hash of the template text; detects edits without a version bump."""
+        digest = hashlib.sha256(f"{self.system}\x1f{self.user}".encode())
+        return digest.hexdigest()[:16]
+
+    def render(self, variables: Mapping[str, str]) -> tuple[ChatMessage, ...]:
+        """Fill placeholders; missing or extra variables are errors.
+
+        Args:
+            variables: Placeholder values; untrusted text stays in the user message.
+
+        Returns:
+            System and user messages.
+
+        Raises:
+            ValueError: If a placeholder is missing or a variable is unused.
+        """
+        template = string.Template(self.user)
+        expected = set(template.get_identifiers())
+        provided = set(variables)
+        if expected != provided:
+            raise ValueError(
+                f"prompt {self.name}@{self.version} expects {sorted(expected)}, "
+                f"got {sorted(provided)}"
+            )
+        return (
+            ChatMessage(role=Role.SYSTEM, content=self.system),
+            ChatMessage(role=Role.USER, content=template.substitute(variables)),
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CompletionRequest:
+    """Provider-neutral completion request.
+
+    Attributes:
+        operation: Stable name of the calling use case, for metrics and budgets.
+        model: Model alias resolved by the adapter, never a provider secret.
+        messages: Conversation to send.
+        max_output_tokens: Hard cap on generated tokens.
+        temperature: Sampling temperature; 0 reduces but does not remove variance.
+        timeout_s: Deadline for one attempt.
+        json_schema: Optional JSON Schema the provider should follow.
+        prompt_name: Prompt template name, for audit.
+        prompt_version: Prompt template version, for audit.
+        request_id: Caller correlation id.
+    """
+
+    operation: str
+    model: str
+    messages: tuple[ChatMessage, ...]
+    max_output_tokens: int = 512
+    temperature: float = 0.0
+    timeout_s: float = 30.0
+    json_schema: Mapping[str, object] | None = None
+    prompt_name: str = ""
+    prompt_version: str = ""
+    request_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject requests no provider should receive."""
+        if not self.messages:
+            raise LlmInvalidRequestError("messages are required")
+        if not 1 <= self.max_output_tokens <= 32_000:  # noqa: PLR2004 - sanity cap
+            raise LlmInvalidRequestError("max_output_tokens out of range")
+        if not 0.0 <= self.temperature <= 2.0:  # noqa: PLR2004 - provider range
+            raise LlmInvalidRequestError("temperature out of range")
+        if self.timeout_s <= 0:
+            raise LlmInvalidRequestError("timeout_s must be positive")
+
+    @property
+    def input_chars(self) -> int:
+        """Total characters across messages, for cheap budget estimates."""
+        return sum(len(message.content) for message in self.messages)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Usage:
+    """Token accounting reported by the provider.
+
+    Attributes:
+        input_tokens: Prompt tokens billed.
+        output_tokens: Completion tokens billed.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        """Sum of input and output tokens."""
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Completion:
+    """Provider-neutral completion result.
+
+    Attributes:
+        text: Generated text; untrusted until validated.
+        model: Concrete model that served the request.
+        finish_reason: 'stop', 'length', 'content_filter' or provider value.
+        usage: Token usage.
+        cost_usd: Provider- or gateway-reported cost, when available.
+        latency_ms: Wall-clock latency of the successful attempt.
+        attempts: Attempts used, including the successful one.
+        metadata: Safe, content-free annotations from policies.
+    """
+
+    text: str
+    model: str
+    finish_reason: str
+    usage: Usage = field(default_factory=Usage)
+    cost_usd: float | None = None
+    latency_ms: int = 0
+    attempts: int = 1
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+class LlmClient(Protocol):
+    """Port every adapter, policy wrapper and fake implements."""
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        """Return a completion or raise an 'LlmError' subclass."""
+        ...

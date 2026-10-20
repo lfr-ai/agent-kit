@@ -1,0 +1,481 @@
+"""Bounded, resumable approval workflow built with LangGraph.
+
+Copy to 'workflows/approval_graph.py'. Requires 'langgraph>=1.0'. Flow:
+
+    START -> validate -> draft -> review (human interrupt) -> apply -> END
+                  |                    |
+                  +-> END (invalid)    +-> END (rejected)
+
+Design rules applied here:
+
+- State is a small 'TypedDict'; only 'history' has a reducer (append).
+- Dependencies are injected ports; nodes never import provider SDKs.
+- 'draft' and 'apply' retry only 'TransientError', with bounded attempts.
+- The model call has its own timeout; the run has a recursion limit.
+- 'review' is pure before 'interrupt()' because that code re-runs on resume.
+- 'apply' uses a stable idempotency key, so retries and replays are safe.
+- Callers use 'ApprovalWorkflow', which hides LangGraph types behind a
+  small status contract and validates resume input before resuming.
+"""
+
+import asyncio
+import logging
+import operator
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
+from typing import Annotated, TypedDict
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.errors import GraphRecursionError
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command, RetryPolicy, interrupt
+
+from workflows.ports import (
+    ActionGateway,
+    DraftModel,
+    IncompatibleCheckpointError,
+    InvalidDecisionError,
+    PermanentError,
+    ReviewDecision,
+    TransientError,
+    WorkflowError,
+)
+
+logger = logging.getLogger(__name__)
+
+STATE_SCHEMA_VERSION = 1
+MAX_REQUEST_CHARS = 4000
+MAX_DRAFT_CHARS = 8000
+
+
+class ApprovalState(TypedDict):
+    """Checkpointed workflow state; keep it small and JSON-friendly.
+
+    Bump 'STATE_SCHEMA_VERSION' whenever a key is added, removed or changes
+    meaning, and decide how existing threads migrate or are rejected.
+    """
+
+    schema_version: int
+    request_id: str
+    request: str
+    status: str
+    draft: str
+    draft_model: str
+    prompt_version: str
+    final_text: str
+    reviewer: str
+    receipt_id: str
+    error: str
+    history: Annotated[list[str], operator.add]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class GraphSettings:
+    """Execution bounds for the workflow.
+
+    Attributes:
+        model_timeout_s: Timeout for one model call attempt.
+        max_attempts: Attempts per retried node, including the first.
+        initial_interval_s: First retry delay; doubles per attempt.
+        jitter: Randomize retry delays to avoid synchronized retries.
+        recursion_limit: Maximum super-steps per invocation.
+    """
+
+    model_timeout_s: float = 30.0
+    max_attempts: int = 3
+    initial_interval_s: float = 0.5
+    jitter: bool = True
+    recursion_limit: int = 12
+
+    def retry_policy(self) -> RetryPolicy:
+        """Return the node retry policy; only transient failures retry."""
+        return RetryPolicy(
+            max_attempts=self.max_attempts,
+            initial_interval=self.initial_interval_s,
+            backoff_factor=2.0,
+            max_interval=10.0,
+            jitter=self.jitter,
+            retry_on=TransientError,
+        )
+
+
+def initial_state(*, request_id: str, request: str) -> ApprovalState:
+    """Build the complete initial state so every key is always present.
+
+    Args:
+        request_id: Stable caller identifier; also the thread identity.
+        request: User request text.
+
+    Returns:
+        A fully populated state.
+    """
+    return ApprovalState(
+        schema_version=STATE_SCHEMA_VERSION,
+        request_id=request_id,
+        request=request,
+        status="received",
+        draft="",
+        draft_model="",
+        prompt_version="",
+        final_text="",
+        reviewer="",
+        receipt_id="",
+        error="",
+        history=[],
+    )
+
+
+def parse_decision(raw: object) -> ReviewDecision:
+    """Validate an untrusted resume payload.
+
+    Args:
+        raw: Value supplied with 'Command(resume=...)'.
+
+    Returns:
+        The validated decision.
+
+    Raises:
+        InvalidDecisionError: If the payload is not a well-formed decision.
+    """
+    if not isinstance(raw, Mapping):
+        raise InvalidDecisionError("decision must be an object")
+    fields = {str(key): value for key, value in raw.items()}
+    allowed = {"action", "reviewer", "edited_text", "note"}
+    if set(fields) - allowed:
+        raise InvalidDecisionError(
+            f"unexpected fields: {sorted(set(fields) - allowed)}"
+        )
+    if not all(value is None or isinstance(value, str) for value in fields.values()):
+        raise InvalidDecisionError("decision values must be strings")
+    action, reviewer = fields.get("action"), fields.get("reviewer")
+    if not isinstance(action, str) or not isinstance(reviewer, str):
+        raise InvalidDecisionError("action and reviewer are required")
+    edited, note = fields.get("edited_text"), fields.get("note")
+    return ReviewDecision(
+        action=action,
+        reviewer=reviewer,
+        edited_text=edited if isinstance(edited, str) else None,
+        note=note if isinstance(note, str) else None,
+    )
+
+
+def validate(state: ApprovalState) -> dict[str, object]:
+    """Reject empty or oversized requests before any model call."""
+    text = state["request"].strip()
+    if not text or len(text) > MAX_REQUEST_CHARS:
+        return {
+            "status": "invalid",
+            "error": f"request must be 1..{MAX_REQUEST_CHARS} characters",
+            "history": ["validate:invalid"],
+        }
+    return {"status": "received", "history": ["validate:ok"]}
+
+
+def review(state: ApprovalState) -> dict[str, object]:
+    """Pause for a human decision, then record it.
+
+    Code before 'interrupt()' runs again on resume, so it must stay free of
+    side effects; the decision is validated after resuming.
+    """
+    raw = interrupt(
+        {
+            "request_id": state["request_id"],
+            "draft": state["draft"],
+            "actions": ["approve", "reject", "edit"],
+        }
+    )
+    decision = parse_decision(raw)
+    if decision.action == "reject":
+        return {
+            "status": "rejected",
+            "reviewer": decision.reviewer,
+            "history": ["review:reject"],
+        }
+    final = decision.edited_text if decision.action == "edit" else state["draft"]
+    return {
+        "status": "approved",
+        "final_text": final or state["draft"],
+        "reviewer": decision.reviewer,
+        "history": [f"review:{decision.action}"],
+    }
+
+
+def after_validate(state: ApprovalState) -> str:
+    """Route valid requests to drafting and end invalid ones."""
+    return "draft" if state["status"] == "received" else END
+
+
+def after_review(state: ApprovalState) -> str:
+    """Route approved drafts to the side effect and end everything else."""
+    return "apply" if state["status"] == "approved" else END
+
+
+class BoundaryNodes:
+    """Nodes that call injected ports; plain methods so they test directly."""
+
+    def __init__(
+        self, *, model: DraftModel, gateway: ActionGateway, settings: GraphSettings
+    ) -> None:
+        """Bind ports and bounds.
+
+        Args:
+            model: Port that drafts the proposed action.
+            gateway: Port that applies the approved action idempotently.
+            settings: Execution bounds.
+        """
+        self._model = model
+        self._gateway = gateway
+        self._settings = settings
+
+    async def draft(self, state: ApprovalState) -> dict[str, object]:
+        """Ask the model for a proposal under a per-attempt timeout."""
+        try:
+            async with asyncio.timeout(self._settings.model_timeout_s):
+                proposal = await self._model.draft(request=state["request"])
+        except TimeoutError as error:
+            raise TransientError("model call timed out") from error
+        text = proposal.text.strip()
+        if not text or len(text) > MAX_DRAFT_CHARS:
+            raise PermanentError("model returned an unusable draft")
+        return {
+            "status": "drafted",
+            "draft": text,
+            "draft_model": proposal.model,
+            "prompt_version": proposal.prompt_version,
+            "history": ["draft:ok"],
+        }
+
+    async def apply(self, state: ApprovalState) -> dict[str, object]:
+        """Apply the approved text under a stable idempotency key."""
+        receipt = await self._gateway.apply(
+            idempotency_key=f"{state['request_id']}:apply", text=state["final_text"]
+        )
+        return {
+            "status": "applied",
+            "receipt_id": receipt.receipt_id,
+            "history": ["apply:ok"],
+        }
+
+
+def build_graph(
+    *,
+    model: DraftModel,
+    gateway: ActionGateway,
+    checkpointer: BaseCheckpointSaver,
+    settings: GraphSettings | None = None,
+) -> CompiledStateGraph:
+    """Assemble and compile the approval graph.
+
+    Args:
+        model: Port that drafts the proposed action.
+        gateway: Port that applies the approved action idempotently.
+        checkpointer: Durable saver in production; 'InMemorySaver' in tests.
+        settings: Execution bounds; defaults to 'GraphSettings()'.
+
+    Returns:
+        The compiled graph.
+    """
+    active = settings or GraphSettings()
+    nodes = BoundaryNodes(model=model, gateway=gateway, settings=active)
+    builder = StateGraph(ApprovalState)
+    builder.add_node("validate", validate)
+    builder.add_node("draft", nodes.draft, retry_policy=active.retry_policy())
+    builder.add_node("review", review)
+    builder.add_node("apply", nodes.apply, retry_policy=active.retry_policy())
+    builder.add_edge(START, "validate")
+    builder.add_conditional_edges("validate", after_validate, ["draft", END])
+    builder.add_edge("draft", "review")
+    builder.add_conditional_edges("review", after_review, ["apply", END])
+    builder.add_edge("apply", END)
+    return builder.compile(checkpointer=checkpointer)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class WorkflowStatus:
+    """Framework-free outcome returned to callers.
+
+    Attributes:
+        request_id: Caller identifier.
+        status: 'awaiting_review', 'applied', 'rejected', 'invalid' or 'failed'.
+        draft: Draft shown to the reviewer, when awaiting review.
+        receipt_id: Downstream receipt, when applied.
+        error: Safe error category, when invalid or failed.
+        retryable: True when calling the same operation again may succeed.
+    """
+
+    request_id: str
+    status: str
+    draft: str | None = None
+    receipt_id: str | None = None
+    error: str | None = None
+    retryable: bool = False
+
+
+class ApprovalWorkflow:
+    """Application-facing facade over the compiled graph."""
+
+    def __init__(
+        self, graph: CompiledStateGraph, *, settings: GraphSettings | None = None
+    ) -> None:
+        """Wrap a compiled graph.
+
+        Args:
+            graph: Result of 'build_graph'.
+            settings: Must match the settings used to build the graph.
+        """
+        self._graph = graph
+        self._settings = settings or GraphSettings()
+
+    def _config(self, request_id: str) -> RunnableConfig:
+        """Thread identity and step limit for one request."""
+        return {
+            "configurable": {"thread_id": f"approval:{request_id}"},
+            "recursion_limit": self._settings.recursion_limit,
+        }
+
+    async def start(self, *, request_id: str, request: str) -> WorkflowStatus:
+        """Start a request, or report the existing thread's status.
+
+        Starting twice with the same id never re-runs completed nodes. If an
+        earlier run failed part-way (for example retries were exhausted), the
+        pending node runs again from the last checkpoint.
+
+        Args:
+            request_id: Stable caller identifier.
+            request: User request text.
+
+        Returns:
+            The current status.
+        """
+        config = self._config(request_id)
+        snapshot = await self._graph.aget_state(config)
+        if snapshot.values:
+            if snapshot.next and "review" not in snapshot.next:
+                return await self._run(request_id, None)
+            return self._from_snapshot(request_id, snapshot.values, snapshot.next)
+        return await self._run(
+            request_id, initial_state(request_id=request_id, request=request)
+        )
+
+    async def resume(
+        self, *, request_id: str, decision: Mapping[str, object]
+    ) -> WorkflowStatus:
+        """Resume a thread that is waiting for review.
+
+        Args:
+            request_id: Identifier used at start.
+            decision: Untrusted reviewer payload.
+
+        Returns:
+            The status after the decision is applied.
+
+        Raises:
+            WorkflowError: If the thread is unknown or not awaiting review.
+            IncompatibleCheckpointError: If the thread uses another schema.
+            InvalidDecisionError: If the decision is malformed; the thread
+                stays paused and can be resumed again.
+        """
+        snapshot = await self._graph.aget_state(self._config(request_id))
+        if not snapshot.values:
+            raise WorkflowError(f"unknown request {request_id}")
+        if snapshot.values.get("schema_version") != STATE_SCHEMA_VERSION:
+            raise IncompatibleCheckpointError(
+                f"request {request_id} uses another schema"
+            )
+        if "review" not in snapshot.next:
+            raise WorkflowError(f"request {request_id} is not awaiting review")
+        parse_decision(decision)
+        return await self._run(request_id, Command(resume=dict(decision)))
+
+    async def stream_progress(
+        self, *, request_id: str, request: str
+    ) -> AsyncIterator[str]:
+        """Start a request and yield node names as they complete.
+
+        Yields only node names, never state, so the stream is safe to forward
+        to clients and logs.
+
+        Args:
+            request_id: Stable caller identifier.
+            request: User request text.
+
+        Yields:
+            Node names, then '__interrupt__' if the run paused for review.
+        """
+        async for update in self._graph.astream(
+            initial_state(request_id=request_id, request=request),
+            self._config(request_id),
+            stream_mode="updates",
+        ):
+            for node in update:
+                yield str(node)
+
+    async def _run(
+        self, request_id: str, payload: ApprovalState | Command | None
+    ) -> WorkflowStatus:
+        """Invoke the graph and translate outcomes and failures."""
+        try:
+            result = await self._graph.ainvoke(payload, self._config(request_id))
+        except PermanentError:
+            logger.warning(
+                "workflow.permanent_failure", extra={"request_id": request_id}
+            )
+            return WorkflowStatus(
+                request_id=request_id, status="failed", error="rejected by dependency"
+            )
+        except TransientError:
+            logger.warning(
+                "workflow.retries_exhausted", extra={"request_id": request_id}
+            )
+            return WorkflowStatus(
+                request_id=request_id,
+                status="failed",
+                error="dependency unavailable",
+                retryable=True,
+            )
+        except GraphRecursionError:
+            logger.exception("workflow.step_limit", extra={"request_id": request_id})
+            return WorkflowStatus(
+                request_id=request_id, status="failed", error="step limit reached"
+            )
+        pending = result.get("__interrupt__")
+        if pending:
+            return WorkflowStatus(
+                request_id=request_id,
+                status="awaiting_review",
+                draft=str(result.get("draft", "")),
+            )
+        return self._from_snapshot(request_id, result, ())
+
+    @staticmethod
+    def _from_snapshot(
+        request_id: str, values: Mapping[str, object], upcoming: tuple[str, ...]
+    ) -> WorkflowStatus:
+        """Map persisted state to a caller-facing status."""
+        if "review" in upcoming:
+            return WorkflowStatus(
+                request_id=request_id,
+                status="awaiting_review",
+                draft=str(values.get("draft", "")),
+            )
+        status = str(values.get("status", "failed"))
+        if status == "applied":
+            return WorkflowStatus(
+                request_id=request_id,
+                status=status,
+                receipt_id=str(values.get("receipt_id")),
+            )
+        if status in {"rejected", "invalid"}:
+            return WorkflowStatus(
+                request_id=request_id,
+                status=status,
+                error=str(values.get("error")) or None,
+            )
+        return WorkflowStatus(
+            request_id=request_id,
+            status="failed",
+            error="incomplete run",
+            retryable=True,
+        )

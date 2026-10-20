@@ -1,0 +1,140 @@
+// src/features/invoices/ui/invoice-form.test.tsx
+// User-level tests: type, tab, click, and assert on accessible names and focus.
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/shared/api/http-client";
+import { blankInvoice } from "../model/invoice-form.schema";
+import { InvoiceForm, type SubmitInvoice } from "./invoice-form";
+
+function setup(onSubmit: SubmitInvoice = vi.fn<SubmitInvoice>().mockResolvedValue(undefined)) {
+  const user = userEvent.setup();
+  let counter = 0;
+  const newKey = vi.fn(() => `key-${++counter}`);
+  render(
+    <InvoiceForm
+      defaultValues={blankInvoice("2026-04-01")}
+      onSubmit={onSubmit}
+      onCancel={vi.fn()}
+      newKey={newKey}
+    />,
+  );
+  return { user, onSubmit, newKey };
+}
+
+async function fillValidInvoice(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.type(screen.getByLabelText("Customer email"), "billing@example.com");
+  await user.type(screen.getByLabelText(/line 1 description/i), "Consulting");
+  const quantity = screen.getByLabelText(/line 1 quantity/i);
+  await user.clear(quantity);
+  await user.type(quantity, "3");
+  const price = screen.getByLabelText(/line 1 unit price/i);
+  await user.clear(price);
+  await user.type(price, "12.5");
+}
+
+describe("InvoiceForm", () => {
+  it("blocks submission, shows associated errors, and focuses the first invalid field", async () => {
+    const { user, onSubmit } = setup();
+
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+
+    const email = screen.getByLabelText("Customer email");
+    expect(email).toHaveFocus();
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveAccessibleDescription(/enter an email address/i);
+    expect(screen.getByLabelText(/line 1 description/i)).toHaveAccessibleDescription(/describe the item/i);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("validates the due date against the issue date", async () => {
+    const { user } = setup();
+    await fillValidInvoice(user);
+    const due = screen.getByLabelText(/due date/i);
+    await user.clear(due);
+    await user.type(due, "2026-03-01");
+
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+
+    expect(due).toHaveAccessibleDescription(/on or after the issue date/i);
+  });
+
+  it("submits a converted request once, even on a double click", async () => {
+    let resolveSubmit: () => void = () => undefined;
+    const onSubmit = vi.fn<SubmitInvoice>(
+      () => new Promise<void>((resolve) => {
+        resolveSubmit = resolve;
+      }),
+    );
+    const { user } = setup(onSubmit);
+    await fillValidInvoice(user);
+
+    const save = screen.getByRole("button", { name: "Save invoice" });
+    await user.dblClick(save);
+    const saving = screen.getByRole("button", { name: "Saving…" });
+    expect(saving).toHaveAttribute("aria-disabled", "true");
+    await user.click(saving);
+    resolveSubmit();
+
+    expect(await screen.findByText("Invoice saved.")).toBeVisible();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerEmail: "billing@example.com",
+        lines: [{ description: "Consulting", quantity: 3, unitPriceMinor: 1250 }],
+        notes: null,
+      }),
+      { idempotencyKey: "key-1" },
+    );
+  });
+
+  it("adds and removes lines and requires at least one", async () => {
+    const { user } = setup();
+
+    await user.click(screen.getByRole("button", { name: "Add line" }));
+    expect(screen.getByLabelText(/line 2 description/i)).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Remove line 2" }));
+    await user.click(screen.getByRole("button", { name: "Remove line 1" }));
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+
+    const lines = screen.getByRole("group", { name: "Lines" });
+    expect(within(lines).getByRole("alert")).toHaveTextContent(/at least one line/i);
+  });
+
+  it("maps server field errors inline and keeps the user's input", async () => {
+    const onSubmit = vi
+      .fn<SubmitInvoice>()
+      .mockRejectedValue(
+        new ApiError(422, "validation_failed", "Invalid invoice", { customerEmail: ["This customer is archived."] }),
+      );
+    const { user } = setup(onSubmit);
+    await fillValidInvoice(user);
+
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+
+    const email = screen.getByLabelText("Customer email");
+    expect(email).toHaveAccessibleDescription(/customer is archived/i);
+    expect(email).toHaveFocus();
+    expect(email).toHaveValue("billing@example.com");
+  });
+
+  it("reports an ambiguous network failure, keeps input, and retries with the same key", async () => {
+    const onSubmit = vi
+      .fn<SubmitInvoice>()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(undefined);
+    const { user } = setup(onSubmit);
+    await fillValidInvoice(user);
+
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+    const summary = await screen.findByRole("region", { name: "The invoice was not saved" });
+    expect(summary).toHaveTextContent(/could not confirm/i);
+    await vi.waitFor(() => expect(summary).toHaveFocus());
+    expect(screen.getByLabelText(/line 1 description/i)).toHaveValue("Consulting");
+
+    await user.click(screen.getByRole("button", { name: "Save invoice" }));
+
+    expect(await screen.findByText("Invoice saved.")).toBeVisible();
+    expect(onSubmit.mock.calls.map(([, options]) => options.idempotencyKey)).toEqual(["key-1", "key-1"]);
+  });
+});

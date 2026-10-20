@@ -1,0 +1,126 @@
+"""Migration tests: single head, upgrade, stairway, drift, and data conversion.
+
+Copy into the consumer's integration tests. Requires a disposable database of
+the production engine and major version; set MIGRATION_TEST_DATABASE_URL in the
+test environment (for example from a container fixture). Never point it at a
+shared or production database.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from alembic.script import Script, ScriptDirectory
+
+ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+FORWARD_ONLY_MARKER = "Forward-only"
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def database_url() -> str:
+    """Return the disposable database URL or skip when none is configured."""
+    url = os.environ.get("MIGRATION_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("MIGRATION_TEST_DATABASE_URL is not set")
+    return url
+
+
+@pytest.fixture
+def engine(database_url: str) -> Iterator[sa.Engine]:
+    """Create an engine and leave the database empty after each test."""
+    created = sa.create_engine(database_url)
+    yield created
+    with created.begin() as connection:
+        connection.execute(sa.text("DROP SCHEMA public CASCADE"))
+        connection.execute(sa.text("CREATE SCHEMA public"))
+    created.dispose()
+
+
+@pytest.fixture
+def alembic_config(database_url: str) -> Config:
+    """Point the project's Alembic configuration at the disposable database."""
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("sqlalchemy.url", database_url)
+    return config
+
+
+def _revisions(config: Config) -> list[Script]:
+    """Return revisions ordered from base to head."""
+    script = ScriptDirectory.from_config(config)
+    return list(reversed(list(script.walk_revisions("base", "heads"))))
+
+
+def test_history_has_a_single_head(alembic_config: Config) -> None:
+    heads = ScriptDirectory.from_config(alembic_config).get_heads()
+
+    assert len(heads) == 1, f"merge required, heads: {heads}"
+
+
+def test_upgrade_to_head_from_empty(alembic_config: Config, engine: sa.Engine) -> None:
+    command.upgrade(alembic_config, "head")
+
+    with engine.connect() as connection:
+        version = connection.execute(
+            sa.text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+    assert version == ScriptDirectory.from_config(alembic_config).get_current_head()
+
+
+def test_stairway_upgrade_downgrade_upgrade(
+    alembic_config: Config, engine: sa.Engine
+) -> None:
+    for revision in _revisions(alembic_config):
+        command.upgrade(alembic_config, revision.revision)
+        try:
+            command.downgrade(alembic_config, revision.down_revision or "base")
+        except RuntimeError as error:
+            if FORWARD_ONLY_MARKER not in str(error):
+                raise
+            continue
+        command.upgrade(alembic_config, revision.revision)
+
+
+def test_models_match_latest_revision(
+    alembic_config: Config, engine: sa.Engine
+) -> None:
+    command.upgrade(alembic_config, "head")
+
+    command.check(alembic_config)
+
+
+def test_customer_note_backfill_preserves_rows(
+    alembic_config: Config, engine: sa.Engine
+) -> None:
+    before, target = "8e41b0c5a2f3", "4a7d9e2c1b05"  # pragma: allowlist secret
+    orders = sa.table(
+        "orders",
+        sa.column("id", sa.BigInteger),
+        sa.column("note", sa.Text),
+        sa.column("customer_note", sa.Text),
+    )
+    command.upgrade(alembic_config, before)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.insert(orders),
+            [
+                {"id": 1, "note": "leave at door"},
+                {"id": 2, "note": None},
+                {"id": 3, "note": ""},
+            ],
+        )
+
+    command.upgrade(alembic_config, target)
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            sa.select(orders.c.id, orders.c.customer_note).order_by(orders.c.id)
+        ).all()
+    assert rows == [(1, "leave at door"), (2, None), (3, "")]

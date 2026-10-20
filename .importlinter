@@ -1,0 +1,23 @@
+[importlinter]
+root_package = agent_kit
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Inward dependencies
+type = layers
+layers =
+    agent_kit.main
+    agent_kit.composition
+    agent_kit.presentation | agent_kit.infrastructure
+    agent_kit.application
+    agent_kit.core
+
+[importlinter:contract:core]
+name = Core avoids external parsing and process packages
+type = forbidden
+source_modules =
+    agent_kit.core
+forbidden_modules =
+    yaml
+    apm_cli
+    subprocess

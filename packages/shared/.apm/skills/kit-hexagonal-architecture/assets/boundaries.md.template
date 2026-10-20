@@ -1,0 +1,17 @@
+# Boundary map
+
+- Business invariant and use case:
+- Public driving entry:
+- Runtime call flow:
+
+| Boundary | Owning module | Input/output | Effect | Error contract | Test |
+| --- | --- | --- | --- | --- | --- |
+| Domain | | | none | | |
+| Application | | | orchestration | | |
+| Adapter | | | | | |
+| Composition | | | wiring | | |
+
+- Import contract and deliberate failing fixture:
+- Transaction and resource lifecycle:
+- Installed-package relocation check:
+- Known coupling/trade-off and review trigger:

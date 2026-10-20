@@ -1,0 +1,79 @@
+"""Driven ports for storing invoices and bounding a transaction.
+
+Copy to 'app/application/ports/invoices.py'. The repository behaves like an
+in-memory collection of domain objects; the unit of work owns the transaction.
+Neither exposes SQL, sessions, cursors or ORM rows.
+"""
+
+from types import TracebackType
+from typing import Protocol, Self
+
+from app.domain.invoice import Invoice
+
+
+class InvoiceNotFoundError(LookupError):
+    """Raised when no invoice exists for the requested identifier."""
+
+    def __init__(self, invoice_id: str) -> None:
+        """Remember which identifier was missing.
+
+        Args:
+            invoice_id: The identifier that was looked up.
+        """
+        super().__init__(f"invoice {invoice_id} not found")
+        self.invoice_id = invoice_id
+
+
+class DuplicateInvoiceError(ValueError):
+    """Raised when adding an invoice whose identifier already exists."""
+
+
+class InvoiceRepository(Protocol):
+    """Collection-like access to invoices inside one unit of work."""
+
+    def get(self, invoice_id: str) -> Invoice:
+        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        ...
+
+    def add(self, invoice: Invoice) -> None:
+        """Stage a new invoice; raise 'DuplicateInvoiceError' if the id exists."""
+        ...
+
+    def save(self, invoice: Invoice) -> None:
+        """Stage a changed invoice; raise 'InvoiceNotFoundError' if it is unknown."""
+        ...
+
+    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        ...
+
+
+class UnitOfWork(Protocol):
+    """One atomic change set: commit makes it visible, anything else discards it.
+
+    Leaving the 'with' block without calling 'commit' rolls back. That makes
+    "forgot to commit" a visible test failure instead of a silent partial write.
+    """
+
+    invoices: InvoiceRepository
+
+    def __enter__(self) -> Self:
+        """Begin the transaction and return the unit of work."""
+        ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Roll back anything not committed and release resources."""
+        ...
+
+    def commit(self) -> None:
+        """Make every staged change durable and visible atomically."""
+        ...
+
+    def rollback(self) -> None:
+        """Discard every staged change."""
+        ...

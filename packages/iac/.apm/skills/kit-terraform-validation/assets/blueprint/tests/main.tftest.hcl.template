@@ -1,0 +1,65 @@
+# Offline root-module tests. Copy to infra/tests/main.tftest.hcl.
+# Run without touching remote state: terraform init -backend=false && terraform test
+mock_provider "azurerm" {}
+
+variables {
+  environment = "dev"
+  location    = "westeurope"
+  workload    = "orders"
+  tags = {
+    owner       = "platform-team"
+    cost_center = "cc-0000"
+  }
+}
+
+run "names_and_tags_follow_convention" {
+  command = plan
+
+  assert {
+    condition     = azurerm_resource_group.this.name == "rg-orders-dev-westeurope-001"
+    error_message = "Resource group name does not follow the naming convention."
+  }
+
+  assert {
+    condition     = azurerm_resource_group.this.tags["managed_by"] == "terraform"
+    error_message = "Every resource must carry the managed_by tag."
+  }
+
+  assert {
+    condition     = length(module.storage.name) <= 24
+    error_message = "Storage account name exceeds 24 characters."
+  }
+}
+
+run "rejects_unknown_environment" {
+  command = plan
+
+  variables {
+    environment = "qa"
+  }
+
+  expect_failures = [var.environment]
+}
+
+run "rejects_missing_owner_tag" {
+  command = plan
+
+  variables {
+    tags = {
+      cost_center = "cc-0000"
+    }
+  }
+
+  expect_failures = [var.tags]
+}
+
+run "prod_rejects_lrs" {
+  command = plan
+
+  variables {
+    environment              = "prod"
+    storage_replication_type = "LRS"
+  }
+
+  expect_failures = [var.storage_replication_type]
+}

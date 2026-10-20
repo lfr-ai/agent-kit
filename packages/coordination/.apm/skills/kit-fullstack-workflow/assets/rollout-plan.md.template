@@ -1,0 +1,31 @@
+# Rollout plan: <feature>
+
+Order: contract, infrastructure, data expand, backend, data migrate, frontend,
+enable, contract cleanup. Remove rows that do not apply; keep the order of the
+rest. Every forward step needs a rollback and a health signal before the next
+step starts.
+
+| # | Step | Layer | Environment order | Health signal to check | Rollback | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Merge reviewed contract change | Contract | n/a | Contract lint and drift check green | Revert contract commit | |
+| 2 | Provision resources, settings, secret references, permissions | Infrastructure | dev, test, prod | Preview reviewed; app reads setting with its own identity | Leave additive resources; revert grants after code | |
+| 3 | Additive schema change | Data | dev, test, prod | Migration completed; old code unaffected | Down migration or leave additive column | |
+| 4 | Backend serves old and new shape | Backend | dev, test, prod | Error rate and latency at baseline; provider contract tests green | Redeploy previous backend | |
+| 5 | Backfill existing data | Data | test, prod | Progress metric complete; spot checks pass | Stop job; new column still optional | |
+| 6 | Frontend uses new shape behind switch (off) | Frontend | dev, test, prod | Build and component tests green; no visible change | Redeploy previous frontend | |
+| 7 | Enable switch progressively | Configuration | test, then prod cohorts | Journey success rate, error rate | Switch off | |
+| 8 | Remove old shape: frontend, backend, data, infrastructure | All | after window | No reads of old field in telemetry | Restore from previous release; data from backup | |
+
+## Compatibility checks
+
+| Frontend | Backend | Checked how | Result |
+| --- | --- | --- | --- |
+| old | new | | |
+| new | old | | |
+| new | new | | |
+
+## Communication
+
+- Consumers notified of deprecation: `<who, when>`
+- Release notes entry: `<link>`
+- Window end: `<date or condition>`

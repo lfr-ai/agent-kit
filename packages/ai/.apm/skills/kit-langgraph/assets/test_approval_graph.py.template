@@ -1,0 +1,322 @@
+"""Deterministic tests for 'workflows.approval_graph'.
+
+Copy to 'tests/workflows/test_approval_graph.py'. Uses 'InMemorySaver', scripted
+fakes, and zero retry delay, so no network, model, or wall-clock waits.
+"""
+
+import asyncio
+
+import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+
+from workflows.approval_graph import (
+    ApprovalWorkflow,
+    BoundaryNodes,
+    GraphSettings,
+    build_graph,
+    initial_state,
+    parse_decision,
+)
+from workflows.ports import (
+    Draft,
+    IncompatibleCheckpointError,
+    InvalidDecisionError,
+    PermanentError,
+    Receipt,
+    TransientError,
+    WorkflowError,
+)
+
+_FAST = GraphSettings(initial_interval_s=0.0, jitter=False, max_attempts=3)
+
+
+class ScriptedModel:
+    """Returns scripted drafts or raises scripted errors, in order."""
+
+    def __init__(self, *outcomes: Draft | Exception) -> None:
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    async def draft(self, *, request: str) -> Draft:
+        self.calls += 1
+        outcome = (
+            self._outcomes.pop(0) if len(self._outcomes) > 1 else self._outcomes[0]
+        )
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class RecordingGateway:
+    """Idempotent fake: the same key always yields the same receipt."""
+
+    def __init__(self) -> None:
+        self.applied: dict[str, str] = {}
+        self.calls = 0
+
+    async def apply(self, *, idempotency_key: str, text: str) -> Receipt:
+        self.calls += 1
+        self.applied.setdefault(idempotency_key, text)
+        return Receipt(
+            receipt_id=f"r-{idempotency_key}", idempotency_key=idempotency_key
+        )
+
+
+def _draft(text: str = "Refund order 42 in full.") -> Draft:
+    return Draft(text=text, model="fake-model", prompt_version="refund-v3")
+
+
+def _workflow(
+    model: ScriptedModel, gateway: RecordingGateway | None = None
+) -> tuple[ApprovalWorkflow, RecordingGateway]:
+    active_gateway = gateway or RecordingGateway()
+    graph = build_graph(
+        model=model,
+        gateway=active_gateway,
+        checkpointer=InMemorySaver(),
+        settings=_FAST,
+    )
+    return ApprovalWorkflow(graph, settings=_FAST), active_gateway
+
+
+def test_graph_shape_has_explicit_terminal_paths() -> None:
+    workflow_graph = build_graph(
+        model=ScriptedModel(_draft()),
+        gateway=RecordingGateway(),
+        checkpointer=InMemorySaver(),
+    )
+    drawable = workflow_graph.get_graph()
+
+    assert set(drawable.nodes) == {
+        "__start__",
+        "validate",
+        "draft",
+        "review",
+        "apply",
+        "__end__",
+    }
+    assert {(edge.source, edge.target) for edge in drawable.edges} >= {
+        ("validate", "__end__"),
+        ("review", "__end__"),
+        ("apply", "__end__"),
+    }
+
+
+def test_approve_pauses_for_review_then_applies_once() -> None:
+    workflow, gateway = _workflow(ScriptedModel(_draft()))
+
+    async def scenario() -> None:
+        paused = await workflow.start(request_id="req-1", request="Refund order 42")
+        assert paused.status == "awaiting_review"
+        assert paused.draft == "Refund order 42 in full."
+        assert gateway.calls == 0
+
+        done = await workflow.resume(
+            request_id="req-1", decision={"action": "approve", "reviewer": "u-7"}
+        )
+        assert done.status == "applied"
+        assert done.receipt_id == "r-req-1:apply"
+        assert gateway.applied == {"req-1:apply": "Refund order 42 in full."}
+
+    asyncio.run(scenario())
+
+
+def test_edit_applies_the_reviewer_text() -> None:
+    workflow, gateway = _workflow(ScriptedModel(_draft()))
+
+    async def scenario() -> None:
+        await workflow.start(request_id="req-2", request="Refund order 42")
+        await workflow.resume(
+            request_id="req-2",
+            decision={
+                "action": "edit",
+                "reviewer": "u-7",
+                "edited_text": "Refund half.",
+            },
+        )
+
+    asyncio.run(scenario())
+    assert gateway.applied == {"req-2:apply": "Refund half."}
+
+
+def test_reject_ends_without_side_effects() -> None:
+    workflow, gateway = _workflow(ScriptedModel(_draft()))
+
+    async def scenario() -> str:
+        await workflow.start(request_id="req-3", request="Refund order 42")
+        result = await workflow.resume(
+            request_id="req-3", decision={"action": "reject", "reviewer": "u-7"}
+        )
+        return result.status
+
+    assert asyncio.run(scenario()) == "rejected"
+    assert gateway.calls == 0
+
+
+def test_invalid_request_never_calls_the_model() -> None:
+    model = ScriptedModel(_draft())
+    workflow, _ = _workflow(model)
+
+    result = asyncio.run(workflow.start(request_id="req-4", request="   "))
+
+    assert result.status == "invalid"
+    assert model.calls == 0
+
+
+def test_transient_failure_is_retried_within_the_limit() -> None:
+    model = ScriptedModel(TransientError("busy"), _draft())
+    workflow, _ = _workflow(model)
+
+    result = asyncio.run(workflow.start(request_id="req-5", request="Refund order 42"))
+
+    assert result.status == "awaiting_review"
+    assert model.calls == 2
+
+
+def test_exhausted_retries_fail_as_retryable_and_resume_from_checkpoint() -> None:
+    model = ScriptedModel(TransientError("busy"))
+    workflow, _ = _workflow(model)
+
+    async def scenario() -> None:
+        failed = await workflow.start(request_id="req-6", request="Refund order 42")
+        assert failed.status == "failed"
+        assert failed.retryable
+        assert model.calls == _FAST.max_attempts
+
+        model._outcomes = [_draft()]
+        recovered = await workflow.start(request_id="req-6", request="Refund order 42")
+        assert recovered.status == "awaiting_review"
+
+    asyncio.run(scenario())
+
+
+def test_permanent_failure_is_not_retried() -> None:
+    model = ScriptedModel(PermanentError("policy"))
+    workflow, _ = _workflow(model)
+
+    result = asyncio.run(workflow.start(request_id="req-7", request="Refund order 42"))
+
+    assert result.status == "failed"
+    assert not result.retryable
+    assert model.calls == 1
+
+
+def test_unusable_draft_is_rejected_before_it_enters_state() -> None:
+    workflow, _ = _workflow(ScriptedModel(_draft("   ")))
+
+    result = asyncio.run(workflow.start(request_id="req-8", request="Refund order 42"))
+
+    assert result.status == "failed"
+
+
+def test_invalid_decision_keeps_the_thread_paused() -> None:
+    workflow, gateway = _workflow(ScriptedModel(_draft()))
+
+    async def scenario() -> None:
+        await workflow.start(request_id="req-9", request="Refund order 42")
+        with pytest.raises(InvalidDecisionError):
+            await workflow.resume(request_id="req-9", decision={"action": "ship-it"})
+        result = await workflow.resume(
+            request_id="req-9", decision={"action": "approve", "reviewer": "u-7"}
+        )
+        assert result.status == "applied"
+
+    asyncio.run(scenario())
+    assert gateway.calls == 1
+
+
+def test_start_is_idempotent_per_request_id() -> None:
+    model = ScriptedModel(_draft())
+    workflow, _ = _workflow(model)
+
+    async def scenario() -> None:
+        await workflow.start(request_id="req-10", request="Refund order 42")
+        again = await workflow.start(request_id="req-10", request="Refund order 42")
+        assert again.status == "awaiting_review"
+
+    asyncio.run(scenario())
+    assert model.calls == 1
+
+
+def test_resume_rejects_unknown_and_finished_threads() -> None:
+    workflow, _ = _workflow(ScriptedModel(_draft()))
+    decision = {"action": "approve", "reviewer": "u-7"}
+
+    async def scenario() -> None:
+        with pytest.raises(WorkflowError, match="unknown"):
+            await workflow.resume(request_id="missing", decision=decision)
+        await workflow.start(request_id="req-11", request="Refund order 42")
+        await workflow.resume(request_id="req-11", decision=decision)
+        with pytest.raises(WorkflowError, match="not awaiting"):
+            await workflow.resume(request_id="req-11", decision=decision)
+
+    asyncio.run(scenario())
+
+
+def test_incompatible_checkpoint_is_refused() -> None:
+    model = ScriptedModel(_draft())
+    graph = build_graph(
+        model=model,
+        gateway=RecordingGateway(),
+        checkpointer=InMemorySaver(),
+        settings=_FAST,
+    )
+    workflow = ApprovalWorkflow(graph, settings=_FAST)
+    config = {"configurable": {"thread_id": "approval:req-12"}}
+
+    async def scenario() -> None:
+        await workflow.start(request_id="req-12", request="Refund order 42")
+        await graph.aupdate_state(config, {"schema_version": 0})
+        with pytest.raises(IncompatibleCheckpointError):
+            await workflow.resume(
+                request_id="req-12", decision={"action": "approve", "reviewer": "u-7"}
+            )
+
+    asyncio.run(scenario())
+
+
+def test_progress_stream_exposes_node_names_only() -> None:
+    workflow, _ = _workflow(ScriptedModel(_draft()))
+
+    async def scenario() -> list[str]:
+        return [
+            node
+            async for node in workflow.stream_progress(
+                request_id="req-13", request="Refund"
+            )
+        ]
+
+    assert asyncio.run(scenario()) == ["validate", "draft", "__interrupt__"]
+
+
+class StallingModel:
+    async def draft(self, *, request: str) -> Draft:
+        await asyncio.Event().wait()
+        return _draft()
+
+
+def test_slow_model_call_becomes_a_transient_error() -> None:
+    nodes = BoundaryNodes(
+        model=StallingModel(),
+        gateway=RecordingGateway(),
+        settings=GraphSettings(model_timeout_s=0.01),
+    )
+    state = initial_state(request_id="req-14", request="Refund order 42")
+
+    with pytest.raises(TransientError, match="timed out"):
+        asyncio.run(nodes.draft(state))
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {"action": "approve"},
+        {"action": "approve", "reviewer": "u", "extra": "x"},
+        {"action": "edit", "reviewer": "u"},
+        {"action": "approve", "reviewer": 7},
+    ],
+)
+def test_parse_decision_rejects_malformed_payloads(raw: object) -> None:
+    with pytest.raises(InvalidDecisionError):
+        parse_decision(raw)

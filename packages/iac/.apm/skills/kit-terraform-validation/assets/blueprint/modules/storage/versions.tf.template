@@ -1,0 +1,13 @@
+# Child module version constraints. Copy to infra/modules/storage/versions.tf.
+# Modules state the minimum versions they need and leave upper bounds and
+# provider configuration to the root module.
+terraform {
+  required_version = ">= 1.9.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = ">= 4.0.0, < 5.0.0"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "threshold": 3,
+  "minLines": 8,
+  "minTokens": 70,
+  "format": ["python"],
+  "gitignore": true,
+  "ignore": [
+    "**/.git/**",
+    "**/.venv/**",
+    "**/.tox/**",
+    "**/__pycache__/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/apm_modules/**",
+    "**/node_modules/**",
+    "**/htmlcov/**",
+    "**/jscpd-report/**",
+    "**/.agents/skills/**",
+    "**/.claude/**",
+    "**/.github/**"
+  ]
+}

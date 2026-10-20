@@ -1,0 +1,30 @@
+---
+name: kit-replace-topic
+description: Use when replace this with the specific task trigger and what distinguishes it from neighbors.
+license: MIT
+---
+
+# Replace with an observable task
+
+## Procedure
+
+1. Locate the owning implementation, inputs and current behavior.
+2. Check prerequisites, approvals and the trust boundary before changing anything.
+3. Follow the [task reference](references/replace-topic.md) for the decision at hand.
+4. Perform the smallest complete change using existing repository mechanisms;
+   start copyable output from the [template](assets/replace-output.md.template).
+5. Run the [checker](assets/check_replace.py) with explicit paths, or the
+   repository's equivalent check, and fix every finding.
+6. Exercise ordinary, invalid and recovery cases.
+7. Stop and ask when ownership, approval or a destructive consequence is unclear.
+8. Report exact commands, results, limitations and unsupported surfaces.
+
+## Acceptance gates
+
+- Replace with a checkable statement that is true when the task is done.
+- Replace with the command whose exit status proves it.
+- No credentials, private data or unapproved external actions.
+
+Replace every link above with real files that exist in this skill, delete
+steps that do not apply, and do not install this template unchanged or invent
+quality-gate results.

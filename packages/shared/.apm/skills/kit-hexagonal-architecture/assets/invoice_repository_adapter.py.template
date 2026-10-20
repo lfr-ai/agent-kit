@@ -1,0 +1,172 @@
+"""Driven adapter: persist invoices in SQLite with explicit transactions.
+
+Copy to 'app/adapters/persistence/sqlite_invoices.py'. Mapping between rows and
+domain objects lives here and nowhere else. Connections use 'autocommit=False'
+(Python 3.12+), so a transaction is open until 'commit' or 'rollback' is called.
+"""
+
+import sqlite3
+from collections.abc import Callable
+from decimal import Decimal
+from types import TracebackType
+from typing import Self
+
+from app.application.ports.invoices import (
+    DuplicateInvoiceError,
+    InvoiceNotFoundError,
+    InvoiceRepository,
+    UnitOfWork,
+)
+from app.domain.invoice import Invoice, InvoiceStatus
+
+type ConnectionFactory = Callable[[], sqlite3.Connection]
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS invoices (
+    invoice_id        TEXT PRIMARY KEY,
+    customer_id       TEXT NOT NULL,
+    amount            TEXT NOT NULL,
+    currency          TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    payment_reference TEXT
+)
+"""
+_COLUMNS = "invoice_id, customer_id, amount, currency, status, payment_reference"
+
+
+def connect(database: str) -> sqlite3.Connection:
+    """Open a connection with PEP 249 transaction semantics and the schema.
+
+    Args:
+        database: File path, or ':memory:' for a private in-memory database.
+
+    Returns:
+        A connection whose changes are invisible to others until committed.
+    """
+    connection = sqlite3.connect(database, autocommit=False)
+    connection.execute(_SCHEMA)
+    connection.commit()
+    return connection
+
+
+def _to_row(invoice: Invoice) -> tuple[str, str, str, str, str, str | None]:
+    """Map a domain object to column values; Decimal is stored as exact text."""
+    return (
+        invoice.invoice_id,
+        invoice.customer_id,
+        str(invoice.amount),
+        invoice.currency,
+        invoice.status.value,
+        invoice.payment_reference,
+    )
+
+
+def _from_row(row: tuple[str, str, str, str, str, str | None]) -> Invoice:
+    """Map stored columns back to a validated domain object."""
+    invoice_id, customer_id, amount, currency, status, reference = row
+    return Invoice(
+        invoice_id=invoice_id,
+        customer_id=customer_id,
+        amount=Decimal(amount),
+        currency=currency,
+        status=InvoiceStatus(status),
+        payment_reference=reference,
+    )
+
+
+class SqliteInvoiceRepository(InvoiceRepository):
+    """Invoice collection backed by one open SQLite connection."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """Use a connection owned by the unit of work; never commit here.
+
+        Args:
+            connection: Connection with an open transaction.
+        """
+        self._connection = connection
+
+    def get(self, invoice_id: str) -> Invoice:
+        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        row = self._connection.execute(
+            f"SELECT {_COLUMNS} FROM invoices WHERE invoice_id = ?",  # noqa: S608 - constant column list
+            (invoice_id,),
+        ).fetchone()
+        if row is None:
+            raise InvoiceNotFoundError(invoice_id)
+        return _from_row(row)
+
+    def add(self, invoice: Invoice) -> None:
+        """Insert a new invoice; translate the key violation to the port error."""
+        try:
+            self._connection.execute(
+                "INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?)", _to_row(invoice)
+            )
+        except sqlite3.IntegrityError as error:
+            raise DuplicateInvoiceError(invoice.invoice_id) from error
+
+    def save(self, invoice: Invoice) -> None:
+        """Update an existing invoice or raise 'InvoiceNotFoundError'."""
+        invoice_id, *values = _to_row(invoice)
+        cursor = self._connection.execute(
+            "UPDATE invoices SET customer_id = ?, amount = ?, currency = ?, "
+            "status = ?, payment_reference = ? WHERE invoice_id = ?",
+            (*values, invoice_id),
+        )
+        if cursor.rowcount == 0:
+            raise InvoiceNotFoundError(invoice.invoice_id)
+
+    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        rows = self._connection.execute(
+            f"SELECT {_COLUMNS} FROM invoices WHERE customer_id = ? AND status = ? "  # noqa: S608 - constant column list
+            "ORDER BY invoice_id LIMIT ?",
+            (customer_id, InvoiceStatus.OPEN.value, limit),
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
+
+class SqliteUnitOfWork(UnitOfWork):
+    """Open a connection per unit of work and roll back unless committed."""
+
+    invoices: InvoiceRepository
+
+    def __init__(self, connect_to: ConnectionFactory) -> None:
+        """Store the factory; the connection opens in '__enter__'.
+
+        Args:
+            connect_to: Returns a new connection with 'autocommit=False'.
+        """
+        self._connect_to = connect_to
+        self._connection: sqlite3.Connection | None = None
+
+    def __enter__(self) -> Self:
+        """Open the connection and expose a repository bound to it."""
+        self._connection = self._connect_to()
+        self.invoices = SqliteInvoiceRepository(self._connection)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Discard uncommitted work and close the connection."""
+        if self._connection is not None:
+            self._connection.rollback()
+            self._connection.close()
+            self._connection = None
+
+    def commit(self) -> None:
+        """Commit the open transaction."""
+        self._require_connection().commit()
+
+    def rollback(self) -> None:
+        """Roll back the open transaction."""
+        self._require_connection().rollback()
+
+    def _require_connection(self) -> sqlite3.Connection:
+        """Fail loudly when used outside a 'with' block."""
+        if self._connection is None:
+            raise RuntimeError("unit of work used outside its 'with' block")
+        return self._connection

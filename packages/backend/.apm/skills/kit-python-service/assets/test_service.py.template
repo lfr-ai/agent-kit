@@ -1,0 +1,109 @@
+"""Unit tests for the application service template using in-memory fakes.
+
+Replace 'shop.application.invoicing' with the module that holds the copied
+service. Fakes implement the ports structurally; no mocking library is needed.
+"""
+
+from datetime import UTC, datetime
+
+import pytest
+from shop.application.invoicing import (
+    Invoice,
+    InvoiceService,
+    OrderNotFoundError,
+    OrderNotReadyError,
+    OrderSnapshot,
+)
+
+_NOW = datetime(2026, 1, 2, 10, 0, tzinfo=UTC)
+
+
+class FakeOrders:
+    def __init__(self, *orders: OrderSnapshot) -> None:
+        self._orders = {order.order_id: order for order in orders}
+
+    def get(self, order_id: str, /) -> OrderSnapshot | None:
+        return self._orders.get(order_id)
+
+
+class FakeInvoices:
+    def __init__(self) -> None:
+        self.stored: list[Invoice] = []
+
+    def next_number(self) -> str:
+        return f"INV-{len(self.stored) + 1:05d}"
+
+    def find_by_order(self, order_id: str, /) -> Invoice | None:
+        return next((item for item in self.stored if item.order_id == order_id), None)
+
+    def add(self, invoice: Invoice, /) -> None:
+        self.stored.append(invoice)
+
+
+class FixedClock:
+    def now(self) -> datetime:
+        return _NOW
+
+
+def _order(*, order_id: str = "ord-1", confirmed: bool = True, total: int = 1250) -> OrderSnapshot:
+    return OrderSnapshot(
+        order_id=order_id, confirmed=confirmed, total_minor=total, currency="EUR"
+    )
+
+
+def _service(*orders: OrderSnapshot) -> tuple[InvoiceService, FakeInvoices]:
+    invoices = FakeInvoices()
+    service = InvoiceService(orders=FakeOrders(*orders), invoices=invoices, clock=FixedClock())
+    return service, invoices
+
+
+def test_confirmed_order_is_invoiced_with_injected_time() -> None:
+    """The invoice copies the order total and uses the clock port."""
+    service, invoices = _service(_order())
+    invoice = service.issue("ord-1")
+    assert invoice.number == "INV-00001"
+    assert invoice.total_minor == 1250
+    assert invoice.issued_at == _NOW
+    assert invoices.stored == [invoice]
+
+
+def test_repeated_issue_returns_the_existing_invoice() -> None:
+    """Retries are safe: a second call stores nothing new."""
+    service, invoices = _service(_order())
+    first = service.issue("ord-1")
+    assert service.issue("ord-1") == first
+    assert len(invoices.stored) == 1
+
+
+def test_unknown_order_raises_a_typed_error() -> None:
+    """Callers can map the error without parsing its message."""
+    service, _ = _service()
+    with pytest.raises(OrderNotFoundError) as caught:
+        service.issue("missing")
+    assert caught.value.order_id == "missing"
+
+
+@pytest.mark.parametrize(
+    ("order", "reason"),
+    [
+        (_order(confirmed=False), "not confirmed"),
+        (_order(total=0), "empty total"),
+    ],
+)
+def test_orders_not_ready_store_nothing(order: OrderSnapshot, reason: str) -> None:
+    """Rejected orders leave no partial side effects."""
+    service, invoices = _service(order)
+    with pytest.raises(OrderNotReadyError) as caught:
+        service.issue(order.order_id)
+    assert caught.value.reason == reason
+    assert invoices.stored == []
+
+
+def test_issue_logs_one_structured_event(caplog: pytest.LogCaptureFixture) -> None:
+    """The success event carries identifiers as fields, not formatted text."""
+    service, _ = _service(_order())
+    with caplog.at_level("INFO"):
+        service.issue("ord-1")
+    records = [record for record in caplog.records if record.getMessage() == "invoice issued"]
+    assert len(records) == 1
+    assert records[0].__dict__["order_id"] == "ord-1"

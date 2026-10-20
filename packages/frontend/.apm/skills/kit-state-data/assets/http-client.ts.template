@@ -1,0 +1,154 @@
+// src/shared/api/http-client.ts
+// Typed fetch wrapper. Every response is parsed with a schema before it leaves
+// this module, failures become typed errors, and every request is abortable.
+import { z } from "zod";
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export type QueryValue = string | number | boolean | null | undefined;
+
+export type RequestOptions = Readonly<{
+  method?: HttpMethod;
+  query?: Readonly<Record<string, QueryValue>>;
+  body?: unknown;
+  headers?: HeadersInit;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}>;
+
+export type HttpClientConfig = Readonly<{
+  /** Absolute base URL, or a function read on every request (runtime config). */
+  baseUrl: string | (() => string);
+  getAccessToken?: () => Promise<string | null> | string | null;
+  timeoutMs?: number;
+  credentials?: RequestCredentials;
+  fetchImpl?: typeof fetch;
+}>;
+
+export type HttpClient = Readonly<{
+  request<T>(path: string, schema: z.ZodType<T>, options?: RequestOptions): Promise<T>;
+  get<T>(path: string, schema: z.ZodType<T>, options?: Omit<RequestOptions, "method" | "body">): Promise<T>;
+}>;
+
+/** A non-2xx response, normalized from RFC 9457 problem details when present. */
+export class ApiError extends Error {
+  override readonly name = "ApiError";
+
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly fieldErrors: Readonly<Record<string, readonly string[]>> = {},
+  ) {
+    super(message);
+  }
+}
+
+/** A 2xx response whose body does not match the agreed contract. */
+export class ResponseShapeError extends Error {
+  override readonly name = "ResponseShapeError";
+
+  constructor(
+    readonly endpoint: string,
+    readonly issues: readonly string[],
+  ) {
+    super(`Unexpected response shape from ${endpoint}`);
+  }
+}
+
+const problemSchema = z.object({
+  title: z.string().optional(),
+  detail: z.string().optional(),
+  code: z.string().optional(),
+  errors: z.record(z.string(), z.array(z.string())).optional(),
+});
+type Problem = z.infer<typeof problemSchema>;
+
+const defaultTimeoutMs = 15_000;
+
+function withTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+function buildUrl(base: string, path: string, query: RequestOptions["query"]): URL {
+  const url = new URL(path.replace(/^\/+/, ""), withTrailingSlash(base));
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url;
+}
+
+async function toApiError(response: Response): Promise<ApiError> {
+  let problem: Problem | undefined;
+  try {
+    const parsed = problemSchema.safeParse(await response.json());
+    problem = parsed.success ? parsed.data : undefined;
+  } catch {
+    problem = undefined;
+  }
+  const message = problem?.detail ?? problem?.title ?? (response.statusText || "Request failed");
+  return new ApiError(
+    response.status,
+    problem?.code ?? `http_${response.status}`,
+    message,
+    problem?.errors ?? {},
+  );
+}
+
+export function createHttpClient(config: HttpClientConfig): HttpClient {
+  // Resolve the global per call so fetch patched after start-up (MSW, test stubs)
+  // is honoured by clients created at module load.
+  const fetchImpl: typeof fetch = config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+
+  async function request<T>(
+    path: string,
+    schema: z.ZodType<T>,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const base = typeof config.baseUrl === "function" ? config.baseUrl() : config.baseUrl;
+    const url = buildUrl(base, path, options.query);
+    const headers = new Headers(options.headers);
+    headers.set("Accept", "application/json");
+    let body: string | null = null;
+    if (options.body !== undefined) {
+      headers.set("Content-Type", "application/json");
+      body = JSON.stringify(options.body);
+    }
+    const token = await config.getAccessToken?.();
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const signals = [AbortSignal.timeout(options.timeoutMs ?? config.timeoutMs ?? defaultTimeoutMs)];
+    if (options.signal) {
+      signals.push(options.signal);
+    }
+
+    const response = await fetchImpl(url, {
+      method: options.method ?? "GET",
+      headers,
+      body,
+      credentials: config.credentials ?? "same-origin",
+      signal: AbortSignal.any(signals),
+    });
+
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    const payload: unknown = response.status === 204 ? undefined : await response.json();
+    const parsed = schema.safeParse(payload);
+    if (!parsed.success) {
+      throw new ResponseShapeError(
+        `${options.method ?? "GET"} ${url.pathname}`,
+        parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`),
+      );
+    }
+    return parsed.data;
+  }
+
+  return {
+    request,
+    get: (path, schema, options = {}) => request(path, schema, { ...options, method: "GET" }),
+  };
+}

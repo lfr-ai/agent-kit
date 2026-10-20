@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "description": "Copy to the consumer repository and review with the owner of third-party license policy. Identifiers are SPDX license IDs or full 'ID WITH exception' strings, compared case-insensitively. LicenseRef-BSD-unspecified and LicenseRef-Public-Domain come from ambiguous trove classifiers and need an explicit decision.",
+  "allowed": [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "PSF-2.0",
+    "Python-2.0",
+    "Unlicense",
+    "Zlib",
+    "BSL-1.0"
+  ],
+  "denied": [
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "SSPL-1.0",
+    "BUSL-1.1",
+    "LicenseRef-Proprietary"
+  ],
+  "exceptions": {
+    "example-distribution": {
+      "license": "LicenseRef-Example",
+      "reason": "Replace with the reviewed decision, reviewer role, and ticket reference.",
+      "expires": "2027-01-31"
+    }
+  }
+}

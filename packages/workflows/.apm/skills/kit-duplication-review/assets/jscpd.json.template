@@ -1,0 +1,29 @@
+{
+  "path": ["src"],
+  "format": ["python", "javascript", "typescript", "tsx"],
+  "minLines": 8,
+  "minTokens": 70,
+  "mode": "mild",
+  "threshold": 3,
+  "gitignore": true,
+  "ignore": [
+    "**/.git/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/coverage/**",
+    "**/report/**",
+    "**/*.min.js",
+    "**/*.generated.*",
+    "**/generated/**",
+    "**/migrations/**",
+    "**/__snapshots__/**",
+    "**/*.lock",
+    "**/package-lock.json"
+  ],
+  "reporters": ["console", "json"],
+  "output": "report",
+  "absolute": false
+}

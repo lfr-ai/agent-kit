@@ -1,0 +1,16 @@
+# Verification and handoff
+
+- Requested outcome and preserved behavior:
+- Changed source and generated owners:
+
+| Check | Exact command/cwd | Environment | Exit/result | What it proves |
+| --- | --- | --- | --- | --- |
+| Focused regression | | | | |
+| Negative/recovery | | | | |
+| Owning contracts | | | | |
+| Final gate | | | | |
+
+- Pre-existing failures:
+- Unavailable checks and prerequisites:
+- Live runtime certification (separate from file tests):
+- Rollback, next operator action and stop condition:

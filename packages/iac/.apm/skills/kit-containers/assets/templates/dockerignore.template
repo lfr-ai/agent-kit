@@ -1,0 +1,57 @@
+# Copy to .dockerignore next to the Dockerfile. The build context should
+# contain only what the image needs. For a stricter allow-list, start with
+# '*' and re-include paths with '!src', '!pyproject.toml', and so on.
+
+# Version control and CI metadata
+.git
+.gitignore
+.github
+.gitlab-ci.yml
+
+# Secrets and local configuration: never send these to the builder
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+.npmrc
+.pypirc
+.netrc
+.aws
+.azure
+.docker
+secrets/
+
+# Dependencies and build outputs are rebuilt inside the image
+node_modules
+.venv
+venv
+__pycache__
+*.pyc
+dist
+build
+coverage
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+htmlcov
+
+# Editor, OS, and infrastructure files
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+infra
+*.tfstate
+*.tfstate.*
+.terraform
+
+# Container files themselves are not needed inside the image
+Dockerfile*
+compose*.yaml
+docker-compose*.yml
+.dockerignore

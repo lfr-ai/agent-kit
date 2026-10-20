@@ -1,0 +1,49 @@
+// src/shared/debug/redact.test.ts
+import { describe, expect, it } from "vitest";
+import { REDACTED, redactHeaders, redactJson, redactText, redactUrl } from "./redact";
+
+describe("redactUrl", () => {
+  it("redacts sensitive query parameters and credentials but keeps the shape", () => {
+    const result = redactUrl("https://user:pw@app.example.test/cb?code=abc&state=xyz&page=2");
+
+    expect(result).toBe(
+      `https://app.example.test/cb?code=${encodeURIComponent(REDACTED)}&state=${encodeURIComponent(REDACTED)}&page=2`,
+    );
+  });
+
+  it("redacts token fragments from implicit-flow style URLs", () => {
+    expect(redactUrl("https://app.example.test/#access_token=abc")).toBe(`https://app.example.test/#${REDACTED}`);
+  });
+
+  it("falls back to text redaction for relative or invalid URLs", () => {
+    expect(redactUrl("/search?q=someone@example.test")).toBe(`/search?q=${REDACTED}`);
+  });
+});
+
+describe("redactHeaders", () => {
+  it("redacts credential headers case-insensitively", () => {
+    expect(redactHeaders({ Authorization: "Bearer abc", Accept: "application/json", Cookie: "sid=1" })).toEqual({
+      Authorization: REDACTED,
+      Accept: "application/json",
+      Cookie: REDACTED,
+    });
+  });
+});
+
+describe("redactText and redactJson", () => {
+  it("removes bearer tokens, JWT-shaped values, and emails from free text", () => {
+    const jwt = ["eyJhbGciOi", "eyJzdWIiOi", "c2lnbmF0dXJl"].join(".");
+    expect(redactText(`Bearer abc.def failed for a.person@example.test with ${jwt}`)).toBe(
+      `Bearer ${REDACTED} failed for ${REDACTED} with ${REDACTED}`,
+    );
+  });
+
+  it("redacts sensitive keys at any depth", () => {
+    const input = { order: { id: "ord_1", customer: { email: "x@example.test", name: "Sample" } }, password: "p" };
+
+    expect(redactJson(input, new Set(["password", "name"]))).toEqual({
+      order: { id: "ord_1", customer: { email: REDACTED, name: REDACTED } },
+      password: REDACTED,
+    });
+  });
+});

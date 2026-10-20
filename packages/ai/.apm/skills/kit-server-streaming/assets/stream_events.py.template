@@ -1,0 +1,247 @@
+"""Stream event contract, SSE codec, replay buffer, and SSE parser.
+
+Copy to 'streaming/events.py'. Framework-free: the FastAPI route, a WebSocket
+handler, or a gRPC servicer can all reuse these types.
+
+Contract:
+
+- Every event has a per-stream sequence number starting at 1; it is the SSE
+  'id' and the value clients send back in 'Last-Event-ID'.
+- Event names are 'start', 'delta', 'progress' and 'end'.
+- Every completed stream ends with exactly one 'end' event whose data has a
+  'status' of 'completed', 'failed', 'cancelled' or 'timeout'.
+- A connection that closes without 'end' is a transport interruption; the
+  client reconnects with 'Last-Event-ID' and receives only later events.
+"""
+
+import json
+from collections import deque
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class EventName(StrEnum):
+    """Allowed event names; clients ignore names they do not know."""
+
+    START = "start"
+    DELTA = "delta"
+    PROGRESS = "progress"
+    END = "end"
+
+
+class EndStatus(StrEnum):
+    """Terminal outcomes carried by the 'end' event."""
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
+
+
+class ReplayGapError(Exception):
+    """Events after the requested id were evicted; the client must restart."""
+
+
+MAX_EVENT_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamEvent:
+    """One event in a stream.
+
+    Attributes:
+        seq: One-based sequence number within the stream.
+        event: Event name.
+        data: JSON-serializable payload with documented fields per event name.
+    """
+
+    seq: int
+    event: EventName
+    data: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate sequence, terminal payload, and size."""
+        if self.seq < 1:
+            raise ValueError("seq is one-based")
+        if self.event is EventName.END and self.data.get("status") not in set(
+            EndStatus
+        ):
+            raise ValueError("end events need a valid status")
+        if len(self.json()) > MAX_EVENT_BYTES:
+            raise ValueError(f"event {self.seq} exceeds {MAX_EVENT_BYTES} bytes")
+
+    @property
+    def is_terminal(self) -> bool:
+        """True for the single 'end' event."""
+        return self.event is EventName.END
+
+    def json(self) -> str:
+        """Serialize the payload compactly and deterministically."""
+        return json.dumps(
+            self.data, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+        )
+
+
+def encode_sse(event: StreamEvent) -> bytes:
+    """Encode one event as an SSE frame.
+
+    The payload is single-line JSON, so no 'data' line can smuggle a blank line
+    or extra field into the stream. Event names come from an enum and ids are
+    integers, so neither can contain a newline.
+
+    Args:
+        event: Event to encode.
+
+    Returns:
+        UTF-8 bytes ending with the blank line that dispatches the event.
+    """
+    return f"id: {event.seq}\nevent: {event.event}\ndata: {event.json()}\n\n".encode()
+
+
+def encode_comment(text: str = "ping") -> bytes:
+    """Encode an SSE comment, used as a heartbeat that clients ignore.
+
+    Args:
+        text: Comment text; newlines are removed.
+
+    Returns:
+        UTF-8 bytes for one comment line and a terminating blank line.
+    """
+    return f": {' '.join(text.splitlines())}\n\n".encode()
+
+
+def encode_retry(milliseconds: int) -> bytes:
+    """Encode the client reconnection delay hint.
+
+    Args:
+        milliseconds: Delay the client should wait before reconnecting.
+
+    Returns:
+        UTF-8 bytes for a 'retry' field.
+    """
+    if milliseconds < 0:
+        raise ValueError("retry must be non-negative")
+    return f"retry: {milliseconds}\n\n".encode()
+
+
+def parse_last_event_id(raw: str | None) -> int:
+    """Parse a 'Last-Event-ID' header value.
+
+    Args:
+        raw: Header value, or None when absent.
+
+    Returns:
+        The last sequence the client saw; 0 when absent.
+
+    Raises:
+        ValueError: If the value is not a non-negative integer.
+    """
+    if raw is None or not raw.strip():
+        return 0
+    value = int(raw.strip())
+    if value < 0:
+        raise ValueError("Last-Event-ID must be non-negative")
+    return value
+
+
+class ReplayBuffer:
+    """Bounded window of recent events for reconnecting clients."""
+
+    def __init__(self, *, capacity: int) -> None:
+        """Create an empty buffer.
+
+        Args:
+            capacity: Maximum number of retained events.
+        """
+        if capacity < 1:
+            raise ValueError("capacity must be positive")
+        self._events: deque[StreamEvent] = deque(maxlen=capacity)
+
+    @property
+    def last_seq(self) -> int:
+        """Sequence of the newest retained event; 0 when empty."""
+        return self._events[-1].seq if self._events else 0
+
+    def append(self, event: StreamEvent) -> None:
+        """Retain an event; sequence numbers must increase by one.
+
+        Args:
+            event: Next event of the stream.
+
+        Raises:
+            ValueError: If the sequence is not contiguous.
+        """
+        if event.seq != self.last_seq + 1:
+            raise ValueError(f"expected seq {self.last_seq + 1}, got {event.seq}")
+        self._events.append(event)
+
+    def after(self, seq: int) -> list[StreamEvent]:
+        """Return retained events newer than 'seq'.
+
+        Args:
+            seq: Last sequence the client saw.
+
+        Returns:
+            Events with a larger sequence, oldest first.
+
+        Raises:
+            ReplayGapError: If some newer events were already evicted.
+        """
+        if not self._events:
+            return []
+        oldest = self._events[0].seq
+        if seq + 1 < oldest:
+            raise ReplayGapError(f"events {seq + 1}..{oldest - 1} were evicted")
+        return [event for event in self._events if event.seq > seq]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ParsedEvent:
+    """One dispatched SSE event as a client sees it.
+
+    Attributes:
+        event: Event name; 'message' when the frame had none.
+        data: Data lines joined with newlines.
+        id: Last event id in effect, or None.
+    """
+
+    event: str
+    data: str
+    id: str | None
+
+
+def parse_sse(text: str) -> Iterator[ParsedEvent]:
+    """Parse an SSE body the way the HTML specification's client algorithm does.
+
+    Comments and 'retry' fields are consumed; an event is dispatched at each
+    blank line when it has data. Use it in contract tests and Python clients.
+
+    Args:
+        text: Complete or partial response body.
+
+    Yields:
+        Dispatched events in order.
+    """
+    event = ""
+    data: list[str] = []
+    last_id: str | None = None
+    for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if raw_line == "":
+            if data:
+                yield ParsedEvent(
+                    event=event or "message", data="\n".join(data), id=last_id
+                )
+            event = ""
+            data = []
+            continue
+        if raw_line.startswith(":"):
+            continue
+        name, _, value = raw_line.partition(":")
+        value = value.removeprefix(" ")
+        if name == "event":
+            event = value
+        elif name == "data":
+            data.append(value)
+        elif name == "id" and "\x00" not in value:
+            last_id = value

@@ -1,0 +1,47 @@
+"""Behavior tests for the lazy regional revenue summary."""
+
+import polars as pl
+from polars.testing import assert_frame_equal
+
+from myapp.infrastructure.analytics.regional_revenue import regional_revenue
+
+
+def test_revenue_skips_missing_quantities_and_orders_by_revenue_then_region() -> None:
+    """Null quantities are ignored and ties fall back to region order."""
+    sales = pl.LazyFrame(
+        {
+            "region": ["north", "south", "north", "east", "south"],
+            "product": ["p1", "p2", "p2", "p1", "p2"],
+            "quantity": [2, 1, None, 4, 3],
+            "unit_price": [5.0, 10.0, 99.0, 2.5, 10.0],
+        }
+    )
+
+    actual = regional_revenue(sales).collect()
+
+    expected = pl.DataFrame(
+        {
+            "region": ["south", "east", "north"],
+            "revenue": [40.0, 10.0, 10.0],
+            "distinct_products": [1, 1, 1],
+        },
+        schema_overrides={"distinct_products": pl.UInt32},
+    )
+    assert_frame_equal(actual, expected)
+
+
+def test_empty_input_keeps_the_output_schema() -> None:
+    """An empty source still yields the documented columns."""
+    empty = pl.LazyFrame(
+        schema={
+            "region": pl.String,
+            "product": pl.String,
+            "quantity": pl.Int64,
+            "unit_price": pl.Float64,
+        }
+    )
+
+    actual = regional_revenue(empty).collect()
+
+    assert actual.columns == ["region", "revenue", "distinct_products"]
+    assert actual.is_empty()

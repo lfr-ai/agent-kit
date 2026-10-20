@@ -1,0 +1,71 @@
+// src/app/search-params.ts
+// URL state parsed with a schema: invalid or tampered values fall back to defaults
+// instead of crashing, and defaults are omitted so URLs stay canonical.
+import { useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router";
+import { z } from "zod";
+
+export const orderSearchSchema = z.object({
+  status: z.enum(["draft", "submitted", "paid", "cancelled"]).optional().catch(undefined),
+  q: z.string().trim().max(100).optional().catch(undefined),
+  page: z.coerce.number().int().min(1).max(10_000).catch(1),
+  sort: z.enum(["updated-desc", "updated-asc", "total-desc"]).catch("updated-desc"),
+});
+export type OrderSearch = z.infer<typeof orderSearchSchema>;
+
+const defaults: OrderSearch = orderSearchSchema.parse({});
+
+export function parseOrderSearch(params: URLSearchParams): OrderSearch {
+  return orderSearchSchema.parse(Object.fromEntries(params));
+}
+
+export function serializeOrderSearch(search: OrderSearch): URLSearchParams {
+  const params = new URLSearchParams();
+  if (search.status) params.set("status", search.status);
+  if (search.q) params.set("q", search.q);
+  if (search.page !== defaults.page) params.set("page", String(search.page));
+  if (search.sort !== defaults.sort) params.set("sort", search.sort);
+  return params;
+}
+
+export type UpdateOrderSearch = (
+  patch: Partial<OrderSearch>,
+  options?: Readonly<{ push?: boolean }>,
+) => void;
+
+/**
+ * Typing in a filter replaces the history entry; deliberate steps (pagination)
+ * pass push: true so Back returns to the previous page.
+ */
+export function useOrderSearch(): readonly [OrderSearch, UpdateOrderSearch] {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = useMemo(() => parseOrderSearch(searchParams), [searchParams]);
+  const update = useCallback<UpdateOrderSearch>(
+    (patch, options = {}) => {
+      setSearchParams(
+        (current) => {
+          const merged = { ...parseOrderSearch(current), ...patch };
+          // Changing a filter resets pagination unless the patch sets a page.
+          const page = "page" in patch && patch.page !== undefined ? patch.page : 1;
+          return serializeOrderSearch({ ...merged, page });
+        },
+        { replace: options.push !== true },
+      );
+    },
+    [setSearchParams],
+  );
+  return [search, update] as const;
+}
+
+/** Only same-origin absolute paths are allowed as post-sign-in destinations. */
+export function safeReturnTo(value: string | null | undefined, fallback = "/"): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return fallback;
+  }
+  try {
+    const url = new URL(value, "https://placeholder.invalid");
+    return url.origin === "https://placeholder.invalid" ? url.pathname + url.search + url.hash : fallback;
+  } catch {
+    return fallback;
+  }
+}

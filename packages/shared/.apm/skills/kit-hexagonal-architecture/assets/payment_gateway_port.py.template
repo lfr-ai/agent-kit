@@ -1,0 +1,55 @@
+"""Driven port for charging money through an external payment provider.
+
+Copy to 'app/application/ports/payments.py'. The port speaks the application's
+language: an invoice, an amount and an idempotency key. It does not expose URLs,
+HTTP status codes, vendor SDK objects or retry knobs; those stay in adapters.
+"""
+
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Protocol
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PaymentReceipt:
+    """Proof that the provider accepted a charge.
+
+    Attributes:
+        reference: Provider identifier for the charge; stable across retries.
+        amount: Amount the provider actually captured.
+        currency: Currency the provider actually captured.
+    """
+
+    reference: str
+    amount: Decimal
+    currency: str
+
+
+class PaymentGateway(Protocol):
+    """Charge customers; implementations must be idempotent per key."""
+
+    def charge(
+        self,
+        *,
+        invoice_id: str,
+        amount: Decimal,
+        currency: str,
+        idempotency_key: str,
+    ) -> PaymentReceipt:
+        """Capture a payment, or return the earlier receipt for a repeated key.
+
+        Args:
+            invoice_id: Invoice being paid; used for provider-side reconciliation.
+            amount: Positive amount to capture.
+            currency: ISO 4217 code of the amount.
+            idempotency_key: Same key means same charge; never charge twice.
+
+        Returns:
+            The receipt for the captured (or previously captured) charge.
+
+        Raises:
+            PaymentDeclinedError: The provider refused the charge.
+            PaymentUnavailableError: The outcome is unknown; retry with the same key.
+            PaymentProtocolError: The provider answered outside its contract.
+        """
+        ...

@@ -1,0 +1,99 @@
+"""Process-wide logging configuration: JSON lines plus a correlation identifier.
+
+Copy into 'src/<package>/logging_setup.py'. Call 'configure_logging' once from
+the composition root or entry point. Transport middleware calls
+'bind_correlation_id' at the start of each request or job.
+"""
+
+import json
+import logging
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import UTC, datetime
+from typing import TextIO
+
+_CORRELATION_ID = ContextVar[str | None]("correlation_id", default=None)
+_HANDLER_NAME = "shop-root-handler"
+_RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {
+    "message",
+    "asctime",
+    "taskName",
+}
+_REDACTED_KEYS = frozenset({"password", "token", "secret", "authorization", "api_key"})
+
+
+class CorrelationFilter(logging.Filter):
+    """Attach the current correlation identifier to every record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add 'correlation_id' and keep the record."""
+        record.correlation_id = _CORRELATION_ID.get()
+        return True
+
+
+class JsonFormatter(logging.Formatter):
+    """Render each record as one JSON object per line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Serialize standard fields, extra fields, and any exception text."""
+        payload: dict[str, object] = {
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": record.getMessage(),
+        }
+        for key, value in vars(record).items():
+            if key in _RESERVED or key.startswith("_"):
+                continue
+            payload[key] = "[redacted]" if key.lower() in _REDACTED_KEYS else value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str, sort_keys=True)
+
+
+def configure_logging(
+    *, level: str = "INFO", json_lines: bool = True, stream: TextIO | None = None
+) -> logging.Handler:
+    """Install one root handler; repeated calls replace it instead of duplicating.
+
+    Args:
+        level: Root level name such as 'INFO'.
+        json_lines: Emit JSON lines when true, a readable text format otherwise.
+        stream: Destination stream; defaults to standard error.
+
+    Returns:
+        The installed handler, which tests can inspect or remove.
+    """
+    root = logging.getLogger()
+    for existing in [item for item in root.handlers if item.get_name() == _HANDLER_NAME]:
+        root.removeHandler(existing)
+    handler = logging.StreamHandler(stream or sys.stderr)
+    handler.set_name(_HANDLER_NAME)
+    handler.addFilter(CorrelationFilter())
+    handler.setFormatter(
+        JsonFormatter()
+        if json_lines
+        else logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(correlation_id)s] %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(level.upper())
+    return handler
+
+
+@contextmanager
+def bind_correlation_id(correlation_id: str) -> Iterator[None]:
+    """Set the correlation identifier for the current task or thread context.
+
+    Args:
+        correlation_id: Request or job identifier; must not contain personal data.
+
+    Yields:
+        Nothing; the previous identifier is restored on exit.
+    """
+    token = _CORRELATION_ID.set(correlation_id)
+    try:
+        yield
+    finally:
+        _CORRELATION_ID.reset(token)

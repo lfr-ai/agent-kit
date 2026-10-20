@@ -1,0 +1,32 @@
+# terraform-docs configuration. Copy to infra/.terraform-docs.yml.
+# Use: terraform-docs . (CI runs it with --output-check to detect stale docs)
+formatter: markdown table
+version: ">= 0.19.0, < 1.0.0"
+
+recursive:
+  enabled: true
+  path: modules
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+sort:
+  enabled: true
+  by: required
+
+settings:
+  anchor: true
+  default: true
+  description: true
+  escape: true
+  hide-empty: false
+  indent: 2
+  lockfile: true
+  required: true
+  sensitive: true
+  type: true

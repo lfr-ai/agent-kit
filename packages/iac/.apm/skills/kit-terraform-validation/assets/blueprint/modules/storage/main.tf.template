@@ -1,0 +1,40 @@
+# Storage account with secure defaults. Copy to infra/modules/storage/main.tf.
+resource "azurerm_storage_account" "this" {
+  name                = var.name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  account_kind             = "StorageV2"
+  account_tier             = "Standard"
+  account_replication_type = var.replication_type
+
+  # Transport and access hardening.
+  https_traffic_only_enabled        = true
+  min_tls_version                   = "TLS1_2"
+  allow_nested_items_to_be_public   = false
+  shared_access_key_enabled         = false
+  default_to_oauth_authentication   = true
+  public_network_access_enabled     = var.public_network_access_enabled
+  infrastructure_encryption_enabled = true
+
+  blob_properties {
+    versioning_enabled = true
+
+    delete_retention_policy {
+      days = var.soft_delete_retention_days
+    }
+
+    container_delete_retention_policy {
+      days = var.soft_delete_retention_days
+    }
+  }
+
+  tags = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = !var.public_network_access_enabled || var.replication_type != "LRS"
+      error_message = "Publicly reachable accounts must not use LRS; choose ZRS or higher."
+    }
+  }
+}

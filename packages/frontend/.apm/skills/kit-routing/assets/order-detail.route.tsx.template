@@ -1,0 +1,56 @@
+// src/features/orders/routes/order-detail.route.tsx
+// Route module: the loader validates params and warms the query cache before
+// render; the component reads the same query so background refreshes still work.
+import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
+import { useId, type ReactElement } from "react";
+import { data, Link, useLoaderData, type LoaderFunctionArgs } from "react-router";
+import { z } from "zod";
+import { ApiError } from "@/shared/api/http-client";
+import { formatOrderTotal, orderStatusLabel, ordersQueries } from "@/features/orders";
+
+const paramsSchema = z.object({
+  orderId: z.string().regex(/^ord_[A-Za-z0-9]{1,40}$/),
+});
+
+export function orderDetailLoader(queryClient: QueryClient) {
+  return async ({ params }: LoaderFunctionArgs): Promise<{ orderId: string }> => {
+    const parsed = paramsSchema.safeParse(params);
+    if (!parsed.success) {
+      // A malformed id can never exist: answer like a missing page, without a request.
+      throw data("Order not found", { status: 404 });
+    }
+    const { orderId } = parsed.data;
+    try {
+      await queryClient.ensureQueryData(ordersQueries.detail(orderId));
+    } catch (error) {
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+        throw data(error.message, { status: error.status });
+      }
+      throw error;
+    }
+    return { orderId };
+  };
+}
+
+type Loader = ReturnType<typeof orderDetailLoader>;
+
+export function OrderDetailPage(): ReactElement {
+  const headingId = useId();
+  const { orderId } = useLoaderData<Loader>();
+  const { data: order, isFetching } = useSuspenseQuery(ordersQueries.detail(orderId));
+
+  return (
+    <article aria-labelledby={headingId} aria-busy={isFetching}>
+      <p>
+        <Link to="/orders">Back to orders</Link>
+      </p>
+      <h1 id={headingId}>Order {order.reference}</h1>
+      <dl>
+        <dt>Status</dt>
+        <dd>{orderStatusLabel(order.status)}</dd>
+        <dt>Total</dt>
+        <dd>{formatOrderTotal(order, navigator.language)}</dd>
+      </dl>
+    </article>
+  );
+}

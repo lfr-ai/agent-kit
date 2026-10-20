@@ -1,0 +1,55 @@
+# Design: TBD change title
+
+Requirements served: REQ-001, TBD
+
+## Current state
+
+TBD - how the affected behavior works today, with file paths and the main
+call or data flow.
+
+## Decisions
+
+### Decision 1: TBD decision title
+
+- Context: TBD - the forces and constraints that require a decision.
+- Options considered:
+  1. TBD option - benefits, costs, risks.
+  2. TBD option - benefits, costs, risks.
+- Choice: TBD and the deciding reason.
+- Consequences: TBD - what becomes easier, harder or impossible.
+
+## Flow for the main scenario
+
+1. TBD caller sends TBD.
+2. TBD component validates TBD.
+3. TBD component persists or emits TBD.
+4. TBD response or event is returned.
+
+## Contract and data changes
+
+| Contract or store | Change | Compatibility handling | Order |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD (additive field, versioned path, dual write) | expand / migrate / contract |
+
+## Non-functional targets
+
+| Property | Target | Measurement method |
+| --- | --- | --- |
+| Latency | TBD | TBD |
+| Memory or throughput | TBD | TBD |
+| Security and privacy | TBD | TBD |
+| Accessibility | TBD | TBD |
+
+## Rollout and rollback
+
+- Rollout order: TBD
+- Feature flag or configuration switch: TBD
+- Rollback steps and data safety: TBD
+
+## Out of scope for this design
+
+- TBD
+
+## Deviations recorded during Apply
+
+- None yet.

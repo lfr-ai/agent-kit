@@ -1,0 +1,82 @@
+# Dependabot version and security updates.
+# Reference: https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+# Commit messages follow Conventional Commits so `cz check` accepts them:
+#   build(deps): ...  build(deps-dev): ...  ci(deps): ...
+version: 2
+
+updates:
+  # Python: pyproject.toml dependency groups and uv.lock, updated together.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    # Let new releases settle before proposing them; security updates are exempt.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    labels: [dependencies]
+    groups:
+      # Any security fix arrives as one PR, immediately.
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      python-dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+        patterns: ["*"]
+        # The APM CLI is pinned exactly and needs its own compatibility review
+        # (`task apm:smoke`), so it is never batched.
+        exclude-patterns: [apm-cli]
+      python-runtime:
+        dependency-type: production
+        update-types: [minor, patch]
+        patterns: ["*"]
+
+  # GitHub Actions stay pinned to full commit SHAs (enforced by
+  # scripts/check_governance.py); Dependabot updates the SHA and version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+      include: scope
+    labels: [dependencies, ci]
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # pre-commit hook revisions in .pre-commit-config.yaml.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [dependencies, quality-gate]
+    groups:
+      pre-commit-hooks:
+        patterns: ["*"]

@@ -1,0 +1,23 @@
+# Bounded assignment
+
+- Observable objective:
+- Owned check (from the ownership table):
+- Writable paths:
+- Read-only contracts and owners:
+- Branch and worktree path (only when the operator approved worktrees):
+- Prerequisites:
+- Forbidden actions (including remote/global/deployment changes):
+- Required checks:
+- Stop condition:
+
+## Return contract
+
+- Changed paths and behavior:
+- Exact executed command/result:
+- Invalid-input or negative regression:
+- Shared-file edits requested from the integration owner:
+- Shared change needed from coordinator:
+- Assumptions about other tasks' output:
+- Unverified surfaces:
+
+Do not delegate further or expand scope to repair unrelated failures.

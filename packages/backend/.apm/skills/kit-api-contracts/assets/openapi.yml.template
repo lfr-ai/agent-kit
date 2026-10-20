@@ -1,0 +1,266 @@
+openapi: 3.1.1
+info:
+  title: Orders API
+  version: 1.0.0
+  description: >-
+    Example contract for an orders service. Replace names, servers, and
+    schemas. Every error response uses RFC 9457 problem details.
+  license:
+    name: MIT
+    identifier: MIT
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://api.example.com/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: orders
+    description: Order lifecycle.
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: List orders, newest first.
+      tags: [orders]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+      responses:
+        "200":
+          description: One page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createOrder
+      summary: Create a draft order.
+      tags: [orders]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCreate"
+      responses:
+        "201":
+          description: Order created.
+          headers:
+            Location:
+              description: URL of the new order.
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /orders/{order_id}:
+    parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    get:
+      operationId: getOrder
+      summary: Fetch one order.
+      tags: [orders]
+      responses:
+        "200":
+          description: The order.
+          headers:
+            ETag:
+              description: Version tag for conditional updates.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a previous page's next_cursor.
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique key per logical create; retries reuse it.
+      schema:
+        type: string
+        maxLength: 255
+  schemas:
+    OrderStatus:
+      type: string
+      enum: [draft, confirmed, cancelled]
+      description: Clients must tolerate values added in later versions.
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          pattern: "^-?[0-9]+\\.[0-9]{2}$"
+          examples: ["12.50"]
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          examples: [EUR]
+    OrderLineCreate:
+      type: object
+      additionalProperties: false
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+        quantity:
+          type: integer
+          minimum: 1
+    OrderCreate:
+      type: object
+      additionalProperties: false
+      required: [customer_id, currency, lines]
+      properties:
+        customer_id:
+          type: string
+          minLength: 1
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OrderLineCreate"
+        note:
+          type: [string, "null"]
+          maxLength: 500
+    Order:
+      type: object
+      required: [id, status, total, created_at]
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        total:
+          $ref: "#/components/schemas/Money"
+        created_at:
+          type: string
+          format: date-time
+    OrderPage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+    Problem:
+      type: object
+      description: RFC 9457 problem details with a field-error extension.
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        errors:
+          type: array
+          items:
+            type: object
+            required: [pointer, message]
+            properties:
+              pointer:
+                type: string
+              message:
+                type: string
+  responses:
+    BadRequest:
+      description: The request could not be parsed or a cursor is invalid.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Authentication is missing or invalid.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: The idempotency key is in use by a request still in progress.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationFailed:
+      description: The body is well-formed but invalid, or an idempotency key was reused with a different body.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"

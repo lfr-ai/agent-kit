@@ -1,0 +1,38 @@
+# Topic title stating the decision this page supports
+
+One paragraph: who reads this, at which step of the skill procedure, and what
+they will be able to decide or do afterwards.
+
+## When this applies
+
+- Situation where the guidance applies.
+- Situation where it does not, and what to use instead.
+
+## Procedure or catalog
+
+1. First action, with the observable result that shows it worked.
+2. Next action. Name exact commands, file names or fields.
+3. Decision point: if A, do X; if B, do Y.
+
+| Option | Use when | Avoid when |
+| --- | --- | --- |
+| | | |
+
+## Example
+
+A short, synthetic, runnable example (orders, invoices, documents, users).
+Label anything not executed as illustrative.
+
+## Failure and recovery
+
+- Symptom: cause, safe fix, and the point after which the fix is not safe.
+- Missing prerequisite: how it shows up and what to report.
+
+## Checks
+
+- Statement that is true when this part is done correctly.
+- Command or checker that verifies it.
+
+## Sources
+
+- [Official documentation page title](https://example.com/official-docs)

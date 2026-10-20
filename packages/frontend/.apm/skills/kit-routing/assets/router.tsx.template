@@ -1,0 +1,143 @@
+// src/app/router.tsx
+// Data-mode router (React Router v7+). The root layout keeps navigation visible,
+// a pathless child boundary catches page errors inside the layout, and the root
+// boundary is the last resort when the layout itself fails.
+import type { QueryClient } from "@tanstack/react-query";
+import {
+  createBrowserRouter,
+  data,
+  NavLink,
+  Outlet,
+  redirect,
+  ScrollRestoration,
+  useNavigation,
+  type LoaderFunctionArgs,
+  type RouteObject,
+} from "react-router";
+import type { ReactElement } from "react";
+import { RouteErrorBoundary } from "./route-error-boundary";
+import { RouteFocus } from "./route-focus";
+import { safeReturnTo } from "./search-params";
+
+export type Session = Readonly<{ userId: string; displayName: string }>;
+
+export type AppRouterDeps = Readonly<{
+  queryClient: QueryClient;
+  getSession: () => Promise<Session | null>;
+}>;
+
+/**
+ * Navigation aid only: the API still authorizes every request. Redirects keep the
+ * requested location so sign-in can return the user there.
+ */
+export function requireSession(getSession: AppRouterDeps["getSession"]) {
+  return async ({ request }: LoaderFunctionArgs): Promise<Session> => {
+    const session = await getSession();
+    if (session === null) {
+      const url = new URL(request.url);
+      const returnTo = safeReturnTo(url.pathname + url.search);
+      throw redirect(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+    return session;
+  };
+}
+
+function RootLayout(): ReactElement {
+  const navigation = useNavigation();
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <header>
+        <nav aria-label="Primary">
+          <NavLink to="/orders">Orders</NavLink> <NavLink to="/invoices">Invoices</NavLink>
+        </nav>
+        <p role="status" className="navigation-progress">
+          {navigation.state === "loading" ? "Loading page…" : ""}
+        </p>
+      </header>
+      <main id="main" tabIndex={-1}>
+        <Outlet />
+      </main>
+      <RouteFocus appName="Example App" />
+      <ScrollRestoration />
+    </>
+  );
+}
+
+function AppLoading(): ReactElement {
+  return <p role="status">Loading application…</p>;
+}
+
+export function appRoutes(deps: AppRouterDeps): RouteObject[] {
+  return [
+    {
+      id: "root",
+      path: "/",
+      Component: RootLayout,
+      HydrateFallback: AppLoading,
+      ErrorBoundary: RouteErrorBoundary,
+      children: [
+        {
+          // Pathless boundary: page errors render inside the layout.
+          ErrorBoundary: RouteErrorBoundary,
+          children: [
+            { index: true, loader: () => redirect("/orders") },
+            {
+              path: "sign-in",
+              handle: { title: "Sign in" },
+              lazy: async () => {
+                const module = await import("@/features/auth/routes/sign-in.route");
+                return { Component: module.SignInPage, action: module.signInAction };
+              },
+            },
+            {
+              id: "authenticated",
+              loader: requireSession(deps.getSession),
+              children: [
+                {
+                  path: "orders",
+                  handle: { title: "Orders" },
+                  lazy: async () => {
+                    const module = await import("@/features/orders/routes/orders-list.route");
+                    return { Component: module.OrdersListPage };
+                  },
+                },
+                {
+                  path: "orders/:orderId",
+                  handle: { title: "Order details" },
+                  lazy: async () => {
+                    const module = await import("@/features/orders/routes/order-detail.route");
+                    return {
+                      Component: module.OrderDetailPage,
+                      loader: module.orderDetailLoader(deps.queryClient),
+                    };
+                  },
+                },
+              ],
+            },
+            {
+              path: "*",
+              loader: () => {
+                throw data("Page not found", { status: 404 });
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+export function createAppRouter(deps: AppRouterDeps): ReturnType<typeof createBrowserRouter> {
+  return createBrowserRouter(appRoutes(deps));
+}
+
+// src/main.tsx wiring, after runtime config has loaded:
+//   const router = createAppRouter({ queryClient, getSession });
+//   root.render(
+//     <QueryClientProvider client={queryClient}>
+//       <RouterProvider router={router} />   // import from "react-router/dom"
+//     </QueryClientProvider>,
+//   );

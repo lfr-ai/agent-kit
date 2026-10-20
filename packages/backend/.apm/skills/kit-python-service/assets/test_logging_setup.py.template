@@ -1,0 +1,76 @@
+"""Tests for the logging setup template using an in-memory stream.
+
+Replace 'shop.logging_setup' with the module that holds the copied setup.
+"""
+
+import io
+import json
+import logging
+from collections.abc import Iterator
+
+import pytest
+from shop.logging_setup import bind_correlation_id, configure_logging
+
+
+@pytest.fixture
+def stream() -> Iterator[io.StringIO]:
+    buffer = io.StringIO()
+    handler = configure_logging(level="DEBUG", json_lines=True, stream=buffer)
+    yield buffer
+    logging.getLogger().removeHandler(handler)
+
+
+def _events(buffer: io.StringIO) -> list[dict[str, object]]:
+    return [json.loads(line) for line in buffer.getvalue().splitlines()]
+
+
+def test_records_are_json_lines_with_extra_fields(stream: io.StringIO) -> None:
+    """Variable data appears as fields, not interpolated text."""
+    logging.getLogger("shop.test").info("order confirmed", extra={"order_id": "ord-1"})
+    (event,) = _events(stream)
+    assert event["event"] == "order confirmed"
+    assert event["order_id"] == "ord-1"
+    assert event["level"] == "INFO"
+    assert event["logger"] == "shop.test"
+
+
+def test_correlation_identifier_is_bound_and_restored(stream: io.StringIO) -> None:
+    """Records inside the block carry the identifier; records after it do not."""
+    logger = logging.getLogger("shop.test")
+    with bind_correlation_id("req-123"):
+        logger.info("inside")
+    logger.info("outside")
+    inside, outside = _events(stream)
+    assert inside["correlation_id"] == "req-123"
+    assert outside["correlation_id"] is None
+
+
+def test_sensitive_extra_keys_are_redacted(stream: io.StringIO) -> None:
+    """Known secret field names never reach the log sink."""
+    logging.getLogger("shop.test").info("login", extra={"token": "abc.def.ghi"})
+    (event,) = _events(stream)
+    assert event["token"] == "[redacted]"
+    assert "abc.def.ghi" not in stream.getvalue()
+
+
+def test_exceptions_include_traceback_text(stream: io.StringIO) -> None:
+    """'logger.exception' inside a handler records the traceback once."""
+    logger = logging.getLogger("shop.test")
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        logger.exception("job failed")
+    (event,) = _events(stream)
+    assert "RuntimeError: boom" in str(event["exception"])
+
+
+def test_reconfiguring_does_not_duplicate_output(stream: io.StringIO) -> None:
+    """Calling the setup twice replaces the handler instead of adding another."""
+    second = io.StringIO()
+    handler = configure_logging(level="INFO", json_lines=True, stream=second)
+    try:
+        logging.getLogger("shop.test").info("once")
+        assert stream.getvalue() == ""
+        assert len(_events(second)) == 1
+    finally:
+        logging.getLogger().removeHandler(handler)

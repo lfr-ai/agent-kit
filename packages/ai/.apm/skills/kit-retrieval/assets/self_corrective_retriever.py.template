@@ -1,0 +1,203 @@
+"""Self-corrective retrieval: grade, rewrite, retry, then abstain.
+
+Copy to 'retrieval/self_corrective.py'. The loop retrieves, asks a
+'RelevanceGrader' whether the hits can support an answer, and when they
+cannot, asks a 'QueryRewriter' for a better query. Rounds, wall-clock time and
+repeated rewrites are bounded. The rewritten query always keeps the original
+principal, filters and 'top_k', so a rewrite can never widen access.
+"""
+
+import asyncio
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from retrieval.contracts import (
+    EvidenceStatus,
+    Grade,
+    Query,
+    QueryRewriter,
+    RelevanceGrader,
+    RetrievalResult,
+    RetrievalUnavailableError,
+    Retriever,
+    ScoredChunk,
+)
+from retrieval.retrievers import tokenize
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CorrectionPolicy:
+    """Bounds for the corrective loop.
+
+    Attributes:
+        max_rounds: Maximum retrieval rounds, including the first.
+        total_timeout_s: Wall-clock budget for all rounds.
+        keep_partial: Return the best insufficient hits instead of abstaining.
+    """
+
+    max_rounds: int = 3
+    total_timeout_s: float = 10.0
+    keep_partial: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject unbounded or empty loops."""
+        if not 1 <= self.max_rounds <= 5:  # noqa: PLR2004 - documented bound
+            raise ValueError("max_rounds must be between 1 and 5")
+        if self.total_timeout_s <= 0:
+            raise ValueError("total_timeout_s must be positive")
+
+
+class KeywordOverlapGrader:
+    """Baseline grader: sufficient when a top hit covers enough query terms.
+
+    Replace with a model-based or cross-encoder grader in production, and keep
+    this one as a cheap, deterministic fallback and test double.
+    """
+
+    def __init__(self, *, min_coverage: float = 0.5, inspect_top: int = 3) -> None:
+        """Configure thresholds.
+
+        Args:
+            min_coverage: Share of distinct query terms a hit must contain.
+            inspect_top: Number of leading hits to inspect.
+        """
+        if not 0 < min_coverage <= 1:
+            raise ValueError("min_coverage must be in (0, 1]")
+        self._min_coverage = min_coverage
+        self._inspect_top = inspect_top
+
+    async def grade(self, query: Query, hits: Sequence[ScoredChunk]) -> Grade:
+        """Grade hits by term coverage.
+
+        Args:
+            query: The executed query.
+            hits: Hits in rank order.
+
+        Returns:
+            The grade with a content-free reason.
+        """
+        if not hits:
+            return Grade(status=EvidenceStatus.NO_EVIDENCE, reason="no hits")
+        terms = set(tokenize(query.text))
+        if not terms:
+            return Grade(
+                status=EvidenceStatus.INSUFFICIENT, reason="query has no terms"
+            )
+        best = max(
+            len(terms & set(tokenize(hit.chunk.text))) / len(terms)
+            for hit in hits[: self._inspect_top]
+        )
+        if best >= self._min_coverage:
+            return Grade(
+                status=EvidenceStatus.SUFFICIENT, reason=f"coverage={best:.2f}"
+            )
+        return Grade(
+            status=EvidenceStatus.INSUFFICIENT,
+            reason=f"best term coverage {best:.2f} below {self._min_coverage:.2f}",
+        )
+
+
+def _normalized(text: str) -> str:
+    """Collapse case and whitespace to detect repeated rewrites."""
+    return " ".join(text.casefold().split())
+
+
+class SelfCorrectiveRetriever:
+    """Bounded retrieve-grade-rewrite loop over any 'Retriever' port."""
+
+    def __init__(
+        self,
+        retriever: Retriever,
+        grader: RelevanceGrader,
+        rewriter: QueryRewriter,
+        *,
+        policy: CorrectionPolicy | None = None,
+    ) -> None:
+        """Wire the loop's collaborators.
+
+        Args:
+            retriever: Strategy used every round.
+            grader: Judges whether a round's hits are sufficient.
+            rewriter: Produces the next query text after a weak round.
+            policy: Loop bounds; defaults to 'CorrectionPolicy()'.
+        """
+        self._retriever = retriever
+        self._grader = grader
+        self._rewriter = rewriter
+        self._policy = policy or CorrectionPolicy()
+
+    async def run(self, query: Query) -> RetrievalResult:
+        """Retrieve until the grader is satisfied or a bound is reached.
+
+        Args:
+            query: The caller's original query.
+
+        Returns:
+            A sufficient result, the best partial result when the policy keeps
+            partial evidence, or an explicit no-evidence result.
+
+        Raises:
+            RetrievalUnavailableError: If the time budget is exhausted or a
+                collaborator reports the backend unavailable.
+        """
+        try:
+            async with asyncio.timeout(self._policy.total_timeout_s):
+                return await self._loop(query)
+        except TimeoutError as error:
+            logger.warning(
+                "retrieval.corrective_timeout",
+                extra={"rounds": self._policy.max_rounds},
+            )
+            raise RetrievalUnavailableError(
+                "retrieval time budget exhausted"
+            ) from error
+
+    async def _loop(self, query: Query) -> RetrievalResult:
+        """Execute the bounded rounds."""
+        current = query
+        trace: list[str] = []
+        seen = {_normalized(query.text)}
+        partial: tuple[Query, list[ScoredChunk]] | None = None
+        for round_number in range(1, self._policy.max_rounds + 1):
+            hits = await self._retriever.retrieve(current)
+            grade = (
+                await self._grader.grade(current, hits)
+                if hits
+                else Grade(status=EvidenceStatus.NO_EVIDENCE, reason="no hits")
+            )
+            trace.append(f"round={round_number} hits={len(hits)} status={grade.status}")
+            if grade.status is EvidenceStatus.SUFFICIENT:
+                return RetrievalResult(
+                    query=current,
+                    hits=tuple(hits),
+                    status=EvidenceStatus.SUFFICIENT,
+                    trace=tuple(trace),
+                )
+            if hits and (partial is None or len(hits) > len(partial[1])):
+                partial = (current, hits)
+            if round_number == self._policy.max_rounds:
+                break
+            rewritten = await self._rewriter.rewrite(current, feedback=grade.reason)
+            key = _normalized(rewritten)
+            if not key or key in seen:
+                trace.append("rewrite empty or repeated; stopping")
+                break
+            seen.add(key)
+            current = current.with_text(rewritten)
+        if self._policy.keep_partial and partial is not None:
+            best_query, best_hits = partial
+            return RetrievalResult(
+                query=best_query,
+                hits=tuple(best_hits),
+                status=EvidenceStatus.INSUFFICIENT,
+                trace=tuple(trace),
+            )
+        return RetrievalResult(
+            query=current,
+            hits=(),
+            status=EvidenceStatus.NO_EVIDENCE,
+            trace=tuple(trace),
+        )

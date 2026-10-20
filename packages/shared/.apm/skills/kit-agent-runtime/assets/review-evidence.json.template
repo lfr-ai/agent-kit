@@ -1,0 +1,35 @@
+{
+  "task": "Add invoice total rounding",
+  "worker": "kit-backend-implementer",
+  "summary": "Round invoice totals half-even at the domain boundary and cover negative amounts.",
+  "acceptance": [
+    {
+      "criterion": "Totals round half-even to two decimals",
+      "status": "met",
+      "evidence": "tests/unit/test_invoice_total.py::test_half_even"
+    },
+    {
+      "criterion": "Negative credit notes keep their sign",
+      "status": "met",
+      "evidence": "tests/unit/test_invoice_total.py::test_negative_credit"
+    }
+  ],
+  "commands": [
+    {
+      "command": "uv run --locked pytest tests/unit/test_invoice_total.py -q",
+      "exit_code": 0,
+      "summary": "6 passed"
+    },
+    {
+      "command": "uv run --locked ruff check src/invoices",
+      "exit_code": 0,
+      "summary": "All checks passed"
+    }
+  ],
+  "limitations": [
+    "Currency-specific minor units are out of scope; amounts assume two decimals."
+  ],
+  "follow_up": [
+    "Confirm whether exported reports need the same rounding."
+  ]
+}

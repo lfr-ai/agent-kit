@@ -1,0 +1,68 @@
+// src/features/orders/realtime/use-live-orders.ts
+// One owner for the live connection: created in an effect, stopped in cleanup
+// (Strict Mode safe), resynchronized after every (re)connect.
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import {
+  ReconnectingSocket,
+  type ConnectionStatus,
+} from "@/shared/realtime/reconnecting-socket";
+import { createSequenceGate, handleOrderPayload, resynchronize } from "./order-events";
+
+export type LiveOrders = Readonly<{
+  status: ConnectionStatus;
+  retry: () => void;
+}>;
+
+const idle: ConnectionStatus = { kind: "idle" };
+
+export type UseLiveOrdersOptions = Readonly<{
+  enabled: boolean;
+  /**
+   * Returns the stream URL. Prefer cookie or one-time ticket authentication;
+   * never put a long-lived bearer token in the URL.
+   */
+  streamUrl: () => string;
+  onInvalidEvent?: (payload: unknown) => void;
+}>;
+
+export function useLiveOrders({ enabled, streamUrl, onInvalidEvent }: UseLiveOrdersOptions): LiveOrders {
+  const queryClient = useQueryClient();
+  const [socket, setSocket] = useState<ReconnectingSocket | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus>({ kind: "idle" });
+
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const gate = createSequenceGate();
+    const live = new ReconnectingSocket({
+      url: streamUrl,
+      onOpen: () => {
+        // Anything could have changed while disconnected: restart sequencing and refetch.
+        gate.reset();
+        void resynchronize(queryClient);
+      },
+      onMessage: (payload) => {
+        if (handleOrderPayload(queryClient, gate, payload) === "invalid") {
+          onInvalidEvent?.(payload);
+        }
+      },
+      onInvalidMessage: (raw) => onInvalidEvent?.(raw),
+    });
+    const unsubscribe = live.subscribe(() => setStatus(live.getStatus()));
+    setSocket(live);
+    live.start();
+    return () => {
+      unsubscribe();
+      live.stop();
+      setSocket(null);
+    };
+    // streamUrl and onInvalidEvent are read through the socket; pass stable callbacks.
+  }, [enabled, queryClient, streamUrl, onInvalidEvent]);
+
+  return {
+    status: enabled ? status : idle,
+    retry: () => socket?.reconnectNow(),
+  };
+}

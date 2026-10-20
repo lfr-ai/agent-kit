@@ -1,0 +1,13 @@
+"""Validate environment-backed configuration at the application boundary."""
+
+from pydantic import AnyHttpUrl, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ServiceSettings(BaseSettings):
+    """Validated settings consumed by the composition layer."""
+
+    model_config = SettingsConfigDict(env_prefix="MYAPP_", case_sensitive=False)
+
+    api_endpoint: AnyHttpUrl
+    api_key: SecretStr

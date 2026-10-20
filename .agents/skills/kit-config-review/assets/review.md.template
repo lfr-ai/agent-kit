@@ -1,0 +1,16 @@
+# Effective configuration review
+
+- Owning source, generated outputs and exact host/version:
+- Repository/parent/user/plugin discovery inventory:
+
+| Surface | Source | Effective native semantics | Negative check | Limitation |
+| --- | --- | --- | --- | --- |
+| Scoped instructions | | | | |
+| Role tools/delegation | | | | |
+| Hooks/cwd/events | | | | |
+| MCP/auth/toolset | | | | |
+| Budgets/resources/provenance | | | | |
+
+- Pre-regeneration audit and post-refresh evidence:
+- Compatibility change and operator approval:
+- Rollback and unavailable checks:

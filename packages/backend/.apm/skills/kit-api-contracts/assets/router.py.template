@@ -1,0 +1,222 @@
+"""FastAPI router with explicit schemas and RFC 9457 problem details.
+
+Copy into 'src/<package>/presentation/orders_api.py'. The router depends only on
+an application-service port; the composition root stores the wired service on
+'app.state.orders' and calls 'install_problem_handlers(app)'. Return annotations
+are the response models, so no route repeats them in 'response_model='.
+"""
+
+from datetime import datetime
+from http import HTTPStatus
+from typing import Annotated, Literal, Protocol
+
+from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.exceptions import HTTPException
+
+PROBLEM_MEDIA_TYPE = "application/problem+json"
+PROBLEM_BASE = "https://api.example.com/problems"
+
+OrderStatus = Literal["draft", "confirmed", "cancelled"]
+
+
+class MoneyOut(BaseModel):
+    """Money as a decimal string plus ISO 4217 code."""
+
+    amount: str = Field(pattern=r"^-?[0-9]+\.[0-9]{2}$")
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class OrderLineIn(BaseModel):
+    """One requested line."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sku: str = Field(min_length=1)
+    quantity: int = Field(ge=1)
+
+
+class OrderCreateIn(BaseModel):
+    """Request body for creating a draft order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: str = Field(min_length=1)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    lines: list[OrderLineIn] = Field(min_length=1, max_length=100)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OrderOut(BaseModel):
+    """Public order representation; internal fields are never exposed."""
+
+    id: str
+    status: OrderStatus
+    total: MoneyOut
+    created_at: datetime
+
+
+class OrderPageOut(BaseModel):
+    """One page of orders with an opaque continuation cursor."""
+
+    items: list[OrderOut]
+    next_cursor: str | None
+    has_more: bool
+
+
+class OrderNotFoundError(LookupError):
+    """Raised by the service when an order does not exist."""
+
+
+class IdempotencyConflictError(Exception):
+    """Raised by the service when a key is reused with a different body."""
+
+
+class OrderService(Protocol):
+    """Application port used by this router."""
+
+    def create(self, request: OrderCreateIn, /, *, idempotency_key: str) -> OrderOut:
+        """Create a draft order, replaying the stored result for a repeated key."""
+        ...
+
+    def get(self, order_id: str, /) -> OrderOut:
+        """Return one order or raise 'OrderNotFoundError'."""
+        ...
+
+    def list_page(
+        self, *, limit: int, cursor: str | None, status: OrderStatus | None
+    ) -> OrderPageOut:
+        """Return one page; raise 'ValueError' for an invalid cursor."""
+        ...
+
+
+router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+def orders_service(request: Request) -> OrderService:
+    """Resolve the wired service; tests override this dependency."""
+    service: OrderService = request.app.state.orders
+    return service
+
+ServiceDep = Annotated[OrderService, Depends(orders_service)]
+
+
+@router.get("", operation_id="listOrders")
+def list_orders(
+    service: ServiceDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query()] = None,
+    order_status: Annotated[OrderStatus | None, Query(alias="status")] = None,
+) -> OrderPageOut:
+    """List orders newest first using cursor pagination."""
+    try:
+        return service.list_page(limit=limit, cursor=cursor, status=order_status)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid cursor") from error
+
+
+@router.post(
+    "",
+    operation_id="createOrder",
+    status_code=status.HTTP_201_CREATED,
+    responses={409: {"description": "Key in use"}, 422: {"description": "Invalid"}},
+)
+def create_order(
+    body: OrderCreateIn,
+    response: Response,
+    service: ServiceDep,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", max_length=255)],
+) -> OrderOut:
+    """Create a draft order; retries with the same key return the same order."""
+    order = service.create(body, idempotency_key=idempotency_key)
+    response.headers["Location"] = f"{router.prefix}/{order.id}"
+    return order
+
+
+@router.get("/{order_id}", operation_id="getOrder", responses={404: {"description": "Missing"}})
+def get_order(order_id: str, service: ServiceDep) -> OrderOut:
+    """Fetch one order."""
+    return service.get(order_id)
+
+
+def install_problem_handlers(app: FastAPI) -> None:
+    """Render every error as problem details, including framework errors.
+
+    Args:
+        app: Application whose default exception handlers are replaced.
+    """
+    app.add_exception_handler(RequestValidationError, _validation_problem)
+    app.add_exception_handler(HTTPException, _http_problem)
+    app.add_exception_handler(OrderNotFoundError, _not_found_problem)
+    app.add_exception_handler(IdempotencyConflictError, _idempotency_problem)
+    app.add_exception_handler(Exception, _internal_problem)
+
+
+def problem(
+    *,
+    status_code: int,
+    title: str,
+    problem_type: str = "about:blank",
+    detail: str | None = None,
+    errors: list[dict[str, str]] | None = None,
+) -> JSONResponse:
+    """Build an RFC 9457 response with the problem media type."""
+    body: dict[str, object] = {"type": problem_type, "title": title, "status": status_code}
+    if detail is not None:
+        body["detail"] = detail
+    if errors:
+        body["errors"] = errors
+    return JSONResponse(body, status_code=status_code, media_type=PROBLEM_MEDIA_TYPE)
+
+
+async def _validation_problem(request: Request, error: Exception) -> JSONResponse:
+    assert isinstance(error, RequestValidationError)
+    errors = [
+        {
+            "pointer": "/" + "/".join(str(part) for part in item["loc"][1:]),
+            "message": str(item["msg"]),
+        }
+        for item in error.errors()
+    ]
+    return problem(
+        status_code=422,
+        title="Request validation failed",
+        problem_type=f"{PROBLEM_BASE}/validation",
+        detail=f"{len(errors)} field(s) are invalid.",
+        errors=errors,
+    )
+
+
+async def _http_problem(request: Request, error: Exception) -> JSONResponse:
+    assert isinstance(error, HTTPException)
+    return problem(
+        status_code=error.status_code,
+        title=HTTPStatus(error.status_code).phrase,
+        detail=str(error.detail),
+    )
+
+
+async def _not_found_problem(request: Request, error: Exception) -> JSONResponse:
+    return problem(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Order not found",
+        problem_type=f"{PROBLEM_BASE}/not-found",
+    )
+
+
+async def _idempotency_problem(request: Request, error: Exception) -> JSONResponse:
+    return problem(
+        status_code=422,
+        title="Idempotency key reused with a different request",
+        problem_type=f"{PROBLEM_BASE}/idempotency-mismatch",
+    )
+
+
+async def _internal_problem(request: Request, error: Exception) -> JSONResponse:
+    return problem(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        title="Internal server error",
+        detail="The request could not be completed.",
+    )

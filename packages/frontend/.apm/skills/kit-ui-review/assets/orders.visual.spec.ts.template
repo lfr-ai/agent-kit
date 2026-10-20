@@ -1,0 +1,78 @@
+// e2e/visual/orders.visual.spec.ts
+// Visual baselines per state, viewport, and theme. Dynamic content is masked,
+// animations are disabled, and data comes from fixed fixtures so diffs mean
+// real visual changes. Baselines are platform-specific: generate them in CI's
+// container image, not on a developer laptop.
+import { expect, test, type Page } from "@playwright/test";
+
+const viewports = [
+  { name: "narrow", width: 320, height: 640 },
+  { name: "desktop", width: 1280, height: 800 },
+] as const;
+
+const fixtures = {
+  populated: {
+    items: [
+      { id: "ord_1", reference: "ORD-1001", status: "paid", totalMinor: 1250, currency: "EUR", updatedAt: "2026-01-15T10:00:00Z" },
+      { id: "ord_2", reference: "ORD-1002", status: "draft", totalMinor: 99_900, currency: "EUR", updatedAt: "2026-01-14T09:00:00Z" },
+    ],
+    nextCursor: null,
+  },
+  empty: { items: [], nextCursor: null },
+  longContent: {
+    items: [
+      {
+        id: "ord_3",
+        reference: "ORD-1003-WITH-AN-UNUSUALLY-LONG-REFERENCE-THAT-MUST-WRAP-OR-TRUNCATE",
+        status: "submitted",
+        totalMinor: 123_456_789,
+        currency: "EUR",
+        updatedAt: "2026-01-13T08:00:00Z",
+      },
+    ],
+    nextCursor: null,
+  },
+} as const;
+
+async function stubOrders(page: Page, body: unknown, status = 200): Promise<void> {
+  await page.route(/\/api\/orders(\?.*)?$/, (route) =>
+    route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }),
+  );
+}
+
+for (const viewport of viewports) {
+  test.describe(`orders at ${viewport.name}`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+    for (const [state, body] of Object.entries(fixtures)) {
+      test(`${state} state`, async ({ page }) => {
+        await stubOrders(page, body);
+        await page.goto("/orders");
+        await expect(page.getByRole("heading", { level: 1, name: "Orders" })).toBeVisible();
+
+        await expect(page).toHaveScreenshot(`orders-${state}-${viewport.name}.png`, {
+          fullPage: true,
+          mask: [page.locator("[data-dynamic]")],
+        });
+      });
+    }
+
+    test("network failure state", async ({ page }) => {
+      await stubOrders(page, { title: "Unavailable" }, 503);
+      await page.goto("/orders");
+      await expect(page.getByRole("alert")).toBeVisible();
+      await expect(page).toHaveScreenshot(`orders-error-${viewport.name}.png`);
+    });
+  });
+}
+
+test.describe("dark theme", () => {
+  test.use({ colorScheme: "dark" });
+
+  test("populated state", async ({ page }) => {
+    await stubOrders(page, fixtures.populated);
+    await page.goto("/orders");
+    await expect(page.getByRole("list", { name: "Orders" })).toBeVisible();
+    await expect(page).toHaveScreenshot("orders-populated-dark.png");
+  });
+});

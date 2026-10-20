@@ -1,0 +1,31 @@
+// src/shared/i18n/pseudo-locale.test.ts
+import { describe, expect, it } from "vitest";
+import { pseudoCatalog, pseudoLocalize } from "./pseudo-locale";
+
+describe("pseudoLocalize", () => {
+  it("accents letters, pads for expansion, and brackets the result", () => {
+    expect(pseudoLocalize("Save order")).toBe("[Sávé ördér~~~~]");
+  });
+
+  it("keeps placeholders and tags intact", () => {
+    const result = pseudoLocalize("{count} orders for {{name}} in <b>total</b>");
+
+    expect(result).toContain("{count}");
+    expect(result).toContain("{{name}}");
+    expect(result).toContain("<b>");
+    expect(result).toContain("</b>");
+    expect(result.startsWith("[")).toBe(true);
+    expect(result.endsWith("]")).toBe(true);
+  });
+
+  it("supports a custom expansion ratio", () => {
+    expect(pseudoLocalize("abcd", 1)).toBe("[ábçd~~~~]");
+    expect(pseudoLocalize("", 0.35)).toBe("[]");
+  });
+});
+
+describe("pseudoCatalog", () => {
+  it("transforms every message and keeps keys", () => {
+    expect(pseudoCatalog({ "orders.title": "Orders" })).toEqual({ "orders.title": "[Ørdérs~~~]" });
+  });
+});

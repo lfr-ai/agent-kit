@@ -1,0 +1,15 @@
+{
+  "order_confirmation.html": {
+    "output": "html",
+    "required": ["customer_name", "lines"],
+    "optional": ["note"],
+    "item_shapes": {
+      "lines": ["description", "total"]
+    }
+  },
+  "summarize.txt": {
+    "output": "prompt",
+    "required": ["audience", "document"],
+    "optional": []
+  }
+}

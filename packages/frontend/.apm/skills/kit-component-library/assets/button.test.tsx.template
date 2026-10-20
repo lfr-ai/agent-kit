@@ -1,0 +1,91 @@
+// src/shared/ui/button.test.tsx
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { Button } from "./button";
+
+function TrashIcon() {
+  return <svg viewBox="0 0 16 16" />;
+}
+
+describe("Button", () => {
+  it("is a native button that defaults to type=button", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Button onClick={onClick}>Save</Button>);
+
+    const button = screen.getByRole("button", { name: "Save" });
+    expect(button).toHaveAttribute("type", "button");
+    await user.click(button);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("activates with Enter and Space", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Button onClick={onClick}>Save</Button>);
+
+    await user.tab();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it("names icon-only buttons from aria-label and hides the icon", () => {
+    render(<Button icon={<TrashIcon />} aria-label="Delete order ORD-1001" />);
+
+    const button = screen.getByRole("button", { name: "Delete order ORD-1001" });
+    expect(button.querySelector("[aria-hidden='true'] svg")).not.toBeNull();
+  });
+
+  it("stays focusable but inert while pending, and announces progress", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <Button pending pendingLabel="Saving" onClick={onClick}>
+        Save
+      </Button>,
+    );
+
+    const button = screen.getByRole("button", { name: /^save\W+saving$/i });
+    await user.tab();
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await user.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("is removed from the tab order when disabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Button disabled>Archive</Button>
+        <Button>Next</Button>
+      </>,
+    );
+
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Next" })).toHaveFocus();
+  });
+
+  it("forwards ref as a prop and merges class names", () => {
+    const ref = createRef<HTMLButtonElement>();
+    render(
+      <Button ref={ref} variant="danger" size="sm" className="extra">
+        Delete
+      </Button>,
+    );
+
+    expect(ref.current).toBe(screen.getByRole("button", { name: "Delete" }));
+    expect(ref.current).toHaveClass("ui-button", "ui-button--danger", "ui-button--sm", "extra");
+  });
+
+  it("rejects invalid prop combinations at compile time", () => {
+    // @ts-expect-error icon-only buttons need an aria-label
+    void (<Button icon={<TrashIcon />} />);
+    // @ts-expect-error text buttons must not override their visible name
+    void (<Button aria-label="Other">Save</Button>);
+    expect(true).toBe(true);
+  });
+});

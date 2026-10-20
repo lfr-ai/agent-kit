@@ -1,0 +1,45 @@
+-- Retrieval index schema for PostgreSQL with the pgvector extension.
+-- Copy to 'schema.sql' beside 'compose.vector-store.yaml'; the container runs
+-- it once on first start. Keep 'vector(384)' equal to
+-- RETRIEVAL_EMBEDDING_DIMENSIONS and the 'english' configuration equal to
+-- RETRIEVAL_TEXT_SEARCH_CONFIG. Changing either requires a reindex.
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS retrieval_chunks (
+    chunk_id       text PRIMARY KEY,
+    tenant         text        NOT NULL,
+    source_id      text        NOT NULL,
+    source_version text        NOT NULL,
+    body           text        NOT NULL CHECK (length(btrim(body)) > 0),
+    start_char     integer     NOT NULL CHECK (start_char >= 0),
+    end_char       integer     NOT NULL,
+    section        text        NOT NULL DEFAULT '',
+    -- Principal tokens such as 'user:alice' or 'group:finance'; never empty.
+    acl            text[]      NOT NULL CHECK (cardinality(acl) > 0),
+    metadata       jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    updated_at     timestamptz NOT NULL,
+    embedding      vector(384) NOT NULL,
+    tsv            tsvector GENERATED ALWAYS AS (to_tsvector('english', body)) STORED,
+    CHECK (end_char > start_char)
+);
+
+-- A deleted source stays deleted: ingestion checks this table before writing.
+CREATE TABLE IF NOT EXISTS retrieval_tombstones (
+    tenant     text        NOT NULL,
+    source_id  text        NOT NULL,
+    deleted_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS retrieval_chunks_source_idx
+    ON retrieval_chunks (tenant, source_id, source_version);
+CREATE INDEX IF NOT EXISTS retrieval_chunks_acl_idx
+    ON retrieval_chunks USING gin (acl);
+CREATE INDEX IF NOT EXISTS retrieval_chunks_tsv_idx
+    ON retrieval_chunks USING gin (tsv);
+CREATE INDEX IF NOT EXISTS retrieval_chunks_metadata_idx
+    ON retrieval_chunks USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS retrieval_chunks_embedding_idx
+    ON retrieval_chunks USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);

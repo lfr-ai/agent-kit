@@ -1,0 +1,181 @@
+// src/shared/realtime/reconnecting-socket.test.ts
+// Deterministic tests: fake timers, a fake socket factory, and a fixed random source.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  backoffDelay,
+  defaultReconnectPolicy,
+  ReconnectingSocket,
+  type SocketFactory,
+  type SocketHandlers,
+} from "./reconnecting-socket";
+
+class FakeSocket {
+  readonly sent: string[] = [];
+  closedWith: { code: number | undefined; reason: string | undefined } | null = null;
+
+  constructor(
+    readonly url: string,
+    readonly handlers: SocketHandlers,
+  ) {}
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(code?: number, reason?: string): void {
+    this.closedWith = { code, reason };
+  }
+}
+
+function fakeTransport(): { sockets: FakeSocket[]; factory: SocketFactory } {
+  const sockets: FakeSocket[] = [];
+  const factory: SocketFactory = (url, handlers) => {
+    const socket = new FakeSocket(url, handlers);
+    sockets.push(socket);
+    return socket;
+  };
+  return { sockets, factory };
+}
+
+function latest(sockets: FakeSocket[]): FakeSocket {
+  const socket = sockets.at(-1);
+  if (!socket) throw new Error("no socket created");
+  return socket;
+}
+
+describe("backoffDelay", () => {
+  it("grows exponentially and caps at maxDelayMs", () => {
+    const max = () => 0.999_999;
+    expect(backoffDelay(0, defaultReconnectPolicy, max)).toBe(499);
+    expect(backoffDelay(3, defaultReconnectPolicy, max)).toBe(3_999);
+    expect(backoffDelay(20, defaultReconnectPolicy, max)).toBe(29_999);
+    expect(backoffDelay(5, defaultReconnectPolicy, () => 0)).toBe(0);
+  });
+});
+
+describe("ReconnectingSocket", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function create(overrides: Partial<ConstructorParameters<typeof ReconnectingSocket>[0]> = {}) {
+    const transport = fakeTransport();
+    const onMessage = vi.fn();
+    const onInvalidMessage = vi.fn();
+    const onOpen = vi.fn();
+    const socket = new ReconnectingSocket({
+      url: () => "wss://updates.example.test/stream",
+      onMessage,
+      onInvalidMessage,
+      onOpen,
+      factory: transport.factory,
+      random: () => 0.5,
+      ...overrides,
+    });
+    return { socket, onMessage, onInvalidMessage, onOpen, ...transport };
+  }
+
+  it("opens, parses JSON messages, and reports invalid frames separately", () => {
+    const { socket, sockets, onMessage, onInvalidMessage, onOpen } = create();
+    socket.start();
+    expect(socket.getStatus()).toEqual({ kind: "connecting", attempt: 0 });
+
+    latest(sockets).handlers.open();
+    latest(sockets).handlers.message('{"type":"heartbeat"}');
+    latest(sockets).handlers.message("not json");
+
+    expect(socket.getStatus()).toEqual({ kind: "open" });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith({ type: "heartbeat" });
+    expect(onInvalidMessage).toHaveBeenCalledWith("not json");
+  });
+
+  it("reconnects after an unexpected close using jittered backoff", () => {
+    const { socket, sockets, onOpen } = create();
+    socket.start();
+    latest(sockets).handlers.open();
+
+    latest(sockets).handlers.close(1006, "");
+    expect(socket.getStatus()).toEqual({ kind: "reconnecting", attempt: 1, delayMs: 250 });
+
+    vi.advanceTimersByTime(249);
+    expect(sockets).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(2);
+
+    latest(sockets).handlers.open();
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails after the retry budget instead of retrying forever", () => {
+    const { socket, sockets } = create({ policy: { maxAttempts: 2 } });
+    socket.start();
+    for (let index = 0; index < 3; index += 1) {
+      latest(sockets).handlers.close(1006, "");
+      vi.runOnlyPendingTimers();
+    }
+    expect(socket.getStatus()).toEqual({ kind: "failed", reason: "retry budget exhausted" });
+    expect(sockets).toHaveLength(3);
+  });
+
+  it("stops on terminal close codes", () => {
+    const { socket, sockets } = create();
+    socket.start();
+    latest(sockets).handlers.close(4401, "unauthorized");
+    vi.runAllTimers();
+    expect(socket.getStatus()).toEqual({ kind: "failed", reason: "unauthorized" });
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("cancels a pending retry on stop and ignores late events from old sockets", () => {
+    const { socket, sockets, onMessage } = create();
+    socket.start();
+    const first = latest(sockets);
+    first.handlers.close(1006, "");
+
+    socket.stop();
+    vi.runAllTimers();
+    first.handlers.message('{"late":true}');
+
+    expect(sockets).toHaveLength(1);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(socket.getStatus()).toEqual({ kind: "closed" });
+  });
+
+  it("marks the connection stale without traffic and recovers on the next message", () => {
+    const { socket, sockets } = create({ policy: { staleAfterMs: 1_000 } });
+    socket.start();
+    latest(sockets).handlers.open();
+
+    vi.advanceTimersByTime(1_000);
+    expect(socket.getStatus().kind).toBe("stale");
+
+    latest(sockets).handlers.message('{"type":"heartbeat"}');
+    expect(socket.getStatus()).toEqual({ kind: "open" });
+  });
+
+  it("lets the user skip the backoff delay", () => {
+    const { socket, sockets } = create();
+    socket.start();
+    latest(sockets).handlers.close(1006, "");
+
+    socket.reconnectNow();
+
+    expect(sockets).toHaveLength(2);
+    expect(socket.getStatus()).toEqual({ kind: "connecting", attempt: 0 });
+  });
+
+  it("notifies subscribers and refuses to send while disconnected", () => {
+    const { socket, sockets } = create();
+    const listener = vi.fn();
+    const unsubscribe = socket.subscribe(listener);
+    socket.start();
+    expect(socket.send("x")).toBe(false);
+    latest(sockets).handlers.open();
+    expect(socket.send("ping")).toBe(true);
+    expect(latest(sockets).sent).toEqual(["ping"]);
+    unsubscribe();
+    socket.stop();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(latest(sockets).closedWith).toEqual({ code: 1000, reason: "client closed" });
+  });
+});

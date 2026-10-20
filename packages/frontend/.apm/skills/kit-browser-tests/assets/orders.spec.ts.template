@@ -1,0 +1,58 @@
+// e2e/orders.spec.ts
+// Critical journey: filter, open, go back with state intact, and recover from a
+// failed request. Assumes seeded test data containing ORD-1001 (paid) and
+// ORD-1002 (draft) for the signed-in test account.
+import { expect, test } from "./fixtures";
+
+test.describe("orders journey", () => {
+  test("filters by status and keeps filters when returning from a detail page", async ({ page, ordersPage }) => {
+    await ordersPage.goto();
+
+    await ordersPage.filterByStatus("Paid");
+    await expect(page).toHaveURL(/[?&]status=paid\b/);
+    await expect(ordersPage.row("ORD-1001")).toBeVisible();
+    await expect(ordersPage.row("ORD-1002")).toBeHidden();
+
+    await ordersPage.open("ORD-1001");
+    await page.goBack();
+
+    await expect(ordersPage.statusFilter).toHaveValue("paid");
+    await expect(ordersPage.row("ORD-1001")).toBeVisible();
+  });
+
+  test("shows an actionable empty state", async ({ ordersPage }) => {
+    await ordersPage.goto("?q=no-such-order-reference");
+    await expect(ordersPage.emptyState).toBeVisible();
+  });
+
+  test.describe("when the API fails once", () => {
+    test.use({ expectedConsoleErrors: [/Failed to load resource.*503/] });
+
+    test("explains the failure and recovers on retry", async ({ ordersPage, failApiOnce }) => {
+      await failApiOnce(/\/api\/orders(\?.*)?$/, 503);
+
+      await ordersPage.goto();
+
+      await expect(ordersPage.errorAlert).toContainText("could not be loaded");
+      await ordersPage.retryButton.click();
+      await expect(ordersPage.row("ORD-1001")).toBeVisible();
+    });
+  });
+
+  test("can be completed with the keyboard only", async ({ page, ordersPage }) => {
+    await ordersPage.goto();
+
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    // Jump to the search box directly; full Tab order is covered by the accessibility spec.
+    await ordersPage.search.focus();
+    await page.keyboard.type("ORD-1001");
+    const link = ordersPage.row("ORD-1001").getByRole("link", { name: "ORD-1001" });
+    await link.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("heading", { level: 1, name: "Order ORD-1001" })).toBeFocused();
+  });
+});

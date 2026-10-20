@@ -1,0 +1,110 @@
+"""Tests for 'retrieval.chunking'; copy to 'tests/retrieval/test_chunking.py'."""
+
+from datetime import UTC, datetime
+from itertools import pairwise
+
+import pytest
+
+from retrieval.chunking import ChunkingPolicy, SourceDocument, chunk_document
+
+_WHEN = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _document(text: str, *, version: str = "v1") -> SourceDocument:
+    return SourceDocument(
+        source_id="doc-1",
+        source_version=version,
+        tenant="t1",
+        text=text,
+        acl=frozenset({"group:staff"}),
+        updated_at=_WHEN,
+        metadata={"kind": "manual"},
+    )
+
+
+def test_offsets_slice_the_exact_source_text() -> None:
+    text = "# Setup\n\nInstall the tool. Configure it.\n\n## Usage\n\nRun the command."
+    chunks = chunk_document(
+        _document(text), policy=ChunkingPolicy(max_chars=40, overlap_chars=0)
+    )
+
+    assert chunks
+    for chunk in chunks:
+        assert text[chunk.start_char : chunk.end_char] == chunk.text
+        assert chunk.text == chunk.text.strip()
+        assert len(chunk.text) <= 40
+
+
+def test_sections_follow_the_heading_hierarchy() -> None:
+    text = "# Setup\n\nInstall.\n\n## Usage\n\nRun the command."
+    chunks = chunk_document(
+        _document(text), policy=ChunkingPolicy(max_chars=20, overlap_chars=0)
+    )
+
+    assert chunks[-1].section == "Setup > Usage"
+    assert chunks[0].section == "Setup"
+
+
+def test_overlap_repeats_whole_pieces_and_stays_bounded() -> None:
+    text = " ".join(f"Sentence number {index} ends here." for index in range(30))
+    policy = ChunkingPolicy(max_chars=120, overlap_chars=40)
+    chunks = chunk_document(_document(text), policy=policy)
+
+    assert len(chunks) > 1
+    for previous, current in pairwise(chunks):
+        assert current.start_char > previous.start_char
+        assert previous.end_char - current.start_char <= policy.overlap_chars
+    assert chunks[-1].end_char == len(text.rstrip())
+
+
+def test_oversized_words_are_hard_split() -> None:
+    chunks = chunk_document(
+        _document("x" * 250), policy=ChunkingPolicy(max_chars=100, overlap_chars=0)
+    )
+
+    assert [len(chunk.text) for chunk in chunks] == [100, 100, 50]
+
+
+def test_ids_are_deterministic_and_version_scoped() -> None:
+    text = "Alpha paragraph.\n\nBeta paragraph."
+    first = chunk_document(_document(text))
+    again = chunk_document(_document(text))
+    next_version = chunk_document(_document(text, version="v2"))
+
+    assert [chunk.chunk_id for chunk in first] == [chunk.chunk_id for chunk in again]
+    assert {chunk.chunk_id for chunk in first}.isdisjoint(
+        chunk.chunk_id for chunk in next_version
+    )
+
+
+def test_access_list_and_metadata_are_copied_to_every_chunk() -> None:
+    chunks = chunk_document(
+        _document("One.\n\nTwo.\n\nThree."),
+        policy=ChunkingPolicy(max_chars=6, overlap_chars=0),
+    )
+
+    assert {chunk.acl for chunk in chunks} == {frozenset({"group:staff"})}
+    assert all(chunk.metadata == {"kind": "manual"} for chunk in chunks)
+
+
+def test_blank_document_yields_no_chunks() -> None:
+    assert chunk_document(_document(" \n\n \t")) == []
+
+
+def test_empty_access_list_is_rejected() -> None:
+    document = SourceDocument(
+        source_id="doc-1",
+        source_version="v1",
+        tenant="t1",
+        text="text",
+        acl=frozenset(),
+        updated_at=_WHEN,
+    )
+    with pytest.raises(ValueError, match="empty access list"):
+        chunk_document(document)
+
+
+@pytest.mark.parametrize(("max_chars", "overlap"), [(0, 0), (10, 10), (10, -1)])
+def test_invalid_policies_are_rejected(max_chars: int, overlap: int) -> None:
+    with pytest.raises(ValueError, match="must"):
+        ChunkingPolicy(max_chars=max_chars, overlap_chars=overlap)

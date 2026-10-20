@@ -1,0 +1,39 @@
+# Worker handoff
+
+## Assignment
+
+- Task id and title: <one observable outcome>
+- Role and tier: <worker id; read-only or implementer>
+- Owned paths: <exact files or directories; nothing else may change>
+- Forbidden actions: <publication, live resources, global settings, other paths>
+- Acceptance criteria: <numbered, each with the check that proves it>
+- Stop condition: <when to return, including the blocked case>
+
+## Result
+
+- Status: done | blocked | partial
+- Changed paths (from the diff, not memory):
+  - <path>: <added, modified, deleted, renamed>
+- Acceptance:
+
+| Criterion | Status | Evidence |
+| --- | --- | --- |
+| <criterion> | met / partial / unmet | <test name, command output line, or file:line> |
+
+## Verification run after the final edit
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| <exact command> | <code> | <one-line summary> |
+
+## Open items
+
+- Assumptions made without confirmation:
+- Limitations and unsupported cases:
+- Blockers and the evidence that shows them:
+- Suggested follow-up for the coordinator (not done here):
+
+## Review package
+
+<Command used to build it, for example the review_package script with the diff
+and evidence files, and the resulting gate status.>

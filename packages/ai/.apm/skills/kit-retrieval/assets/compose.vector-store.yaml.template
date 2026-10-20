@@ -1,0 +1,30 @@
+# Local vector store for development and integration tests only.
+# Copy to 'compose.vector-store.yaml' beside 'schema.sql', then:
+#   export RETRIEVAL_DB_PASSWORD=<local-only value>
+#   docker compose -f compose.vector-store.yaml up -d --wait
+#   export RETRIEVAL_DATABASE_URL=postgresql://retrieval:${RETRIEVAL_DB_PASSWORD}@127.0.0.1:5432/retrieval
+# The port binds to loopback only. Pin the image digest in shared environments.
+name: retrieval-local
+
+services:
+  vector-store:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: retrieval
+      POSTGRES_DB: retrieval
+      POSTGRES_PASSWORD: ${RETRIEVAL_DB_PASSWORD:?set RETRIEVAL_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - vector-store-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retrieval -d retrieval"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 256mb
+    restart: unless-stopped
+
+volumes:
+  vector-store-data:

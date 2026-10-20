@@ -1,0 +1,31 @@
+# Root composition. Copy to infra/main.tf. Keep resources thin here and push
+# reusable logic into modules with their own tests.
+resource "azurerm_resource_group" "this" {
+  name     = local.resource_group_name
+  location = var.location
+  tags     = local.tags
+
+  lifecycle {
+    # Deleting the resource group deletes everything inside it.
+    prevent_destroy = true
+  }
+}
+
+module "storage" {
+  source = "./modules/storage"
+
+  name                = local.storage_account_name
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  replication_type    = var.storage_replication_type
+  tags                = local.tags
+}
+
+# Continuous assertion: reported as a warning on every plan and apply,
+# without blocking, so drift in a property is visible during review.
+check "storage_is_private" {
+  assert {
+    condition     = module.storage.public_network_access_enabled == false
+    error_message = "Storage account allows public network access; confirm this is intended."
+  }
+}

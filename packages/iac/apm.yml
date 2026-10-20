@@ -1,0 +1,8 @@
+name: agent-kit-iac
+version: "0.1.0"
+license: MIT
+description: Optional read-only infrastructure review guidance.
+targets: [copilot, claude]
+includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
+dependencies: {}
+executables: {}

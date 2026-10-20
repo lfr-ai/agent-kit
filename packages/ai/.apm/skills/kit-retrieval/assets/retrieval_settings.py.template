@@ -1,0 +1,132 @@
+"""Typed retrieval settings loaded from environment variables.
+
+Copy to 'retrieval/settings.py'. Uses only the standard library so the core
+package stays dependency-free; swap in 'pydantic-settings' if the application
+already standardizes on it. Every variable uses the 'RETRIEVAL_' prefix and the
+defaults match 'compose.vector-store.yaml' and 'schema.sql'.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Self
+
+from retrieval.chunking import ChunkingPolicy
+from retrieval.self_corrective import CorrectionPolicy
+
+ENV_PREFIX = "RETRIEVAL_"
+
+
+def _int(environ: Mapping[str, str], name: str, default: int) -> int:
+    """Read an integer variable, naming the variable on failure."""
+    raw = environ.get(ENV_PREFIX + name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as error:
+        raise ValueError(f"{ENV_PREFIX}{name} must be an integer") from error
+
+
+def _float(environ: Mapping[str, str], name: str, default: float) -> float:
+    """Read a float variable, naming the variable on failure."""
+    raw = environ.get(ENV_PREFIX + name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as error:
+        raise ValueError(f"{ENV_PREFIX}{name} must be a number") from error
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RetrievalSettings:
+    """Retrieval configuration with validated bounds.
+
+    Attributes:
+        database_url: Connection string; excluded from 'repr' because it may
+            embed a password.
+        embedding_model: Provider model identifier used for documents and queries.
+        embedding_dimensions: Vector length; must match 'vector(N)' in the schema.
+        text_search_config: PostgreSQL text search configuration; must match
+            the generated 'tsv' column in the schema.
+        top_k: Hits returned to answer assembly.
+        candidate_multiplier: Per-strategy over-fetch before fusion.
+        rrf_k: Reciprocal rank fusion constant.
+        chunk_max_chars: Chunk window size.
+        chunk_overlap_chars: Chunk overlap bound.
+        max_correction_rounds: Self-corrective retrieval rounds.
+        retrieval_timeout_s: Wall-clock budget for one retrieval request.
+        statement_timeout_ms: Per-statement database timeout.
+    """
+
+    database_url: str = field(repr=False)
+    embedding_model: str = "local-embedding-model"
+    embedding_dimensions: int = 384
+    text_search_config: str = "english"
+    top_k: int = 8
+    candidate_multiplier: int = 4
+    rrf_k: int = 60
+    chunk_max_chars: int = 1200
+    chunk_overlap_chars: int = 150
+    max_correction_rounds: int = 3
+    retrieval_timeout_s: float = 10.0
+    statement_timeout_ms: int = 2000
+
+    def __post_init__(self) -> None:
+        """Fail at startup instead of on the first request."""
+        if not self.database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(f"{ENV_PREFIX}DATABASE_URL must be a PostgreSQL URL")
+        if not 1 <= self.top_k <= 100:  # noqa: PLR2004 - mirrors MAX_TOP_K
+            raise ValueError(f"{ENV_PREFIX}TOP_K must be between 1 and 100")
+        if self.embedding_dimensions < 1 or self.candidate_multiplier < 1:
+            raise ValueError("dimensions and candidate multiplier must be positive")
+        if self.retrieval_timeout_s <= 0 or self.statement_timeout_ms <= 0:
+            raise ValueError("timeouts must be positive")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str]) -> Self:
+        """Build settings from an environment mapping.
+
+        Args:
+            environ: Usually 'os.environ'; tests pass a plain dict.
+
+        Returns:
+            Validated settings.
+
+        Raises:
+            ValueError: If a variable is missing or malformed.
+        """
+        url = environ.get(ENV_PREFIX + "DATABASE_URL")
+        if not url:
+            raise ValueError(f"{ENV_PREFIX}DATABASE_URL is required")
+        return cls(
+            database_url=url,
+            embedding_model=environ.get(
+                ENV_PREFIX + "EMBEDDING_MODEL", "local-embedding-model"
+            ),
+            embedding_dimensions=_int(environ, "EMBEDDING_DIMENSIONS", 384),
+            text_search_config=environ.get(
+                ENV_PREFIX + "TEXT_SEARCH_CONFIG", "english"
+            ),
+            top_k=_int(environ, "TOP_K", 8),
+            candidate_multiplier=_int(environ, "CANDIDATE_MULTIPLIER", 4),
+            rrf_k=_int(environ, "RRF_K", 60),
+            chunk_max_chars=_int(environ, "CHUNK_MAX_CHARS", 1200),
+            chunk_overlap_chars=_int(environ, "CHUNK_OVERLAP_CHARS", 150),
+            max_correction_rounds=_int(environ, "MAX_CORRECTION_ROUNDS", 3),
+            retrieval_timeout_s=_float(environ, "TIMEOUT_S", 10.0),
+            statement_timeout_ms=_int(environ, "STATEMENT_TIMEOUT_MS", 2000),
+        )
+
+    def chunking_policy(self) -> ChunkingPolicy:
+        """Return the chunker limits these settings describe."""
+        return ChunkingPolicy(
+            max_chars=self.chunk_max_chars, overlap_chars=self.chunk_overlap_chars
+        )
+
+    def correction_policy(self) -> CorrectionPolicy:
+        """Return the corrective-loop bounds these settings describe."""
+        return CorrectionPolicy(
+            max_rounds=self.max_correction_rounds,
+            total_timeout_s=self.retrieval_timeout_s,
+        )

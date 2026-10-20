@@ -1,0 +1,203 @@
+"""LiteLLM-backed adapter for the 'LlmClient' port.
+
+Copy to 'llm/adapters/litellm.py'. Requires 'litellm'. This is the only module
+that imports LiteLLM. It resolves model aliases, disables LiteLLM's own retries
+(retries belong to 'ResilientLlmClient' so budgets and deadlines stay visible),
+and maps provider exceptions to the port's typed errors without copying
+provider messages, which can echo prompt content.
+
+Set 'LITELLM_LOCAL_MODEL_COST_MAP=True' in locked-down or offline environments so
+LiteLLM uses its bundled model price map instead of fetching one at import.
+"""
+
+import logging
+import time
+from collections.abc import Awaitable, Callable, Mapping
+
+import litellm
+
+from llm.port import (
+    Completion,
+    CompletionRequest,
+    LlmAuthError,
+    LlmContentFilteredError,
+    LlmContextTooLongError,
+    LlmError,
+    LlmInvalidRequestError,
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    Usage,
+)
+
+logger = logging.getLogger(__name__)
+
+CompletionFn = Callable[..., Awaitable[litellm.ModelResponse]]
+
+
+def _retry_after(error: Exception) -> float | None:
+    """Read a numeric Retry-After header from a provider error, if present."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("retry-after")
+    try:
+        return max(float(raw), 0.0) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+_ERROR_TABLE: tuple[tuple[tuple[type[Exception], ...], type[LlmError], str], ...] = (
+    ((litellm.Timeout,), LlmTimeoutError, "provider timeout"),
+    (
+        (litellm.ContextWindowExceededError,),
+        LlmContextTooLongError,
+        "context window exceeded",
+    ),
+    (
+        (litellm.ContentPolicyViolationError,),
+        LlmContentFilteredError,
+        "content filtered",
+    ),
+    (
+        (litellm.AuthenticationError, litellm.PermissionDeniedError),
+        LlmAuthError,
+        "provider rejected credentials",
+    ),
+    (
+        (
+            litellm.APIConnectionError,
+            litellm.ServiceUnavailableError,
+            litellm.InternalServerError,
+        ),
+        LlmUnavailableError,
+        "provider unavailable",
+    ),
+    (
+        (litellm.BadRequestError, litellm.NotFoundError),
+        LlmInvalidRequestError,
+        "provider rejected request",
+    ),
+)
+
+
+def map_provider_error(error: Exception) -> LlmError:
+    """Translate a LiteLLM exception into a typed, content-free port error.
+
+    The table is ordered: LiteLLM's timeout subclasses its connection error,
+    and its context-window and content-policy errors subclass its bad-request
+    error, so the specific entries come first.
+
+    Args:
+        error: Exception raised by LiteLLM.
+
+    Returns:
+        The matching port error.
+    """
+    name = type(error).__name__
+    if isinstance(error, litellm.RateLimitError):
+        return LlmRateLimitedError(
+            f"provider throttled ({name})", retry_after_s=_retry_after(error)
+        )
+    for classes, port_error, label in _ERROR_TABLE:
+        if isinstance(error, classes):
+            return port_error(f"{label} ({name})")
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and status >= 500:  # noqa: PLR2004 - HTTP server errors
+        return LlmUnavailableError(f"provider error {status} ({name})")
+    return LlmInvalidRequestError(f"unexpected provider error ({name})")
+
+
+class LiteLlmAdapter:
+    """'LlmClient' implementation over 'litellm.acompletion'."""
+
+    def __init__(
+        self,
+        *,
+        aliases: Mapping[str, str],
+        api_base: str | None = None,
+        completion_fn: CompletionFn | None = None,
+    ) -> None:
+        """Configure model routing.
+
+        Args:
+            aliases: Application alias to LiteLLM model string, for example
+                'summarizer' to a provider-prefixed model name. Credentials come
+                from the environment or a secret store, never from this mapping.
+            api_base: Optional gateway or proxy base URL.
+            completion_fn: Injected for tests; defaults to 'litellm.acompletion'.
+        """
+        if not aliases:
+            raise ValueError("at least one model alias is required")
+        self._aliases = dict(aliases)
+        self._api_base = api_base
+        self._completion = completion_fn or litellm.acompletion
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        """Send one attempt to the provider.
+
+        Args:
+            request: Provider-neutral request.
+
+        Returns:
+            The completion with usage and, when the price is known, cost.
+
+        Raises:
+            LlmError: A typed subclass for every provider failure.
+        """
+        model = self._aliases.get(request.model)
+        if model is None:
+            raise LlmInvalidRequestError(f"unknown model alias {request.model!r}")
+        arguments: dict[str, object] = {
+            "model": model,
+            "messages": [
+                {"role": message.role.value, "content": message.content}
+                for message in request.messages
+            ],
+            "max_tokens": request.max_output_tokens,
+            "temperature": request.temperature,
+            "timeout": request.timeout_s,
+            "num_retries": 0,
+        }
+        if request.json_schema is not None:
+            arguments["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.operation.replace("-", "_"),
+                    "schema": dict(request.json_schema),
+                    "strict": True,
+                },
+            }
+        if self._api_base:
+            arguments["api_base"] = self._api_base
+        started = time.perf_counter()
+        try:
+            response = await self._completion(**arguments)
+        except LlmError:
+            raise
+        except Exception as error:
+            raise map_provider_error(error) from error
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        choice = response.choices[0]
+        usage = getattr(response, "usage", None)
+        return Completion(
+            text=choice.message.content or "",
+            model=str(response.model or model),
+            finish_reason=str(choice.finish_reason or "unknown"),
+            usage=Usage(
+                input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            ),
+            cost_usd=self._cost(response),
+            latency_ms=latency_ms,
+        )
+
+    @staticmethod
+    def _cost(response: litellm.ModelResponse) -> float | None:
+        """Price the response from LiteLLM's model price map, if it knows the model."""
+        try:
+            return float(litellm.completion_cost(completion_response=response))
+        except Exception:  # noqa: BLE001 - unknown models have no price; cost stays unknown
+            logger.debug("llm.cost_unknown", extra={"model": response.model})
+            return None

@@ -1,0 +1,47 @@
+# Verification: TBD change title
+
+Result: TBD
+Revision verified: TBD (commit, version or image digest)
+Environment: TBD
+Verified by: TBD
+Accepted by: TBD (owner, date, link)
+
+Set Result to pass only when every row below passed; otherwise fail, and list
+the failing rows under Follow-up.
+
+## Scenario evidence
+
+| Requirement | Scenario | Method | Command or steps | Observed outcome | Pass |
+| --- | --- | --- | --- | --- | --- |
+| REQ-001 | TBD ordinary case | automated test | TBD | TBD | TBD |
+| REQ-001 | TBD boundary case | automated test | TBD | TBD | TBD |
+| REQ-001 | TBD failure case | automated test | TBD | TBD | TBD |
+| REQ-002 | TBD new behavior | manual check | TBD | TBD | TBD |
+| REQ-003 | removed behavior is gone | automated test | TBD | TBD | TBD |
+
+## Full suite
+
+- Command: TBD
+- Result: TBD passed, TBD failed, TBD skipped (with reasons for skips)
+- Duration: TBD
+
+## Non-functional targets
+
+| Property | Target | Measured | Method |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD | TBD |
+
+## Impact checklist
+
+- [ ] Documentation updated: TBD
+- [ ] Configuration documented with defaults: TBD
+- [ ] Migrations reversible or rollback documented: TBD
+- [ ] Dashboards and alerts adjusted: TBD
+
+## Design deviations
+
+- TBD deviation and why it is acceptable, or "none".
+
+## Follow-up
+
+- TBD or "none".

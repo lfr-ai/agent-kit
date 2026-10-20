@@ -1,0 +1,94 @@
+// src/shared/ui/tabs.test.tsx
+// Keyboard contract from the ARIA tabs pattern, plus an axe scan of the markup.
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { AnnouncerProvider, useAnnounce } from "@/shared/a11y/announcer";
+import { expectNoAxeViolations } from "@/test/axe";
+import { Tabs } from "./tabs";
+
+const items = [
+  { id: "details", label: "Details", panel: <p>Order details</p> },
+  { id: "items", label: "Items", panel: <p>Line items</p> },
+  { id: "history", label: "History", panel: <p>Change history</p> },
+] as const;
+
+function Harness() {
+  const [selected, setSelected] = useState("details");
+  return (
+    <>
+      <button type="button">Before</button>
+      <Tabs label="Order sections" items={items} selectedId={selected} onSelect={setSelected} />
+    </>
+  );
+}
+
+describe("Tabs", () => {
+  it("exposes tablist, tabs, and the selected panel", async () => {
+    const { container } = render(<Harness />);
+
+    expect(screen.getByRole("tablist", { name: "Order sections" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Details" })).toHaveTextContent("Order details");
+    expect(screen.queryByRole("tabpanel", { name: "Items" })).not.toBeInTheDocument();
+    await expectNoAxeViolations(container);
+  });
+
+  it("is one tab stop and moves with arrow, Home, and End keys", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveFocus();
+
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Items" })).toHaveFocus();
+    expect(screen.getByRole("tabpanel", { name: "Items" })).toBeVisible();
+
+    await user.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveFocus();
+
+    await user.tab();
+    expect(screen.getByRole("tabpanel", { name: "Details" })).toHaveFocus();
+  });
+});
+
+describe("AnnouncerProvider", () => {
+  function SaveButton() {
+    const announce = useAnnounce();
+    return (
+      <button type="button" onClick={() => announce("Order saved")}>
+        Save
+      </button>
+    );
+  }
+
+  it("announces through a persistent polite region and re-announces repeats", async () => {
+    vi.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AnnouncerProvider>
+        <SaveButton />
+      </AnnouncerProvider>,
+    );
+    const region = screen.getByRole("status");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    act(() => vi.advanceTimersByTime(50));
+    expect(region).toHaveTextContent("Order saved");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(region).toHaveTextContent("");
+    act(() => vi.advanceTimersByTime(50));
+    expect(region).toHaveTextContent("Order saved");
+    vi.useRealTimers();
+  });
+});

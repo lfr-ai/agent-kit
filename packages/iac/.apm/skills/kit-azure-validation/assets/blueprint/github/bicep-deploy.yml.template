@@ -1,0 +1,138 @@
+# Bicep validate, what-if, and gated deploy template.
+# Copy to .github/workflows/bicep-deploy.yml, then:
+#   1. Replace every PIN_FULL_COMMIT_SHA with the reviewed 40-character SHA.
+#   2. Create environments '<env>-preview' (no reviewers) and '<env>' (required
+#      reviewers, deployment branch policy 'main') with variables
+#      AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, RESOURCE_GROUP.
+#   3. Federate a reader identity with subject
+#      'repo:<owner>/<repo>:environment:<env>-preview' and a deployer identity
+#      with 'repo:<owner>/<repo>:environment:<env>'. Grant the deployer only the
+#      roles the template needs on the target resource group.
+#   4. Copy review_whatif.py from this skill to tools/review_whatif.py.
+name: bicep-deploy
+
+on:
+  pull_request:
+    paths:
+      - infra/**
+  push:
+    branches: [main]
+    paths:
+      - infra/**
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - name: Build and lint
+        working-directory: infra
+        run: |
+          az bicep install
+          az bicep build --file main.bicep --stdout > /dev/null
+          az bicep lint --file main.bicep
+          for file in parameters/dev.bicepparam parameters/prod.bicepparam; do
+            az bicep build-params --file "$file" --stdout > /dev/null
+          done
+
+  preview:
+    needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment || 'dev' }}-preview
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENV: ${{ inputs.environment || 'dev' }}
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate
+        working-directory: infra
+        run: |
+          az deployment group validate \
+            --resource-group "$RESOURCE_GROUP" \
+            --parameters "parameters/$TARGET_ENV.bicepparam" \
+            --output none
+      - name: What-if
+        working-directory: infra
+        run: |
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --parameters "parameters/$TARGET_ENV.bicepparam" \
+            --result-format FullResourcePayloads \
+            --no-pretty-print --output json > whatif.json
+          sha256sum whatif.json > whatif.sha256
+      - name: Review what-if
+        working-directory: infra
+        run: python3 ../tools/review_whatif.py --file whatif.json > whatif-summary.json
+      - uses: actions/upload-artifact@PIN_FULL_COMMIT_SHA # v4
+        if: always()
+        with:
+          name: whatif-${{ env.TARGET_ENV }}
+          path: |
+            infra/whatif.json
+            infra/whatif.sha256
+            infra/whatif-summary.json
+          retention-days: 14
+          if-no-files-found: error
+
+  deploy:
+    needs: preview
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Required reviewers on this environment approve the uploaded what-if.
+    environment: ${{ inputs.environment || 'dev' }}
+    concurrency:
+      group: bicep-deploy-${{ inputs.environment || 'dev' }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENV: ${{ inputs.environment || 'dev' }}
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy
+        working-directory: infra
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "main-$TARGET_ENV-$GITHUB_RUN_ID" \
+            --parameters "parameters/$TARGET_ENV.bicepparam" \
+            --output none

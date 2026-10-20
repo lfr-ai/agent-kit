@@ -1,0 +1,340 @@
+"""Run the repository quality gate in a fixed fast-to-slow order.
+
+Copy to 'scripts/run_gate.py' and edit 'STEPS' to match the project's tools.
+The same script runs locally, in pre-commit (as one local hook) and in CI, so
+all three agree on what "the gate passed" means.
+
+Modes:
+    python scripts/run_gate.py                 check-only; never modifies files
+    python scripts/run_gate.py --fix           run fixers first, then every check
+    python scripts/run_gate.py --include-slow  add link checks, integration tests
+    python scripts/run_gate.py --only lint --only types
+    python scripts/run_gate.py --list
+    python scripts/run_gate.py --report gate-report.json
+
+Exit status: 0 when every selected check passed, 1 when any check failed or its
+tool was unavailable, 2 for usage errors. An unavailable tool is never a pass.
+"""
+
+import argparse
+import json
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Step:
+    """One gate step.
+
+    Attributes:
+        name: Short identifier used by '--only' and '--skip'.
+        check: Read-only command; must exit non-zero on findings.
+        fix: Optional command that rewrites files; only run with '--fix'.
+        tier: 'fast' (seconds), 'test' (test suites) or 'slow' (network, long).
+        proves: One line stating what a pass demonstrates, for the report.
+    """
+
+    name: str
+    check: tuple[str, ...]
+    fix: tuple[str, ...] | None = None
+    tier: str = "fast"
+    proves: str = ""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Result:
+    """Outcome of one executed or skipped step.
+
+    Attributes:
+        name: Step name.
+        command: The command line that ran.
+        status: 'passed', 'failed', 'unavailable', 'timeout' or 'skipped'.
+        exit_code: Process exit code, or None when it did not run to completion.
+        seconds: Wall-clock duration.
+        proves: What a pass demonstrates.
+    """
+
+    name: str
+    command: str
+    status: str
+    exit_code: int | None
+    seconds: float
+    proves: str
+
+
+_UV = ("uv", "run", "--locked")
+
+# Order matters: cheapest and most likely to fail first, so feedback is fast.
+STEPS: tuple[Step, ...] = (
+    Step(
+        name="lock",
+        check=("uv", "lock", "--check"),
+        proves="the lockfile matches the declared dependencies",
+    ),
+    Step(
+        name="format",
+        check=(*_UV, "ruff", "format", "--check", "."),
+        fix=(*_UV, "ruff", "format", "."),
+        proves="all Python files are formatted",
+    ),
+    Step(
+        name="lint",
+        check=(*_UV, "ruff", "check", "."),
+        fix=(*_UV, "ruff", "check", "--fix", "."),
+        proves="no enabled lint rule is violated",
+    ),
+    Step(
+        name="types",
+        check=(*_UV, "mypy", "src"),
+        proves="the type checker accepts the source package",
+    ),
+    Step(
+        name="imports",
+        check=(*_UV, "lint-imports"),
+        proves="import contracts (layer direction) hold",
+    ),
+    Step(
+        name="spelling",
+        check=(
+            "npx",
+            "--yes",
+            "cspell@10",
+            "lint",
+            "--no-progress",
+            "--gitignore",
+            ".",
+        ),
+        proves="no unknown words in checked files",
+    ),
+    Step(
+        name="markdown",
+        check=("npx", "--yes", "markdownlint-cli2@0.23.3"),
+        fix=("npx", "--yes", "markdownlint-cli2@0.23.3", "--fix"),
+        proves="Markdown follows the configured style rules",
+    ),
+    Step(
+        name="secrets",
+        # Reuses the pinned pre-commit hook and its audited baseline; check-only.
+        check=(*_UV, "pre-commit", "run", "detect-secrets", "--all-files"),
+        proves="no new secret candidates beyond the audited baseline",
+    ),
+    Step(
+        name="unit-tests",
+        check=(*_UV, "pytest", "-m", "unit or property", "-q"),
+        tier="test",
+        proves="unit and property tests pass",
+    ),
+    Step(
+        name="integration-tests",
+        check=(*_UV, "pytest", "-m", "integration", "-q"),
+        tier="slow",
+        proves="real boundaries behave as their contracts state",
+    ),
+    Step(
+        name="links",
+        check=("lychee", "--no-progress", "--config", ".lychee.toml", "**/*.md"),
+        tier="slow",
+        proves="links in Markdown resolve",
+    ),
+)
+
+
+def _run(command: Sequence[str], *, timeout: float) -> tuple[str, int | None]:
+    """Run a command without a shell and classify the outcome.
+
+    The executable is resolved with 'shutil.which' so wrappers such as
+    'npx.cmd' on Windows run without 'shell=True'.
+    """
+    executable = shutil.which(command[0])
+    if executable is None:
+        return "unavailable", None
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argument vectors
+            [executable, *command[1:]], check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout", None
+    return ("passed" if completed.returncode == 0 else "failed"), completed.returncode
+
+
+def select(
+    steps: Sequence[Step],
+    *,
+    only: Sequence[str],
+    skip: Sequence[str],
+    include_slow: bool,
+) -> list[Step]:
+    """Choose the steps to run, preserving gate order.
+
+    Args:
+        steps: All configured steps.
+        only: When non-empty, run exactly these names (slow ones included).
+        skip: Names never run.
+        include_slow: Include the 'slow' tier when 'only' is empty.
+
+    Returns:
+        Selected steps in gate order.
+
+    Raises:
+        ValueError: If a name in 'only' or 'skip' is unknown.
+    """
+    known = {step.name for step in steps}
+    unknown = sorted((set(only) | set(skip)) - known)
+    if unknown:
+        raise ValueError(f"unknown step(s): {', '.join(unknown)}")
+    return [
+        step
+        for step in steps
+        if step.name not in skip
+        and (step.name in only if only else include_slow or step.tier != "slow")
+    ]
+
+
+def run_gate(
+    steps: Sequence[Step], *, fix: bool, keep_going: bool, timeout: float
+) -> list[Result]:
+    """Run fixers (optionally) and checks, printing one line per step.
+
+    Args:
+        steps: Selected steps in order.
+        fix: Run each step's fixer before its check.
+        keep_going: Continue after a failing check instead of stopping.
+        timeout: Seconds allowed per command.
+
+    Returns:
+        One result per selected step; steps after a stop are 'skipped'.
+    """
+    results: list[Result] = []
+    stopped = False
+    for index, step in enumerate(steps, start=1):
+        command = " ".join(step.check)
+        if stopped:
+            results.append(
+                Result(
+                    name=step.name,
+                    command=command,
+                    status="skipped",
+                    exit_code=None,
+                    seconds=0.0,
+                    proves=step.proves,
+                )
+            )
+            continue
+        print(f"[{index}/{len(steps)}] {step.name}: {command}", flush=True)
+        started = time.perf_counter()
+        if fix and step.fix is not None:
+            fix_status, _ = _run(step.fix, timeout=timeout)
+            print(f"    fixer {fix_status}", flush=True)
+        status, code = _run(step.check, timeout=timeout)
+        seconds = round(time.perf_counter() - started, 2)
+        print(f"    {status} ({seconds}s)", flush=True)
+        results.append(
+            Result(
+                name=step.name,
+                command=command,
+                status=status,
+                exit_code=code,
+                seconds=seconds,
+                proves=step.proves,
+            )
+        )
+        if status != "passed" and not keep_going:
+            stopped = True
+    return results
+
+
+def _git_revision() -> str:
+    """Return the current commit, or 'unknown' outside a repository."""
+    git = shutil.which("git")
+    if git is None:
+        return "unknown"
+    completed = subprocess.run(  # noqa: S603 - fixed argument vector
+        [git, "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else "unknown"
+
+
+def write_report(path: Path, results: Sequence[Result], *, mode: str) -> None:
+    """Write machine-readable evidence for the run.
+
+    Args:
+        path: Destination JSON file.
+        results: Step outcomes.
+        mode: 'check' or 'fix'.
+    """
+    report = {
+        "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "revision": _git_revision(),
+        "mode": mode,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "passed": bool(results)
+        and all(result.status == "passed" for result in results),
+        "steps": [asdict(result) for result in results],
+    }
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse arguments, run the gate and summarize.
+
+    Args:
+        argv: Command-line arguments; 'sys.argv[1:]' when None.
+
+    Returns:
+        0 when every selected check passed, 1 otherwise, 2 on usage errors.
+    """
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--fix", action="store_true", help="run fixers before checks")
+    parser.add_argument("--only", action="append", default=[], metavar="STEP")
+    parser.add_argument("--skip", action="append", default=[], metavar="STEP")
+    parser.add_argument("--include-slow", action="store_true")
+    parser.add_argument("--keep-going", action="store_true")
+    parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
+    parser.add_argument("--report", type=Path, metavar="JSON")
+    parser.add_argument("--list", action="store_true", help="list steps and exit")
+    args = parser.parse_args(argv)
+    if args.list:
+        for step in STEPS:
+            fixer = " (fixable)" if step.fix else ""
+            print(f"{step.name:<20} {step.tier:<5} {step.proves}{fixer}")
+        return 0
+    try:
+        steps = select(
+            STEPS, only=args.only, skip=args.skip, include_slow=args.include_slow
+        )
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    if not steps:
+        print("no steps selected", file=sys.stderr)
+        return 2
+    results = run_gate(
+        steps, fix=args.fix, keep_going=args.keep_going, timeout=args.timeout
+    )
+    if args.report:
+        write_report(args.report, results, mode="fix" if args.fix else "check")
+    print("\nSummary")
+    for result in results:
+        print(f"  {result.status:<11} {result.name:<20} {result.seconds:>7.2f}s")
+    failed = [
+        result for result in results if result.status not in {"passed", "skipped"}
+    ]
+    if failed:
+        print(f"Gate FAILED: {', '.join(result.name for result in failed)}")
+        return 1
+    print("Gate passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,144 @@
+"""Contract tests for the payment client port: fake and HTTP adapter alike.
+
+Copy to 'tests/contract/test_payment_gateway_contract.py'. The HTTP adapter is
+driven through an injected transport, so every documented provider answer can
+be replayed offline. The same success and idempotency expectations run against
+the fake, which keeps the fake honest.
+"""
+
+import io
+import json
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from decimal import Decimal
+from email.message import Message
+
+import pytest
+
+from app.adapters.payments.http_payment_gateway import HttpPaymentGateway
+from app.application.ports.payment_errors import (
+    PaymentDeclinedError,
+    PaymentProtocolError,
+    PaymentUnavailableError,
+)
+from app.application.ports.payments import PaymentGateway
+from tests.fakes import FakePaymentGateway
+
+_URL = "https://payments.test/v1"
+
+
+class RecordingTransport:
+    """Replays scripted provider answers and records each request."""
+
+    def __init__(self, *answers: bytes | Exception) -> None:
+        self._answers = list(answers)
+        self.requests: list[urllib.request.Request] = []
+
+    def __call__(self, request: urllib.request.Request, timeout: float) -> bytes:
+        self.requests.append(request)
+        answer = self._answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def _success(reference: str = "pay-1") -> bytes:
+    return json.dumps({"id": reference, "amount": "10.00", "currency": "EUR"}).encode()
+
+
+def _http_error(status: int, body: bytes = b"{}", retry_after: str = "") -> Exception:
+    headers = Message()
+    if retry_after:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(_URL, status, "error", headers, io.BytesIO(body))
+
+
+def _charge(gateway: PaymentGateway, key: str = "settle-inv-1") -> str:
+    receipt = gateway.charge(
+        invoice_id="inv-1",
+        amount=Decimal("10.00"),
+        currency="EUR",
+        idempotency_key=key,
+    )
+    return receipt.reference
+
+
+GatewayFactory = Callable[[], PaymentGateway]
+
+
+def _fake() -> PaymentGateway:
+    return FakePaymentGateway()
+
+
+def _http() -> PaymentGateway:
+    return HttpPaymentGateway(
+        base_url=_URL,
+        token=lambda: "test-token",
+        transport=RecordingTransport(_success("pay-1"), _success("pay-1")),
+    )
+
+
+@pytest.mark.parametrize("factory", [_fake, _http], ids=["fake", "http"])
+def test_repeated_idempotency_key_returns_the_same_receipt(
+    factory: GatewayFactory,
+) -> None:
+    gateway = factory()
+    assert _charge(gateway) == _charge(gateway)
+
+
+def test_http_adapter_sends_amount_as_text_and_forwards_idempotency_key() -> None:
+    transport = RecordingTransport(_success())
+    gateway = HttpPaymentGateway(base_url=_URL, token=lambda: "t", transport=transport)
+    _charge(gateway, key="key-42")
+    request = transport.requests[0]
+    assert request.full_url == f"{_URL}/charges"
+    assert request.get_header("Idempotency-key") == "key-42"
+    assert isinstance(request.data, bytes)
+    assert json.loads(request.data)["amount"] == "10.00"
+
+
+@pytest.mark.parametrize("status", [402, 409, 422])
+def test_business_refusals_become_declined_errors(status: int) -> None:
+    body = json.dumps({"reason": "card expired"}).encode()
+    transport = RecordingTransport(_http_error(status, body))
+    gateway = HttpPaymentGateway(base_url=_URL, token=lambda: "t", transport=transport)
+    with pytest.raises(PaymentDeclinedError) as caught:
+        _charge(gateway)
+    assert caught.value.reason == "card expired"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _http_error(503, retry_after="7"),
+        _http_error(429),
+        urllib.error.URLError("dns failure"),
+        TimeoutError(),
+    ],
+    ids=["503", "429", "dns", "timeout"],
+)
+def test_transient_failures_become_unavailable_errors(failure: Exception) -> None:
+    gateway = HttpPaymentGateway(
+        base_url=_URL, token=lambda: "t", transport=RecordingTransport(failure)
+    )
+    with pytest.raises(PaymentUnavailableError):
+        _charge(gateway)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [b"not json", b"[]", json.dumps({"id": "pay-1"}).encode(), _http_error(418)],
+    ids=["invalid-json", "not-object", "missing-field", "unexpected-status"],
+)
+def test_contract_drift_becomes_protocol_error(answer: bytes | Exception) -> None:
+    gateway = HttpPaymentGateway(
+        base_url=_URL, token=lambda: "t", transport=RecordingTransport(answer)
+    )
+    with pytest.raises(PaymentProtocolError):
+        _charge(gateway)
+
+
+def test_plain_http_base_url_is_rejected_at_construction() -> None:
+    with pytest.raises(ValueError, match="https"):
+        HttpPaymentGateway(base_url="http://payments.test", token=lambda: "t")

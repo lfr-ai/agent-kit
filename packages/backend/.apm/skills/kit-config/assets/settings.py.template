@@ -1,0 +1,127 @@
+"""Typed application settings parsed once at the composition root.
+
+Copy into the configuration/composition package of the consumer (for example
+'myapp/composition/settings.py'). Domain and application code never import this
+module; the composition root passes the facets below to the adapters that need
+them.
+"""
+
+from __future__ import annotations
+
+from functools import cache
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    PostgresDsn,
+    SecretStr,
+    ValidationError,
+    model_validator,
+)
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+ENV_PREFIX = "ORDERS_"
+NESTED_DELIMITER = "__"
+
+
+class DatabaseSettings(BaseModel):
+    """Connection settings for the relational store."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: PostgresDsn
+    password: SecretStr
+    pool_size: int = Field(default=5, ge=1, le=100)
+    statement_timeout_seconds: int = Field(default=30, ge=1, le=600)
+
+
+class BillingClientSettings(BaseModel):
+    """Outbound HTTP client settings for the billing service."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    base_url: HttpUrl
+    api_key: SecretStr
+    timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+
+
+class TlsSettings(BaseModel):
+    """Optional TLS material for the HTTP listener."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    certificate_path: str | None = None
+    key_path: str | None = None
+
+    @model_validator(mode="after")
+    def _require_material_when_enabled(self) -> TlsSettings:
+        if self.enabled and not (self.certificate_path and self.key_path):
+            raise ValueError("certificate_path and key_path are required when enabled")
+        return self
+
+
+class AppSettings(BaseSettings):
+    """Root settings object; the only place that reads the environment."""
+
+    model_config = SettingsConfigDict(
+        env_prefix=ENV_PREFIX,
+        env_nested_delimiter=NESTED_DELIMITER,
+        env_file=".env",
+        env_file_encoding="utf-8",
+        secrets_dir=None,
+        frozen=True,
+        extra="forbid",
+    )
+
+    log_format: Literal["json", "text"] = "json"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    database: DatabaseSettings
+    billing: BillingClientSettings
+    tls: TlsSettings = Field(default_factory=TlsSettings)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Document precedence: arguments, environment, dotenv, secret files."""
+        del settings_cls
+        return (init_settings, env_settings, dotenv_settings, file_secret_settings)
+
+
+def format_errors(error: ValidationError) -> str:
+    """Render validation errors with variable names and without input values."""
+    lines = [f"Invalid configuration ({error.error_count()} errors):"]
+    for item in error.errors(include_input=False, include_url=False):
+        location = NESTED_DELIMITER.join(str(part) for part in item["loc"])
+        lines.append(f"  {ENV_PREFIX}{location.upper()}: {item['msg']}")
+    return "\n".join(lines)
+
+
+@cache
+def load_settings() -> AppSettings:
+    """Parse settings once; tests call 'load_settings.cache_clear()' to reset."""
+    return AppSettings()  # type: ignore[call-arg]  # values come from sources
+
+
+def main() -> int:
+    """Example entry point: fail fast before building any adapter."""
+    try:
+        settings = load_settings()
+    except ValidationError as error:
+        print(format_errors(error))
+        return 2
+    print(f"configuration loaded (log_format={settings.log_format})")
+    return 0

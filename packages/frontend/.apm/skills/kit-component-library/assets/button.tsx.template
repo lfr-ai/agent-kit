@@ -1,0 +1,88 @@
+// src/shared/ui/button.tsx
+// Button primitive. Native <button> semantics, typed variants, an icon-only form
+// that requires an accessible label at compile time, and a pending state that
+// stays focusable (aria-disabled) so keyboard users do not lose their place.
+import type { ButtonHTMLAttributes, ReactElement, ReactNode, Ref } from "react";
+
+export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ButtonSize = "sm" | "md" | "lg";
+
+type NativeProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "aria-label" | "disabled">;
+
+type CommonProps = NativeProps &
+  Readonly<{
+    variant?: ButtonVariant;
+    size?: ButtonSize;
+    /** Shows progress, blocks activation, keeps focus. */
+    pending?: boolean;
+    /** Text announced while pending, for example "Saving". */
+    pendingLabel?: string;
+    disabled?: boolean;
+    ref?: Ref<HTMLButtonElement>;
+  }>;
+
+type TextButtonProps = CommonProps &
+  Readonly<{
+    children: ReactNode;
+    icon?: ReactElement;
+    "aria-label"?: never;
+  }>;
+
+type IconButtonProps = CommonProps &
+  Readonly<{
+    children?: never;
+    icon: ReactElement;
+    /** Required: an icon alone has no accessible name. */
+    "aria-label": string;
+  }>;
+
+export type ButtonProps = TextButtonProps | IconButtonProps;
+
+export function Button(props: ButtonProps): ReactElement {
+  const {
+    variant = "secondary",
+    size = "md",
+    pending = false,
+    pendingLabel = "Working",
+    disabled = false,
+    type = "button",
+    icon,
+    className,
+    onClick,
+    children,
+    ref,
+    ...rest
+  } = props;
+  const inactive = disabled || pending;
+
+  return (
+    <button
+      {...rest}
+      ref={ref}
+      type={type}
+      className={["ui-button", `ui-button--${variant}`, `ui-button--${size}`, className]
+        .filter(Boolean)
+        .join(" ")}
+      // Disabled removes the button from the tab order; pending keeps it focusable.
+      disabled={disabled}
+      aria-disabled={inactive || undefined}
+      aria-busy={pending || undefined}
+      data-pending={pending ? "" : undefined}
+      onClick={(event) => {
+        if (inactive) {
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
+    >
+      {icon ? (
+        <span className="ui-button__icon" aria-hidden="true">
+          {icon}
+        </span>
+      ) : null}
+      {children ? <span className="ui-button__label">{children}</span> : null}
+      {pending ? <span className="visually-hidden">{`, ${pendingLabel}`}</span> : null}
+    </button>
+  );
+}

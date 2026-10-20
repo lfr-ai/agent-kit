@@ -1,0 +1,17 @@
+# Memory entry
+
+Copy one block per lesson into the repository's memory file. Keep the ISO date
+in the heading; the freshness checker reads it.
+
+## YYYY-MM-DD Short statement of the lesson
+
+- Status: active
+- Scope: where this applies (package, command, environment) and where it does not
+- Lesson: one or two sentences a newcomer can act on
+- Evidence: [owning file or test](../path/to/evidence) and the command that showed it
+- Why it was surprising: the expectation it contradicted
+- Promote to: nothing yet / policy / check / decision record (and why)
+- Last verified: YYYY-MM-DD
+
+<!-- When replaced: set "Status: superseded" and add
+"- Superseded by: [new entry or record](../path)". Never delete the entry. -->

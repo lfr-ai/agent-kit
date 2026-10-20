@@ -1,0 +1,239 @@
+"""Structure-aware chunking that preserves exact source offsets.
+
+Copy to 'retrieval/chunking.py'. The chunker splits on paragraphs first, then
+sentences, then whitespace, and packs the pieces into windows no longer than
+'max_chars'. Every chunk keeps the exact '[start_char, end_char)' span of the
+source text so citations can be verified by slicing the original document.
+"""
+
+import hashlib
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from retrieval.contracts import Chunk
+
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SourceDocument:
+    """One normalized source version ready for chunking.
+
+    Attributes:
+        source_id: Stable identifier of the source.
+        source_version: Version or content hash; changes on every edit.
+        tenant: Owning tenant.
+        text: Normalized plain text or Markdown.
+        acl: Principal tokens allowed to read the source.
+        updated_at: Timezone-aware time of this version.
+        metadata: Non-secret string attributes copied onto every chunk.
+    """
+
+    source_id: str
+    source_version: str
+    tenant: str
+    text: str
+    acl: frozenset[str]
+    updated_at: datetime
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ChunkingPolicy:
+    """Window limits measured in characters.
+
+    Attributes:
+        max_chars: Upper bound on chunk length.
+        overlap_chars: Upper bound on text repeated from the previous chunk.
+    """
+
+    max_chars: int = 1200
+    overlap_chars: int = 150
+
+    def __post_init__(self) -> None:
+        """Reject limits that cannot make progress."""
+        if self.max_chars < 1:
+            raise ValueError("max_chars must be positive")
+        if not 0 <= self.overlap_chars < self.max_chars:
+            raise ValueError("overlap_chars must be in [0, max_chars)")
+
+
+def chunk_id_for(
+    *, tenant: str, source_id: str, source_version: str, start: int, end: int
+) -> str:
+    """Derive a deterministic chunk identifier.
+
+    Re-indexing the same version yields the same ids, so upserts are
+    idempotent and stale versions are found by version, not by guesswork.
+
+    Args:
+        tenant: Owning tenant.
+        source_id: Source identifier.
+        source_version: Source version.
+        start: Inclusive start offset.
+        end: Exclusive end offset.
+
+    Returns:
+        A 32-character hexadecimal identifier.
+    """
+    key = "\x1f".join((tenant, source_id, source_version, f"{start}:{end}"))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+
+
+def _hard_split(
+    text: str, start: int, end: int, max_chars: int
+) -> list[tuple[int, int]]:
+    """Split one oversized span at whitespace, or mid-word as a last resort."""
+    spans: list[tuple[int, int]] = []
+    while end - start > max_chars:
+        cut = text.rfind(" ", start + 1, start + max_chars)
+        if cut <= start:
+            cut = start + max_chars
+        spans.append((start, cut))
+        start = cut
+        while start < end and text[start].isspace():
+            start += 1
+    if start < end:
+        spans.append((start, end))
+    return spans
+
+
+def _split_block(
+    text: str, start: int, end: int, max_chars: int
+) -> list[tuple[int, int]]:
+    """Split a paragraph into sentence spans when it exceeds the limit."""
+    if end - start <= max_chars:
+        return [(start, end)]
+    spans: list[tuple[int, int]] = []
+    cursor = start
+    for match in _SENTENCE_END.finditer(text, start, end):
+        spans.extend(_hard_split(text, cursor, match.start(), max_chars))
+        cursor = match.end()
+    spans.extend(_hard_split(text, cursor, end, max_chars))
+    return spans
+
+
+def _pieces(text: str, max_chars: int) -> list[tuple[int, int]]:
+    """Return non-blank paragraph or sentence spans, each within the limit."""
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for match in _PARAGRAPH_BREAK.finditer(text):
+        spans.extend(_split_block(text, cursor, match.start(), max_chars))
+        cursor = match.end()
+    spans.extend(_split_block(text, cursor, len(text), max_chars))
+    return [(start, end) for start, end in spans if text[start:end].strip()]
+
+
+def _pack(
+    pieces: list[tuple[int, int]], policy: ChunkingPolicy
+) -> list[tuple[int, int]]:
+    """Greedily pack pieces into windows with whole-piece overlap."""
+    windows: list[tuple[int, int]] = []
+    first = 0
+    while first < len(pieces):
+        start = pieces[first][0]
+        last = first
+        while (
+            last + 1 < len(pieces) and pieces[last + 1][1] - start <= policy.max_chars
+        ):
+            last += 1
+        end = pieces[last][1]
+        windows.append((start, end))
+        if last + 1 >= len(pieces):
+            break
+        following = pieces[last + 1][1]
+        next_first = last + 1
+        candidate = last
+        while (
+            candidate > first
+            and end - pieces[candidate][0] <= policy.overlap_chars
+            and following - pieces[candidate][0] <= policy.max_chars
+        ):
+            next_first = candidate
+            candidate -= 1
+        first = next_first
+    return windows
+
+
+def _trim(text: str, start: int, end: int) -> tuple[int, int]:
+    """Move offsets inward past surrounding whitespace."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _sections(text: str) -> list[tuple[int, str]]:
+    """Return '(offset, heading path)' pairs for Markdown ATX headings."""
+    stack: list[tuple[int, str]] = []
+    result: list[tuple[int, str]] = []
+    for match in _HEADING.finditer(text):
+        level = len(match.group(1))
+        stack = [entry for entry in stack if entry[0] < level]
+        stack.append((level, match.group(2).strip()))
+        result.append((match.start(), " > ".join(title for _, title in stack)))
+    return result
+
+
+def _section_at(sections: list[tuple[int, str]], offset: int) -> str:
+    """Return the heading path in effect at an offset."""
+    current = ""
+    for start, path in sections:
+        if start > offset:
+            break
+        current = path
+    return current
+
+
+def chunk_document(
+    document: SourceDocument, *, policy: ChunkingPolicy | None = None
+) -> list[Chunk]:
+    """Split a document into citable, permission-carrying chunks.
+
+    Args:
+        document: Source version to split.
+        policy: Window limits; defaults to 'ChunkingPolicy()'.
+
+    Returns:
+        Chunks in document order. An all-whitespace document yields none.
+
+    Raises:
+        ValueError: If the document has no access list.
+    """
+    if not document.acl:
+        raise ValueError(f"source {document.source_id} has an empty access list")
+    active = policy or ChunkingPolicy()
+    text = document.text
+    sections = _sections(text)
+    chunks: list[Chunk] = []
+    for raw_start, raw_end in _pack(_pieces(text, active.max_chars), active):
+        start, end = _trim(text, raw_start, raw_end)
+        if start == end:
+            continue
+        chunks.append(
+            Chunk(
+                chunk_id=chunk_id_for(
+                    tenant=document.tenant,
+                    source_id=document.source_id,
+                    source_version=document.source_version,
+                    start=start,
+                    end=end,
+                ),
+                source_id=document.source_id,
+                source_version=document.source_version,
+                tenant=document.tenant,
+                text=text[start:end],
+                start_char=start,
+                end_char=end,
+                acl=document.acl,
+                updated_at=document.updated_at,
+                section=_section_at(sections, start),
+                metadata=dict(document.metadata),
+            )
+        )
+    return chunks

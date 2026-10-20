@@ -1,0 +1,111 @@
+"""LangChain retriever behind the framework-neutral 'Retriever' port.
+
+Copy to 'retrieval/adapters/langchain.py'. Requires 'langchain-core'. Only
+this module imports LangChain; the import-linter contract forbids it anywhere
+in the retrieval core. The adapter never trusts the framework for access
+control: it builds a per-principal, pre-filtered retriever through a factory,
+then re-validates provenance and visibility of every returned document.
+"""
+
+import logging
+from collections.abc import Callable
+
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+
+from retrieval.contracts import (
+    Query,
+    RetrievalUnavailableError,
+    ScoredChunk,
+    chunk_from_mapping,
+    is_visible_to,
+)
+
+logger = logging.getLogger(__name__)
+
+# Builds a retriever whose vector-store filter already restricts results to the
+# query's tenant, access tokens and metadata filters, and whose 'k' is top_k.
+# For a vector store with metadata filters, call 'as_retriever' with 'search_kwargs'
+# holding 'k' and a store-specific 'filter' built from the query principal.
+RetrieverFactory = Callable[[Query], BaseRetriever]
+
+
+class LangChainRetrieverAdapter:
+    """Adapt a LangChain 'BaseRetriever' to the 'Retriever' port."""
+
+    def __init__(
+        self,
+        factory: RetrieverFactory,
+        *,
+        name: str = "langchain",
+        score_key: str = "score",
+        unavailable: tuple[type[Exception], ...] = (ConnectionError, TimeoutError),
+    ) -> None:
+        """Configure the adapter.
+
+        Args:
+            factory: Builds a pre-filtered retriever for one query.
+            name: Strategy name reported in hits and fusion weights.
+            score_key: Metadata key holding a store score, when present.
+            unavailable: Exceptions mapped to 'RetrievalUnavailableError'.
+        """
+        self._factory = factory
+        self._name = name
+        self._score_key = score_key
+        self._unavailable = unavailable
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return self._name
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Run the framework retriever and convert its documents.
+
+        Documents with missing provenance are dropped and logged rather than
+        returned unattributed; documents that fail the visibility re-check are
+        dropped and logged as an access-control defect in the filter factory.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Visible, attributable hits in framework order.
+
+        Raises:
+            RetrievalUnavailableError: If the framework raises a transport error.
+        """
+        try:
+            documents: list[Document] = await self._factory(query).ainvoke(query.text)
+        except self._unavailable as error:
+            raise RetrievalUnavailableError(
+                f"{self._name} retriever unavailable"
+            ) from error
+        hits: list[ScoredChunk] = []
+        for document in documents[: query.top_k]:
+            try:
+                chunk = chunk_from_mapping(
+                    text=document.page_content,
+                    metadata=document.metadata,
+                    score_key=self._score_key,
+                )
+            except ValueError:
+                logger.warning(
+                    "retrieval.unattributable_document", extra={"strategy": self._name}
+                )
+                continue
+            if not is_visible_to(chunk, query.principal):
+                logger.error(
+                    "retrieval.acl_violation_dropped", extra={"strategy": self._name}
+                )
+                continue
+            raw = document.metadata.get(self._score_key)
+            score = (
+                float(raw) if isinstance(raw, int | float) else 1.0 / (len(hits) + 1)
+            )
+            hits.append(
+                ScoredChunk(
+                    chunk=chunk, score=score, retriever=self._name, rank=len(hits) + 1
+                )
+            )
+        return hits

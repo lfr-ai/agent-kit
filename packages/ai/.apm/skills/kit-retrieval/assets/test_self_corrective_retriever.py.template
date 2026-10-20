@@ -1,0 +1,176 @@
+"""Tests for 'retrieval.self_corrective'; copy to 'tests/retrieval/test_self_corrective_retriever.py'."""
+
+import asyncio
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+import pytest
+
+from retrieval.contracts import (
+    Chunk,
+    EvidenceStatus,
+    Grade,
+    Principal,
+    Query,
+    RetrievalUnavailableError,
+    ScoredChunk,
+)
+from retrieval.retrievers import StaticRetriever
+from retrieval.self_corrective import (
+    CorrectionPolicy,
+    KeywordOverlapGrader,
+    SelfCorrectiveRetriever,
+)
+
+_ALICE = Principal(subject="alice", tenant="t1", groups=frozenset({"staff"}))
+
+
+def _chunk(chunk_id: str, text: str) -> Chunk:
+    return Chunk(
+        chunk_id=chunk_id,
+        source_id=f"src-{chunk_id}",
+        source_version="v1",
+        tenant="t1",
+        text=text,
+        start_char=0,
+        end_char=len(text),
+        acl=frozenset({"group:staff"}),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+class _ByQueryRetriever:
+    """Returns different canned hits depending on the query text."""
+
+    def __init__(self, answers: dict[str, list[Chunk]]) -> None:
+        self._answers = answers
+        self.queries: list[Query] = []
+
+    @property
+    def name(self) -> str:
+        return "scripted"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        self.queries.append(query)
+        return [
+            ScoredChunk(chunk=chunk, score=1.0, retriever=self.name, rank=rank)
+            for rank, chunk in enumerate(self._answers.get(query.text, []), start=1)
+        ]
+
+
+class _ScriptedRewriter:
+    def __init__(self, *texts: str) -> None:
+        self._texts = list(texts)
+        self.feedback: list[str] = []
+
+    async def rewrite(self, query: Query, *, feedback: str) -> str:
+        self.feedback.append(feedback)
+        return self._texts.pop(0)
+
+
+class _StallingGrader:
+    async def grade(self, query: Query, hits: Sequence[ScoredChunk]) -> Grade:
+        await asyncio.Event().wait()
+        return Grade(status=EvidenceStatus.SUFFICIENT)
+
+
+def test_first_sufficient_round_returns_immediately() -> None:
+    retriever = StaticRetriever("s", [_chunk("a", "export invoices as csv")])
+    loop = SelfCorrectiveRetriever(
+        retriever, KeywordOverlapGrader(), _ScriptedRewriter()
+    )
+
+    result = asyncio.run(loop.run(Query(text="export invoices", principal=_ALICE)))
+
+    assert result.status is EvidenceStatus.SUFFICIENT
+    assert [citation.source_id for citation in result.citations] == ["src-a"]
+    assert len(retriever.calls) == 1
+
+
+def test_weak_round_triggers_a_rewrite_that_keeps_the_principal() -> None:
+    retriever = _ByQueryRetriever(
+        {
+            "bill export": [_chunk("x", "shipping policy")],
+            "export invoices": [_chunk("a", "export invoices as csv")],
+        }
+    )
+    rewriter = _ScriptedRewriter("export invoices")
+    loop = SelfCorrectiveRetriever(retriever, KeywordOverlapGrader(), rewriter)
+
+    result = asyncio.run(
+        loop.run(Query(text="bill export", principal=_ALICE, filters={"k": "v"}))
+    )
+
+    assert result.status is EvidenceStatus.SUFFICIENT
+    assert result.query.text == "export invoices"
+    assert all(query.principal == _ALICE for query in retriever.queries)
+    assert all(query.filters == {"k": "v"} for query in retriever.queries)
+    assert rewriter.feedback
+    assert "coverage" in rewriter.feedback[0]
+    assert len(result.trace) == 2
+
+
+def test_exhausted_rounds_abstain_with_no_evidence() -> None:
+    retriever = _ByQueryRetriever({})
+    loop = SelfCorrectiveRetriever(
+        retriever,
+        KeywordOverlapGrader(),
+        _ScriptedRewriter("second try", "third try"),
+        policy=CorrectionPolicy(max_rounds=3),
+    )
+
+    result = asyncio.run(loop.run(Query(text="first try", principal=_ALICE)))
+
+    assert result.status is EvidenceStatus.NO_EVIDENCE
+    assert result.hits == ()
+    assert [query.text for query in retriever.queries] == [
+        "first try",
+        "second try",
+        "third try",
+    ]
+
+
+def test_repeated_rewrite_stops_the_loop() -> None:
+    retriever = _ByQueryRetriever({})
+    loop = SelfCorrectiveRetriever(
+        retriever, KeywordOverlapGrader(), _ScriptedRewriter("  FIRST try ")
+    )
+
+    result = asyncio.run(loop.run(Query(text="first try", principal=_ALICE)))
+
+    assert len(retriever.queries) == 1
+    assert result.trace[-1].startswith("rewrite empty or repeated")
+
+
+def test_partial_evidence_is_kept_only_when_the_policy_allows() -> None:
+    retriever = StaticRetriever("s", [_chunk("x", "unrelated shipping text")])
+    policy = CorrectionPolicy(max_rounds=1, keep_partial=True)
+    loop = SelfCorrectiveRetriever(
+        retriever, KeywordOverlapGrader(), _ScriptedRewriter(), policy=policy
+    )
+
+    result = asyncio.run(loop.run(Query(text="export invoices", principal=_ALICE)))
+
+    assert result.status is EvidenceStatus.INSUFFICIENT
+    assert len(result.hits) == 1
+
+
+def test_time_budget_maps_to_unavailable() -> None:
+    retriever = StaticRetriever("s", [_chunk("a", "export invoices")])
+    loop = SelfCorrectiveRetriever(
+        retriever,
+        _StallingGrader(),
+        _ScriptedRewriter(),
+        policy=CorrectionPolicy(total_timeout_s=0.01),
+    )
+
+    with pytest.raises(RetrievalUnavailableError, match="budget"):
+        asyncio.run(loop.run(Query(text="export invoices", principal=_ALICE)))
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"max_rounds": 0}, {"max_rounds": 6}, {"total_timeout_s": 0}]
+)
+def test_invalid_policies_are_rejected(kwargs: dict[str, float]) -> None:
+    with pytest.raises(ValueError, match="must"):
+        CorrectionPolicy(**kwargs)  # type: ignore[arg-type]

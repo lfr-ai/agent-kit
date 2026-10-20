@@ -1,0 +1,13 @@
+# Non-secret prod inputs. Copy to infra/environments/prod/terraform.tfvars.
+# Use: terraform plan -var-file=environments/prod/terraform.tfvars
+environment              = "prod"
+location                 = "westeurope"
+workload                 = "orders"
+instance                 = "001"
+storage_replication_type = "GZRS"
+
+tags = {
+  owner       = "platform-team"
+  cost_center = "cc-0000"
+  criticality = "high"
+}

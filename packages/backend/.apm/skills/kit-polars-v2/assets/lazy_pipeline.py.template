@@ -1,0 +1,31 @@
+"""Lazy regional revenue summary with explicit null handling and result order.
+
+Copy to 'myapp/infrastructure/analytics/regional_revenue.py'.
+"""
+
+from pathlib import Path
+
+import polars as pl
+
+_COLUMNS = ("region", "product", "quantity", "unit_price")
+
+
+def regional_revenue(sales: pl.LazyFrame) -> pl.LazyFrame:
+    """Sum quantity times unit price per region; rows without a quantity are skipped."""
+    revenue = pl.col("quantity") * pl.col("unit_price")
+    return (
+        sales.select(_COLUMNS)
+        .drop_nulls("quantity")
+        .with_columns(revenue.alias("revenue"))
+        .group_by("region")
+        .agg(
+            pl.col("revenue").sum().alias("revenue"),
+            pl.col("product").n_unique().alias("distinct_products"),
+        )
+        .sort("revenue", "region", descending=[True, False])
+    )
+
+
+def load_regional_revenue(source: Path) -> pl.DataFrame:
+    """Scan Parquet lazily so only the selected columns are read, then collect."""
+    return regional_revenue(pl.scan_parquet(source)).collect()

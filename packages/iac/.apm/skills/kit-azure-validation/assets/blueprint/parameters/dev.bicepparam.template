@@ -1,0 +1,8 @@
+// Dev parameters. Copy to infra/parameters/dev.bicepparam.
+using '../main.bicep'
+extends './base.bicepparam'
+
+param environment = 'dev'
+
+// Lower-cost redundancy is acceptable outside production.
+param storageSkuName = 'Standard_LRS'

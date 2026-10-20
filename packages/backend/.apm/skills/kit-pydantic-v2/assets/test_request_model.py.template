@@ -1,0 +1,23 @@
+"""Contract tests for a Pydantic v2 request model."""
+
+import pytest
+from pydantic import ValidationError
+
+from myapp.presentation.requests.create_record import CreateRecordRequest
+
+
+def test_create_request_normalizes_and_dumps_json_values() -> None:
+    """Request normalization and JSON-compatible output are stable."""
+    request = CreateRecordRequest.model_validate(
+        {"name": " Example ", "labels": ["new"]}
+    )
+
+    assert request.model_dump(mode="json") == {"name": "Example", "labels": ["new"]}
+
+
+def test_create_request_rejects_extra_and_empty_fields() -> None:
+    """Unexpected fields and invalid names fail at the transport boundary."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        CreateRecordRequest.model_validate({"name": "valid", "admin": True})
+    with pytest.raises(ValidationError):
+        CreateRecordRequest.model_validate({"name": "  "})

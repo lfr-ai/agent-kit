@@ -1,0 +1,63 @@
+// src/shared/state/create-store.ts
+// Minimal external store for shared client-only state (selection, panel layout)
+// when a project has no state library. Server data never goes here.
+import { useSyncExternalStore } from "react";
+
+export type Store<T> = Readonly<{
+  get: () => T;
+  set: (update: T | ((current: T) => T)) => void;
+  subscribe: (listener: () => void) => () => void;
+  reset: () => void;
+}>;
+
+export function createStore<T>(initial: T): Store<T> {
+  let state = initial;
+  const listeners = new Set<() => void>();
+
+  function set(update: T | ((current: T) => T)): void {
+    const next = typeof update === "function" ? (update as (current: T) => T)(state) : update;
+    if (Object.is(next, state)) {
+      return;
+    }
+    state = next;
+    for (const listener of listeners) {
+      listener();
+    }
+  }
+
+  return {
+    get: () => state,
+    set,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    reset: () => set(initial),
+  };
+}
+
+/** Subscribe to a selected slice; return primitives or stable references from select. */
+export function useStore<T, S>(store: Store<T>, select: (state: T) => S): S {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => select(store.get()),
+    () => select(store.get()),
+  );
+}
+
+// Example: selected order ids for bulk actions, cleared on identity change.
+export type SelectionState = Readonly<{ selectedIds: ReadonlySet<string> }>;
+
+export const selectionStore = createStore<SelectionState>({ selectedIds: new Set() });
+
+export function toggleSelection(id: string): void {
+  selectionStore.set(({ selectedIds }) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    return { selectedIds: next };
+  });
+}

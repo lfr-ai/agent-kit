@@ -1,0 +1,56 @@
+# Project name
+
+One sentence: what this is and who it is for.
+
+<!-- Optional badges: build status, latest release, license. Remove if unused. -->
+
+## Why
+
+Two or three sentences on the problem it solves and what makes it different.
+Link to a longer explanation page instead of growing this section.
+
+## Quick start
+
+Prerequisites: runtime and version, package manager, task runner.
+
+```sh
+git clone https://example.com/your-org/project.git
+cd project
+# install with the lockfile
+# run the fastest check that proves the setup works
+```
+
+Expected result: what the reader should see when it works.
+
+## Usage
+
+The smallest realistic example, with synthetic data:
+
+```sh
+# command or code that exercises the main feature
+```
+
+More tasks: link to how-to guides.
+
+## Documentation
+
+- Tutorials: link
+- How-to guides: link
+- Reference (generated): link
+- Architecture and decisions: link
+
+## Development
+
+- Set up: the bootstrap command
+- Focused tests: the command
+- Completion gate: the command that CI runs
+- Contributing: link to CONTRIBUTING.md
+
+## Support and security
+
+- Questions and bugs: the issue tracker link
+- Vulnerabilities: report privately as described in SECURITY.md
+
+## License
+
+Name of the license; see [LICENSE](LICENSE).

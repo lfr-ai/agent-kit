@@ -1,0 +1,186 @@
+// src/features/invoices/ui/invoice-form.tsx
+// React Hook Form + Zod: validation on blur after first touch, focus on the first
+// invalid field, server errors mapped inline, input preserved on every failure,
+// and one idempotency key per logical submission so a retry cannot duplicate it.
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useId, useRef, useState, type ReactElement } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
+import { applyServerErrors } from "@/shared/forms/apply-server-errors";
+import { FormField } from "@/shared/forms/form-field";
+import {
+  emptyLine,
+  invoiceFormSchema,
+  isInvoiceField,
+  toCreateInvoiceRequest,
+  type CreateInvoiceRequest,
+  type InvoiceFormValues,
+} from "../model/invoice-form.schema";
+
+export type SubmitInvoice = (
+  request: CreateInvoiceRequest,
+  options: Readonly<{ idempotencyKey: string }>,
+) => Promise<void>;
+
+export type InvoiceFormProps = Readonly<{
+  defaultValues: InvoiceFormValues;
+  onSubmit: SubmitInvoice;
+  onCancel: () => void;
+  newKey?: () => string;
+}>;
+
+export function InvoiceForm({
+  defaultValues,
+  onSubmit,
+  onCancel,
+  newKey = () => crypto.randomUUID(),
+}: InvoiceFormProps): ReactElement {
+  const titleId = useId();
+  const summaryRef = useRef<HTMLElement>(null);
+  const idempotencyKey = useRef<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    setError,
+    setFocus,
+    formState: { errors, isSubmitting },
+  } = useForm<InvoiceFormValues>({
+    resolver: zodResolver(invoiceFormSchema),
+    defaultValues,
+    mode: "onTouched",
+    shouldFocusError: true,
+  });
+  const { fields, append, remove } = useFieldArray({ control, name: "lines" });
+  const linesError = errors.lines?.message ?? errors.lines?.root?.message;
+
+  const submit = handleSubmit(async (values) => {
+    setSummary(null);
+    setSaved(false);
+    idempotencyKey.current ??= newKey();
+    try {
+      await onSubmit(toCreateInvoiceRequest(values), { idempotencyKey: idempotencyKey.current });
+      idempotencyKey.current = null;
+      setSaved(true);
+    } catch (error) {
+      const outcome = applyServerErrors(error, setError, isInvoiceField);
+      if (!outcome.ambiguous) {
+        // A definitive rejection: the next attempt is a new logical submission.
+        idempotencyKey.current = null;
+      }
+      const [firstField] = outcome.mappedFields;
+      if (outcome.summary !== null) {
+        setSummary(outcome.summary);
+        requestAnimationFrame(() => summaryRef.current?.focus());
+      } else if (firstField !== undefined && isInvoiceField(firstField)) {
+        setFocus(firstField);
+      }
+    }
+  });
+
+  return (
+    <form
+      noValidate
+      aria-labelledby={titleId}
+      onSubmit={(event) => {
+        // The button stays focusable while saving, so block repeat submissions here.
+        if (isSubmitting) {
+          event.preventDefault();
+          return;
+        }
+        void submit(event);
+      }}
+    >
+      <h2 id={titleId}>New invoice</h2>
+
+      {summary ? (
+        // Focus moves here, so no live role: focusing already announces the content.
+        <section
+          ref={summaryRef}
+          tabIndex={-1}
+          aria-labelledby={`${titleId}-summary`}
+          className="form-summary"
+        >
+          <h3 id={`${titleId}-summary`}>The invoice was not saved</h3>
+          <p>{summary}</p>
+        </section>
+      ) : null}
+      <p role="status">{saved ? "Invoice saved." : ""}</p>
+
+      <FormField label="Customer email" required error={errors.customerEmail?.message}>
+        {(control) => <input {...control} type="email" autoComplete="email" {...register("customerEmail")} />}
+      </FormField>
+
+      <FormField label="Issue date" required error={errors.issueDate?.message}>
+        {(control) => <input {...control} type="date" {...register("issueDate")} />}
+      </FormField>
+
+      <FormField label="Due date" required hint="On or after the issue date." error={errors.dueDate?.message}>
+        {(control) => <input {...control} type="date" {...register("dueDate")} />}
+      </FormField>
+
+      <fieldset>
+        <legend>Lines</legend>
+        {linesError ? (
+          <p role="alert" className="form-field__error">
+            {linesError}
+          </p>
+        ) : null}
+        <ol>
+          {fields.map((field, index) => (
+            <li key={field.id}>
+              <FormField label={`Line ${index + 1} description`} required error={errors.lines?.[index]?.description?.message}>
+                {(control) => <input {...control} {...register(`lines.${index}.description`)} />}
+              </FormField>
+              <FormField label={`Line ${index + 1} quantity`} required error={errors.lines?.[index]?.quantity?.message}>
+                {(control) => (
+                  <input
+                    {...control}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    {...register(`lines.${index}.quantity`, { valueAsNumber: true })}
+                  />
+                )}
+              </FormField>
+              <FormField label={`Line ${index + 1} unit price`} required error={errors.lines?.[index]?.unitPrice?.message}>
+                {(control) => (
+                  <input
+                    {...control}
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.01"
+                    {...register(`lines.${index}.unitPrice`, { valueAsNumber: true })}
+                  />
+                )}
+              </FormField>
+              <button type="button" onClick={() => remove(index)}>
+                Remove line {index + 1}
+              </button>
+            </li>
+          ))}
+        </ol>
+        <button type="button" onClick={() => append(emptyLine, { shouldFocus: true })}>
+          Add line
+        </button>
+      </fieldset>
+
+      <FormField label="Notes" error={errors.notes?.message}>
+        {(control) => <textarea {...control} rows={3} {...register("notes")} />}
+      </FormField>
+
+      <div className="form-actions">
+        <button type="submit" aria-disabled={isSubmitting || undefined}>
+          {isSubmitting ? "Saving…" : "Save invoice"}
+        </button>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}

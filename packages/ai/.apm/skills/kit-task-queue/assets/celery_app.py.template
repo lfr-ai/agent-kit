@@ -1,0 +1,141 @@
+"""Celery binding for the broker-neutral task contracts.
+
+Copy to 'tasks/adapters/celery_app.py'. Requires 'celery>=5.3'. Celery owns
+delivery, acknowledgement and retries here, so this module maps the same
+policy the neutral worker applies onto Celery settings:
+
+- Late acknowledgement with rejection on worker loss gives at-least-once
+  delivery; prefetch of one keeps leases short and fair.
+- Retryable errors use Celery's exponential backoff with jitter and a bounded
+  retry count; permanent errors are rejected without requeue so the broker's
+  dead-letter configuration receives them.
+- Idempotency is still enforced by the application store, because late
+  acknowledgement means a task can run more than once.
+- The Redis and SQS transports emulate acknowledgement with a visibility
+  timeout; it must exceed the longest task runtime plus the longest countdown.
+
+Run a worker with 'celery -A tasks.adapters.celery_app worker --loglevel=INFO'.
+"""
+
+import asyncio
+import os
+from collections.abc import Mapping
+
+from celery import Celery, Task
+from celery.exceptions import Reject
+
+from tasks.contracts import (
+    ClaimState,
+    IdempotencyStore,
+    PermanentTaskError,
+    RetryableTaskError,
+    TaskContext,
+    parse_envelope,
+)
+from tasks.worker import HandlerSpec
+
+app = Celery("tasks")
+app.conf.update(
+    broker_url=os.environ.get("TASKS_BROKER_URL", "redis://127.0.0.1:6379/0"),
+    task_serializer="json",
+    accept_content=["json"],
+    task_ignore_result=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
+    task_time_limit=900,
+    task_soft_time_limit=840,
+    broker_transport_options={"visibility_timeout": 3600},
+    broker_connection_retry_on_startup=True,
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+)
+
+
+def register(task_type: str, spec: HandlerSpec, store: IdempotencyStore) -> Task:
+    """Register a handler as a Celery task that consumes serialized envelopes.
+
+    Producers send 'envelope.to_json().decode()' as the single argument, so the
+    same envelope contract and versioning apply as with the neutral worker.
+
+    Args:
+        task_type: Celery task name; equal to the envelope task type.
+        spec: Handler registration with versions, timeout and attempt limit.
+        store: Shared idempotency store.
+
+    Returns:
+        The registered Celery task.
+    """
+
+    async def execute(body: str, attempt: int) -> None:
+        envelope = parse_envelope(body.encode())
+        if envelope.task_type != task_type or envelope.version not in spec.versions:
+            raise PermanentTaskError(
+                f"unsupported {envelope.task_type} v{envelope.version}"
+            )
+        claim = await store.claim(envelope.idempotency_key, lease_s=spec.timeout_s * 2)
+        if claim is ClaimState.DONE:
+            return
+        if claim is ClaimState.IN_PROGRESS:
+            raise RetryableTaskError("duplicate in progress")
+        completed = False
+        try:
+            async with asyncio.timeout(spec.timeout_s):
+                await spec.handler(
+                    envelope.payload,
+                    TaskContext(
+                        task_id=envelope.task_id,
+                        idempotency_key=envelope.idempotency_key,
+                        attempt=attempt,
+                        correlation_id=envelope.correlation_id,
+                        deadline_s=spec.timeout_s,
+                    ),
+                )
+            completed = True
+        finally:
+            if completed:
+                await store.complete(envelope.idempotency_key)
+            else:
+                await store.release(envelope.idempotency_key)
+
+    @app.task(
+        name=task_type,
+        bind=True,
+        autoretry_for=(RetryableTaskError, TimeoutError, ConnectionError),
+        retry_backoff=2,
+        retry_backoff_max=300,
+        retry_jitter=True,
+        max_retries=spec.max_attempts - 1,
+        acks_late=True,
+    )
+    def run(self: Task, body: str) -> None:
+        try:
+            asyncio.run(execute(body, attempt=self.request.retries + 1))
+        except PermanentTaskError as error:
+            raise Reject(type(error).__name__, requeue=False) from error
+
+    return run
+
+
+def enqueue(task: Task, body: bytes, *, countdown_s: float = 0.0) -> None:
+    """Publish a serialized envelope to a registered task.
+
+    Args:
+        task: Task returned by 'register'.
+        body: 'TaskEnvelope.to_json()' output.
+        countdown_s: Delay before the task becomes eligible to run.
+    """
+    task.apply_async(args=(body.decode(),), countdown=countdown_s)
+
+
+def describe_settings() -> Mapping[str, object]:
+    """Return the delivery-relevant settings, for startup logs and reviews."""
+    keys = (
+        "task_acks_late",
+        "task_reject_on_worker_lost",
+        "worker_prefetch_multiplier",
+        "task_time_limit",
+        "task_soft_time_limit",
+        "broker_transport_options",
+    )
+    return {key: app.conf[key] for key in keys}

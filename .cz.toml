@@ -1,0 +1,17 @@
+[tool.commitizen]
+version_provider = "pep621"
+tag_format = "v$version"
+major_version_zero = true
+# CHANGELOG.md is curated by hand (Keep a Changelog style); bump never rewrites it.
+# check_release.py requires these to equal the pyproject version.
+version_files = [
+  "catalog.json:\"version\"",
+  "apm.yml:^version",
+  "packages/ai/apm.yml:^version",
+  "packages/backend/apm.yml:^version",
+  "packages/coordination/apm.yml:^version",
+  "packages/frontend/apm.yml:^version",
+  "packages/iac/apm.yml:^version",
+  "packages/shared/apm.yml:^version",
+  "packages/workflows/apm.yml:^version",
+]

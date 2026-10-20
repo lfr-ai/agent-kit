@@ -1,0 +1,35 @@
+globs:
+  - "**/*.md"
+
+gitignore: true
+
+ignores:
+  - "**/node_modules/**"
+  - ".venv/**"
+  - ".tox/**"
+  - "build/**"
+  - "dist/**"
+  - "apm_modules/**"
+  - "htmlcov/**"
+  # APM-deployed and attested native projections are generated, never edited.
+  - ".agents/skills/**"
+  - ".claude/**"
+  - ".github/agents/**"
+  - ".github/instructions/**"
+  - "**/*.template.md"
+  # Deployed by APM to .agents/ and .claude/ with pinned hashes; restyle it only
+  # together with the APM refresh in its own Verify procedure.
+  - ".apm/skills/kit-capability-authoring/SKILL.md"
+
+config:
+  # Capability prose is soft-wrapped; skills enforce their own body-line budgets
+  # (catalog.json budgets.skill_body_lines), which hard wrapping would fight.
+  MD013: false
+  MD024:
+    siblings_only: true
+  MD033: false
+  MD041: false
+  MD046:
+    style: fenced
+  MD048:
+    style: backtick

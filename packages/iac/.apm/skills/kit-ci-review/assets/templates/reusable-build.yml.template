@@ -1,0 +1,60 @@
+# Reusable build workflow template (called with 'uses:' from another workflow).
+# Copy to .github/workflows/reusable-build.yml. Callers pin it by SHA when it
+# lives in another repository:
+#   jobs:
+#     build:
+#       uses: owner/repo/.github/workflows/reusable-build.yml@PIN_FULL_COMMIT_SHA
+#       permissions:
+#         contents: read
+#       with:
+#         working-directory: services/orders
+#       secrets:
+#         registry-token: ${{ secrets.REGISTRY_TOKEN }}
+name: reusable-build
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory that contains the project to build.
+        type: string
+        required: true
+    secrets:
+      registry-token:
+        description: Optional token for a private package registry.
+        required: false
+    outputs:
+      digest:
+        description: SHA-256 of the built archive.
+        value: ${{ jobs.build.outputs.digest }}
+
+# The caller can only reduce these; never request more than the job needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.hash.outputs.digest }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - name: Build
+        env:
+          REGISTRY_TOKEN: ${{ secrets.registry-token }}
+        # Fixed command; never let callers or event data supply script text.
+        run: make build
+      - id: hash
+        name: Hash output
+        run: |
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -czf "$RUNNER_TEMP/build.tgz" dist
+          digest="$(sha256sum "$RUNNER_TEMP/build.tgz" | cut -d' ' -f1)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"

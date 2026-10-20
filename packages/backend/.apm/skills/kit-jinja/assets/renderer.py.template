@@ -1,0 +1,159 @@
+"""Jinja rendering adapters: HTML/email output, plain-text prompts, untrusted text.
+
+Copy into the consumer's infrastructure layer (for example
+'myapp/infrastructure/templates/renderer.py'). Application code depends on the
+'TemplateRenderer' protocol, not on Jinja.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Protocol
+
+from jinja2 import (
+    Environment,
+    PackageLoader,
+    StrictUndefined,
+    TemplateError,
+    TemplateNotFound,
+    select_autoescape,
+)
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
+
+DEFAULT_CACHE_SIZE = 400
+MAX_UNTRUSTED_TEMPLATE_CHARS = 10_000
+MAX_RENDERED_CHARS = 100_000
+
+
+class TemplateRenderer(Protocol):
+    """Port used by the application layer."""
+
+    def render(self, name: str, context: Mapping[str, object]) -> str:
+        """Render a named template with an explicit context."""
+        ...
+
+
+class TemplateRenderingError(Exception):
+    """A template could not be found, compiled, or rendered."""
+
+
+class TemplateNotAllowedError(TemplateRenderingError):
+    """The requested template name is not in the allow-list."""
+
+
+def _html_environment(package: str, folder: str) -> Environment:
+    """Build the environment for HTML and email bodies."""
+    return Environment(
+        loader=PackageLoader(package, folder),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "htm", "xml"),
+            default_for_string=True,
+            default=True,
+        ),
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,
+        auto_reload=False,
+        cache_size=DEFAULT_CACHE_SIZE,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class JinjaRenderer:
+    """Render allow-listed templates packaged with the application.
+
+    Args:
+        package: Import name of the package that ships the templates.
+        folder: Folder inside the package that holds template files.
+        allowed: Template names callers may request.
+    """
+
+    package: str
+    folder: str = "templates"
+    allowed: frozenset[str]
+    _environment: Environment = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Create the environment once; templates compile lazily and are cached."""
+        object.__setattr__(
+            self, "_environment", _html_environment(self.package, self.folder)
+        )
+
+    def render(self, name: str, context: Mapping[str, object]) -> str:
+        """Render one allow-listed template; failures never echo context values."""
+        if name not in self.allowed:
+            raise TemplateNotAllowedError(f"template {name!r} is not allowed")
+        try:
+            template = self._environment.get_template(name)
+            return template.render(dict(context))
+        except TemplateNotFound as error:
+            raise TemplateRenderingError(f"template {name!r} not found") from error
+        except TemplateError as error:
+            raise TemplateRenderingError(
+                f"template {name!r} failed: {type(error).__name__}: {error.message}"
+            ) from error
+
+    def compile_all(self) -> list[str]:
+        """Compile every allow-listed template; call from a startup or CI check."""
+        for name in sorted(self.allowed):
+            self._environment.get_template(name)
+        return sorted(self.allowed)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PromptRenderer:
+    """Render plain-text prompt templates from trusted strings.
+
+    Prompts are text, not HTML, so escaping is disabled; the sandbox still
+    blocks unsafe attribute access and StrictUndefined rejects missing values.
+
+    Args:
+        templates: Mapping of prompt name to trusted template source.
+    """
+
+    templates: Mapping[str, str]
+    _environment: SandboxedEnvironment = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Create a sandboxed text environment."""
+        environment = SandboxedEnvironment(  # template-safety: reviewed (plain text)
+            autoescape=False,
+            undefined=StrictUndefined,
+            keep_trailing_newline=True,
+        )
+        object.__setattr__(self, "_environment", environment)
+
+    def render(self, name: str, context: Mapping[str, object]) -> str:
+        """Render a named prompt with explicit, already-validated values."""
+        source = self.templates.get(name)
+        if source is None:
+            raise TemplateNotAllowedError(f"prompt {name!r} is not registered")
+        try:
+            prompt = self._environment.from_string(source)  # template-safety: reviewed
+            return prompt.render(dict(context))
+        except TemplateError as error:
+            raise TemplateRenderingError(
+                f"prompt {name!r} failed: {type(error).__name__}"
+            ) from error
+
+
+def render_untrusted(source: str, context: Mapping[str, object]) -> str:
+    """Render template text supplied by users, with sandbox and size limits."""
+    if len(source) > MAX_UNTRUSTED_TEMPLATE_CHARS:
+        raise TemplateRenderingError("template source is too large")
+    environment = ImmutableSandboxedEnvironment(
+        autoescape=True,
+        undefined=StrictUndefined,
+    )
+    try:
+        template = environment.from_string(source)  # template-safety: reviewed
+        rendered = template.render(dict(context))
+    except TemplateError as error:
+        raise TemplateRenderingError(
+            f"untrusted template rejected: {type(error).__name__}"
+        ) from error
+    if len(rendered) > MAX_RENDERED_CHARS:
+        raise TemplateRenderingError("rendered output is too large")
+    return rendered

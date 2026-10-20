@@ -1,0 +1,52 @@
+# Import-linter contracts that keep frameworks and drivers at the edge.
+# Copy the sections into '.importlinter' (or translate them into
+# '[tool.importlinter]' in pyproject.toml) and run 'lint-imports' in CI.
+# Module names match the copy targets named in each retrieval template.
+
+[importlinter]
+root_package = retrieval
+include_external_packages = True
+
+[importlinter:contract:retrieval-core-framework-free]
+name = Retrieval core imports no framework, driver or adapter
+type = forbidden
+source_modules =
+    retrieval.contracts
+    retrieval.chunking
+    retrieval.fusion
+    retrieval.metrics
+    retrieval.retrievers
+    retrieval.self_corrective
+    retrieval.settings
+forbidden_modules =
+    retrieval.adapters
+    langchain
+    langchain_core
+    langchain_community
+    llama_index
+    psycopg
+    psycopg_pool
+    pgvector
+broken_contract_guidance =
+    Depend on a port in retrieval.contracts and implement it in retrieval.adapters.
+
+[importlinter:contract:retrieval-contracts-innermost]
+name = Contracts depend on nothing else in the package
+type = forbidden
+source_modules =
+    retrieval.contracts
+forbidden_modules =
+    retrieval.chunking
+    retrieval.fusion
+    retrieval.metrics
+    retrieval.retrievers
+    retrieval.self_corrective
+    retrieval.settings
+
+[importlinter:contract:retrieval-adapters-independent]
+name = Framework adapters do not import each other
+type = independence
+modules =
+    retrieval.adapters.langchain
+    retrieval.adapters.llamaindex
+    retrieval.adapters.pgvector

@@ -1,0 +1,50 @@
+# Requirements: TBD change title
+
+Grammar: one level-two heading per requirement that starts with its
+identifier, a Change line (add, modify or remove), a statement with an
+uppercase normative keyword, then one or more level-three scenarios with
+Given/When/Then steps. A removed requirement needs a Reason line instead of
+scenarios.
+
+## REQ-001 TBD requirement title
+
+Change: add
+The TBD component MUST TBD observable obligation.
+
+### Scenario: TBD ordinary case
+
+- Given TBD concrete precondition with real values
+- When TBD single action
+- Then TBD observable outcome
+- And TBD further observable outcome
+
+### Scenario: TBD boundary case
+
+- Given TBD precondition at the limit (empty, maximum, exactly at threshold)
+- When TBD single action
+- Then TBD observable outcome
+
+### Scenario: TBD failure case
+
+- Given TBD precondition that makes the action invalid or unauthorized
+- When TBD single action
+- Then TBD error outcome with a stable error identifier
+- But TBD state that must not change
+
+## REQ-002 TBD modified requirement title
+
+Change: modify
+Previously: TBD the old statement from the living spec.
+The TBD component SHOULD TBD new obligation, except when TBD documented case.
+
+### Scenario: TBD new behavior
+
+- Given TBD precondition
+- When TBD single action
+- Then TBD observable outcome
+
+## REQ-003 TBD removed requirement title
+
+Change: remove
+Reason: TBD why the behavior is no longer required, and the replacing
+requirement if any.

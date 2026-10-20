@@ -1,0 +1,409 @@
+"""Framework-neutral retrieval contracts.
+
+Copy to 'retrieval/contracts.py'. This module is the innermost layer: it never
+imports a vector store driver, an embedding SDK, LangChain, or LlamaIndex.
+Adapters depend on these types; these types depend on the standard library only.
+
+Access model: every chunk carries a tenant and a non-empty access list of
+principal tokens such as 'user:alice' or 'group:finance'. A chunk is visible
+when the tenant matches and at least one token overlaps. An empty access list
+is visible to nobody (deny by default).
+"""
+
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from datetime import datetime
+from enum import StrEnum
+from typing import Protocol, Self
+
+MAX_QUERY_CHARS = 2000
+MAX_TOP_K = 100
+
+
+class RetrievalError(Exception):
+    """Base class for retrieval failures a caller can handle."""
+
+
+class RetrievalUnavailableError(RetrievalError):
+    """The index or a backing service is temporarily unavailable."""
+
+
+class InvalidQueryError(RetrievalError):
+    """The query cannot be executed as given."""
+
+
+class SourceDeletedError(RetrievalError):
+    """A write targeted a source that was deleted and must stay deleted."""
+
+
+class EvidenceStatus(StrEnum):
+    """How well the retrieved hits support answering the query."""
+
+    SUFFICIENT = "sufficient"
+    INSUFFICIENT = "insufficient"
+    NO_EVIDENCE = "no_evidence"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Principal:
+    """Caller identity used to filter content before it leaves the index.
+
+    Attributes:
+        subject: Stable user or service identifier.
+        tenant: Tenant partition; other tenants' chunks are never visible.
+        groups: Group identifiers the subject belongs to.
+    """
+
+    subject: str
+    tenant: str
+    groups: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        """Reject identities that would make filtering ambiguous."""
+        if not self.subject.strip() or not self.tenant.strip():
+            raise ValueError("principal subject and tenant are required")
+
+    def tokens(self) -> frozenset[str]:
+        """Return the access tokens this principal may match.
+
+        Returns:
+            The user token plus one token per group.
+        """
+        return frozenset({f"user:{self.subject}"}) | frozenset(
+            f"group:{group}" for group in self.groups
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Chunk:
+    """An indexed, citable span of one source version.
+
+    Attributes:
+        chunk_id: Deterministic identifier for this span.
+        source_id: Stable identifier of the source document.
+        source_version: Version or content hash of the source.
+        tenant: Tenant partition that owns the source.
+        text: Exact text of the span.
+        start_char: Inclusive start offset in the source text.
+        end_char: Exclusive end offset in the source text.
+        acl: Principal tokens allowed to read this chunk.
+        updated_at: Timezone-aware time the source version was indexed.
+        section: Heading path of the span, for example 'Setup > Install'.
+        metadata: Additional non-secret string attributes used for filtering.
+    """
+
+    chunk_id: str
+    source_id: str
+    source_version: str
+    tenant: str
+    text: str
+    start_char: int
+    end_char: int
+    acl: frozenset[str]
+    updated_at: datetime
+    section: str = ""
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate provenance so every hit stays attributable."""
+        if not (self.chunk_id and self.source_id and self.source_version):
+            raise ValueError("chunk_id, source_id and source_version are required")
+        if not self.text.strip():
+            raise ValueError(f"chunk {self.chunk_id} has empty text")
+        if not 0 <= self.start_char < self.end_char:
+            raise ValueError(f"chunk {self.chunk_id} has invalid offsets")
+        if self.updated_at.tzinfo is None:
+            raise ValueError(f"chunk {self.chunk_id} updated_at must be timezone-aware")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Citation:
+    """A pointer from generated text back to an exact source span.
+
+    Attributes:
+        source_id: Stable identifier of the source document.
+        source_version: Version the span was read from.
+        start_char: Inclusive start offset.
+        end_char: Exclusive end offset.
+        section: Heading path, when known.
+    """
+
+    source_id: str
+    source_version: str
+    start_char: int
+    end_char: int
+    section: str = ""
+
+    @classmethod
+    def from_chunk(cls, chunk: Chunk) -> Self:
+        """Build the citation for a chunk.
+
+        Args:
+            chunk: The retrieved chunk.
+
+        Returns:
+            A citation with the chunk's provenance.
+        """
+        return cls(
+            source_id=chunk.source_id,
+            source_version=chunk.source_version,
+            start_char=chunk.start_char,
+            end_char=chunk.end_char,
+            section=chunk.section,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Query:
+    """A retrieval request executed on behalf of one principal.
+
+    Attributes:
+        text: Natural-language or keyword query.
+        principal: Identity whose permissions bound the result.
+        top_k: Maximum number of hits to return.
+        filters: Exact-match metadata filters applied inside the index.
+    """
+
+    text: str
+    principal: Principal
+    top_k: int = 8
+    filters: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Reject queries that cannot be executed safely."""
+        if not self.text.strip():
+            raise InvalidQueryError("query text is empty")
+        if len(self.text) > MAX_QUERY_CHARS:
+            raise InvalidQueryError(f"query exceeds {MAX_QUERY_CHARS} characters")
+        if not 1 <= self.top_k <= MAX_TOP_K:
+            raise InvalidQueryError(f"top_k must be between 1 and {MAX_TOP_K}")
+
+    def with_text(self, text: str) -> Self:
+        """Return the same request with rewritten text.
+
+        Args:
+            text: Replacement query text.
+
+        Returns:
+            A new query that keeps principal, limits and filters.
+        """
+        return replace(self, text=text)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ScoredChunk:
+    """A chunk with the score and rank one strategy assigned to it.
+
+    Attributes:
+        chunk: The retrieved chunk.
+        score: Strategy-specific score; only comparable within one strategy.
+        retriever: Name of the strategy that produced the score.
+        rank: One-based position in that strategy's ranking.
+    """
+
+    chunk: Chunk
+    score: float
+    retriever: str
+    rank: int
+
+    def __post_init__(self) -> None:
+        """Reject non-finite scores and invalid ranks."""
+        if not math.isfinite(self.score):
+            raise ValueError("score must be finite")
+        if self.rank < 1:
+            raise ValueError("rank is one-based")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Grade:
+    """Relevance judgment for a set of hits.
+
+    Attributes:
+        status: Whether the hits can support an answer.
+        reason: Short, non-sensitive explanation used for query rewriting.
+    """
+
+    status: EvidenceStatus
+    reason: str = ""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RetrievalResult:
+    """Final retrieval outcome handed to answer assembly.
+
+    Attributes:
+        query: The query that produced the final hits.
+        hits: Visible hits in rank order.
+        status: Evidence status; answer assembly must honor NO_EVIDENCE.
+        trace: Safe, content-free notes describing each retrieval round.
+    """
+
+    query: Query
+    hits: tuple[ScoredChunk, ...]
+    status: EvidenceStatus
+    trace: tuple[str, ...] = ()
+
+    @property
+    def citations(self) -> tuple[Citation, ...]:
+        """Return one citation per hit in rank order."""
+        return tuple(Citation.from_chunk(hit.chunk) for hit in self.hits)
+
+
+def is_visible_to(chunk: Chunk, principal: Principal) -> bool:
+    """Decide whether a principal may read a chunk.
+
+    Args:
+        chunk: Candidate chunk.
+        principal: Requesting identity.
+
+    Returns:
+        True only for the same tenant and an overlapping access token.
+    """
+    return chunk.tenant == principal.tenant and bool(chunk.acl & principal.tokens())
+
+
+def chunk_from_mapping(
+    *, text: str, metadata: Mapping[str, object], score_key: str = ""
+) -> Chunk:
+    """Rebuild a chunk from adapter metadata, failing closed on gaps.
+
+    Adapters store provenance and access fields as flat metadata. Missing or
+    malformed fields raise instead of producing an unattributable or
+    world-readable chunk.
+
+    Args:
+        text: Chunk text returned by the store.
+        metadata: Flat metadata stored beside the vector.
+        score_key: Metadata key to exclude from the copied attributes.
+
+    Returns:
+        The validated chunk.
+
+    Raises:
+        ValueError: If a required field is missing or malformed.
+    """
+    required = (
+        "chunk_id",
+        "source_id",
+        "source_version",
+        "tenant",
+        "start_char",
+        "end_char",
+        "acl",
+        "updated_at",
+    )
+    missing = [key for key in required if key not in metadata]
+    if missing:
+        raise ValueError(f"metadata is missing {', '.join(missing)}")
+    acl = metadata["acl"]
+    if isinstance(acl, str):
+        tokens = frozenset(token for token in acl.split(",") if token)
+    elif isinstance(acl, Sequence | frozenset | set):
+        tokens = frozenset(str(token) for token in acl)
+    else:
+        raise ValueError("acl must be a string or a sequence of tokens")
+    start, end = metadata["start_char"], metadata["end_char"]
+    if not isinstance(start, int | str) or not isinstance(end, int | str):
+        raise ValueError("offsets must be integers")
+    updated = metadata["updated_at"]
+    updated_at = (
+        updated
+        if isinstance(updated, datetime)
+        else datetime.fromisoformat(str(updated))
+    )
+    reserved = {*required, "section", score_key}
+    return Chunk(
+        chunk_id=str(metadata["chunk_id"]),
+        source_id=str(metadata["source_id"]),
+        source_version=str(metadata["source_version"]),
+        tenant=str(metadata["tenant"]),
+        text=text,
+        start_char=int(start),
+        end_char=int(end),
+        acl=tokens,
+        updated_at=updated_at,
+        section=str(metadata.get("section", "")),
+        metadata={
+            key: str(value) for key, value in metadata.items() if key not in reserved
+        },
+    )
+
+
+class Retriever(Protocol):
+    """Port for one retrieval strategy (lexical, dense, graph, hybrid)."""
+
+    @property
+    def name(self) -> str:
+        """Stable strategy name used in traces and fusion weights."""
+        ...
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Return visible hits for the query in rank order.
+
+        Implementations must apply tenant and access filtering inside the
+        store, before ranking, and raise 'RetrievalUnavailableError' for
+        transient backend failures.
+        """
+        ...
+
+
+class Embedder(Protocol):
+    """Port for an embedding model."""
+
+    @property
+    def dimensions(self) -> int:
+        """Vector length produced by the model."""
+        ...
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed texts in order; the result has one vector per input."""
+        ...
+
+
+class Reranker(Protocol):
+    """Port for a cross-encoder or model-based reranker."""
+
+    async def rerank(
+        self, query: Query, hits: Sequence[ScoredChunk], *, top_n: int
+    ) -> list[ScoredChunk]:
+        """Reorder hits by relevance and keep at most 'top_n'."""
+        ...
+
+
+class RelevanceGrader(Protocol):
+    """Port that judges whether hits can support an answer."""
+
+    async def grade(self, query: Query, hits: Sequence[ScoredChunk]) -> Grade:
+        """Grade the hits for the query."""
+        ...
+
+
+class QueryRewriter(Protocol):
+    """Port that reformulates a query after a weak retrieval round."""
+
+    async def rewrite(self, query: Query, *, feedback: str) -> str:
+        """Return new query text; never widen the principal or filters."""
+        ...
+
+
+class IndexWriter(Protocol):
+    """Port for index maintenance, including deletion propagation."""
+
+    async def upsert(self, chunks: Sequence[Chunk]) -> int:
+        """Insert or replace chunks by chunk id; return the count written.
+
+        Implementations raise 'SourceDeletedError' when a chunk belongs to a
+        deleted source, so a lagging ingestion job cannot resurrect content.
+        """
+        ...
+
+    async def delete_source(self, *, tenant: str, source_id: str) -> int:
+        """Remove every chunk of a source and record a tombstone for it."""
+        ...
+
+    async def retain_version(
+        self, *, tenant: str, source_id: str, source_version: str
+    ) -> int:
+        """Remove chunks of other versions of a source; return the count removed."""
+        ...

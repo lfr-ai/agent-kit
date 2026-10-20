@@ -1,0 +1,454 @@
+"""Framework-free retrievers, an in-memory index, and test doubles.
+
+Copy to 'retrieval/retrievers.py'. 'InMemoryIndex' implements the
+'IndexWriter' port and backs 'LexicalRetriever' (Okapi BM25) and
+'DenseRetriever' (cosine similarity). 'HybridRetriever' fuses any set of
+'Retriever' ports with reciprocal rank fusion and an optional reranker.
+These classes are production-usable for small corpora and are the fakes for
+tests of everything that depends on the 'Retriever' port.
+"""
+
+import asyncio
+import hashlib
+import logging
+import math
+import re
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+
+from retrieval.contracts import (
+    MAX_TOP_K,
+    Chunk,
+    Embedder,
+    Query,
+    Reranker,
+    Retriever,
+    ScoredChunk,
+    SourceDeletedError,
+    is_visible_to,
+)
+from retrieval.fusion import DEFAULT_RRF_K, reciprocal_rank_fusion
+
+logger = logging.getLogger(__name__)
+
+_TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def tokenize(text: str) -> list[str]:
+    """Lower-case word tokens; replace with a language-aware analyzer if needed.
+
+    Args:
+        text: Input text.
+
+    Returns:
+        Tokens in order.
+    """
+    return [token.casefold() for token in _TOKEN.findall(text)]
+
+
+class InMemoryIndex:
+    """Dictionary-backed index implementing the 'IndexWriter' port."""
+
+    def __init__(self) -> None:
+        """Create an empty index."""
+        self._chunks: dict[str, Chunk] = {}
+        self._tombstones: set[tuple[str, str]] = set()
+
+    def candidates(self, query: Query) -> list[Chunk]:
+        """Return chunks the principal may read that match exact filters.
+
+        Filtering happens here, before any scoring, so invisible chunks never
+        influence ranks, scores, or corpus statistics returned to the caller.
+
+        Args:
+            query: Request whose principal and filters apply.
+
+        Returns:
+            Visible chunks in stable id order.
+        """
+        return [
+            chunk
+            for _, chunk in sorted(self._chunks.items())
+            if is_visible_to(chunk, query.principal)
+            and all(
+                chunk.metadata.get(key) == value for key, value in query.filters.items()
+            )
+        ]
+
+    async def upsert(self, chunks: Sequence[Chunk]) -> int:
+        """Insert or replace chunks by id.
+
+        Args:
+            chunks: Chunks to write.
+
+        Returns:
+            Number of chunks written.
+
+        Raises:
+            SourceDeletedError: If any chunk belongs to a deleted source; no
+                chunk of the batch is written.
+        """
+        deleted = sorted(
+            {
+                chunk.source_id
+                for chunk in chunks
+                if (chunk.tenant, chunk.source_id) in self._tombstones
+            }
+        )
+        if deleted:
+            raise SourceDeletedError(f"sources were deleted: {', '.join(deleted)}")
+        for chunk in chunks:
+            self._chunks[chunk.chunk_id] = chunk
+        return len(chunks)
+
+    async def delete_source(self, *, tenant: str, source_id: str) -> int:
+        """Remove every chunk of a source and remember the deletion.
+
+        Args:
+            tenant: Owning tenant.
+            source_id: Source to remove.
+
+        Returns:
+            Number of chunks removed.
+        """
+        doomed = [
+            key
+            for key, chunk in self._chunks.items()
+            if chunk.tenant == tenant and chunk.source_id == source_id
+        ]
+        for key in doomed:
+            del self._chunks[key]
+        self._tombstones.add((tenant, source_id))
+        return len(doomed)
+
+    async def retain_version(
+        self, *, tenant: str, source_id: str, source_version: str
+    ) -> int:
+        """Remove chunks of every other version of a source.
+
+        Args:
+            tenant: Owning tenant.
+            source_id: Source whose old versions are removed.
+            source_version: Version to keep.
+
+        Returns:
+            Number of chunks removed.
+        """
+        doomed = [
+            key
+            for key, chunk in self._chunks.items()
+            if chunk.tenant == tenant
+            and chunk.source_id == source_id
+            and chunk.source_version != source_version
+        ]
+        for key in doomed:
+            del self._chunks[key]
+        return len(doomed)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Bm25Parameters:
+    """Okapi BM25 tuning.
+
+    Attributes:
+        k1: Term-frequency saturation.
+        b: Length normalization strength in [0, 1].
+    """
+
+    k1: float = 1.2
+    b: float = 0.75
+
+
+class LexicalRetriever:
+    """Okapi BM25 over the principal's visible candidates."""
+
+    def __init__(
+        self, index: InMemoryIndex, *, parameters: Bm25Parameters | None = None
+    ) -> None:
+        """Bind the retriever to an index.
+
+        Args:
+            index: Source of visible candidates.
+            parameters: BM25 tuning; defaults to 'Bm25Parameters()'.
+        """
+        self._index = index
+        self._parameters = parameters or Bm25Parameters()
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return "bm25"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Score visible candidates with BM25.
+
+        Corpus statistics are computed over visible candidates only, so a
+        caller cannot infer hidden documents from score shifts.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Hits with a positive score in rank order.
+        """
+        candidates = self._index.candidates(query)
+        terms = set(tokenize(query.text))
+        if not candidates or not terms:
+            return []
+        documents = [Counter(tokenize(chunk.text)) for chunk in candidates]
+        lengths = [sum(counts.values()) for counts in documents]
+        average = sum(lengths) / len(lengths) or 1.0
+        total = len(documents)
+        frequency = {
+            term: sum(1 for counts in documents if term in counts) for term in terms
+        }
+        k1, b = self._parameters.k1, self._parameters.b
+        scored: list[tuple[float, str, Chunk]] = []
+        for chunk, counts, length in zip(candidates, documents, lengths, strict=True):
+            score = 0.0
+            for term in terms:
+                tf = counts.get(term, 0)
+                if not tf:
+                    continue
+                idf = math.log(
+                    1 + (total - frequency[term] + 0.5) / (frequency[term] + 0.5)
+                )
+                score += (
+                    idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / average))
+                )
+            if score > 0:
+                scored.append((score, chunk.chunk_id, chunk))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [
+            ScoredChunk(chunk=chunk, score=score, retriever=self.name, rank=rank)
+            for rank, (score, _, chunk) in enumerate(scored[: query.top_k], start=1)
+        ]
+
+
+class HashingEmbedder:
+    """Deterministic feature-hashing embedder for tests and offline demos.
+
+    It captures token overlap, not meaning; never use it to judge model quality.
+    """
+
+    def __init__(self, *, dimensions: int = 64) -> None:
+        """Configure the vector size.
+
+        Args:
+            dimensions: Output vector length.
+        """
+        if dimensions < 1:
+            raise ValueError("dimensions must be positive")
+        self._dimensions = dimensions
+
+    @property
+    def dimensions(self) -> int:
+        """Vector length."""
+        return self._dimensions
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed each text as an L2-normalized hashed bag of words.
+
+        Args:
+            texts: Inputs to embed.
+
+        Returns:
+            One vector per input.
+        """
+        vectors: list[list[float]] = []
+        for text in texts:
+            vector = [0.0] * self._dimensions
+            for token in tokenize(text):
+                digest = hashlib.sha256(token.encode("utf-8")).digest()
+                vector[int.from_bytes(digest[:4], "big") % self._dimensions] += 1.0
+            norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+            vectors.append([value / norm for value in vector])
+        return vectors
+
+
+def cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """Cosine similarity of two equal-length vectors.
+
+    Args:
+        left: First vector.
+        right: Second vector.
+
+    Returns:
+        Similarity in [-1, 1]; 0.0 when either vector is zero.
+
+    Raises:
+        ValueError: If lengths differ.
+    """
+    if len(left) != len(right):
+        raise ValueError("vector lengths differ")
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    return dot / norm if norm else 0.0
+
+
+class DenseRetriever:
+    """Exact cosine search over visible candidates using an 'Embedder' port."""
+
+    def __init__(
+        self, index: InMemoryIndex, embedder: Embedder, *, min_similarity: float = 0.0
+    ) -> None:
+        """Bind the retriever to an index and embedder.
+
+        Args:
+            index: Source of visible candidates.
+            embedder: Embedding port shared by indexing and querying.
+            min_similarity: Hits at or below this similarity are dropped.
+        """
+        self._index = index
+        self._embedder = embedder
+        self._min_similarity = min_similarity
+        self._cache: dict[str, list[float]] = {}
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return "dense"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Rank visible candidates by cosine similarity to the query.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Hits above the similarity floor in rank order.
+        """
+        candidates = self._index.candidates(query)
+        if not candidates:
+            return []
+        missing = [chunk for chunk in candidates if chunk.chunk_id not in self._cache]
+        if missing:
+            vectors = await self._embedder.embed([chunk.text for chunk in missing])
+            self._cache.update(
+                (chunk.chunk_id, vector)
+                for chunk, vector in zip(missing, vectors, strict=True)
+            )
+        (query_vector,) = await self._embedder.embed([query.text])
+        scored = [
+            (cosine(query_vector, self._cache[chunk.chunk_id]), chunk.chunk_id, chunk)
+            for chunk in candidates
+        ]
+        kept = sorted(
+            (item for item in scored if item[0] > self._min_similarity),
+            key=lambda item: (-item[0], item[1]),
+        )
+        return [
+            ScoredChunk(chunk=chunk, score=score, retriever=self.name, rank=rank)
+            for rank, (score, _, chunk) in enumerate(kept[: query.top_k], start=1)
+        ]
+
+
+class HybridRetriever:
+    """Run several strategies concurrently and fuse them with RRF."""
+
+    def __init__(
+        self,
+        retrievers: Sequence[Retriever],
+        *,
+        rrf_k: int = DEFAULT_RRF_K,
+        candidate_multiplier: int = 4,
+        reranker: Reranker | None = None,
+    ) -> None:
+        """Configure the strategies to fuse.
+
+        Args:
+            retrievers: Strategies with unique names.
+            rrf_k: Reciprocal rank fusion constant.
+            candidate_multiplier: Each strategy fetches 'top_k' times this.
+            reranker: Optional reranker applied to the fused candidates.
+        """
+        names = [retriever.name for retriever in retrievers]
+        if not names or len(set(names)) != len(names):
+            raise ValueError("hybrid retrieval needs uniquely named strategies")
+        if candidate_multiplier < 1:
+            raise ValueError("candidate_multiplier must be at least 1")
+        self._retrievers = tuple(retrievers)
+        self._rrf_k = rrf_k
+        self._multiplier = candidate_multiplier
+        self._reranker = reranker
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return "hybrid"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Fuse every strategy's ranking, rerank, and re-check visibility.
+
+        A failing strategy fails the whole call: silently degrading to one
+        strategy hides recall regressions. Wrap strategies explicitly if a
+        degraded mode is an accepted product decision.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Fused, visible hits in rank order.
+        """
+        widened = replace(query, top_k=min(query.top_k * self._multiplier, MAX_TOP_K))
+        results = await asyncio.gather(
+            *(retriever.retrieve(widened) for retriever in self._retrievers)
+        )
+        rankings = {
+            retriever.name: hits
+            for retriever, hits in zip(self._retrievers, results, strict=True)
+        }
+        fused = reciprocal_rank_fusion(rankings, k=self._rrf_k)
+        if self._reranker is not None:
+            fused = await self._reranker.rerank(query, fused, top_n=query.top_k)
+        visible = [hit for hit in fused if is_visible_to(hit.chunk, query.principal)]
+        if len(visible) != len(fused):
+            logger.error(
+                "retrieval.acl_violation_dropped",
+                extra={"dropped": len(fused) - len(visible), "strategy": self.name},
+            )
+        return [
+            ScoredChunk(
+                chunk=hit.chunk, score=hit.score, retriever=hit.retriever, rank=rank
+            )
+            for rank, hit in enumerate(visible[: query.top_k], start=1)
+        ]
+
+
+class StaticRetriever:
+    """Test double that returns fixed chunks, still enforcing visibility."""
+
+    def __init__(self, name: str, chunks: Sequence[Chunk]) -> None:
+        """Store the canned ranking.
+
+        Args:
+            name: Strategy name to report.
+            chunks: Chunks in the rank order to return.
+        """
+        self._name = name
+        self._chunks = tuple(chunks)
+        self.calls: list[Query] = []
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return self._name
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Return visible canned chunks with descending synthetic scores.
+
+        Args:
+            query: Request to record and filter by.
+
+        Returns:
+            Visible hits in canned order.
+        """
+        self.calls.append(query)
+        visible = [
+            chunk for chunk in self._chunks if is_visible_to(chunk, query.principal)
+        ]
+        return [
+            ScoredChunk(chunk=chunk, score=1.0 / rank, retriever=self._name, rank=rank)
+            for rank, chunk in enumerate(visible[: query.top_k], start=1)
+        ]

@@ -1,0 +1,68 @@
+"""Property-based tests for the value object template using Hypothesis.
+
+Replace 'shop.core.values' with the module that holds the copied values.
+Hypothesis generates many valid inputs and shrinks any failure to a minimal
+example; '@example' pins known edge cases so they always run.
+"""
+
+from decimal import Decimal
+
+import pytest
+from hypothesis import example, given
+from hypothesis import strategies as st
+from shop.core.values import CurrencyMismatchError, Money
+
+currencies = st.sampled_from(["EUR", "USD", "JPY"])
+cents = st.integers(min_value=-(10**12), max_value=10**12)
+
+
+@st.composite
+def money(draw: st.DrawFn, currency: str | None = None) -> Money:
+    """Draw a valid amount in a given or generated currency."""
+    code = currency if currency is not None else draw(currencies)
+    return Money(amount=Decimal(draw(cents)).scaleb(-2), currency=code)
+
+
+@given(amount=cents, currency=currencies)
+@example(amount=0, currency="EUR")
+def test_any_whole_cent_amount_is_valid(amount: int, currency: str) -> None:
+    """Every amount with at most two decimals constructs successfully."""
+    assert Money(amount=Decimal(amount).scaleb(-2), currency=currency).currency == currency
+
+
+@given(first=money(currency="EUR"), second=money(currency="EUR"))
+def test_addition_is_commutative(first: Money, second: Money) -> None:
+    """Order of operands does not change a sum."""
+    assert first + second == second + first
+
+
+@given(first=money(currency="EUR"), second=money(currency="EUR"))
+def test_subtraction_inverts_addition(first: Money, second: Money) -> None:
+    """Adding then subtracting the same amount returns the original."""
+    assert (first + second) - second == first
+
+
+@given(value=money(), factor=st.integers(min_value=0, max_value=10_000))
+def test_multiplication_keeps_precision_and_currency(value: Money, factor: int) -> None:
+    """Whole-quantity multiplication never breaks the two-decimal invariant."""
+    product = value.times(factor)
+    assert product.currency == value.currency
+    assert product.amount == product.amount.quantize(Decimal("0.01"))
+
+
+@given(first=money(currency="EUR"), second=money(currency="USD"))
+def test_mixed_currencies_always_fail(first: Money, second: Money) -> None:
+    """No generated pair of different currencies can be combined."""
+    with pytest.raises(CurrencyMismatchError):
+        _ = first + second
+
+
+@given(
+    text=st.decimals(
+        min_value=-(10**9), max_value=10**9, allow_nan=False, allow_infinity=False, places=4
+    )
+)
+def test_of_always_produces_a_valid_value(text: Decimal) -> None:
+    """Rounding in the factory always yields a value that passes validation."""
+    result = Money.of(str(text), "EUR")
+    assert abs(result.amount - text) <= Decimal("0.005")

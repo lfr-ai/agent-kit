@@ -1,0 +1,65 @@
+"""Example-based tests for the value object template.
+
+Replace 'shop.core.values' with the module that holds the copied values.
+"""
+
+from decimal import Decimal
+
+import pytest
+from shop.core.values import CurrencyMismatchError, Money, OrderId
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [("12.5", "12.50"), ("0.005", "0.00"), ("0.015", "0.02"), (3, "3.00")],
+)
+def test_of_rounds_half_to_even(amount: str | int, expected: str) -> None:
+    """Bankers' rounding keeps aggregated totals unbiased."""
+    assert Money.of(amount, "EUR").amount == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("amount", "currency", "message"),
+    [
+        (Decimal("1.001"), "EUR", "two decimals"),
+        (Decimal("NaN"), "EUR", "finite"),
+        (Decimal("1.00"), "eur", "currency"),
+        (Decimal("1.00"), "EURO", "currency"),
+    ],
+)
+def test_invalid_values_are_rejected(amount: Decimal, currency: str, message: str) -> None:
+    """Construction enforces precision, finiteness, and currency format."""
+    with pytest.raises(ValueError, match=message):
+        Money(amount=amount, currency=currency)
+
+
+def test_of_rejects_non_numeric_text() -> None:
+    """Parsing failures are ValueError, chained from the decimal error."""
+    with pytest.raises(ValueError, match="not a number"):
+        Money.of("twelve", "EUR")
+
+
+def test_values_with_equal_fields_are_equal_and_hash_equally() -> None:
+    """Value semantics: no identity."""
+    assert Money.of("1", "EUR") == Money.of("1.00", "EUR")
+    assert len({Money.of("1", "EUR"), Money.of("1.00", "EUR")}) == 1
+
+
+def test_arithmetic_refuses_to_mix_currencies() -> None:
+    """Units are never converted silently."""
+    with pytest.raises(CurrencyMismatchError):
+        _ = Money.of("1", "EUR") + Money.of("1", "USD")
+
+
+def test_display_form() -> None:
+    """The user-facing string shows amount and currency."""
+    assert str(Money.of("12.5", "EUR")) == "12.50 EUR"
+
+
+def test_order_id_requires_canonical_uuid() -> None:
+    """Identifiers are validated once, at construction."""
+    assert OrderId.new() != OrderId.new()
+    with pytest.raises(ValueError, match="canonical"):
+        OrderId(value="0B6F8A52-4A1E-4A8E-9A43-2F6F1D6F0C11")
+    with pytest.raises(ValueError, match="UUID"):
+        OrderId(value="order-1")

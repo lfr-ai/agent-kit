@@ -1,0 +1,17 @@
+# Consumer project inventory
+
+Keep this index scoped to the actual repository; no company-wide or personal fleet.
+
+| Package | Responsibility | Public entry | Owner | Completion command/cwd |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+## Shared boundaries
+
+- Authoritative contracts and generated clients:
+- Shared dependency/configuration ownership:
+- Cross-package journey and rollout order:
+- Native capabilities/tool configuration owners:
+- Private knowledge/credentials remain consumer-owned (locations only):
+
+Remove unused rows and link authoritative facts rather than duplicating them.

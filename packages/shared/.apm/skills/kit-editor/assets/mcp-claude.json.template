@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "context7": {"type": "http", "url": "https://mcp.context7.com/mcp"},
+    "microsoft-learn": {"type": "http", "url": "https://learn.microsoft.com/api/mcp"},
+    "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"},
+    "gitnexus": {"type": "stdio", "command": "npx", "args": ["--yes", "gitnexus@REVIEWED_VERSION", "mcp"]},
+    "chrome-devtools": {"type": "stdio", "command": "npx", "args": ["--yes", "chrome-devtools-mcp@REVIEWED_VERSION"]},
+    "playwright": {"type": "stdio", "command": "npx", "args": ["--yes", "@playwright/mcp@REVIEWED_VERSION"]},
+    "shadcn": {"type": "stdio", "command": "npx", "args": ["--yes", "shadcn@REVIEWED_VERSION", "mcp"]},
+    "postman": {"type": "http", "url": "https://mcp.postman.com/minimal"},
+    "azure": {"type": "stdio", "command": "npx", "args": ["--yes", "@azure/mcp@REVIEWED_VERSION", "server", "start"]},
+    "terraform": {"type": "stdio", "command": "docker", "args": ["run", "--interactive", "--rm", "hashicorp/terraform-mcp-server@sha256:REVIEWED_SHA256"]},
+    "azure-devops": {"type": "stdio", "command": "npx", "args": ["--yes", "@azure-devops/mcp@REVIEWED_VERSION", "REVIEWED_ORGANIZATION", "-d", "core", "work", "work-items"]}
+  }
+}

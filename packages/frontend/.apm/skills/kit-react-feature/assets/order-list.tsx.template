@@ -1,0 +1,61 @@
+// src/features/orders/ui/order-list.tsx
+// Every remote state is rendered deliberately: pending, error with retry, empty,
+// success, and background refresh. The query hook owns server data; this
+// component owns no copy of it.
+import { useQuery } from "@tanstack/react-query";
+import { useId, type ReactElement } from "react";
+import { ordersQueries } from "../api/orders.queries";
+import {
+  formatOrderTotal,
+  orderStatusLabel,
+  type OrderFilters,
+} from "../model/order";
+
+export type OrderListProps = Readonly<{
+  filters: OrderFilters;
+  locale: string;
+  onSelect: (orderId: string) => void;
+}>;
+
+export function OrderList({ filters, locale, onSelect }: OrderListProps): ReactElement {
+  const headingId = useId();
+  const query = useQuery(ordersQueries.list(filters));
+
+  if (query.isPending) {
+    return <p role="status">Loading orders…</p>;
+  }
+
+  if (query.isError) {
+    return (
+      <div role="alert">
+        <p>Orders could not be loaded. Check your connection and try again.</p>
+        <button type="button" onClick={() => void query.refetch()}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const { items } = query.data;
+
+  return (
+    <section aria-labelledby={headingId} aria-busy={query.isFetching}>
+      <h2 id={headingId}>Orders</h2>
+      {items.length === 0 ? (
+        <p>No orders match these filters.</p>
+      ) : (
+        <ul>
+          {items.map((order) => (
+            <li key={order.id}>
+              <button type="button" onClick={() => onSelect(order.id)}>
+                {order.reference}
+              </button>{" "}
+              <span>{orderStatusLabel(order.status)}</span>{" "}
+              <span>{formatOrderTotal(order, locale)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

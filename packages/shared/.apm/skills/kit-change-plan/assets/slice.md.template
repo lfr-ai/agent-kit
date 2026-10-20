@@ -1,0 +1,39 @@
+# Slice NN: one-sentence outcome
+
+- Status: planned | in progress | done | dropped
+- Prerequisite slices: none / NN, NN
+- Owner:
+
+## Acceptance criteria covered
+
+| Criterion | Test that proves it | Level (unit / integration / end-to-end) |
+| --- | --- | --- |
+| | | |
+
+## Scope
+
+- Paths expected to change:
+- Paths that must not change:
+- Shared contracts read (not changed):
+- Out of scope for this slice:
+
+## Test first
+
+- Failing test name and file:
+- Command that runs it:
+- Observed failure before the change:
+
+## Risks and rollback
+
+- Risks from the register addressed here (IDs):
+- Undo action:
+- Point of no return (if any) and its approval:
+- Rollback trigger and verification:
+
+## Done when
+
+- [ ] The failing test passes, together with the focused suite: `<command>`
+- [ ] Invalid input and recovery cases are covered
+- [ ] Completion gate passes: `<command>` -> `<result>`
+- [ ] Docs, changelog or migration notes updated if users can observe the change
+- [ ] Remaining work and limitations recorded in the plan

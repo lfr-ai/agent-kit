@@ -1,0 +1,29 @@
+# Consumer knowledge index
+
+Keep this index in the consumer. Link authoritative documents; do not duplicate them.
+
+| Topic | Owning document/code | Verification | Last relevant change reviewed |
+| --- | --- | --- | --- |
+| Entry points and architecture | | | |
+| Trust boundaries and data classification | | | |
+| Data lifecycle and migrations | | | |
+| Configuration and dependency ownership | | | |
+| Build, operation, rollback | | | |
+
+## Decision record
+
+- Decision and date:
+- Status: proposed / accepted / superseded
+- Problem and constraints:
+- Chosen approach and rejected alternative:
+- Owning code/test and evidence:
+- Limits and review trigger:
+- Supersedes / superseded by:
+
+## Task handoff
+
+- Requested observable outcome:
+- Changed paths and remaining work:
+- Last executed command, result and environment:
+- Known failure or unavailable prerequisite:
+- Next smallest verification and stop condition:

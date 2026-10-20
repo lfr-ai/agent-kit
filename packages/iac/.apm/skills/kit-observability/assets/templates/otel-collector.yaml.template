@@ -1,0 +1,98 @@
+# OpenTelemetry Collector template (otelcol-contrib distribution).
+# Copy to otel-collector.yaml and run:
+#   otelcol-contrib --config otel-collector.yaml
+# Validate before rollout:
+#   otelcol-contrib validate --config otel-collector.yaml
+# Environment variables:
+#   DEPLOYMENT_ENVIRONMENT  e.g. dev, prod
+#   OTLP_BACKEND_ENDPOINT   host:port of the telemetry backend (TLS)
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 8
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # First in every pipeline: refuse data before the process runs out of memory.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Drop health-check noise before it costs anything downstream.
+  filter/health:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["url.path"] == "/healthz"'
+        - 'attributes["url.path"] == "/readyz"'
+
+  # Remove attributes that may carry credentials or personal data.
+  attributes/scrub:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: user.email
+        action: delete
+      - key: enduser.id
+        action: hash
+
+  # Stamp environment centrally so services cannot mislabel it.
+  resource:
+    attributes:
+      - key: deployment.environment.name
+        value: ${env:DEPLOYMENT_ENVIRONMENT}
+        action: upsert
+
+  # Last before export: fewer, larger requests.
+  batch:
+    send_batch_size: 8192
+    send_batch_max_size: 16384
+    timeout: 5s
+
+exporters:
+  otlp:
+    endpoint: ${env:OTLP_BACKEND_ENDPOINT}
+    compression: gzip
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  # Local troubleshooting only; remove or keep at 'basic' in production.
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: normal
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/health, attributes/scrub, resource, batch]
+      exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/scrub, resource, batch]
+      exporters: [otlp]

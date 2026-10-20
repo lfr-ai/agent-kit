@@ -1,0 +1,48 @@
+"""Driven port for telling customers about invoice events.
+
+Copy to 'app/application/ports/notifications.py'. The application owns this
+interface and states it in application terms ("invoice paid"), not in transport
+terms ("send SMTP message"). Adapters translate it to e-mail, chat, queues, etc.
+"""
+
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Protocol
+
+
+class NotificationError(Exception):
+    """Raised by any notifier adapter when a message could not be delivered."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class InvoicePaidNotice:
+    """Data the application hands to a notifier; no transport details.
+
+    Attributes:
+        invoice_id: Identifier of the paid invoice.
+        customer_id: Recipient identity; the adapter resolves the address.
+        amount: Paid amount.
+        currency: Currency code of the amount.
+        payment_reference: Provider reference to quote to the customer.
+    """
+
+    invoice_id: str
+    customer_id: str
+    amount: Decimal
+    currency: str
+    payment_reference: str
+
+
+class InvoiceNotifier(Protocol):
+    """Deliver invoice events to the customer through some channel."""
+
+    def invoice_paid(self, notice: InvoicePaidNotice) -> None:
+        """Deliver a payment confirmation.
+
+        Args:
+            notice: What happened, in application terms.
+
+        Raises:
+            NotificationError: If the channel rejected or could not take the message.
+        """
+        ...

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "default_active": [],
+  "integrations": {
+    "context7": {"delivery": "reviewed-template", "reference": "https://context7.com/", "requires": "Approved documentation network use"},
+    "microsoft-learn": {"delivery": "reviewed-template", "reference": "https://learn.microsoft.com/training/support/mcp", "requires": "Approved public documentation endpoint"},
+    "github": {"delivery": "consumer-owned", "reference": "https://github.com/github/github-mcp-server", "requires": "Explicit repository identity, read-only scopes, provider authentication"},
+    "gitnexus": {"delivery": "consumer-owned", "reference": "https://github.com/abhigyanpatwari/GitNexus", "requires": "Pinned installed CLI and the consumer's local index"},
+    "chrome-devtools": {"delivery": "consumer-owned", "reference": "https://github.com/ChromeDevTools/chrome-devtools-mcp", "requires": "Pinned CLI and isolated browser context"},
+    "playwright": {"delivery": "consumer-owned", "reference": "https://github.com/microsoft/playwright-mcp", "requires": "Pinned CLI and isolated browser context"},
+    "shadcn": {"delivery": "consumer-owned", "reference": "https://ui.shadcn.com/docs/mcp", "requires": "Actual frontend registry and pinned declared package tooling"},
+    "postman": {"delivery": "consumer-owned", "reference": "https://learning.postman.com/docs/developer/ai-agent/mcp", "requires": "Maintained collection and approved private workspace credentials"},
+    "azure": {"delivery": "consumer-owned", "reference": "https://github.com/microsoft/mcp", "requires": "Read-only tool selection and approved subscription identity"},
+    "terraform": {"delivery": "consumer-owned", "reference": "https://github.com/hashicorp/terraform-mcp-server", "requires": "Applicable non-Azure targets; registry toolset only by default"},
+    "azure-devops": {"delivery": "consumer-owned", "reference": "https://github.com/microsoft/azure-devops-mcp", "requires": "Consumer-specific organization, project, and least-privilege identity"}
+  }
+}

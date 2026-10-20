@@ -1,0 +1,5 @@
+// src/shared/ui/index.ts
+// Public surface of the component library. Export components and their prop
+// types; keep helpers, class-name builders, and internal parts private.
+export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./button";
+export { Dialog, type DialogProps } from "./dialog";

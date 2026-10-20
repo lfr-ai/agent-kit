@@ -1,0 +1,167 @@
+"""Provider contract tests for the router template.
+
+Replace the 'shop' imports with the project's modules. The tests run the app
+in-process with a fake service, then assert status codes, media types, headers,
+and that every body validates against the published contract. They need
+'fastapi', 'httpx' (for TestClient), 'jsonschema', and 'pyyaml' in the test
+dependencies; no network access is used.
+"""
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import jsonschema
+import pytest
+import yaml
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from shop.presentation.orders_api import (
+    IdempotencyConflictError,
+    MoneyOut,
+    OrderCreateIn,
+    OrderNotFoundError,
+    OrderOut,
+    OrderPageOut,
+    OrderStatus,
+    install_problem_handlers,
+    orders_service,
+    router,
+)
+
+_CONTRACT = Path(__file__).parents[2] / "openapi.yml"
+_ORDER = OrderOut(
+    id="ord-1",
+    status="draft",
+    total=MoneyOut(amount="5.00", currency="EUR"),
+    created_at=datetime(2026, 1, 2, 10, 0, tzinfo=UTC),
+)
+_BODY = {"customer_id": "customer-1", "currency": "EUR", "lines": [{"sku": "A", "quantity": 1}]}
+
+
+class FakeService:
+    def __init__(self) -> None:
+        self.keys: dict[str, OrderCreateIn] = {}
+
+    def create(self, request: OrderCreateIn, /, *, idempotency_key: str) -> OrderOut:
+        previous = self.keys.setdefault(idempotency_key, request)
+        if previous != request:
+            raise IdempotencyConflictError
+        return _ORDER
+
+    def get(self, order_id: str, /) -> OrderOut:
+        if order_id != _ORDER.id:
+            raise OrderNotFoundError(order_id)
+        return _ORDER
+
+    def list_page(
+        self, *, limit: int, cursor: str | None, status: OrderStatus | None
+    ) -> OrderPageOut:
+        if cursor == "bad":
+            raise ValueError("cursor")
+        return OrderPageOut(items=[_ORDER], next_cursor=None, has_more=False)
+
+
+@pytest.fixture
+def client() -> TestClient:
+    app = FastAPI()
+    app.include_router(router)
+    install_problem_handlers(app)
+    service = FakeService()
+    app.dependency_overrides[orders_service] = lambda: service
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(scope="module")
+def contract() -> dict[str, object]:
+    loaded = yaml.safe_load(_CONTRACT.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _assert_matches(contract: dict[str, object], schema_name: str, body: object) -> None:
+    """Validate a body against a named component, resolving local references."""
+    components = contract["components"]
+    assert isinstance(components, dict)
+    schema = {"$ref": f"#/components/schemas/{schema_name}", "components": components}
+    jsonschema.Draft202012Validator(schema).validate(body)
+
+
+def test_get_returns_the_documented_order(client: TestClient, contract: dict[str, object]) -> None:
+    """Success bodies validate against the published schema."""
+    response = client.get("/orders/ord-1")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    _assert_matches(contract, "Order", response.json())
+
+
+def test_create_returns_201_with_location(client: TestClient, contract: dict[str, object]) -> None:
+    """Creation reports the new resource URL."""
+    response = client.post("/orders", json=_BODY, headers={"Idempotency-Key": "k-1"})
+    assert response.status_code == 201
+    assert response.headers["location"] == "/orders/ord-1"
+    _assert_matches(contract, "Order", response.json())
+
+
+def test_retry_with_same_key_returns_same_order(client: TestClient) -> None:
+    """Idempotent retries are safe."""
+    first = client.post("/orders", json=_BODY, headers={"Idempotency-Key": "k-2"})
+    second = client.post("/orders", json=_BODY, headers={"Idempotency-Key": "k-2"})
+    assert first.json() == second.json()
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs", "expected_status"),
+    [
+        ("get", "/orders/missing", {}, 404),
+        ("get", "/orders?cursor=bad", {}, 400),
+        ("get", "/orders?limit=0", {}, 422),
+        ("post", "/orders", {"json": _BODY}, 422),
+        ("post", "/orders", {"json": {**_BODY, "extra": 1}, "headers": {"Idempotency-Key": "k"}}, 422),
+        ("get", "/unknown", {}, 404),
+    ],
+)
+def test_errors_use_problem_details(
+    client: TestClient,
+    contract: dict[str, object],
+    method: str,
+    path: str,
+    kwargs: dict[str, object],
+    expected_status: int,
+) -> None:
+    """Every error, including framework errors, uses the problem envelope."""
+    response = client.request(method.upper(), path, **kwargs)  # type: ignore[arg-type]
+    assert response.status_code == expected_status
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert body["status"] == expected_status
+    _assert_matches(contract, "Problem", body)
+
+
+def test_key_reuse_with_different_body_is_rejected(client: TestClient) -> None:
+    """A reused key with another payload is a client error, not a replay."""
+    client.post("/orders", json=_BODY, headers={"Idempotency-Key": "k-3"})
+    changed = {**_BODY, "currency": "USD"}
+    response = client.post("/orders", json=changed, headers={"Idempotency-Key": "k-3"})
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/idempotency-mismatch")
+
+
+def test_validation_errors_point_at_fields(client: TestClient) -> None:
+    """Field errors carry JSON pointers clients can map to inputs."""
+    bad = {**_BODY, "lines": [{"sku": "A", "quantity": 0}]}
+    response = client.post("/orders", json=bad, headers={"Idempotency-Key": "k-4"})
+    pointers = [item["pointer"] for item in response.json()["errors"]]
+    assert "/lines/0/quantity" in pointers
+
+
+def test_generated_operations_match_the_contract(contract: dict[str, object]) -> None:
+    """Every documented operation exists in the generated description."""
+    app = FastAPI()
+    app.include_router(router)
+    generated = app.openapi()["paths"]
+    documented = contract["paths"]
+    assert isinstance(documented, dict)
+    for path, item in documented.items():
+        for method in ("get", "post", "put", "patch", "delete"):
+            if method in item:
+                assert method in generated.get(path, {}), f"{method.upper()} {path} missing"

@@ -1,0 +1,106 @@
+// src/config/runtime-config.ts
+// Public runtime configuration, loaded once before the app renders. One build
+// artifact serves every environment; each deployment provides its own
+// /config.json. Everything here is visible to every user: never put secrets in it.
+import { z } from "zod";
+
+const httpsOrLocalUrl = z
+  .url({ error: "must be an absolute URL" })
+  .refine((value) => {
+    // Checks continue after a failed format check in Zod 4, so guard parsing here.
+    if (!URL.canParse(value)) return false;
+    const url = new URL(value);
+    return url.protocol === "https:" || url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  }, "must use https outside localhost")
+  .transform((value) => (value.endsWith("/") ? value : `${value}/`));
+
+export const runtimeConfigSchema = z
+  .object({
+    apiBaseUrl: httpsOrLocalUrl,
+    environment: z.enum(["local", "test", "staging", "production"]),
+    buildVersion: z.string().min(1).optional(),
+    features: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), z.boolean()).default({}),
+    telemetry: z
+      .object({
+        enabled: z.boolean(),
+        sampleRate: z.number().min(0).max(1),
+      })
+      .optional(),
+  })
+  .strict();
+
+export type RuntimeConfig = Readonly<z.output<typeof runtimeConfigSchema>>;
+export type RuntimeConfigInput = z.input<typeof runtimeConfigSchema>;
+
+export class RuntimeConfigError extends Error {
+  override readonly name = "RuntimeConfigError";
+
+  constructor(
+    message: string,
+    readonly issues: readonly string[] = [],
+  ) {
+    super(message);
+  }
+}
+
+let current: RuntimeConfig | null = null;
+
+export function parseRuntimeConfig(input: unknown): RuntimeConfig {
+  const result = runtimeConfigSchema.safeParse(input);
+  if (!result.success) {
+    throw new RuntimeConfigError(
+      "Runtime configuration is invalid",
+      result.error.issues.map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`),
+    );
+  }
+  return Object.freeze({ ...result.data, features: Object.freeze({ ...result.data.features }) });
+}
+
+export type LoadOptions = Readonly<{
+  url?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}>;
+
+/** Fetches, validates, and stores the configuration; call once before rendering. */
+export async function loadRuntimeConfig(options: LoadOptions = {}): Promise<RuntimeConfig> {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  let response: Response;
+  try {
+    response = await fetchImpl(options.url ?? "/config.json", {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
+    });
+  } catch (error) {
+    throw new RuntimeConfigError(`Runtime configuration could not be fetched: ${String(error)}`);
+  }
+  if (!response.ok) {
+    throw new RuntimeConfigError(`Runtime configuration request failed with status ${response.status}`);
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new RuntimeConfigError("Runtime configuration is not valid JSON");
+  }
+  current = parseRuntimeConfig(body);
+  return current;
+}
+
+export function getRuntimeConfig(): RuntimeConfig {
+  if (current === null) {
+    throw new RuntimeConfigError("Runtime configuration was read before it was loaded");
+  }
+  return current;
+}
+
+export function isFeatureEnabled(name: string): boolean {
+  return getRuntimeConfig().features[name] === true;
+}
+
+/** Test seam: install a validated configuration without fetching. */
+export function setRuntimeConfigForTests(input: RuntimeConfigInput): RuntimeConfig {
+  current = parseRuntimeConfig(input);
+  return current;
+}

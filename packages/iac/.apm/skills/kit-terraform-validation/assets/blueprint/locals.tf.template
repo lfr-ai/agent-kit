@@ -1,0 +1,26 @@
+# Derived values shared by the root module. Copy to infra/locals.tf.
+locals {
+  # Naming follows '<type>-<workload>-<environment>-<region>-<instance>'.
+  name_suffix = "${var.workload}-${var.environment}-${var.location}-${var.instance}"
+
+  resource_group_name = "rg-${local.name_suffix}"
+
+  # Storage account names allow only 3-24 lowercase letters and digits.
+  storage_account_name = substr(
+    replace("st${var.workload}${var.environment}${var.instance}", "/[^a-z0-9]/", ""),
+    0,
+    24,
+  )
+
+  # Caller tags win over defaults except for the managed-by marker.
+  tags = merge(
+    {
+      environment = var.environment
+      workload    = var.workload
+    },
+    var.tags,
+    {
+      managed_by = "terraform"
+    },
+  )
+}

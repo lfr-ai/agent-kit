@@ -1,0 +1,397 @@
+"""PostgreSQL and pgvector adapter for the retrieval ports.
+
+Copy to 'retrieval/adapters/pgvector.py'. Requires 'psycopg[binary]>=3.2',
+'psycopg-pool' and 'pgvector'. Only this module imports the driver; the
+import-linter contract keeps it out of the core. Tenant, access-list and
+metadata filters run inside SQL, before ranking, for both strategies.
+"""
+
+import logging
+from collections.abc import Mapping, Sequence
+
+import psycopg
+from pgvector import Vector
+from pgvector.psycopg import register_vector_async
+from psycopg.rows import DictRow, dict_row
+from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
+
+from retrieval.contracts import (
+    Chunk,
+    Embedder,
+    Query,
+    RetrievalUnavailableError,
+    ScoredChunk,
+    SourceDeletedError,
+    chunk_from_mapping,
+)
+from retrieval.settings import RetrievalSettings
+
+logger = logging.getLogger(__name__)
+
+_COLUMNS = (
+    "chunk_id, tenant, source_id, source_version, body, start_char, end_char, "
+    "section, acl, metadata, updated_at"
+)
+
+_DENSE_SQL = f"""
+SELECT {_COLUMNS}, 1 - (embedding <=> %(vector)s) AS score
+FROM retrieval_chunks
+WHERE tenant = %(tenant)s
+  AND acl && %(tokens)s::text[]
+  AND metadata @> %(filters)s
+ORDER BY embedding <=> %(vector)s
+LIMIT %(limit)s
+"""  # noqa: S608 - only constant column names are interpolated
+
+_LEXICAL_SQL = f"""
+SELECT {_COLUMNS}, ts_rank_cd(tsv, query) AS score
+FROM retrieval_chunks, websearch_to_tsquery(%(config)s::regconfig, %(text)s) AS query
+WHERE tenant = %(tenant)s
+  AND acl && %(tokens)s::text[]
+  AND metadata @> %(filters)s
+  AND tsv @@ query
+ORDER BY score DESC, chunk_id
+LIMIT %(limit)s
+"""  # noqa: S608 - only constant column names are interpolated
+
+_UPSERT_SQL = """
+INSERT INTO retrieval_chunks (
+    chunk_id, tenant, source_id, source_version, body, start_char, end_char,
+    section, acl, metadata, updated_at, embedding
+) VALUES (
+    %(chunk_id)s, %(tenant)s, %(source_id)s, %(source_version)s, %(body)s,
+    %(start_char)s, %(end_char)s, %(section)s, %(acl)s, %(metadata)s,
+    %(updated_at)s, %(embedding)s
+)
+ON CONFLICT (chunk_id) DO UPDATE SET
+    body = EXCLUDED.body,
+    section = EXCLUDED.section,
+    acl = EXCLUDED.acl,
+    metadata = EXCLUDED.metadata,
+    updated_at = EXCLUDED.updated_at,
+    embedding = EXCLUDED.embedding
+"""
+
+
+async def open_pool(settings: RetrievalSettings) -> AsyncConnectionPool:
+    """Open a connection pool with the vector type registered.
+
+    Args:
+        settings: Retrieval settings carrying the database URL.
+
+    Returns:
+        An open pool; close it on application shutdown.
+    """
+    pool = AsyncConnectionPool(
+        settings.database_url,
+        configure=register_vector_async,
+        open=False,
+        min_size=1,
+        max_size=10,
+        timeout=5.0,
+    )
+    await pool.open(wait=True)
+    return pool
+
+
+def _to_hit(row: DictRow, *, strategy: str, rank: int) -> ScoredChunk:
+    """Convert a result row into a validated hit."""
+    stored = row["metadata"] if isinstance(row["metadata"], Mapping) else {}
+    chunk = chunk_from_mapping(
+        text=str(row["body"]),
+        metadata={
+            **stored,
+            "chunk_id": row["chunk_id"],
+            "source_id": row["source_id"],
+            "source_version": row["source_version"],
+            "tenant": row["tenant"],
+            "start_char": row["start_char"],
+            "end_char": row["end_char"],
+            "acl": list(row["acl"]),
+            "updated_at": row["updated_at"],
+            "section": row["section"],
+        },
+    )
+    return ScoredChunk(
+        chunk=chunk, score=float(row["score"]), retriever=strategy, rank=rank
+    )
+
+
+async def _lock_source(
+    connection: psycopg.AsyncConnection,
+    *,
+    tenant: str,
+    source_id: str,
+) -> None:
+    """Serialize writes and deletes of one source for the transaction.
+
+    Without the lock, an upsert could pass the tombstone check just before a
+    concurrent delete commits and then resurrect the deleted source.
+    """
+    await connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"{tenant}\x1f{source_id}",),
+    )
+
+
+class _PgBase:
+    """Shared pool, timeout and error mapping."""
+
+    def __init__(self, pool: AsyncConnectionPool, settings: RetrievalSettings) -> None:
+        """Bind to an open pool.
+
+        Args:
+            pool: Pool from 'open_pool'.
+            settings: Settings supplying timeouts and search configuration.
+        """
+        self._pool = pool
+        self._settings = settings
+
+    async def _fetch(
+        self, sql: str, params: Mapping[str, object], *, vector: bool
+    ) -> list[DictRow]:
+        """Run one bounded read inside a transaction.
+
+        Raises:
+            RetrievalUnavailableError: On connection, pool or timeout failures.
+        """
+        try:
+            async with self._pool.connection() as connection, connection.transaction():
+                await connection.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(self._settings.statement_timeout_ms),),
+                )
+                if vector:
+                    await connection.execute(
+                        "SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)"
+                    )
+                async with connection.cursor(row_factory=dict_row) as cursor:
+                    await cursor.execute(sql, params)
+                    return await cursor.fetchall()
+        except (psycopg.OperationalError, psycopg.errors.QueryCanceled) as error:
+            logger.warning(
+                "retrieval.store_unavailable", extra={"error": type(error).__name__}
+            )
+            raise RetrievalUnavailableError("vector store unavailable") from error
+
+    @staticmethod
+    def _filters(query: Query) -> dict[str, object]:
+        """Build the shared tenant, access and metadata parameters."""
+        return {
+            "tenant": query.principal.tenant,
+            "tokens": sorted(query.principal.tokens()),
+            "filters": Jsonb(dict(query.filters)),
+        }
+
+
+class PgVectorRetriever(_PgBase):
+    """Dense retrieval with cosine distance over the HNSW index."""
+
+    def __init__(
+        self,
+        pool: AsyncConnectionPool,
+        settings: RetrievalSettings,
+        embedder: Embedder,
+    ) -> None:
+        """Bind to a pool and an embedder.
+
+        Args:
+            pool: Pool from 'open_pool'.
+            settings: Retrieval settings.
+            embedder: Must be the model used at indexing time.
+        """
+        super().__init__(pool, settings)
+        self._embedder = embedder
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return "dense"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Return visible hits ordered by cosine similarity.
+
+        Iterative index scans use relaxed ordering, so rows are re-sorted.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Hits in rank order.
+        """
+        (vector,) = await self._embedder.embed([query.text])
+        rows = await self._fetch(
+            _DENSE_SQL,
+            {**self._filters(query), "vector": Vector(vector), "limit": query.top_k},
+            vector=True,
+        )
+        rows.sort(key=lambda row: (-float(row["score"]), str(row["chunk_id"])))
+        return [
+            _to_hit(row, strategy=self.name, rank=rank)
+            for rank, row in enumerate(rows, 1)
+        ]
+
+
+class PgFullTextRetriever(_PgBase):
+    """Lexical retrieval with PostgreSQL full-text search.
+
+    'ts_rank_cd' is a cover-density ranking, not BM25; evaluate it on your
+    golden set before assuming parity with a BM25 engine.
+    """
+
+    @property
+    def name(self) -> str:
+        """Strategy name."""
+        return "lexical"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        """Return visible hits matching the web-search style query.
+
+        Args:
+            query: Request to execute.
+
+        Returns:
+            Hits in rank order.
+        """
+        rows = await self._fetch(
+            _LEXICAL_SQL,
+            {
+                **self._filters(query),
+                "config": self._settings.text_search_config,
+                "text": query.text,
+                "limit": query.top_k,
+            },
+            vector=False,
+        )
+        return [
+            _to_hit(row, strategy=self.name, rank=rank)
+            for rank, row in enumerate(rows, 1)
+        ]
+
+
+class PgIndexWriter(_PgBase):
+    """'IndexWriter' implementation with tombstones and version retention."""
+
+    def __init__(
+        self,
+        pool: AsyncConnectionPool,
+        settings: RetrievalSettings,
+        embedder: Embedder,
+        *,
+        batch_size: int = 64,
+    ) -> None:
+        """Bind to a pool and an embedder.
+
+        Args:
+            pool: Pool from 'open_pool'.
+            settings: Retrieval settings.
+            embedder: Embedding port; its dimensions must match the schema.
+            batch_size: Chunks embedded and written per round trip.
+        """
+        super().__init__(pool, settings)
+        if embedder.dimensions != settings.embedding_dimensions:
+            raise ValueError("embedder dimensions do not match the configured schema")
+        self._embedder = embedder
+        self._batch_size = batch_size
+
+    async def upsert(self, chunks: Sequence[Chunk]) -> int:
+        """Embed and write chunks, refusing deleted sources.
+
+        Args:
+            chunks: Chunks to write.
+
+        Returns:
+            Number of chunks written.
+
+        Raises:
+            SourceDeletedError: If a chunk belongs to a tombstoned source.
+        """
+        written = 0
+        for offset in range(0, len(chunks), self._batch_size):
+            batch = list(chunks[offset : offset + self._batch_size])
+            vectors = await self._embedder.embed([chunk.text for chunk in batch])
+            async with self._pool.connection() as connection, connection.transaction():
+                deleted: list[str] = []
+                for tenant, source_id in sorted(
+                    {(chunk.tenant, chunk.source_id) for chunk in batch}
+                ):
+                    await _lock_source(connection, tenant=tenant, source_id=source_id)
+                    cursor = await connection.execute(
+                        "SELECT 1 FROM retrieval_tombstones "
+                        "WHERE tenant = %s AND source_id = %s",
+                        (tenant, source_id),
+                    )
+                    if await cursor.fetchone() is not None:
+                        deleted.append(source_id)
+                if deleted:
+                    raise SourceDeletedError(
+                        f"sources were deleted: {', '.join(deleted)}"
+                    )
+                async with connection.cursor() as writer:
+                    await writer.executemany(
+                        _UPSERT_SQL,
+                        [
+                            {
+                                "chunk_id": chunk.chunk_id,
+                                "tenant": chunk.tenant,
+                                "source_id": chunk.source_id,
+                                "source_version": chunk.source_version,
+                                "body": chunk.text,
+                                "start_char": chunk.start_char,
+                                "end_char": chunk.end_char,
+                                "section": chunk.section,
+                                "acl": sorted(chunk.acl),
+                                "metadata": Jsonb(dict(chunk.metadata)),
+                                "updated_at": chunk.updated_at,
+                                "embedding": Vector(vector),
+                            }
+                            for chunk, vector in zip(batch, vectors, strict=True)
+                        ],
+                    )
+            written += len(batch)
+        return written
+
+    async def delete_source(self, *, tenant: str, source_id: str) -> int:
+        """Delete a source's chunks and tombstone it in one transaction.
+
+        Args:
+            tenant: Owning tenant.
+            source_id: Source to delete.
+
+        Returns:
+            Number of chunks removed.
+        """
+        async with self._pool.connection() as connection, connection.transaction():
+            await _lock_source(connection, tenant=tenant, source_id=source_id)
+            cursor = await connection.execute(
+                "DELETE FROM retrieval_chunks WHERE tenant = %s AND source_id = %s",
+                (tenant, source_id),
+            )
+            await connection.execute(
+                "INSERT INTO retrieval_tombstones (tenant, source_id) VALUES (%s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (tenant, source_id),
+            )
+            return cursor.rowcount
+
+    async def retain_version(
+        self, *, tenant: str, source_id: str, source_version: str
+    ) -> int:
+        """Delete chunks of every other version of a source.
+
+        Args:
+            tenant: Owning tenant.
+            source_id: Source to prune.
+            source_version: Version to keep.
+
+        Returns:
+            Number of chunks removed.
+        """
+        async with self._pool.connection() as connection, connection.transaction():
+            cursor = await connection.execute(
+                "DELETE FROM retrieval_chunks "
+                "WHERE tenant = %s AND source_id = %s AND source_version <> %s",
+                (tenant, source_id, source_version),
+            )
+            return cursor.rowcount

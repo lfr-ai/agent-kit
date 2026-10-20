@@ -1,0 +1,168 @@
+"""Application service: one use case orchestrated through injected ports.
+
+Copy into 'src/<package>/application/' and split the ports and errors into the
+core package when the project already has those modules. The service owns the
+use-case policy; adapters behind the ports own storage and time.
+"""
+
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Protocol
+
+logger = logging.getLogger(__name__)
+
+
+class InvoicingError(Exception):
+    """Base class for expected invoicing failures."""
+
+
+class OrderNotFoundError(InvoicingError):
+    """No order exists for the requested identifier."""
+
+    def __init__(self, *, order_id: str) -> None:
+        """Record the identifier that was not found.
+
+        Args:
+            order_id: Identifier the caller asked for.
+        """
+        super().__init__(f"order {order_id!r} was not found")
+        self.order_id = order_id
+
+
+class OrderNotReadyError(InvoicingError):
+    """The order is not in a state that allows invoicing."""
+
+    def __init__(self, *, order_id: str, reason: str) -> None:
+        """Record why the order cannot be invoiced.
+
+        Args:
+            order_id: Identifier of the rejected order.
+            reason: Stable, non-sensitive explanation for callers.
+        """
+        super().__init__(f"order {order_id!r} cannot be invoiced: {reason}")
+        self.order_id = order_id
+        self.reason = reason
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderSnapshot:
+    """Read model of an order as needed by invoicing."""
+
+    order_id: str
+    confirmed: bool
+    total_minor: int
+    currency: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Invoice:
+    """An issued invoice."""
+
+    number: str
+    order_id: str
+    total_minor: int
+    currency: str
+    issued_at: datetime
+
+
+class OrderReader(Protocol):
+    """Port: look up orders by identifier."""
+
+    def get(self, order_id: str, /) -> OrderSnapshot | None:
+        """Return the order or 'None' when it does not exist."""
+        ...
+
+
+class InvoiceRepository(Protocol):
+    """Port: persist invoices and allocate invoice numbers."""
+
+    def next_number(self) -> str:
+        """Reserve the next unused invoice number."""
+        ...
+
+    def find_by_order(self, order_id: str, /) -> Invoice | None:
+        """Return the invoice already issued for an order, if any."""
+        ...
+
+    def add(self, invoice: Invoice, /) -> None:
+        """Store a newly issued invoice."""
+        ...
+
+
+class Clock(Protocol):
+    """Port: current time, injected so tests are deterministic."""
+
+    def now(self) -> datetime:
+        """Return the current timezone-aware time."""
+        ...
+
+
+class SystemClock:
+    """Clock adapter backed by the system time in UTC."""
+
+    def now(self) -> datetime:
+        """Return the current UTC time."""
+        return datetime.now(tz=UTC)
+
+
+class InvoiceService:
+    """Issue invoices for confirmed orders exactly once."""
+
+    def __init__(
+        self, *, orders: OrderReader, invoices: InvoiceRepository, clock: Clock
+    ) -> None:
+        """Bind the service to its ports.
+
+        Args:
+            orders: Source of order snapshots.
+            invoices: Invoice storage and number allocation.
+            clock: Source of the issue timestamp.
+        """
+        self._orders = orders
+        self._invoices = invoices
+        self._clock = clock
+
+    def issue(self, order_id: str, /) -> Invoice:
+        """Issue the invoice for a confirmed order.
+
+        Repeating the call for the same order returns the existing invoice, so
+        retries after a timeout are safe.
+
+        Args:
+            order_id: Identifier of the order to invoice.
+
+        Returns:
+            The newly issued or previously issued invoice.
+
+        Raises:
+            OrderNotFoundError: If the order does not exist.
+            OrderNotReadyError: If the order is not confirmed or has no total.
+        """
+        existing = self._invoices.find_by_order(order_id)
+        if existing is not None:
+            return existing
+        order = self._require_ready(order_id)
+        invoice = Invoice(
+            number=self._invoices.next_number(),
+            order_id=order.order_id,
+            total_minor=order.total_minor,
+            currency=order.currency,
+            issued_at=self._clock.now(),
+        )
+        self._invoices.add(invoice)
+        logger.info(
+            "invoice issued",
+            extra={"invoice_number": invoice.number, "order_id": order.order_id},
+        )
+        return invoice
+
+    def _require_ready(self, order_id: str) -> OrderSnapshot:
+        order = self._orders.get(order_id)
+        if order is None:
+            raise OrderNotFoundError(order_id=order_id)
+        if not order.confirmed:
+            raise OrderNotReadyError(order_id=order_id, reason="not confirmed")
+        if order.total_minor <= 0:
+            raise OrderNotReadyError(order_id=order_id, reason="empty total")
+        return order

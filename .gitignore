@@ -1,0 +1,54 @@
+# OS and editors
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+# Shared VS Code configuration is committed; personal state is not.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Python bytecode and packaging
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments and tool caches
+.venv/
+.tox/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.import_linter_cache/
+.ty/
+.cspellcache
+.lycheecache
+jscpd-report/
+node_modules/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# APM install output
+apm_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local runtime settings
+.claude/settings.local.json
+.github/copilot/settings.local.json

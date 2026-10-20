@@ -1,0 +1,13 @@
+{
+  "apiBaseUrl": "https://api.example.test/v1/",
+  "environment": "staging",
+  "buildVersion": "2026.01.15-1",
+  "features": {
+    "bulk-export": true,
+    "live-updates": false
+  },
+  "telemetry": {
+    "enabled": true,
+    "sampleRate": 0.1
+  }
+}

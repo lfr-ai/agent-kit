@@ -1,0 +1,115 @@
+"""Schema-validated structured output with one bounded repair attempt.
+
+Copy to 'llm/structured.py'. Requires 'pydantic>=2'. Provider JSON modes reduce
+malformed output but do not remove it, and they never check business rules.
+Every structured result is therefore parsed and validated here, and failures
+become a typed 'StructuredOutputError' instead of leaking half-valid data.
+"""
+
+import re
+from dataclasses import replace
+
+from pydantic import BaseModel, ValidationError
+
+from llm.port import (
+    ChatMessage,
+    Completion,
+    CompletionRequest,
+    LlmClient,
+    LlmContentFilteredError,
+    Role,
+    StructuredOutputError,
+)
+
+_FENCE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n(?P<body>.*?)\n?```\s*$", re.DOTALL)
+
+
+def extract_json(text: str) -> str:
+    """Strip a single surrounding Markdown code fence, if present.
+
+    Args:
+        text: Raw model output.
+
+    Returns:
+        The candidate JSON text.
+    """
+    stripped = text.strip()
+    match = _FENCE.match(stripped)
+    return match.group("body").strip() if match else stripped
+
+
+def describe_errors(error: ValidationError, *, limit: int = 5) -> str:
+    """Summarize validation errors by location and type, without input values.
+
+    Args:
+        error: Pydantic validation error.
+        limit: Maximum number of problems to describe.
+
+    Returns:
+        A short, content-free description safe to log and to send back.
+    """
+    problems = [
+        f"{'.'.join(str(part) for part in item['loc']) or '<root>'}: {item['type']}"
+        for item in error.errors(include_input=False, include_url=False)[:limit]
+    ]
+    return "; ".join(problems)
+
+
+async def complete_structured[ModelT: BaseModel](
+    client: LlmClient,
+    request: CompletionRequest,
+    schema: type[ModelT],
+    *,
+    max_repairs: int = 1,
+) -> tuple[ModelT, Completion]:
+    """Request JSON matching 'schema', validate it, and repair at most 'max_repairs' times.
+
+    Args:
+        client: Any 'LlmClient', usually the resilient wrapper.
+        request: Base request; its JSON schema defaults to the model's schema.
+        schema: Pydantic model describing the expected object.
+        max_repairs: Extra attempts that show the model its validation errors.
+
+    Returns:
+        The validated object and the completion that produced it.
+
+    Raises:
+        StructuredOutputError: If output is truncated or still invalid after repairs.
+        LlmContentFilteredError: If the provider filtered the output.
+    """
+    if max_repairs < 0:
+        raise ValueError("max_repairs must be non-negative")
+    current = replace(
+        request, json_schema=request.json_schema or schema.model_json_schema()
+    )
+    for attempt in range(max_repairs + 1):
+        completion = await client.complete(current)
+        if completion.finish_reason == "content_filter":
+            raise LlmContentFilteredError("structured output was filtered")
+        if completion.finish_reason == "length":
+            raise StructuredOutputError(
+                "structured output was truncated; raise max_output_tokens"
+            )
+        try:
+            return schema.model_validate_json(extract_json(completion.text)), completion
+        except ValidationError as error:
+            summary = describe_errors(error)
+            if attempt == max_repairs:
+                raise StructuredOutputError(
+                    f"output failed validation: {summary}"
+                ) from error
+            current = replace(
+                current,
+                messages=(
+                    *current.messages,
+                    ChatMessage(role=Role.ASSISTANT, content=completion.text),
+                    ChatMessage(
+                        role=Role.USER,
+                        content=(
+                            "Your previous reply did not match the required JSON schema "
+                            f"({summary}). Reply with only the corrected JSON object."
+                        ),
+                    ),
+                ),
+            )
+    raise StructuredOutputError("unreachable")  # pragma: no cover

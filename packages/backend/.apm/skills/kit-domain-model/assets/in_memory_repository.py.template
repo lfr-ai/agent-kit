@@ -1,0 +1,64 @@
+"""In-memory adapter for the order repository port.
+
+Copy into 'tests/fakes/orders.py' (or 'src/<package>/infrastructure/memory.py'
+when local tooling needs it). It stores restored copies, so callers cannot
+mutate stored state without 'save', and enforces the same version rule as the
+production adapter.
+"""
+
+from shop.core.orders import Order
+from shop.core.ports import ConcurrencyError, OrderNotFoundError
+from shop.core.values import OrderId
+
+
+class InMemoryOrderRepository:
+    """Dictionary-backed 'OrderRepository' for unit tests."""
+
+    def __init__(self) -> None:
+        """Start empty."""
+        self._rows: dict[OrderId, tuple[int, Order, int]] = {}
+        self._sequence = 0
+
+    def get(self, order_id: OrderId, /) -> Order | None:
+        """Return a detached copy of the stored order."""
+        row = self._rows.get(order_id)
+        return None if row is None else _copy(row[1], version=row[2])
+
+    def add(self, order: Order, /) -> None:
+        """Store a new order at version 1."""
+        if order.id in self._rows:
+            raise ValueError(f"order {order.id.value!r} already exists")
+        self._sequence += 1
+        self._rows[order.id] = (self._sequence, _copy(order, version=1), 1)
+
+    def save(self, order: Order, /) -> None:
+        """Store changes when the caller's version matches the stored version."""
+        row = self._rows.get(order.id)
+        if row is None:
+            raise OrderNotFoundError(order_id=order.id)
+        sequence, _, stored_version = row
+        if order.version != stored_version:
+            raise ConcurrencyError(
+                order_id=order.id, expected=order.version, actual=stored_version
+            )
+        self._rows[order.id] = (sequence, _copy(order, version=stored_version + 1), stored_version + 1)
+
+    def list_for_customer(self, customer_id: str, /) -> list[Order]:
+        """Return the customer's orders, most recently added first."""
+        rows = sorted(self._rows.values(), key=lambda row: row[0], reverse=True)
+        return [
+            _copy(order, version=version)
+            for _, order, version in rows
+            if order.customer_id == customer_id
+        ]
+
+
+def _copy(order: Order, *, version: int) -> Order:
+    return Order.restore(
+        order_id=order.id,
+        customer_id=order.customer_id,
+        currency=order.currency,
+        status=order.status,
+        lines=order.lines,
+        version=version,
+    )

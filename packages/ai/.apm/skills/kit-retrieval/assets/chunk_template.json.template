@@ -1,0 +1,15 @@
+[
+  {
+    "chunk_id": "4f0c2a9e5b7d4e1f8a3c6b2d9e0f1a7c",
+    "source_id": "doc-invoices-export",
+    "source_version": "2026-01-01.1",
+    "tenant": "tenant-a",
+    "text": "Export invoices from the billing page as CSV files.",
+    "start_char": 0,
+    "end_char": 51,
+    "section": "Billing > Export",
+    "acl": ["group:staff"],
+    "updated_at": "2026-01-01T00:00:00+00:00",
+    "metadata": {"kind": "guide"}
+  }
+]

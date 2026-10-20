@@ -1,0 +1,184 @@
+minimum_pre_commit_version: "4.4"
+default_install_hook_types: [pre-commit, commit-msg]
+default_language_version:
+  python: python3.13
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        # Owned outputs are validated, but only their owning tools may rewrite them.
+        exclude: &owned_outputs |
+          (?x)^(
+            \.agents/skills/.*|
+            \.claude/(skills|rules|agents)/.*|
+            \.github/(agents|instructions)/.*|
+            apm\.lock\.yaml|
+            uv\.lock
+          )$
+      - id: end-of-file-fixer
+        exclude: *owned_outputs
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: *owned_outputs
+      - id: fix-byte-order-marker
+        exclude: *owned_outputs
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-ast
+      - id: check-docstring-first
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-illegal-windows-names
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: detect-private-key
+      - id: debug-statements
+      - id: no-commit-to-branch
+      - id: name-tests-test
+        args: [--pytest-test-first]
+        files: ^tests/
+        exclude: ^tests/(conftest\.py|README\.md)$
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.2
+    hooks:
+      - id: check-github-workflows
+      - id: check-dependabot
+      - id: check-taskfile
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: ^\.agents/agentic-setup/native-lock\.json$
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: v10.3.0
+    hooks:
+      - id: cspell
+
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.24.2
+    hooks:
+      - id: lychee-docker
+        entry: lycheeverse/lychee:0.24.2
+        types_or: [markdown]
+
+  - repo: local
+    hooks:
+      - id: uv-lock
+        name: uv.lock is current
+        entry: uv lock --check
+        language: unsupported
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+      - id: ruff-check
+        name: Ruff check (read-only; `task format` fixes)
+        entry: uv run --locked ruff check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: ruff-format-check
+        name: Ruff format check (read-only; `task format` fixes)
+        entry: uv run --locked ruff format --check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: ty
+        name: ty type check
+        entry: uv run --locked ty check
+        language: unsupported
+        types: [python]
+        pass_filenames: false
+      - id: commitizen
+        name: Conventional Commit message
+        entry: uv run --locked cz check --allow-abort --commit-msg-file
+        language: unsupported
+        stages: [commit-msg]
+      - id: toolkit-architecture
+        name: Inward dependencies
+        entry: uv run --locked lint-imports
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+      - id: toolkit-python-conventions
+        name: Portable Python convention invariants
+        entry: uv run --locked python scripts/check_conventions.py
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+      - id: toolkit-contract
+        name: Canonical capability and policy contract
+        entry: uv run --locked agent-kit check --root .
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-docs
+        name: Local documentation links and context
+        entry: uv run --locked python scripts/check_docs.py
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-drift
+        name: Existing APM-owned output and explicit policy
+        entry: uv run --locked python scripts/verify.py drift
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-native
+        name: Explicit native reviewer and hook contracts
+        entry: uv run --locked python scripts/check_native.py
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-governance
+        name: Explicit ownership and secure workflow contracts
+        entry: uv run --locked python scripts/check_governance.py
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-capability-coverage
+        name: Original inventory and selected capability completeness
+        entry: uv run --locked python -m scripts.check_coverage
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: toolkit-native-roles
+        name: Selected native roles and provenance
+        entry: uv run --locked python -m scripts.render_native
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: jscpd
+        name: jscpd copy-paste detection
+        entry: bunx --bun jscpd@5.4.1
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes

@@ -1,0 +1,64 @@
+# Cross-stack journey: <feature>
+
+## Outcome
+
+- User outcome (one sentence):
+- Actor and permission level:
+- Entry point (page, route, command):
+- Success state the user sees:
+
+## Layers and owners
+
+| Layer | Package or repository | Owner | Toolchain and gate command | Deployment unit |
+| --- | --- | --- | --- | --- |
+| Contract | | | | |
+| Backend | | | | |
+| Frontend | | | | |
+| Infrastructure | | | | |
+| Data migration | | | | |
+
+## Contract
+
+- Authoritative wire schema and version:
+- Contract change record:
+- Request, response and error shapes; missing versus null behavior:
+- Old-client and old-server compatibility:
+
+## Journey steps
+
+1. <user action> -> <request> -> <backend behavior> -> <visible result>
+2. <user action> -> <request> -> <backend behavior> -> <visible result>
+
+## Scenarios and evidence
+
+| Scenario | Backend contract | Frontend behavior | Accessibility | Journey evidence |
+| --- | --- | --- | --- | --- |
+| Ordinary success | | | | |
+| Validation failure | | | | |
+| Unauthorized or forbidden | | | | |
+| Empty or first use | | | | |
+| Slow or failing dependency, retry | | | | |
+| Conflict or concurrent edit | | | | |
+| Refresh or navigation mid-journey | | | | |
+
+## Verification levels
+
+| Level | Command or run | Revision(s) | Result |
+| --- | --- | --- | --- |
+| Backend boundary and contract tests | | | |
+| Frontend component tests with contract fixtures | | | |
+| Client generation drift check | | | |
+| Infrastructure preview and apply | | | |
+| Integrated journey | | | |
+| Mixed-version checks | | | |
+| Keyboard and screen-reader pass | | | |
+
+## Rollout
+
+- Rollout plan:
+- Current step:
+- Rollback order:
+
+## Gaps
+
+- Unavailable runtime surfaces or environments, and what was run instead:

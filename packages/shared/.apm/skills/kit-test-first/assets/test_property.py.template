@@ -1,0 +1,146 @@
+"""Property-based tests with Hypothesis: invariants, round trips, state machines.
+
+Copy to 'tests/property/test_invoice_properties.py'. Each test states a rule
+that must hold for *every* generated input; Hypothesis searches for a
+counterexample and shrinks it to a minimal one. Keep strategies close to the
+domain's real input space: too wide wastes examples on rejected inputs, too
+narrow misses bugs.
+"""
+
+import string
+from decimal import Decimal
+
+import pytest
+from hypothesis import assume, example, given
+from hypothesis import strategies as st
+from hypothesis.stateful import (
+    Bundle,
+    RuleBasedStateMachine,
+    consumes,
+    invariant,
+    rule,
+)
+
+from app.adapters.persistence.sqlite_invoices import _from_row, _to_row
+from app.domain.invoice import Invoice, InvoiceError, InvoiceStatus
+from tests.fakes import InMemoryUnitOfWork
+
+identifiers = st.text(
+    alphabet=string.ascii_lowercase + string.digits + "-", min_size=1, max_size=16
+)
+amounts = st.decimals(
+    min_value=Decimal("0.01"),
+    max_value=Decimal("1000000.00"),
+    places=2,
+    allow_nan=False,
+    allow_infinity=False,
+)
+currencies = st.sampled_from(["EUR", "USD", "GBP", "SEK", "JPY"])
+customers = st.sampled_from(["cus-1", "cus-2", "cus-3"])
+open_invoices = st.builds(
+    Invoice,
+    invoice_id=identifiers,
+    customer_id=customers,
+    amount=amounts,
+    currency=currencies,
+)
+
+
+@st.composite
+def invoices_in_any_state(draw: st.DrawFn) -> Invoice:
+    """Draw an open invoice, then optionally move it to a later state."""
+    invoice = draw(open_invoices)
+    target = draw(st.sampled_from(list(InvoiceStatus)))
+    if target is InvoiceStatus.PAID:
+        return invoice.mark_paid(payment_reference=draw(identifiers))
+    if target is InvoiceStatus.VOID:
+        return invoice.void()
+    return invoice
+
+
+@given(invoices_in_any_state())
+def test_storage_mapping_round_trips_every_valid_invoice(invoice: Invoice) -> None:
+    assert _from_row(_to_row(invoice)) == invoice
+
+
+@given(
+    st.decimals(max_value=Decimal(0), allow_nan=False, allow_infinity=False),
+    currencies,
+)
+@example(amount=Decimal(0), currency="EUR")
+def test_non_positive_amounts_are_always_rejected(
+    amount: Decimal, currency: str
+) -> None:
+    with pytest.raises(InvoiceError):
+        Invoice(invoice_id="i", customer_id="c", amount=amount, currency=currency)
+
+
+@given(invoices_in_any_state(), identifiers)
+def test_only_open_invoices_can_be_paid_and_paying_preserves_amount(
+    invoice: Invoice, reference: str
+) -> None:
+    if invoice.status is InvoiceStatus.OPEN:
+        paid = invoice.mark_paid(payment_reference=reference)
+        assert paid.status is InvoiceStatus.PAID
+        assert (paid.amount, paid.currency) == (invoice.amount, invoice.currency)
+    else:
+        with pytest.raises(InvoiceError):
+            invoice.mark_paid(payment_reference=reference)
+
+
+@given(st.lists(open_invoices, max_size=20), customers, st.integers(0, 25))
+def test_list_open_never_exceeds_limit_and_is_sorted(
+    invoices: list[Invoice], customer_id: str, limit: int
+) -> None:
+    unique = {invoice.invoice_id: invoice for invoice in invoices}
+    unit = InMemoryUnitOfWork(unique.values())
+    with unit:
+        listed = unit.invoices.list_open(customer_id=customer_id, limit=limit)
+    ids = [invoice.invoice_id for invoice in listed]
+    assert len(ids) <= limit
+    assert ids == sorted(ids)
+    assert all(invoice.customer_id == customer_id for invoice in listed)
+
+
+class InvoiceLedgerMachine(RuleBasedStateMachine):
+    """Compare the in-memory unit of work with a trivial dictionary model."""
+
+    stored = Bundle("stored")
+
+    def __init__(self) -> None:
+        """Start with an empty store and an empty model."""
+        super().__init__()
+        self.unit = InMemoryUnitOfWork()
+        self.model: dict[str, Invoice] = {}
+
+    @rule(target=stored, invoice=open_invoices)
+    def add(self, invoice: Invoice) -> str:
+        assume(invoice.invoice_id not in self.model)
+        with self.unit:
+            self.unit.invoices.add(invoice)
+            self.unit.commit()
+        self.model[invoice.invoice_id] = invoice
+        return invoice.invoice_id
+
+    @rule(invoice_id=consumes(stored), reference=identifiers)
+    def pay(self, invoice_id: str, reference: str) -> None:
+        with self.unit:
+            paid = self.unit.invoices.get(invoice_id).mark_paid(
+                payment_reference=reference
+            )
+            self.unit.invoices.save(paid)
+            self.unit.commit()
+        self.model[invoice_id] = paid
+
+    @rule(invoice=open_invoices)
+    def abandoned_add_is_not_visible(self, invoice: Invoice) -> None:
+        assume(invoice.invoice_id not in self.model)
+        with self.unit:
+            self.unit.invoices.add(invoice)
+
+    @invariant()
+    def store_matches_model(self) -> None:
+        assert self.unit.committed == self.model
+
+
+TestInvoiceLedgerMachine = InvoiceLedgerMachine.TestCase

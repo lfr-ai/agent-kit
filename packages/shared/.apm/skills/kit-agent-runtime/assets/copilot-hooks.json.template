@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "python3 .agents/hooks/tool_guard.py hook --runtime auto --policy .agents/hooks/tool_guard_policy.json",
+        "powershell": "python .agents/hooks/tool_guard.py hook --runtime auto --policy .agents/hooks/tool_guard_policy.json",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

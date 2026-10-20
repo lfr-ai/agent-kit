@@ -1,0 +1,34 @@
+extends: default
+
+ignore: |
+  .venv/
+  .tox/
+  build/
+  dist/
+  apm_modules/
+  node_modules/
+  # APM-deployed projections are generated from .apm/ sources.
+  .agents/skills/
+  .claude/skills/
+  .claude/rules/
+  # Lockfiles are tool-written.
+  apm.lock.yaml
+  uv.lock
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  indentation:
+    indent-sequences: consistent
+  comments:
+    min-spaces-from-content: 1
+  # GitHub Actions uses the bare `on:` key.
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  document-start: disable
+  new-lines:
+    type: unix
+  empty-lines:
+    max: 1

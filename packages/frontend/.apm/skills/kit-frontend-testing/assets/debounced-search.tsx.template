@@ -1,0 +1,45 @@
+// src/shared/ui/debounced-search.tsx
+// Search box that reports a trimmed value after the user pauses typing.
+// Used by the testing templates to demonstrate fake timers with user-event.
+import { useEffect, useId, useState, type ReactElement } from "react";
+
+export type DebouncedSearchProps = Readonly<{
+  label: string;
+  initialValue?: string;
+  delayMs?: number;
+  onSearch: (value: string) => void;
+}>;
+
+export function DebouncedSearch({
+  label,
+  initialValue = "",
+  delayMs = 300,
+  onSearch,
+}: DebouncedSearchProps): ReactElement {
+  const id = useId();
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    const trimmed = value.trim();
+    if (trimmed === initialValue.trim()) {
+      return undefined;
+    }
+    const timer = setTimeout(() => onSearch(trimmed), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, initialValue, delayMs, onSearch]);
+
+  return (
+    <div role="search">
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="search"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setValue("");
+        }}
+      />
+    </div>
+  );
+}

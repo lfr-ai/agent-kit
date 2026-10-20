@@ -1,0 +1,66 @@
+// src/shared/a11y/announcer.tsx
+// One pair of live regions for the whole app. Components call announce() for
+// asynchronous outcomes that do not move focus (saved, 3 results, upload failed).
+// Regions stay mounted; messages are cleared first so repeats are re-announced.
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+
+export type Politeness = "polite" | "assertive";
+
+type AnnounceFn = (message: string, politeness?: Politeness) => void;
+
+const AnnouncerContext = createContext<AnnounceFn | null>(null);
+
+export function AnnouncerProvider({ children }: Readonly<{ children: ReactNode }>): ReactElement {
+  const [polite, setPolite] = useState("");
+  const [assertive, setAssertive] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const announce = useCallback<AnnounceFn>((message, politeness = "polite") => {
+    const set = politeness === "assertive" ? setAssertive : setPolite;
+    set("");
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current);
+    }
+    // A short delay lets screen readers observe the cleared region before the new text.
+    timer.current = setTimeout(() => set(message), 50);
+  }, []);
+
+  const value = useMemo(() => announce, [announce]);
+
+  useEffect(
+    () => () => {
+      if (timer.current !== undefined) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  return (
+    <AnnouncerContext value={value}>
+      {children}
+      <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {polite}
+      </div>
+      <div className="visually-hidden" role="alert" aria-live="assertive" aria-atomic="true">
+        {assertive}
+      </div>
+    </AnnouncerContext>
+  );
+}
+
+export function useAnnounce(): AnnounceFn {
+  const announce = use(AnnouncerContext);
+  if (announce === null) {
+    throw new Error("useAnnounce must be used inside AnnouncerProvider");
+  }
+  return announce;
+}

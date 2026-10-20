@@ -1,0 +1,80 @@
+# Input variables with validation. Copy to infra/variables.tf.
+# Every variable has a description and type; validation rejects bad input at
+# plan time instead of failing halfway through apply.
+
+variable "environment" {
+  description = "Deployment environment name."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "environment must be one of: dev, test, prod."
+  }
+}
+
+variable "location" {
+  description = "Azure region for all resources, for example 'westeurope'."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z]+[a-z0-9]*$", var.location))
+    error_message = "location must be a lowercase Azure region name without spaces."
+  }
+}
+
+variable "workload" {
+  description = "Short workload name used in resource names (2-10 lowercase letters or digits)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.workload))
+    error_message = "workload must be 2-10 characters, start with a letter, and use only a-z and 0-9."
+  }
+}
+
+variable "instance" {
+  description = "Three-digit instance suffix that keeps names unique per environment."
+  type        = string
+  default     = "001"
+
+  validation {
+    condition     = can(regex("^[0-9]{3}$", var.instance))
+    error_message = "instance must be exactly three digits."
+  }
+}
+
+variable "storage_replication_type" {
+  description = "Storage account replication: LRS, ZRS, GRS, or GZRS."
+  type        = string
+  default     = "ZRS"
+
+  validation {
+    condition     = contains(["LRS", "ZRS", "GRS", "GZRS"], var.storage_replication_type)
+    error_message = "storage_replication_type must be LRS, ZRS, GRS, or GZRS."
+  }
+
+  # Cross-variable validation requires Terraform 1.9 or later.
+  validation {
+    condition     = var.environment != "prod" || var.storage_replication_type != "LRS"
+    error_message = "prod must not use locally redundant storage (LRS)."
+  }
+}
+
+variable "tags" {
+  description = "Tags applied to every resource. Must include 'owner' and 'cost_center'."
+  type        = map(string)
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for key in ["owner", "cost_center"] : contains(keys(var.tags), key)])
+    error_message = "tags must include the keys 'owner' and 'cost_center'."
+  }
+
+  validation {
+    condition     = alltrue([for value in values(var.tags) : length(value) > 0 && length(value) <= 256])
+    error_message = "tag values must be 1-256 characters."
+  }
+}

@@ -1,0 +1,168 @@
+"""Client contract tests for 'streaming.sse'; copy to 'tests/streaming/test_sse_endpoint.py'.
+
+These tests pin the wire contract a client relies on: status codes before
+streaming, headers that defeat caching and proxy buffering, SSE framing,
+sequence ids, one terminal 'end' event, 'Last-Event-ID' resume, and
+heartbeat and lifetime behavior. They run in one event loop with httpx's
+ASGI transport, so no server process or network is involved.
+"""
+
+import asyncio
+from collections.abc import AsyncGenerator
+
+import httpx
+import pytest
+from fastapi import FastAPI, Request
+
+from streaming.events import EndStatus, EventName, StreamEvent, parse_sse
+from streaming.hub import Emit, EventHub, HubLimits
+from streaming.sse import StreamSettings, build_router, sse_frames
+
+_ALLOWED = "Bearer reader"
+
+
+async def _authorize(request: Request, stream_id: str) -> bool:
+    return request.headers.get("authorization") == _ALLOWED
+
+
+def _app(hub: EventHub, settings: StreamSettings | None = None) -> FastAPI:
+    app = FastAPI()
+    app.include_router(build_router(hub, authorize=_authorize, settings=settings))
+    return app
+
+
+def _finished_hub(texts: str = "abc") -> EventHub:
+    hub = EventHub(HubLimits(replay_size=16))
+    hub.open("s1")
+    hub.publish("s1", EventName.START)
+    for text in texts:
+        hub.publish("s1", EventName.DELTA, {"text": text})
+    hub.close("s1", status=EndStatus.COMPLETED)
+    return hub
+
+
+async def _get(app: FastAPI, path: str, **headers: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(path, headers={"authorization": _ALLOWED, **headers})
+
+
+def test_stream_has_sse_headers_framing_and_one_terminal_event() -> None:
+    response = asyncio.run(_get(_app(_finished_hub()), "/streams/s1/events"))
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.text.startswith("retry: 3000\n\n")
+    events = list(parse_sse(response.text))
+    assert [event.id for event in events] == ["1", "2", "3", "4", "5"]
+    assert [event.event for event in events].count("end") == 1
+    assert events[-1].data == '{"status":"completed"}'
+
+
+def test_last_event_id_resumes_after_the_given_sequence() -> None:
+    response = asyncio.run(
+        _get(_app(_finished_hub()), "/streams/s1/events", **{"Last-Event-ID": "3"})
+    )
+
+    assert [event.id for event in parse_sse(response.text)] == ["4", "5"]
+
+
+def test_reconnecting_to_a_finished_stream_returns_204() -> None:
+    response = asyncio.run(
+        _get(_app(_finished_hub()), "/streams/s1/events", **{"Last-Event-ID": "5"})
+    )
+
+    assert response.status_code == 204
+
+
+def test_evicted_replay_is_a_409_so_the_client_restarts() -> None:
+    hub = EventHub(HubLimits(replay_size=2))
+    hub.open("s1")
+    for text in "abcd":
+        hub.publish("s1", EventName.DELTA, {"text": text})
+
+    response = asyncio.run(
+        _get(_app(hub), "/streams/s1/events", **{"Last-Event-ID": "1"})
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("path", "headers", "status"),
+    [
+        ("/streams/missing/events", {}, 404),
+        ("/streams/s1/events", {"authorization": "Bearer someone-else"}, 403),
+        ("/streams/s1/events", {"Last-Event-ID": "abc"}, 400),
+    ],
+)
+def test_errors_are_returned_before_streaming_starts(
+    path: str, headers: dict[str, str], status: int
+) -> None:
+    response = asyncio.run(_get(_app(_finished_hub()), path, **headers))
+
+    assert response.status_code == status
+    assert not response.headers["content-type"].startswith("text/event-stream")
+
+
+def test_live_events_published_while_connected_are_delivered() -> None:
+    hub = EventHub()
+
+    async def scenario() -> httpx.Response:
+        async def produce(emit: Emit) -> None:
+            for text in ("x", "y"):
+                await asyncio.sleep(0)
+                emit(EventName.DELTA, {"text": text})
+
+        hub.start("s1", produce, max_duration_s=5.0)
+        return await _get(_app(hub), "/streams/s1/events")
+
+    events = list(parse_sse(asyncio.run(scenario()).text))
+
+    assert [event.event for event in events] == ["start", "delta", "delta", "end"]
+
+
+def test_cancel_endpoint_ends_the_stream_as_cancelled() -> None:
+    hub = EventHub()
+
+    async def scenario() -> list[str]:
+        async def stuck(emit: Emit) -> None:
+            await asyncio.Event().wait()
+
+        hub.start("s1", stuck, max_duration_s=60.0)
+        await asyncio.sleep(0)
+        transport = httpx.ASGITransport(app=_app(hub))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            cancelled = await client.delete(
+                "/streams/s1", headers={"authorization": _ALLOWED}
+            )
+            assert cancelled.status_code == 202
+            body = await client.get(
+                "/streams/s1/events", headers={"authorization": _ALLOWED}
+            )
+        return [event.data for event in parse_sse(body.text)]
+
+    assert asyncio.run(scenario())[-1] == '{"status":"cancelled"}'
+
+
+def test_idle_stream_sends_heartbeats_then_closes_at_the_lifetime() -> None:
+    async def silent() -> AsyncGenerator[StreamEvent]:
+        await asyncio.Event().wait()
+        yield StreamEvent(seq=1, event=EventName.DELTA)
+
+    async def scenario() -> list[bytes]:
+        settings = StreamSettings(
+            heartbeat_s=0.01, max_connection_s=0.05, retry_ms=1000
+        )
+        return [frame async for frame in sse_frames(silent(), settings=settings)]
+
+    frames = asyncio.run(scenario())
+
+    assert frames[0] == b"retry: 1000\n\n"
+    assert b": ping\n\n" in frames
+    assert frames[-1].startswith(b": connection lifetime reached")
+    assert not any(frame.startswith(b"id:") for frame in frames)

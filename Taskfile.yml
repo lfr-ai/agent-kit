@@ -1,0 +1,46 @@
+version: "3"
+
+tasks:
+  bootstrap:
+    desc: Install the declared locked environment without modifying global setup
+    cmds:
+      - uv sync --locked
+  lint:
+    desc: Ruff lint (read-only)
+    cmds:
+      - uv run --locked python scripts/verify.py lint
+  format:
+    desc: Explicit authoring formatter (writes files)
+    cmds:
+      - uv run --locked ruff format
+      - uv run --locked ruff check --fix
+  typecheck:
+    desc: ty over every Python root declared in ty.toml
+    cmds:
+      - uv run --locked python scripts/verify.py types
+  test:
+    desc: All test tiers; pass pytest paths, markers, or options after --
+    cmds:
+      - uv run --locked pytest -n auto {{.CLI_ARGS}}
+
+  verify:
+    desc: Read-only local and CI quality gate; pass one gate after --
+    cmds:
+      - uv run --locked python scripts/verify.py {{.CLI_ARGS}}
+  precommit:
+    desc: Operator-initialized repository pre-commit checks
+    cmds:
+      - uv run --locked pre-commit run --all-files
+  commit:
+    desc: Write a Conventional Commit interactively
+    interactive: true
+    cmds:
+      - uv run --locked cz commit
+  capabilities:build:
+    desc: Create a new licensed APM source archive without replacing an existing artifact
+    cmds:
+      - uv run --locked python scripts/build_capabilities.py {{.CLI_ARGS}}
+  apm:smoke:
+    desc: Exercise the released APM CLI in disposable selected packages
+    cmds:
+      - uv run --locked python scripts/apm_smoke.py {{.CLI_ARGS}}

@@ -1,0 +1,31 @@
+# Naming policy
+
+- Scope (repository, package or directory):
+- Owner who approves exceptions:
+
+| Kind of name | Convention | Enforced by | Exceptions (with reason and review date) |
+| --- | --- | --- | --- |
+| Python modules and packages | snake_case | check_naming.py | |
+| Non-Python directories | kebab-case under: | check_naming.py --kebab-root | |
+| Classes vs module files | exact / affix match, max N public classes | check_class_file_naming.py | |
+| Test modules and functions | test_<subject>.py, test_<behavior>_<outcome> | check_test_naming.py | |
+| CLI flags | --kebab-case | review | |
+| Environment variables | PREFIX_UPPER_SNAKE | review | |
+| Wire fields (JSON/YAML) | | schema | |
+
+## Glossary of domain words
+
+| Preferred term | Not to be confused with | Meaning |
+| --- | --- | --- |
+| | | |
+
+## Checker invocations used in the gate
+
+```text
+python check_naming.py . --kebab-root
+python check_class_file_naming.py src --match
+```
+
+- Baseline finding count before rollout:
+- Rename plan and compatibility shims:
+- Date the gate became blocking:

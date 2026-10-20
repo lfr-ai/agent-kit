@@ -1,0 +1,89 @@
+"""Payment wire contract: discriminated union, strict fields, JSON serializers.
+
+Copy into the presentation or adapter layer (for example
+'myapp/presentation/contracts/payments.py').
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Annotated, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    StringConstraints,
+    TypeAdapter,
+    computed_field,
+    field_serializer,
+)
+
+Money = Annotated[
+    Decimal,
+    Field(ge=Decimal("0"), max_digits=12, decimal_places=2),
+    PlainSerializer(lambda value: f"{value:.2f}", return_type=str, when_used="json"),
+]
+CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+
+
+class _Contract(BaseModel):
+    """Shared configuration for inbound payment payloads."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CardPayment(_Contract):
+    """Card payment identified by the last four digits only."""
+
+    kind: Literal["card"]
+    amount: Money
+    currency: CurrencyCode
+    last4: Annotated[str, StringConstraints(pattern=r"^\d{4}$")]
+
+
+class BankTransfer(_Contract):
+    """Bank transfer referencing an account identifier."""
+
+    kind: Literal["bank_transfer"]
+    amount: Money
+    currency: CurrencyCode
+    iban: Annotated[str, StringConstraints(min_length=15, max_length=34)]
+
+
+class StoredCredit(_Contract):
+    """Settlement from a customer's stored credit balance."""
+
+    kind: Literal["stored_credit"]
+    amount: Money
+    currency: CurrencyCode
+    credit_id: Annotated[int, Field(strict=True, gt=0)]
+
+
+Payment = Annotated[
+    CardPayment | BankTransfer | StoredCredit,
+    Field(discriminator="kind"),
+]
+
+
+class InvoicePayments(_Contract):
+    """Payments applied to one invoice."""
+
+    invoice_number: Annotated[str, Field(strict=True, min_length=1, max_length=40)]
+    received_at: datetime
+    payments: Annotated[list[Payment], Field(min_length=1, max_length=50)]
+
+    @field_serializer("received_at", when_used="json")
+    def _serialize_received_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @computed_field
+    @property
+    def total(self) -> Decimal:
+        """Sum of all payment amounts (all payments share one currency)."""
+        return sum((payment.amount for payment in self.payments), Decimal("0"))
+
+
+PAYMENT_LIST = TypeAdapter(list[Payment])

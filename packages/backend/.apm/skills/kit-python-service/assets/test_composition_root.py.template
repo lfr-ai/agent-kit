@@ -1,0 +1,76 @@
+"""Wiring tests for the composition root template.
+
+Replace the 'shop' imports with the project's modules. These tests prove that
+the graph can be built without real infrastructure and that every override is
+honored, so other unit tests can rely on 'build_container' with fakes.
+"""
+
+from datetime import UTC, datetime
+
+import pytest
+from shop import composition
+from shop.application.invoicing import Invoice, OrderSnapshot
+from shop.composition import Overrides, build_container
+from shop.settings import Settings
+
+_SETTINGS = Settings.from_environ({"SHOP_DATABASE_DSN": "postgresql://db.example.test/x"})
+
+
+class FakeOrders:
+    def get(self, order_id: str, /) -> OrderSnapshot | None:
+        return OrderSnapshot(order_id=order_id, confirmed=True, total_minor=10, currency="EUR")
+
+
+class FakeInvoices:
+    def __init__(self) -> None:
+        self.stored: list[Invoice] = []
+
+    def next_number(self) -> str:
+        return "INV-1"
+
+    def find_by_order(self, order_id: str, /) -> Invoice | None:
+        return None
+
+    def add(self, invoice: Invoice, /) -> None:
+        self.stored.append(invoice)
+
+
+class FixedClock:
+    def now(self) -> datetime:
+        return datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _refuse_database(*args: object, **kwargs: object) -> None:
+    raise AssertionError("the database must not be opened when overrides are complete")
+
+
+def test_complete_overrides_never_open_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests can build the real graph with fakes only."""
+    monkeypatch.setattr(composition.Database, "connect", _refuse_database)
+    invoices = FakeInvoices()
+    overrides = Overrides(orders=FakeOrders(), invoices=invoices, clock=FixedClock())
+    with build_container(_SETTINGS, overrides=overrides) as container:
+        invoice = container.invoicing.issue("ord-1")
+    assert invoices.stored == [invoice]
+    assert invoice.issued_at == datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_container_exposes_the_settings_it_was_built_from() -> None:
+    """Transports read configuration from the container, not the environment."""
+    overrides = Overrides(orders=FakeOrders(), invoices=FakeInvoices(), clock=FixedClock())
+    with build_container(_SETTINGS, overrides=overrides) as container:
+        assert container.settings is _SETTINGS
+
+
+def test_main_returns_the_transport_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The entry point wires once and delegates serving to the transport."""
+    monkeypatch.setenv("SHOP_DATABASE_DSN", "postgresql://db.example.test/x")
+    monkeypatch.setattr(composition, "build_container", _fake_build)
+    assert composition.main(lambda container: 7) == 7
+
+
+def _fake_build(settings: Settings, *, overrides: Overrides | None = None) -> object:
+    return build_container(
+        settings,
+        overrides=Overrides(orders=FakeOrders(), invoices=FakeInvoices(), clock=FixedClock()),
+    )

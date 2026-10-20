@@ -1,0 +1,121 @@
+"""Use-case tests driven entirely through fakes: fast, offline, behavioral.
+
+Copy to 'tests/unit/test_settle_invoice.py'. Assertions are on observable
+outcomes (returned result, committed state, recorded notices, charge count),
+never on which private method was called in which order.
+"""
+
+from decimal import Decimal
+
+import pytest
+
+from app.application.ports.invoices import InvoiceNotFoundError
+from app.application.ports.payment_errors import (
+    PaymentDeclinedError,
+    PaymentUnavailableError,
+)
+from app.application.use_cases.settle_invoice import (
+    SettleInvoice,
+    SettleInvoiceCommand,
+)
+from app.domain.invoice import Invoice, InvoiceError, InvoiceStatus
+from tests.fakes import FakePaymentGateway, InMemoryUnitOfWork, RecordingNotifier
+
+_OPEN = Invoice(
+    invoice_id="inv-1", customer_id="cus-1", amount=Decimal("10.00"), currency="EUR"
+)
+
+
+def _build(
+    *,
+    invoices: tuple[Invoice, ...] = (_OPEN,),
+    payments: FakePaymentGateway | None = None,
+    notifier: RecordingNotifier | None = None,
+) -> tuple[SettleInvoice, InMemoryUnitOfWork, FakePaymentGateway, RecordingNotifier]:
+    unit = InMemoryUnitOfWork(invoices)
+    payments = payments or FakePaymentGateway()
+    notifier = notifier or RecordingNotifier()
+    use_case = SettleInvoice(
+        unit_of_work=lambda: unit, payments=payments, notifier=notifier
+    )
+    return use_case, unit, payments, notifier
+
+
+def test_open_invoice_is_charged_marked_paid_and_customer_notified() -> None:
+    settle, unit, payments, notifier = _build()
+
+    result = settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert result.already_paid is False
+    assert unit.committed["inv-1"].status is InvoiceStatus.PAID
+    assert unit.committed["inv-1"].payment_reference == result.payment_reference
+    assert payments.calls == 1
+    assert [notice.invoice_id for notice in notifier.sent] == ["inv-1"]
+
+
+def test_settling_twice_charges_once_and_reports_already_paid() -> None:
+    settle, _, payments, notifier = _build()
+    first = settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    second = settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert second.already_paid is True
+    assert second.payment_reference == first.payment_reference
+    assert payments.calls == 1
+    assert len(notifier.sent) == 1
+
+
+def test_declined_payment_leaves_invoice_open_and_sends_nothing() -> None:
+    settle, unit, _, notifier = _build(
+        payments=FakePaymentGateway(declined_invoices={"inv-1"})
+    )
+
+    with pytest.raises(PaymentDeclinedError):
+        settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert unit.committed["inv-1"].status is InvoiceStatus.OPEN
+    assert unit.commit_count == 0
+    assert notifier.sent == []
+
+
+def test_retry_after_unavailable_provider_succeeds_with_one_capture() -> None:
+    settle, unit, payments, _ = _build(
+        payments=FakePaymentGateway(unavailable_attempts=1)
+    )
+    with pytest.raises(PaymentUnavailableError):
+        settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert unit.committed["inv-1"].status is InvoiceStatus.PAID
+    assert len(payments.charges) == 1
+
+
+def test_notification_failure_does_not_undo_a_committed_payment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settle, unit, _, _ = _build(notifier=RecordingNotifier(fail=True))
+
+    result = settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert result.already_paid is False
+    assert unit.committed["inv-1"].status is InvoiceStatus.PAID
+    assert "notification failed" in caplog.text
+
+
+def test_unknown_invoice_is_reported_without_charging() -> None:
+    settle, _, payments, _ = _build(invoices=())
+
+    with pytest.raises(InvoiceNotFoundError):
+        settle(SettleInvoiceCommand(invoice_id="missing"))
+
+    assert payments.calls == 0
+
+
+def test_void_invoice_is_rejected_before_any_charge() -> None:
+    settle, _, payments, _ = _build(invoices=(_OPEN.void(),))
+
+    with pytest.raises(InvoiceError):
+        settle(SettleInvoiceCommand(invoice_id="inv-1"))
+
+    assert payments.calls == 0

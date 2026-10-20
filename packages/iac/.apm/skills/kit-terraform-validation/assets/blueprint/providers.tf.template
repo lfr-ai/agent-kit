@@ -1,0 +1,19 @@
+# Provider configuration lives only in the root module; child modules inherit it.
+# Authentication is supplied by the environment, never by variables or files:
+#   CI:    ARM_USE_OIDC=true, ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID
+#   Local: 'az login' and ARM_SUBSCRIPTION_ID
+provider "azurerm" {
+  features {
+    resource_group {
+      # Refuse to delete a resource group that still contains resources
+      # Terraform does not manage.
+      prevent_deletion_if_contains_resources = true
+    }
+  }
+
+  # Use Entra ID data-plane auth for storage instead of shared keys.
+  storage_use_azuread = true
+
+  # Register resource providers out of band; plan identities stay read-scoped.
+  resource_provider_registrations = "none"
+}

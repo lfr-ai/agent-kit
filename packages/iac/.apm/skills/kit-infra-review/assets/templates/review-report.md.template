@@ -1,0 +1,50 @@
+# Infrastructure review report
+
+Copy to the pull request or change record and fill every section. Write
+"not applicable" rather than deleting a section.
+
+## Summary
+
+- Change: <pull request or change ID>
+- Decision: accept | accept with conditions | reject
+- Reviewer: <name>  Date: <YYYY-MM-DD>
+- Operator for apply/deploy: <name>  Target: <account/subscription, backend or scope>
+
+## Scope
+
+| Item | Value |
+| --- | --- |
+| Environments | |
+| State backends / workspaces / stacks | |
+| Pipeline identities (plan, apply) | |
+| Data-bearing resources in scope | |
+| Untrusted triggers possible | yes / no |
+
+## Mechanical checks
+
+| Check | Command | Exit code | Notes |
+| --- | --- | --- | --- |
+| Terraform plan reviewer | `python review_plan.py --file plan.json` | | |
+| What-if reviewer | `python review_whatif.py --file whatif.json` | | |
+| Workflow checker | `python check_workflow_permissions.py .github/workflows` | | |
+| Static IaC pipeline | fmt / validate / test / lint / scan | | |
+| Container lint and scan | hadolint / image scan | | |
+| Alert rules | `promtool check rules` | | |
+
+## Per-resource risk
+
+| Resource | Class | Action | Reason | Mitigation / recovery | Approved by |
+| --- | --- | --- | --- | --- | --- |
+| | destructive / access / ownership / supply-chain / operational / benign | | | | |
+
+## Conditions and follow-ups
+
+| Condition | Owner | Due |
+| --- | --- | --- |
+| | | |
+
+## Skipped checks
+
+| Check | Reason | Risk accepted by |
+| --- | --- | --- |
+| | | |

@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1
+# Python service image template. Copy to Dockerfile and replace:
+#   PIN_IMAGE_DIGEST  the sha256 digest of the reviewed base image
+#                     (docker buildx imagetools inspect python:3.13-slim-bookworm)
+#   orders_service    the importable package that starts the service
+# Expects pyproject.toml, a hash-locked requirements.txt, and src/.
+# Build: docker buildx build --sbom=true --provenance=mode=max -t orders:dev .
+
+ARG PYTHON_BASE=python:3.13-slim-bookworm@sha256:PIN_IMAGE_DIGEST
+
+# ---- build: resolve dependencies into an isolated virtual environment ----
+FROM ${PYTHON_BASE} AS build
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /src
+RUN python -m venv "$VIRTUAL_ENV"
+
+# Dependencies first so source edits do not invalidate this layer.
+COPY requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --require-hashes -r requirements.txt
+
+# Private indexes: pass credentials as a build secret, never as ARG or ENV.
+#   RUN --mount=type=secret,id=pip_index_url,env=PIP_INDEX_URL pip install ...
+COPY pyproject.toml ./
+COPY src/ ./src/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps . \
+    && python -m compileall -q "$VIRTUAL_ENV"
+
+# ---- runtime: same base, no compilers, no package caches, non-root ----
+FROM ${PYTHON_BASE} AS runtime
+
+ARG SOURCE_URL=https://example.invalid/orders
+ARG REVISION=unknown
+# CI passes the repository URL as SOURCE_URL; hadolint cannot expand ARG values.
+# hadolint ignore=DL3052
+LABEL org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.title="orders-service"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+# Fixed numeric IDs let orchestrators enforce runAsNonRoot.
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin app
+
+# Application files stay root-owned so the process cannot modify its code.
+COPY --from=build --chown=root:root /opt/venv /opt/venv
+
+WORKDIR /app
+USER 10001:10001
+EXPOSE 8000
+
+# Probe with the interpreter already in the image; no curl needed. Remove
+# when the orchestrator owns liveness and readiness probes.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).status == 200 else 1)"]
+
+STOPSIGNAL SIGTERM
+# Exec form: the interpreter is PID 1 and receives SIGTERM directly.
+ENTRYPOINT ["python", "-m", "orders_service"]

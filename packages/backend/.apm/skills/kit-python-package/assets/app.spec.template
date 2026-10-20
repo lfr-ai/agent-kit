@@ -1,0 +1,79 @@
+# PyInstaller spec for a console application packaged as order_tools.
+# Build: pyinstaller app.spec --clean --noconfirm
+# One-file build: set ORDER_TOOLS_ONE_FILE=1 in the build environment.
+# Paths are relative to this spec file (SPECPATH).
+
+import os
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+
+APP_NAME = "order-tools"
+ENTRY_SCRIPT = str(Path(SPECPATH) / "src" / "order_tools" / "__main__.py")
+ONE_FILE = os.environ.get("ORDER_TOOLS_ONE_FILE") == "1"
+
+# Package data (templates, schemas) at the same relative path as when installed.
+datas = collect_data_files("order_tools", excludes=["**/tests/**"])
+# Distribution metadata for importlib.metadata.version() and entry point discovery.
+datas += copy_metadata("order-tools")
+# Files outside the package: (source, destination folder inside the bundle).
+datas += [(str(Path(SPECPATH) / "assets" / "app.ico"), "assets")]
+
+# Dynamically loaded modules that static analysis cannot see.
+hiddenimports = collect_submodules("order_tools.exporters")
+
+a = Analysis(
+    [ENTRY_SCRIPT],
+    pathex=[str(Path(SPECPATH) / "src")],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=["tkinter", "pytest", "IPython"],
+    noarchive=False,
+    optimize=1,
+)
+pyz = PYZ(a.pure)
+
+if ONE_FILE:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name=APP_NAME,
+        console=True,
+        debug=False,
+        strip=False,
+        upx=False,
+        runtime_tmpdir=None,
+        icon=str(Path(SPECPATH) / "assets" / "app.ico"),
+        codesign_identity=os.environ.get("MACOS_CODESIGN_IDENTITY") or None,
+        entitlements_file=os.environ.get("MACOS_ENTITLEMENTS_FILE") or None,
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=APP_NAME,
+        console=True,
+        debug=False,
+        strip=False,
+        upx=False,
+        icon=str(Path(SPECPATH) / "assets" / "app.ico"),
+        codesign_identity=os.environ.get("MACOS_CODESIGN_IDENTITY") or None,
+        entitlements_file=os.environ.get("MACOS_ENTITLEMENTS_FILE") or None,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name=APP_NAME,
+    )

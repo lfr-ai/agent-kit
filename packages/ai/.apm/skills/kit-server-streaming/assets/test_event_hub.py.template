@@ -1,0 +1,196 @@
+"""Tests for 'streaming.hub'; copy to 'tests/streaming/test_event_hub.py'."""
+
+import asyncio
+from collections.abc import AsyncGenerator, Mapping
+
+import pytest
+
+from streaming.events import EndStatus, EventName, StreamEvent
+from streaming.hub import (
+    CapacityError,
+    Emit,
+    EventHub,
+    HubLimits,
+    SlowConsumerError,
+    StreamNotFoundError,
+)
+
+
+async def _drain(subscription: AsyncGenerator[StreamEvent]) -> None:
+    async for _ in subscription:
+        pass
+
+
+async def _collect(
+    hub: EventHub, stream_id: str, *, after: int = 0
+) -> list[StreamEvent]:
+    return [event async for event in hub.subscribe(stream_id, after=after)]
+
+
+def test_live_subscriber_receives_every_event_once_in_order() -> None:
+    hub = EventHub()
+
+    async def scenario() -> list[StreamEvent]:
+        hub.open("s1")
+        hub.publish("s1", EventName.START)
+        reader = asyncio.create_task(_collect(hub, "s1"))
+        await asyncio.sleep(0)
+        hub.publish("s1", EventName.DELTA, {"text": "a"})
+        hub.publish("s1", EventName.DELTA, {"text": "b"})
+        hub.close("s1", status=EndStatus.COMPLETED)
+        return await reader
+
+    events = asyncio.run(scenario())
+
+    assert [event.seq for event in events] == [1, 2, 3, 4]
+    assert events[-1].is_terminal
+
+
+def test_reconnect_replays_only_missed_events() -> None:
+    hub = EventHub()
+    hub.open("s1")
+    for text in "abc":
+        hub.publish("s1", EventName.DELTA, {"text": text})
+    hub.close("s1", status=EndStatus.COMPLETED)
+
+    events = asyncio.run(_collect(hub, "s1", after=2))
+
+    assert [event.seq for event in events] == [3, 4]
+
+
+def test_events_published_while_replaying_are_not_lost() -> None:
+    hub = EventHub()
+
+    async def scenario() -> list[int]:
+        hub.open("s1")
+        hub.publish("s1", EventName.DELTA, {"n": 1})
+        subscription = hub.subscribe("s1")
+        first = await anext(subscription)
+        hub.publish("s1", EventName.DELTA, {"n": 2})
+        hub.close("s1", status=EndStatus.COMPLETED)
+        rest = [event.seq async for event in subscription]
+        return [first.seq, *rest]
+
+    assert asyncio.run(scenario()) == [1, 2, 3]
+
+
+def test_slow_consumer_is_disconnected_without_blocking_the_producer() -> None:
+    hub = EventHub(HubLimits(queue_size=2))
+
+    async def scenario() -> None:
+        hub.open("s1")
+        subscription = hub.subscribe("s1")
+        hub.publish("s1", EventName.DELTA, {"n": 0})
+        first = await anext(subscription)
+        for n in range(1, 6):
+            hub.publish("s1", EventName.DELTA, {"n": n})
+        assert first.seq == 1
+        with pytest.raises(SlowConsumerError):
+            await _drain(subscription)
+
+    asyncio.run(scenario())
+
+
+def test_producer_outcomes_become_end_statuses() -> None:
+    async def ok(emit: Emit) -> None:
+        emit(EventName.DELTA, {"text": "hi"})
+
+    async def broken(emit: Emit) -> None:
+        raise RuntimeError("secret detail")
+
+    async def stuck(emit: Emit) -> None:
+        await asyncio.Event().wait()
+
+    async def scenario() -> dict[str, Mapping[str, object]]:
+        hub = EventHub()
+        hub.start("ok", ok, max_duration_s=1.0)
+        hub.start("broken", broken, max_duration_s=1.0)
+        hub.start("stuck", stuck, max_duration_s=0.01)
+        ends = {}
+        for stream_id in ("ok", "broken", "stuck"):
+            ends[stream_id] = (await _collect(hub, stream_id))[-1].data
+        return ends
+
+    ends = asyncio.run(scenario())
+
+    assert ends["ok"] == {"status": "completed"}
+    assert ends["broken"] == {"status": "failed", "error": "RuntimeError"}
+    assert ends["stuck"] == {"status": "timeout"}
+
+
+def test_cancel_stops_the_producer_and_ends_the_stream() -> None:
+    async def stuck(emit: Emit) -> None:
+        await asyncio.Event().wait()
+
+    async def scenario() -> list[StreamEvent]:
+        hub = EventHub()
+        hub.start("s1", stuck, max_duration_s=60.0)
+        await asyncio.sleep(0)
+        assert await hub.cancel("s1")
+        return await _collect(hub, "s1")
+
+    events = asyncio.run(scenario())
+
+    assert events[-1].data == {"status": "cancelled"}
+
+
+def test_unobserved_producer_is_cancelled_when_the_last_subscriber_leaves() -> None:
+    async def stuck(emit: Emit) -> None:
+        await asyncio.Event().wait()
+
+    async def scenario() -> Mapping[str, object]:
+        hub = EventHub(HubLimits(cancel_when_unobserved=True))
+        hub.start("s1", stuck, max_duration_s=60.0)
+        subscription = hub.subscribe("s1")
+        await anext(subscription)
+        await subscription.aclose()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return (await _collect(hub, "s1"))[-1].data
+
+    assert asyncio.run(scenario()) == {"status": "cancelled"}
+
+
+def test_emitting_end_directly_is_rejected() -> None:
+    async def cheater(emit: Emit) -> None:
+        emit(EventName.END, {"status": "completed"})
+
+    async def scenario() -> Mapping[str, object]:
+        hub = EventHub()
+        hub.start("s1", cheater, max_duration_s=1.0)
+        return (await _collect(hub, "s1"))[-1].data
+
+    assert asyncio.run(scenario()) == {"status": "failed", "error": "ValueError"}
+
+
+def test_limits_and_unknown_streams() -> None:
+    hub = EventHub(HubLimits(max_streams=1, max_subscribers=1))
+    hub.open("s1")
+
+    with pytest.raises(CapacityError):
+        hub.open("s2")
+    with pytest.raises(ValueError, match="already exists"):
+        hub.open("s1")
+    with pytest.raises(StreamNotFoundError):
+        hub.publish("missing", EventName.DELTA)
+
+    async def scenario() -> None:
+        first = hub.subscribe("s1")
+        hub.publish("s1", EventName.DELTA)
+        await anext(first)
+        with pytest.raises(CapacityError):
+            hub.admit("s1", 0)
+        await first.aclose()
+        hub.admit("s1", 0)
+
+    asyncio.run(scenario())
+
+
+def test_publishing_after_close_is_rejected() -> None:
+    hub = EventHub()
+    hub.open("s1")
+    hub.close("s1", status=EndStatus.COMPLETED)
+
+    assert hub.close("s1", status=EndStatus.FAILED) is None
+    with pytest.raises(ValueError, match="closed"):
+        hub.publish("s1", EventName.DELTA)

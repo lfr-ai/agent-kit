@@ -1,0 +1,97 @@
+"""Tests for 'streaming.events'; copy to 'tests/streaming/test_stream_events.py'."""
+
+import pytest
+
+from streaming.events import (
+    EventName,
+    ReplayBuffer,
+    ReplayGapError,
+    StreamEvent,
+    encode_comment,
+    encode_retry,
+    encode_sse,
+    parse_last_event_id,
+    parse_sse,
+)
+
+
+def _event(seq: int, event: EventName = EventName.DELTA, **data: object) -> StreamEvent:
+    return StreamEvent(seq=seq, event=event, data=data)
+
+
+def test_frames_round_trip_through_a_spec_parser() -> None:
+    body = (
+        encode_retry(3000)
+        + encode_sse(_event(1, EventName.START))
+        + encode_comment("ping")
+        + encode_sse(_event(2, text="line one\nline two"))
+        + encode_sse(_event(3, EventName.END, status="completed"))
+    ).decode()
+
+    parsed = list(parse_sse(body))
+
+    assert [(item.id, item.event) for item in parsed] == [
+        ("1", "start"),
+        ("2", "delta"),
+        ("3", "end"),
+    ]
+    assert parsed[1].data == '{"text":"line one\\nline two"}'
+
+
+def test_payload_newlines_cannot_inject_fields() -> None:
+    frame = encode_sse(_event(1, text="x\n\nevent: end\ndata: forged")).decode()
+
+    assert frame.count("\n\n") == 1
+    assert [item.event for item in parse_sse(frame)] == ["delta"]
+
+
+def test_comments_collapse_newlines() -> None:
+    assert encode_comment("a\nb") == b": a b\n\n"
+
+
+def test_end_requires_a_known_status() -> None:
+    with pytest.raises(ValueError, match="valid status"):
+        StreamEvent(seq=1, event=EventName.END, data={"status": "done"})
+
+
+def test_oversized_events_are_rejected() -> None:
+    with pytest.raises(ValueError, match="exceeds"):
+        _event(1, text="x" * 70_000)
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(None, 0), ("", 0), (" 7 ", 7)])
+def test_last_event_id_parsing(raw: str | None, expected: int) -> None:
+    assert parse_last_event_id(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["abc", "-1"])
+def test_invalid_last_event_id_is_rejected(raw: str) -> None:
+    with pytest.raises(ValueError):  # noqa: PT011 - int() and range errors differ
+        parse_last_event_id(raw)
+
+
+def test_replay_buffer_returns_only_newer_events() -> None:
+    buffer = ReplayBuffer(capacity=10)
+    for seq in range(1, 6):
+        buffer.append(_event(seq))
+
+    assert [event.seq for event in buffer.after(3)] == [4, 5]
+    assert buffer.after(5) == []
+
+
+def test_replay_buffer_reports_gaps_after_eviction() -> None:
+    buffer = ReplayBuffer(capacity=3)
+    for seq in range(1, 6):
+        buffer.append(_event(seq))
+
+    assert [event.seq for event in buffer.after(2)] == [3, 4, 5]
+    with pytest.raises(ReplayGapError, match="evicted"):
+        buffer.after(1)
+
+
+def test_replay_buffer_rejects_out_of_order_sequences() -> None:
+    buffer = ReplayBuffer(capacity=3)
+    buffer.append(_event(1))
+
+    with pytest.raises(ValueError, match="expected seq 2"):
+        buffer.append(_event(3))

@@ -1,0 +1,358 @@
+"""Resilience and accounting policies around any 'LlmClient'.
+
+Copy to 'llm/policies.py'. 'ResilientLlmClient' wraps an adapter with bounded
+retries (exponential backoff with full jitter, honoring Retry-After), an
+overall deadline, a concurrency limit, a circuit breaker, and a token and
+spend budget. It logs one structured, content-free record per attempt.
+Clock, sleep and randomness are injected so every policy is testable without
+waiting.
+"""
+
+import asyncio
+import logging
+import math
+import random
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
+
+from llm.port import (
+    Completion,
+    CompletionRequest,
+    LlmBudgetExceededError,
+    LlmCircuitOpenError,
+    LlmClient,
+    LlmPermanentError,
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmTransientError,
+    Usage,
+)
+
+logger = logging.getLogger(__name__)
+
+CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RetrySettings:
+    """Retry and deadline bounds.
+
+    Attributes:
+        max_attempts: Attempts including the first.
+        base_delay_s: Backoff cap for the first retry.
+        max_delay_s: Upper bound for any backoff delay.
+        total_deadline_s: Budget for all attempts and delays together.
+        max_retry_after_s: Longest provider-requested wait we accept.
+    """
+
+    max_attempts: int = 3
+    base_delay_s: float = 0.5
+    max_delay_s: float = 8.0
+    total_deadline_s: float = 60.0
+    max_retry_after_s: float = 20.0
+
+    def __post_init__(self) -> None:
+        """Reject unbounded or zero-attempt policies."""
+        if not 1 <= self.max_attempts <= 10:  # noqa: PLR2004 - sanity cap
+            raise ValueError("max_attempts must be between 1 and 10")
+        if self.base_delay_s < 0 or self.max_delay_s < self.base_delay_s:
+            raise ValueError("delays must satisfy 0 <= base <= max")
+        if self.total_deadline_s <= 0:
+            raise ValueError("total_deadline_s must be positive")
+
+
+def backoff_delay(
+    attempt: int, settings: RetrySettings, rng: Callable[[], float]
+) -> float:
+    """Full-jitter exponential backoff for the retry after 'attempt'.
+
+    Args:
+        attempt: One-based number of the attempt that just failed.
+        settings: Delay bounds.
+        rng: Returns a float in [0, 1).
+
+    Returns:
+        Seconds to wait before the next attempt.
+    """
+    cap = min(settings.max_delay_s, settings.base_delay_s * 2 ** (attempt - 1))
+    return rng() * cap
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Price:
+    """Per-model price used when the provider reports no cost.
+
+    Attributes:
+        input_per_million_usd: Price per million input tokens.
+        output_per_million_usd: Price per million output tokens.
+    """
+
+    input_per_million_usd: float
+    output_per_million_usd: float
+
+    def cost(self, usage: Usage) -> float:
+        """Return the cost of the given usage in US dollars."""
+        return (
+            usage.input_tokens * self.input_per_million_usd
+            + usage.output_tokens * self.output_per_million_usd
+        ) / 1_000_000
+
+
+class SpendBudget:
+    """Per-request token cap and cumulative spend cap for one budget scope.
+
+    Create one instance per scope you need to cap (per tenant per day, per
+    batch job). Estimates are character-based and deliberately pessimistic;
+    use the provider tokenizer when the cap must be exact.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_tokens_per_request: int,
+        max_total_usd: float,
+        prices: Mapping[str, Price],
+    ) -> None:
+        """Configure the caps.
+
+        Args:
+            max_tokens_per_request: Estimated input plus maximum output cap.
+            max_total_usd: Spend cap for this scope.
+            prices: Model alias to price, used when cost is not reported.
+        """
+        self._max_tokens = max_tokens_per_request
+        self._max_usd = max_total_usd
+        self._prices = dict(prices)
+        self.spent_usd = 0.0
+        self.tokens = 0
+
+    def check(self, request: CompletionRequest) -> None:
+        """Refuse a request that would break a cap.
+
+        Args:
+            request: Request about to be sent.
+
+        Raises:
+            LlmBudgetExceededError: If the request is too large or the scope
+                has no budget left.
+        """
+        estimate = math.ceil(request.input_chars / CHARS_PER_TOKEN_ESTIMATE)
+        if estimate + request.max_output_tokens > self._max_tokens:
+            raise LlmBudgetExceededError("request exceeds the per-request token cap")
+        if self.spent_usd >= self._max_usd:
+            raise LlmBudgetExceededError("spend budget exhausted")
+
+    def record(
+        self, request: CompletionRequest, completion: Completion
+    ) -> float | None:
+        """Account a completed call.
+
+        Args:
+            request: The request that was sent.
+            completion: Its result.
+
+        Returns:
+            Cost in US dollars, or None when neither provider nor price table knows it.
+        """
+        self.tokens += completion.usage.total_tokens
+        cost = completion.cost_usd
+        if cost is None and request.model in self._prices:
+            cost = self._prices[request.model].cost(completion.usage)
+        if cost is not None:
+            self.spent_usd += cost
+        return cost
+
+
+class CircuitBreaker:
+    """Open after consecutive transient failures; probe again after a cool-down."""
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = 5,
+        reset_after_s: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Configure thresholds.
+
+        Args:
+            failure_threshold: Consecutive transient failures that open the circuit.
+            reset_after_s: Seconds before a single probe call is allowed.
+            clock: Monotonic clock.
+        """
+        self._threshold = failure_threshold
+        self._reset_after = reset_after_s
+        self._clock = clock
+        self._failures = 0
+        self._opened_at: float | None = None
+
+    @property
+    def is_open(self) -> bool:
+        """True while calls are being short-circuited."""
+        return self._opened_at is not None
+
+    def before_call(self) -> None:
+        """Raise while open; allow one probe after the cool-down.
+
+        Raises:
+            LlmCircuitOpenError: If the circuit is open.
+        """
+        if self._opened_at is None:
+            return
+        if self._clock() - self._opened_at < self._reset_after:
+            raise LlmCircuitOpenError("provider circuit open")
+        self._opened_at = None
+        self._failures = self._threshold - 1
+
+    def on_success(self) -> None:
+        """Close the circuit."""
+        self._failures = 0
+        self._opened_at = None
+
+    def on_failure(self) -> None:
+        """Count a transient failure and open at the threshold."""
+        self._failures += 1
+        if self._failures >= self._threshold:
+            self._opened_at = self._clock()
+
+
+class ResilientLlmClient:
+    """'LlmClient' decorator that applies every call policy in one place."""
+
+    def __init__(
+        self,
+        inner: LlmClient,
+        *,
+        retry: RetrySettings | None = None,
+        budget: SpendBudget | None = None,
+        breaker: CircuitBreaker | None = None,
+        max_concurrency: int = 8,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        rng: Callable[[], float] = random.random,
+    ) -> None:
+        """Wrap an adapter.
+
+        Args:
+            inner: Adapter that performs one attempt.
+            retry: Retry and deadline bounds.
+            budget: Optional token and spend caps.
+            breaker: Optional circuit breaker shared by callers of one provider.
+            max_concurrency: Concurrent in-flight calls through this client.
+            clock: Monotonic clock.
+            sleep: Awaitable sleep, injected for tests.
+            rng: Uniform [0, 1) source for jitter, injected for tests.
+        """
+        self._inner = inner
+        self._retry = retry or RetrySettings()
+        self._budget = budget
+        self._breaker = breaker
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._clock = clock
+        self._sleep = sleep
+        self._rng = rng
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        """Call the adapter under budget, concurrency, breaker and retry policies.
+
+        Args:
+            request: Request to send.
+
+        Returns:
+            The completion, annotated with attempts and cost.
+
+        Raises:
+            LlmBudgetExceededError: Before any call when a cap would be broken.
+            LlmCircuitOpenError: When the provider circuit is open.
+            LlmTimeoutError: When the overall deadline is exhausted.
+            LlmError: The last error when retries are exhausted or not allowed.
+        """
+        if self._budget is not None:
+            self._budget.check(request)
+        deadline = self._clock() + self._retry.total_deadline_s
+        async with self._semaphore:
+            attempt = 0
+            while True:
+                attempt += 1
+                if self._breaker is not None:
+                    self._breaker.before_call()
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    raise LlmTimeoutError("overall deadline exhausted")
+                started = self._clock()
+                try:
+                    completion = await self._inner.complete(
+                        replace(request, timeout_s=min(request.timeout_s, remaining))
+                    )
+                except LlmTransientError as error:
+                    if self._breaker is not None:
+                        self._breaker.on_failure()
+                    self._log(request, attempt=attempt, outcome=type(error).__name__)
+                    delay = self._next_delay(error, attempt, deadline)
+                    if delay is None:
+                        raise
+                    await self._sleep(delay)
+                    continue
+                except LlmPermanentError as error:
+                    self._log(request, attempt=attempt, outcome=type(error).__name__)
+                    raise
+                if self._breaker is not None:
+                    self._breaker.on_success()
+                cost = (
+                    self._budget.record(request, completion)
+                    if self._budget is not None
+                    else completion.cost_usd
+                )
+                result = replace(
+                    completion,
+                    attempts=attempt,
+                    cost_usd=cost,
+                    latency_ms=int((self._clock() - started) * 1000),
+                )
+                self._log(request, attempt=attempt, outcome="ok", completion=result)
+                return result
+
+    def _next_delay(
+        self, error: LlmTransientError, attempt: int, deadline: float
+    ) -> float | None:
+        """Return the wait before the next attempt, or None to stop retrying."""
+        if attempt >= self._retry.max_attempts:
+            return None
+        delay = backoff_delay(attempt, self._retry, self._rng)
+        if isinstance(error, LlmRateLimitedError) and error.retry_after_s is not None:
+            if error.retry_after_s > self._retry.max_retry_after_s:
+                return None
+            delay = max(delay, error.retry_after_s)
+        if self._clock() + delay >= deadline:
+            return None
+        return delay
+
+    @staticmethod
+    def _log(
+        request: CompletionRequest,
+        *,
+        attempt: int,
+        outcome: str,
+        completion: Completion | None = None,
+    ) -> None:
+        """Emit one content-free record per attempt."""
+        fields: dict[str, object] = {
+            "operation": request.operation,
+            "model_alias": request.model,
+            "prompt_name": request.prompt_name,
+            "prompt_version": request.prompt_version,
+            "request_id": request.request_id,
+            "attempt": attempt,
+            "outcome": outcome,
+        }
+        if completion is not None:
+            fields |= {
+                "model": completion.model,
+                "finish_reason": completion.finish_reason,
+                "input_tokens": completion.usage.input_tokens,
+                "output_tokens": completion.usage.output_tokens,
+                "cost_usd": completion.cost_usd,
+                "latency_ms": completion.latency_ms,
+            }
+        logger.info("llm.call", extra=fields)

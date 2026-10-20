@@ -1,0 +1,94 @@
+// src/shared/realtime/use-event-source.ts
+// Server-Sent Events hook. The browser's EventSource already reconnects and sends
+// Last-Event-ID; this hook adds no second retry loop. It only owns lifetime,
+// named-event parsing, and a status the UI can render.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
+export type EventSourceStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed";
+
+export type EventSourceHandlers = Readonly<{
+  open: () => void;
+  message: (type: string, data: string, lastEventId: string) => void;
+  /** closed=true means the browser gave up (HTTP error or wrong content type). */
+  error: (closed: boolean) => void;
+}>;
+
+export type EventSourceFactory = (
+  url: string,
+  init: Readonly<{ withCredentials: boolean; eventTypes: readonly string[] }>,
+  handlers: EventSourceHandlers,
+) => Readonly<{ close: () => void }>;
+
+export const browserEventSourceFactory: EventSourceFactory = (url, init, handlers) => {
+  const source = new EventSource(url, { withCredentials: init.withCredentials });
+  source.addEventListener("open", () => handlers.open());
+  source.addEventListener("error", () => handlers.error(source.readyState === EventSource.CLOSED));
+  for (const type of init.eventTypes) {
+    source.addEventListener(type, (event: MessageEvent<string>) =>
+      handlers.message(type, event.data, event.lastEventId),
+    );
+  }
+  return { close: () => source.close() };
+};
+
+export type UseEventSourceOptions<T> = Readonly<{
+  /** null disables the stream (for example while signed out). */
+  url: string | null;
+  eventTypes: readonly string[];
+  parse: (type: string, data: unknown) => T | null;
+  onEvent: (event: T, lastEventId: string) => void;
+  onInvalid?: (type: string, data: string) => void;
+  withCredentials?: boolean;
+  factory?: EventSourceFactory;
+}>;
+
+export function useEventSource<T>(options: UseEventSourceOptions<T>): EventSourceStatus {
+  const { url, eventTypes, withCredentials = false, factory = browserEventSourceFactory } = options;
+  const [status, setStatus] = useState<EventSourceStatus>("idle");
+
+  // Keep the latest callbacks without reconnecting when their identity changes.
+  const latest = useRef(options);
+  useLayoutEffect(() => {
+    latest.current = options;
+  });
+
+  const typesKey = eventTypes.join("\u0000");
+
+  useEffect(() => {
+    if (url === null) {
+      return undefined;
+    }
+    let active = true;
+    setStatus("connecting");
+    const connection = factory(url, { withCredentials, eventTypes: typesKey.split("\u0000") }, {
+      open: () => {
+        if (active) setStatus("open");
+      },
+      error: (closed) => {
+        if (active) setStatus(closed ? "closed" : "reconnecting");
+      },
+      message: (type, data, lastEventId) => {
+        if (!active) return;
+        let payload: unknown;
+        try {
+          payload = JSON.parse(data);
+        } catch {
+          latest.current.onInvalid?.(type, data);
+          return;
+        }
+        const parsed = latest.current.parse(type, payload);
+        if (parsed === null) {
+          latest.current.onInvalid?.(type, data);
+          return;
+        }
+        latest.current.onEvent(parsed, lastEventId);
+      },
+    });
+    return () => {
+      active = false;
+      connection.close();
+    };
+  }, [url, typesKey, withCredentials, factory]);
+
+  return url === null ? "idle" : status;
+}

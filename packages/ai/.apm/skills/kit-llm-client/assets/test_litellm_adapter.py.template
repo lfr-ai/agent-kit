@@ -1,0 +1,151 @@
+"""Tests for 'llm.adapters.litellm'; copy to 'tests/llm/test_litellm_adapter.py'.
+
+Uses LiteLLM's 'mock_response' option and injected failing functions, so no
+model request leaves the process and no credentials are needed. Set
+'LITELLM_LOCAL_MODEL_COST_MAP=True' in the test environment so importing LiteLLM
+uses its bundled price map instead of downloading one.
+"""
+
+import asyncio
+from functools import partial
+
+import httpx
+import litellm
+import pytest
+
+from llm.adapters.litellm import LiteLlmAdapter, map_provider_error
+from llm.port import (
+    ChatMessage,
+    CompletionRequest,
+    LlmAuthError,
+    LlmContentFilteredError,
+    LlmContextTooLongError,
+    LlmError,
+    LlmInvalidRequestError,
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    Role,
+)
+
+_REQUEST = CompletionRequest(
+    operation="summarize-invoice",
+    model="summarizer",
+    messages=(ChatMessage(role=Role.USER, content="Summarize invoice 42."),),
+    max_output_tokens=50,
+)
+_ALIASES = {"summarizer": "openai/gpt-4o-mini"}
+
+
+def test_successful_call_maps_text_usage_and_alias() -> None:
+    adapter = LiteLlmAdapter(
+        aliases=_ALIASES,
+        completion_fn=partial(litellm.acompletion, mock_response="Invoice 42 is paid."),
+    )
+
+    result = asyncio.run(adapter.complete(_REQUEST))
+
+    assert result.text == "Invoice 42 is paid."
+    assert result.finish_reason == "stop"
+    assert result.usage.total_tokens > 0
+
+
+def test_request_shape_disables_gateway_retries_and_sends_schema() -> None:
+    captured: dict[str, object] = {}
+
+    async def capture(**kwargs: object) -> litellm.ModelResponse:
+        captured.update(kwargs)
+        return await litellm.acompletion(**kwargs, mock_response="{}")  # type: ignore[arg-type]
+
+    adapter = LiteLlmAdapter(aliases=_ALIASES, completion_fn=capture)
+    request = CompletionRequest(
+        operation="summarize-invoice",
+        model="summarizer",
+        messages=_REQUEST.messages,
+        json_schema={"type": "object"},
+    )
+
+    asyncio.run(adapter.complete(request))
+
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert captured["num_retries"] == 0
+    assert captured["max_tokens"] == request.max_output_tokens
+    assert captured["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "summarize_invoice",
+            "schema": {"type": "object"},
+            "strict": True,
+        },
+    }
+
+
+def test_unknown_alias_is_rejected_before_any_call() -> None:
+    adapter = LiteLlmAdapter(aliases=_ALIASES)
+    request = CompletionRequest(
+        operation="x", model="unknown", messages=_REQUEST.messages
+    )
+
+    with pytest.raises(LlmInvalidRequestError, match="unknown model alias"):
+        asyncio.run(adapter.complete(request))
+
+
+def _rate_limited() -> litellm.RateLimitError:
+    response = httpx.Response(
+        429,
+        headers={"retry-after": "7"},
+        request=httpx.Request("POST", "https://provider.invalid"),
+    )
+    return litellm.RateLimitError(
+        "echoed prompt text", "openai", "m", response=response
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (litellm.Timeout("echoed prompt text", "m", "openai"), LlmTimeoutError),
+        (
+            litellm.APIConnectionError("echoed prompt text", "openai", "m"),
+            LlmUnavailableError,
+        ),
+        (
+            litellm.ServiceUnavailableError("echoed prompt text", "openai", "m"),
+            LlmUnavailableError,
+        ),
+        (
+            litellm.ContextWindowExceededError("echoed prompt text", "m", "openai"),
+            LlmContextTooLongError,
+        ),
+        (
+            litellm.ContentPolicyViolationError("echoed prompt text", "m", "openai"),
+            LlmContentFilteredError,
+        ),
+        (
+            litellm.AuthenticationError("echoed prompt text", "openai", "m"),
+            LlmAuthError,
+        ),
+        (
+            litellm.BadRequestError("echoed prompt text", "m", "openai"),
+            LlmInvalidRequestError,
+        ),
+    ],
+)
+def test_provider_errors_map_to_typed_content_free_errors(
+    error: Exception, expected: type[LlmError]
+) -> None:
+    async def fail(**_: object) -> litellm.ModelResponse:
+        raise error
+
+    adapter = LiteLlmAdapter(aliases=_ALIASES, completion_fn=fail)
+
+    with pytest.raises(expected) as raised:
+        asyncio.run(adapter.complete(_REQUEST))
+    assert "echoed prompt text" not in str(raised.value)
+
+
+def test_rate_limit_keeps_the_retry_after_hint() -> None:
+    mapped = map_provider_error(_rate_limited())
+
+    assert isinstance(mapped, LlmRateLimitedError)
+    assert mapped.retry_after_s == 7.0

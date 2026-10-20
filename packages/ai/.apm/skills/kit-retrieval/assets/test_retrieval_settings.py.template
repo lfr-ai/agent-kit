@@ -1,0 +1,52 @@
+"""Tests for 'retrieval.settings'; copy to 'tests/retrieval/test_retrieval_settings.py'."""
+
+import pytest
+
+from retrieval.settings import RetrievalSettings
+
+_URL = "postgresql://127.0.0.1:5432/retrieval"
+
+
+def test_defaults_match_the_schema_and_policies() -> None:
+    settings = RetrievalSettings.from_env({"RETRIEVAL_DATABASE_URL": _URL})
+
+    assert settings.embedding_dimensions == 384
+    assert settings.text_search_config == "english"
+    assert settings.chunking_policy().max_chars == settings.chunk_max_chars
+    assert settings.correction_policy().max_rounds == settings.max_correction_rounds
+
+
+def test_overrides_are_parsed() -> None:
+    settings = RetrievalSettings.from_env(
+        {
+            "RETRIEVAL_DATABASE_URL": _URL,
+            "RETRIEVAL_TOP_K": "4",
+            "RETRIEVAL_TIMEOUT_S": "2.5",
+        }
+    )
+
+    assert settings.top_k == 4
+    assert settings.retrieval_timeout_s == 2.5
+
+
+def test_database_url_is_never_rendered() -> None:
+    settings = RetrievalSettings.from_env({"RETRIEVAL_DATABASE_URL": _URL})
+
+    assert "local-only" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("environ", "message"),
+    [
+        ({}, "DATABASE_URL is required"),
+        ({"RETRIEVAL_DATABASE_URL": "mysql://x"}, "PostgreSQL URL"),
+        (
+            {"RETRIEVAL_DATABASE_URL": _URL, "RETRIEVAL_TOP_K": "many"},
+            "TOP_K must be an integer",
+        ),
+        ({"RETRIEVAL_DATABASE_URL": _URL, "RETRIEVAL_TOP_K": "0"}, "between 1 and 100"),
+    ],
+)
+def test_invalid_environment_fails_fast(environ: dict[str, str], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        RetrievalSettings.from_env(environ)

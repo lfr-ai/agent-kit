@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Task: list targets",
+      "detail": "Show the Taskfile targets of the active workspace folder.",
+      "type": "process",
+      "command": "task",
+      "args": ["--list"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "shared", "clear": true}
+    },
+    {
+      "label": "Task: verify",
+      "detail": "Run the completion gate of the active workspace folder.",
+      "type": "process",
+      "command": "task",
+      "args": ["verify"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Task: test",
+      "detail": "Run the fast test tier of the active workspace folder.",
+      "type": "process",
+      "command": "task",
+      "args": ["test"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    }
+  ]
+}

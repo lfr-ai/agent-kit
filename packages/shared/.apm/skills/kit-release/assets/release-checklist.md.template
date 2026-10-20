@@ -1,0 +1,54 @@
+# Release checklist
+
+Copy per release. Each line needs evidence (command and result, link, or
+reviewer) before it is ticked. Publication steps belong to the approved
+release operator.
+
+## Prepare
+
+- [ ] Release branch or commit identified: `<sha>` on `<branch>`
+- [ ] All changes intended for this release are merged; nothing unintended is
+- [ ] Next version decided from the SemVer rules: `<old> -> <new>` (reason)
+- [ ] Breaking changes, deprecations and removals listed with migration notes
+- [ ] Changelog `Unreleased` section edited for users and renamed to
+      `[<new>] - YYYY-MM-DD`; comparison links updated
+- [ ] Version updated in every version file (bump tool dry run reviewed)
+- [ ] Documentation for new or changed behavior merged
+
+## Verify the candidate
+
+- [ ] Completion gate passed on the release commit: `<command>` -> `<result>`
+- [ ] Distributions built from a clean checkout with the locked toolchain
+- [ ] Artifact contents inspected: no secrets, private files, caches or
+      build debris; license and notices included
+- [ ] Installed from the built artifact outside the source tree and smoke
+      tested on each supported runtime
+- [ ] Checksums generated for exactly the files to publish
+- [ ] Dependency and vulnerability scan reviewed for shipped dependencies
+
+## Tag and publish (operator)
+
+- [ ] Signed annotated tag `v<new>` created on the release commit and verified
+      locally (`git tag -v v<new>`)
+- [ ] Tag pushed individually (not `--tags`)
+- [ ] Release workflow run: `<link>`; build, attestation and publish jobs green
+- [ ] Release environment approval recorded: `<reviewer>`
+- [ ] Release notes match the changelog section
+- [ ] Attestation verified for each published file
+      (`gh attestation verify <file> --repo <owner>/<repo>`)
+- [ ] Package registry publication confirmed (if applicable)
+
+## After release
+
+- [ ] New empty `Unreleased` section added to the changelog
+- [ ] Announcement or upgrade notes published where users look
+- [ ] Previous supported version and rollback path documented
+- [ ] Follow-up issues filed for deferred work and known limitations
+
+## Abort or roll back
+
+- Stop condition reached (failed gate, wrong contents, failed attestation):
+  do not publish; fix forward with a new version.
+- Published release is wrong: never move or recreate the tag. Mark the release
+  and package version as yanked or deprecated, publish a fixed version, and
+  record the incident.

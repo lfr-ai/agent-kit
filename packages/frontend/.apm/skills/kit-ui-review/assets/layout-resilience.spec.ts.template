@@ -1,0 +1,60 @@
+// e2e/layout-resilience.spec.ts
+// Rendered checks that screenshots alone do not prove: reflow at 320 CSS px,
+// WCAG text-spacing overrides, 200% zoom, and pseudo-localized text expansion.
+import { expect, test, type Page } from "@playwright/test";
+
+const screens = ["/orders", "/orders/ord_1001", "/invoices/new"] as const;
+
+async function horizontalOverflow(page: Page): Promise<number> {
+  return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+}
+
+async function clippedTextElements(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const offenders: string[] = [];
+    for (const element of document.querySelectorAll<HTMLElement>("body *")) {
+      const style = getComputedStyle(element);
+      const clips = style.overflow === "hidden" || style.overflowX === "hidden" || style.overflowY === "hidden";
+      const hasText = Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+      if (clips && hasText && style.textOverflow !== "ellipsis" && (element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1)) {
+        offenders.push(`${element.tagName.toLowerCase()}: ${element.textContent?.trim().slice(0, 40) ?? ""}`);
+      }
+    }
+    return offenders;
+  });
+}
+
+for (const path of screens) {
+  test.describe(`layout resilience ${path}`, () => {
+    test("reflows at 320 CSS px without horizontal scrolling", async ({ page }) => {
+      await page.setViewportSize({ width: 320, height: 640 });
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    });
+
+    test("tolerates WCAG 1.4.12 text spacing overrides", async ({ page }) => {
+      await page.goto(path);
+      await page.addStyleTag({
+        content: `* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; }
+                  p { margin-bottom: 2em !important; }`,
+      });
+      expect(await clippedTextElements(page)).toEqual([]);
+    });
+
+    test("remains usable at 200% zoom", async ({ page }) => {
+      // Equivalent CSS viewport of a 1280px window at 200% zoom.
+      await page.setViewportSize({ width: 640, height: 400 });
+      await page.goto(path);
+      expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+      await expect(page.getByRole("heading", { level: 1 })).toBeInViewport();
+    });
+  });
+}
+
+test("pseudo-localized text expands without clipping", async ({ page }) => {
+  await page.goto("/orders?locale=pseudo");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  expect(await clippedTextElements(page)).toEqual([]);
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+});

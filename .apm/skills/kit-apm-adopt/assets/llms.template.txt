@@ -1,0 +1,13 @@
+# Project
+
+> Replace this summary with the actual project purpose.
+
+## Start
+
+- [AGENTS.md](AGENTS.md): Project operating guidance.
+- [PROJECT.md](PROJECT.md): Verified facts and commands.
+
+## Context
+
+- [.agents/knowledge-base/README.md](.agents/knowledge-base/README.md): Durable architecture.
+- [memories/README.md](memories/README.md): Decisions and recurring lessons.

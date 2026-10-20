@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "uv run --locked agent-kit context",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

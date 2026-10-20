@@ -1,0 +1,101 @@
+// src/shared/ui/dialog.test.tsx
+// jsdom does not implement showModal()/close(); a minimal stand-in models the
+// open attribute and events. Focus containment and inertness need a real browser
+// test (see the browser-test capability).
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { Dialog } from "./dialog";
+
+beforeAll(() => {
+  const proto = HTMLDialogElement.prototype;
+  proto.showModal = function showModal(this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+    const focusable = this.querySelector<HTMLElement>("[autofocus], button, input, select, textarea, a[href]");
+    focusable?.focus();
+  };
+  proto.close = function close(this: HTMLDialogElement) {
+    this.removeAttribute("open");
+    // Browsers queue 'close' as a task; dispatching it synchronously would run
+    // before React re-attaches listeners in the same commit.
+    setTimeout(() => this.dispatchEvent(new Event("close")), 0);
+  };
+});
+
+// A closed <dialog> stays in the DOM; query it including hidden elements.
+function dialogElement(): HTMLElement {
+  return screen.getByRole("dialog", { hidden: true });
+}
+
+function Harness({ onConfirm = vi.fn() }: { onConfirm?: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Delete order
+      </button>
+      <Dialog
+        open={open}
+        title="Delete order ORD-1001?"
+        description="This cannot be undone."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <button type="button" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onConfirm();
+                setOpen(false);
+              }}
+            >
+              Delete
+            </button>
+          </>
+        }
+      >
+        <p>The order and its history will be removed.</p>
+      </Dialog>
+    </>
+  );
+}
+
+describe("Dialog", () => {
+  it("opens as a labelled, described dialog and moves focus inside", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Delete order" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Delete order ORD-1001?" });
+    expect(dialog).toHaveAccessibleDescription("This cannot be undone.");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("closes on Escape through onClose and returns focus to the opener", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Delete order" });
+    await user.click(opener);
+
+    dialogElement().dispatchEvent(new Event("cancel", { cancelable: true }));
+
+    await vi.waitFor(() => expect(dialogElement()).not.toHaveAttribute("open"));
+    expect(opener).toHaveFocus();
+  });
+
+  it("runs the confirm action once and closes", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    await user.click(screen.getByRole("button", { name: "Delete order" }));
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(dialogElement()).not.toHaveAttribute("open");
+  });
+});

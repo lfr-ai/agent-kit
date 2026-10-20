@@ -1,0 +1,276 @@
+"""Offline retrieval metrics and golden-set evaluation.
+
+Copy to 'retrieval/metrics.py'. All functions are pure and deterministic so
+they can gate CI on a versioned golden set. Ranked inputs are chunk or source
+identifiers in retrieval order; relevance judgments are identifier-to-gain
+mappings where a larger gain means more useful evidence.
+"""
+
+import json
+import math
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def _check_k(k: int) -> None:
+    """Reject cut-offs that make a metric meaningless."""
+    if k < 1:
+        raise ValueError("k must be at least 1")
+
+
+def recall_at_k(retrieved: Sequence[str], relevant: Collection[str], k: int) -> float:
+    """Share of relevant identifiers found in the first 'k' results.
+
+    Args:
+        retrieved: Identifiers in rank order.
+        relevant: Identifiers judged relevant.
+        k: Cut-off.
+
+    Returns:
+        Recall in [0, 1].
+
+    Raises:
+        ValueError: If 'k' is invalid or nothing is relevant.
+    """
+    _check_k(k)
+    if not relevant:
+        raise ValueError("recall is undefined without relevant identifiers")
+    return len(set(retrieved[:k]) & set(relevant)) / len(set(relevant))
+
+
+def precision_at_k(
+    retrieved: Sequence[str], relevant: Collection[str], k: int
+) -> float:
+    """Share of the first 'k' results that are relevant.
+
+    Args:
+        retrieved: Identifiers in rank order.
+        relevant: Identifiers judged relevant.
+        k: Cut-off; missing positions count as non-relevant.
+
+    Returns:
+        Precision in [0, 1].
+    """
+    _check_k(k)
+    return len(set(retrieved[:k]) & set(relevant)) / k
+
+
+def reciprocal_rank(retrieved: Sequence[str], relevant: Collection[str]) -> float:
+    """Inverse rank of the first relevant result, or 0.0 when none appears.
+
+    Args:
+        retrieved: Identifiers in rank order.
+        relevant: Identifiers judged relevant.
+
+    Returns:
+        Reciprocal rank in [0, 1].
+    """
+    wanted = set(relevant)
+    for position, identifier in enumerate(retrieved, start=1):
+        if identifier in wanted:
+            return 1.0 / position
+    return 0.0
+
+
+def ndcg_at_k(retrieved: Sequence[str], gains: Mapping[str, float], k: int) -> float:
+    """Normalized discounted cumulative gain with a log2 position discount.
+
+    Duplicate identifiers earn gain only at their first position.
+
+    Args:
+        retrieved: Identifiers in rank order.
+        gains: Graded relevance per identifier; absent means 0.
+        k: Cut-off.
+
+    Returns:
+        nDCG in [0, 1].
+
+    Raises:
+        ValueError: If 'k' is invalid, a gain is negative, or no gain is positive.
+    """
+    _check_k(k)
+    if any(gain < 0 for gain in gains.values()):
+        raise ValueError("gains must be non-negative")
+    ideal_gains = sorted((gain for gain in gains.values() if gain > 0), reverse=True)
+    if not ideal_gains:
+        raise ValueError("nDCG is undefined without a positive gain")
+    seen: set[str] = set()
+    dcg = 0.0
+    for position, identifier in enumerate(retrieved[:k], start=1):
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        dcg += gains.get(identifier, 0.0) / math.log2(position + 1)
+    ideal = sum(
+        gain / math.log2(position + 1)
+        for position, gain in enumerate(ideal_gains[:k], start=1)
+    )
+    return dcg / ideal
+
+
+def citation_precision(cited: Collection[str], retrieved: Collection[str]) -> float:
+    """Share of answer citations that point at chunks actually retrieved.
+
+    A citation to anything outside the retrieved, permission-filtered set is
+    either fabricated or leaked; both are failures.
+
+    Args:
+        cited: Identifiers cited by the generated answer.
+        retrieved: Identifiers handed to the generator.
+
+    Returns:
+        Precision in [0, 1]; 1.0 when the answer cites nothing.
+    """
+    if not cited:
+        return 1.0
+    return len(set(cited) & set(retrieved)) / len(set(cited))
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class GoldenQuery:
+    """One judged query in a versioned golden set.
+
+    Attributes:
+        query_id: Stable identifier.
+        text: Query text.
+        subject: Synthetic principal subject the query runs as.
+        gains: Graded relevance per identifier; empty for no-answer queries.
+    """
+
+    query_id: str
+    text: str
+    subject: str
+    gains: Mapping[str, float] = field(default_factory=dict)
+
+    @property
+    def expects_no_evidence(self) -> bool:
+        """True when the correct behavior is to return no evidence."""
+        return not any(gain > 0 for gain in self.gains.values())
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EvaluationReport:
+    """Aggregate metrics for one retrieval configuration.
+
+    Attributes:
+        k: Cut-off used for recall and nDCG.
+        answerable: Number of queries with relevant evidence.
+        recall: Mean recall at k over answerable queries.
+        mrr: Mean reciprocal rank over answerable queries.
+        ndcg: Mean nDCG at k over answerable queries.
+        no_evidence_accuracy: Share of no-answer queries that returned nothing.
+        misses: Query ids whose recall at k is zero, in input order.
+    """
+
+    k: int
+    answerable: int
+    recall: float
+    mrr: float
+    ndcg: float
+    no_evidence_accuracy: float
+    misses: tuple[str, ...]
+
+
+def evaluate(
+    runs: Mapping[str, Sequence[str]], golden: Sequence[GoldenQuery], *, k: int
+) -> EvaluationReport:
+    """Score retrieval runs against a golden set.
+
+    Args:
+        runs: Query id mapped to retrieved identifiers in rank order.
+        golden: Judged queries.
+        k: Cut-off.
+
+    Returns:
+        The aggregate report.
+
+    Raises:
+        ValueError: If a golden query has no run or the set is empty.
+    """
+    _check_k(k)
+    if not golden:
+        raise ValueError("golden set is empty")
+    missing = [item.query_id for item in golden if item.query_id not in runs]
+    if missing:
+        raise ValueError(f"no run for queries: {', '.join(missing)}")
+    recalls: list[float] = []
+    ranks: list[float] = []
+    ndcgs: list[float] = []
+    misses: list[str] = []
+    abstained: list[bool] = []
+    for item in golden:
+        retrieved = runs[item.query_id]
+        if item.expects_no_evidence:
+            abstained.append(not retrieved)
+            continue
+        relevant = {key for key, gain in item.gains.items() if gain > 0}
+        recall = recall_at_k(retrieved, relevant, k)
+        recalls.append(recall)
+        ranks.append(reciprocal_rank(retrieved, relevant))
+        ndcgs.append(ndcg_at_k(retrieved, item.gains, k))
+        if recall == 0.0:
+            misses.append(item.query_id)
+    count = len(recalls)
+    return EvaluationReport(
+        k=k,
+        answerable=count,
+        recall=sum(recalls) / count if count else 0.0,
+        mrr=sum(ranks) / count if count else 0.0,
+        ndcg=sum(ndcgs) / count if count else 0.0,
+        no_evidence_accuracy=(sum(abstained) / len(abstained) if abstained else 1.0),
+        misses=tuple(misses),
+    )
+
+
+def load_golden_set(path: Path) -> list[GoldenQuery]:
+    """Read a JSON Lines golden set.
+
+    Each line is an object with 'query_id', 'text', 'subject' and an optional
+    'gains' object of identifier to non-negative number.
+
+    Args:
+        path: File to read.
+
+    Returns:
+        Golden queries in file order.
+
+    Raises:
+        ValueError: If a line is malformed or a query id repeats.
+    """
+    queries: list[GoldenQuery] = []
+    seen: set[str] = set()
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            raise ValueError(f"{path}:{number}: expected an object")
+        query_id, text, subject = (
+            record.get("query_id"),
+            record.get("text"),
+            record.get("subject"),
+        )
+        gains = record.get("gains", {})
+        if not all(
+            isinstance(value, str) and value for value in (query_id, text, subject)
+        ):
+            raise ValueError(
+                f"{path}:{number}: query_id, text and subject are required"
+            )
+        if not isinstance(gains, dict) or not all(
+            isinstance(gain, int | float) and gain >= 0 for gain in gains.values()
+        ):
+            raise ValueError(f"{path}:{number}: gains must map ids to numbers >= 0")
+        if query_id in seen:
+            raise ValueError(f"{path}:{number}: duplicate query_id {query_id}")
+        seen.add(str(query_id))
+        queries.append(
+            GoldenQuery(
+                query_id=str(query_id),
+                text=str(text),
+                subject=str(subject),
+                gains={str(key): float(value) for key, value in gains.items()},
+            )
+        )
+    return queries

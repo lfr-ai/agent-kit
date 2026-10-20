@@ -1,0 +1,19 @@
+# Preserved behavior ledger
+
+- Structural goal:
+- Owning callers and registrations:
+
+| Contract | Before evidence | After evidence | Intentional difference |
+| --- | --- | --- | --- |
+| Public API/import | | | |
+| Serialization/defaults | | | |
+| Error and recovery | | | |
+| Ordering/side effects | | | |
+| Installed resource paths | | | |
+
+- Baseline and final checks:
+- Complexity before/after (tool, function or module, value):
+- Characterization tests added (kept / temporary):
+- Defects observed but deliberately not fixed:
+- Removed duplicate implementation:
+- Rollback boundary:

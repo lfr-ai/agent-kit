@@ -1,0 +1,215 @@
+"""Tests for 'retrieval.retrievers'; copy to 'tests/retrieval/test_retriever_adapters.py'.
+
+The in-memory retrievers are the reference behavior every adapter must match:
+tenant and access filtering before ranking, deletion propagation, and
+deterministic ranking. Reuse these cases as contract tests for real adapters.
+"""
+
+import asyncio
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+import pytest
+
+from retrieval.chunking import SourceDocument, chunk_document
+from retrieval.contracts import Chunk, Principal, Query, ScoredChunk, SourceDeletedError
+from retrieval.retrievers import (
+    DenseRetriever,
+    HashingEmbedder,
+    HybridRetriever,
+    InMemoryIndex,
+    LexicalRetriever,
+    StaticRetriever,
+    cosine,
+)
+
+_WHEN = datetime(2026, 1, 1, tzinfo=UTC)
+_ALICE = Principal(subject="alice", tenant="t1", groups=frozenset({"staff"}))
+_BOB = Principal(subject="bob", tenant="t1")
+_OTHER_TENANT = Principal(subject="alice", tenant="t2", groups=frozenset({"staff"}))
+
+
+def _source(
+    source_id: str, text: str, acl: set[str], *, tenant: str = "t1"
+) -> list[Chunk]:
+    return chunk_document(
+        SourceDocument(
+            source_id=source_id,
+            source_version="v1",
+            tenant=tenant,
+            text=text,
+            acl=frozenset(acl),
+            updated_at=_WHEN,
+            metadata={"kind": "guide"},
+        )
+    )
+
+
+def _index() -> InMemoryIndex:
+    index = InMemoryIndex()
+    asyncio.run(
+        index.upsert(
+            [
+                *_source(
+                    "invoices", "How to export invoices as CSV files.", {"group:staff"}
+                ),
+                *_source("orders", "Orders ship within two days.", {"group:staff"}),
+                *_source(
+                    "payroll", "Export payroll invoices quarterly.", {"user:carol"}
+                ),
+                *_source(
+                    "t2-doc",
+                    "Export invoices for tenant two.",
+                    {"group:staff"},
+                    tenant="t2",
+                ),
+            ]
+        )
+    )
+    return index
+
+
+def _ids(hits: Sequence[ScoredChunk]) -> list[str]:
+    return [hit.chunk.source_id for hit in hits]
+
+
+def test_bm25_ranks_visible_matches_only() -> None:
+    hits = asyncio.run(
+        LexicalRetriever(_index()).retrieve(
+            Query(text="export invoices", principal=_ALICE)
+        )
+    )
+
+    assert _ids(hits) == ["invoices"]
+    assert hits[0].retriever == "bm25"
+    assert hits[0].rank == 1
+
+
+def test_principal_without_access_sees_nothing() -> None:
+    hits = asyncio.run(
+        LexicalRetriever(_index()).retrieve(
+            Query(text="export invoices", principal=_BOB)
+        )
+    )
+
+    assert hits == []
+
+
+def test_tenants_are_isolated() -> None:
+    hits = asyncio.run(
+        LexicalRetriever(_index()).retrieve(
+            Query(text="export invoices", principal=_OTHER_TENANT)
+        )
+    )
+
+    assert _ids(hits) == ["t2-doc"]
+
+
+def test_metadata_filters_apply_inside_the_index() -> None:
+    query = Query(text="export invoices", principal=_ALICE, filters={"kind": "faq"})
+
+    assert asyncio.run(LexicalRetriever(_index()).retrieve(query)) == []
+
+
+def test_dense_retrieval_uses_the_embedder_port() -> None:
+    retriever = DenseRetriever(_index(), HashingEmbedder(dimensions=128))
+
+    hits = asyncio.run(retriever.retrieve(Query(text="orders ship", principal=_ALICE)))
+
+    assert _ids(hits)[0] == "orders"
+    assert all(hit.retriever == "dense" for hit in hits)
+
+
+def test_hybrid_fuses_strategies_and_respects_top_k() -> None:
+    index = _index()
+    hybrid = HybridRetriever(
+        [
+            LexicalRetriever(index),
+            DenseRetriever(index, HashingEmbedder(dimensions=128)),
+        ]
+    )
+
+    hits = asyncio.run(
+        hybrid.retrieve(Query(text="export invoices", principal=_ALICE, top_k=1))
+    )
+
+    assert _ids(hits) == ["invoices"]
+    assert hits[0].retriever == "rrf"
+
+
+def test_hybrid_drops_hits_a_faulty_strategy_leaks() -> None:
+    leaked = _source("secret", "Export invoices secretly.", {"user:carol"})
+    hybrid = HybridRetriever([_LeakyRetriever(leaked)])
+
+    hits = asyncio.run(hybrid.retrieve(Query(text="export", principal=_ALICE)))
+
+    assert hits == []
+
+
+def test_hybrid_requires_unique_strategy_names() -> None:
+    with pytest.raises(ValueError, match="uniquely named"):
+        HybridRetriever([StaticRetriever("x", []), StaticRetriever("x", [])])
+
+
+def test_deleted_sources_disappear_and_stay_deleted() -> None:
+    index = _index()
+    retriever = LexicalRetriever(index)
+    query = Query(text="export invoices", principal=_ALICE)
+
+    removed = asyncio.run(index.delete_source(tenant="t1", source_id="invoices"))
+
+    assert removed == 1
+    assert asyncio.run(retriever.retrieve(query)) == []
+    with pytest.raises(SourceDeletedError):
+        asyncio.run(
+            index.upsert(_source("invoices", "Resurrected text.", {"group:staff"}))
+        )
+
+
+def test_retain_version_removes_stale_chunks() -> None:
+    index = _index()
+    new_version = chunk_document(
+        SourceDocument(
+            source_id="orders",
+            source_version="v2",
+            tenant="t1",
+            text="Orders now ship within one day.",
+            acl=frozenset({"group:staff"}),
+            updated_at=_WHEN,
+        )
+    )
+    asyncio.run(index.upsert(new_version))
+
+    removed = asyncio.run(
+        index.retain_version(tenant="t1", source_id="orders", source_version="v2")
+    )
+    hits = asyncio.run(
+        LexicalRetriever(index).retrieve(Query(text="orders ship", principal=_ALICE))
+    )
+
+    assert removed == 1
+    assert {hit.chunk.source_version for hit in hits} == {"v2"}
+
+
+def test_cosine_rejects_mismatched_vectors() -> None:
+    assert cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
+    with pytest.raises(ValueError, match="lengths"):
+        cosine([1.0], [1.0, 0.0])
+
+
+class _LeakyRetriever:
+    """Simulates an adapter whose filter factory forgot the access list."""
+
+    def __init__(self, chunks: Sequence[Chunk]) -> None:
+        self._chunks = tuple(chunks)
+
+    @property
+    def name(self) -> str:
+        return "leaky"
+
+    async def retrieve(self, query: Query) -> list[ScoredChunk]:
+        return [
+            ScoredChunk(chunk=chunk, score=1.0, retriever=self.name, rank=rank)
+            for rank, chunk in enumerate(self._chunks, start=1)
+        ]

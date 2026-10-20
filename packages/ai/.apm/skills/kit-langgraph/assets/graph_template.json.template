@@ -1,0 +1,19 @@
+{
+  "graph": "approval",
+  "state_schema_version": 1,
+  "nodes": ["validate", "draft", "review", "apply"],
+  "edges": [
+    ["__start__", "validate"],
+    ["validate", "draft"],
+    ["validate", "__end__"],
+    ["draft", "review"],
+    ["review", "apply"],
+    ["review", "__end__"],
+    ["apply", "__end__"]
+  ],
+  "terminal": ["__end__"],
+  "interrupts": ["review"],
+  "retries": {"draft": {"max_attempts": 3, "retry_on": "TransientError"}, "apply": {"max_attempts": 3, "retry_on": "TransientError"}},
+  "side_effects": {"apply": {"idempotency_key": "{request_id}:apply"}},
+  "recursion_limit": 12
+}

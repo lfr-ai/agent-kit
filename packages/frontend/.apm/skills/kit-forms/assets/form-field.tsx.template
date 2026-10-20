@@ -1,0 +1,52 @@
+// src/shared/forms/form-field.tsx
+// Associates label, hint, and error with one control. The control receives the
+// ids through a render prop so native inputs, selects, and textareas all work.
+import { useId, type ReactElement } from "react";
+
+export type FieldControlProps = Readonly<{
+  id: string;
+  "aria-describedby": string | undefined;
+  "aria-invalid": boolean;
+  "aria-required": boolean | undefined;
+}>;
+
+export type FormFieldProps = Readonly<{
+  label: string;
+  hint?: string;
+  error?: string | undefined;
+  required?: boolean;
+  children: (control: FieldControlProps) => ReactElement;
+}>;
+
+export function FormField({ label, hint, error, required = false, children }: FormFieldProps): ReactElement {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
+  const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ");
+
+  return (
+    <div className="form-field" data-invalid={error ? "" : undefined}>
+      <label htmlFor={id}>
+        {label}
+        {required ? null : <span className="form-field__optional"> (optional)</span>}
+      </label>
+      {hint ? (
+        <p id={hintId} className="form-field__hint">
+          {hint}
+        </p>
+      ) : null}
+      {error ? (
+        <p id={errorId} className="form-field__error">
+          <span className="visually-hidden">Error: </span>
+          {error}
+        </p>
+      ) : null}
+      {children({
+        id,
+        "aria-describedby": describedBy === "" ? undefined : describedBy,
+        "aria-invalid": Boolean(error),
+        "aria-required": required ? true : undefined,
+      })}
+    </div>
+  );
+}

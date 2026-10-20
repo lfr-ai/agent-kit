@@ -1,0 +1,104 @@
+"""Rendering contract tests; copy beside the consumer's renderer tests.
+
+Assumes the package 'myapp' ships 'templates/order_confirmation.html' with:
+
+    <p>Hello {{ customer_name }}</p>
+    {% for line in lines %}<li>{{ line.description }}: {{ line.total }}</li>{% endfor %}
+"""
+
+from __future__ import annotations
+
+import pytest
+from jinja2.exceptions import SecurityError
+
+from myapp.infrastructure.templates.renderer import (
+    JinjaRenderer,
+    PromptRenderer,
+    TemplateNotAllowedError,
+    TemplateRenderingError,
+    render_untrusted,
+)
+
+_ORDER = "order_confirmation.html"
+
+
+@pytest.fixture
+def renderer() -> JinjaRenderer:
+    return JinjaRenderer(package="myapp", allowed=frozenset({_ORDER}))
+
+
+def _context(**overrides: object) -> dict[str, object]:
+    context: dict[str, object] = {
+        "customer_name": "Ada",
+        "lines": [{"description": "Widget", "total": "9.99"}],
+    }
+    context.update(overrides)
+    return context
+
+
+def test_renders_expected_html(renderer: JinjaRenderer) -> None:
+    html = renderer.render(_ORDER, _context())
+
+    assert "<p>Hello Ada</p>" in html
+    assert "<li>Widget: 9.99</li>" in html
+
+
+def test_html_metacharacters_are_escaped(renderer: JinjaRenderer) -> None:
+    html = renderer.render(_ORDER, _context(customer_name="<script>x</script>"))
+
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_missing_value_fails_instead_of_rendering_empty(
+    renderer: JinjaRenderer,
+) -> None:
+    context = _context()
+    del context["customer_name"]
+
+    with pytest.raises(TemplateRenderingError, match="UndefinedError"):
+        renderer.render(_ORDER, context)
+
+
+def test_unknown_template_name_is_rejected(renderer: JinjaRenderer) -> None:
+    with pytest.raises(TemplateNotAllowedError):
+        renderer.render("../secrets.txt", _context())
+
+
+def test_all_allowed_templates_compile(renderer: JinjaRenderer) -> None:
+    assert renderer.compile_all() == [_ORDER]
+
+
+def test_empty_loop_renders_without_items(renderer: JinjaRenderer) -> None:
+    html = renderer.render(_ORDER, _context(lines=[]))
+
+    assert "<li>" not in html
+
+
+def test_prompt_renderer_keeps_text_unescaped_and_strict() -> None:
+    prompts = PromptRenderer(
+        templates={"summarize": "Summarize for {{ audience }}:\n{{ document }}\n"}
+    )
+
+    text = prompts.render(
+        "summarize", {"audience": "finance & ops", "document": "a < b"}
+    )
+
+    assert text == "Summarize for finance & ops:\na < b\n"
+    with pytest.raises(TemplateRenderingError):
+        prompts.render("summarize", {"audience": "ops"})
+
+
+def test_sandbox_blocks_attribute_escape() -> None:
+    with pytest.raises((TemplateRenderingError, SecurityError)):
+        render_untrusted("{{ ''.__class__.__mro__[1].__subclasses__() }}", {})
+
+
+def test_untrusted_template_size_is_bounded() -> None:
+    with pytest.raises(TemplateRenderingError, match="too large"):
+        render_untrusted("x" * 20_000, {})
+
+
+def test_untrusted_output_size_is_bounded() -> None:
+    with pytest.raises(TemplateRenderingError, match="too large"):
+        render_untrusted("{% for _ in range(100000) %}xx{% endfor %}", {})

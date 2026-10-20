@@ -1,0 +1,16 @@
+# Contract consistency matrix
+
+- Concept and canonical definition:
+- Requested change and compatibility window:
+
+| Boundary | Name/type | Missing/null/default | Units/timezone | Allowed values | Test |
+| --- | --- | --- | --- | --- | --- |
+| Input | | | | | |
+| Domain | | | | | |
+| Persistence | | | | | |
+| Output/client | | | | | |
+
+- Generated sources and regeneration command:
+- Intentional differences:
+- Old-consumer behavior and rollback:
+- Exact verification:

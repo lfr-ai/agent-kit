@@ -1,0 +1,23 @@
+// Shared user-defined types. Copy to infra/types.bicep and import with
+// "import { tagSet, environmentName } from 'types.bicep'".
+
+@export()
+@description('Deployment environment.')
+type environmentName = 'dev' | 'test' | 'prod'
+
+@export()
+@description('Required governance tags; additional string tags are allowed.')
+type tagSet = {
+  @description('Team accountable for the resources.')
+  owner: string
+
+  @description('Cost allocation code.')
+  costCenter: string
+
+  @description('Additional tags.')
+  *: string
+}
+
+@export()
+@description('Storage redundancy options permitted by policy.')
+type storageSku = 'Standard_LRS' | 'Standard_ZRS' | 'Standard_GRS' | 'Standard_GZRS'

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en",
+  "useGitignore": true,
+  "minWordLength": 4,
+  "dictionaries": ["softwareTerms", "python", "bash", "companies", "misc", "project-words"],
+  "dictionaryDefinitions": [
+    {
+      "name": "project-words",
+      "path": "./.cspell/project-words.txt",
+      "addWords": true
+    }
+  ],
+  "ignorePaths": [
+    ".cspell/**",
+    ".git/**",
+    ".venv/**",
+    "node_modules/**",
+    "build/**",
+    "dist/**",
+    "htmlcov/**",
+    "*.lock",
+    "*.min.js",
+    "*.svg",
+    ".secrets.baseline"
+  ],
+  "ignoreRegExpList": [
+    "/\\b[0-9a-f]{7,64}\\b/gi",
+    "/sha(256|512)-[A-Za-z0-9+/=]+/g",
+    "/https?:\\/\\/\\S+/g",
+    "/\\b[A-Z0-9]{20,}\\b/g"
+  ],
+  "flagWords": ["blacklist", "whitelist"],
+  "overrides": [
+    {
+      "filename": "**/*.{yml,yaml}",
+      "dictionaries": ["softwareTerms", "project-words"]
+    },
+    {
+      "filename": "**/*.md",
+      "ignoreRegExpList": ["/```[\\s\\S]*?```/g"]
+    }
+  ]
+}

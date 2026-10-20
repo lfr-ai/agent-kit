@@ -1,0 +1,54 @@
+"""Closed set of wire values with behavior attached to the members.
+
+Copy into the core package and rename. Values are explicit strings because they
+are persisted and sent over the wire; renaming a member must never change data.
+"""
+
+import enum
+from enum import StrEnum
+from typing import Self
+
+
+@enum.unique
+class OrderStatus(StrEnum):
+    """Lifecycle state of an order."""
+
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+
+    @classmethod
+    def parse(cls, value: str, /) -> Self:
+        """Parse untrusted text, accepting surrounding whitespace and any case.
+
+        Raises:
+            ValueError: If the text does not name a member; the message lists
+                the accepted values.
+        """
+        normalized = value.strip().lower()
+        try:
+            return cls(normalized)
+        except ValueError:
+            accepted = ", ".join(member.value for member in cls)
+            raise ValueError(
+                f"unknown order status {value!r}; expected one of: {accepted}"
+            ) from None
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether no further transition is possible."""
+        return self in _TERMINAL
+
+    def can_transition_to(self, target: Self, /) -> bool:
+        """Whether moving from this state to 'target' is allowed."""
+        return target in _TRANSITIONS[self]
+
+
+_TERMINAL = frozenset({OrderStatus.SHIPPED, OrderStatus.CANCELLED})
+_TRANSITIONS = {
+    OrderStatus.DRAFT: frozenset({OrderStatus.CONFIRMED, OrderStatus.CANCELLED}),
+    OrderStatus.CONFIRMED: frozenset({OrderStatus.SHIPPED, OrderStatus.CANCELLED}),
+    OrderStatus.SHIPPED: frozenset(),
+    OrderStatus.CANCELLED: frozenset(),
+}

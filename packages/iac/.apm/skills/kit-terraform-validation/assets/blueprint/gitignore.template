@@ -1,0 +1,17 @@
+# Copy to infra/.gitignore. The dependency lock file is committed on purpose.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Local-only variable files; committed environments/*/terraform.tfvars hold
+# non-secret values only.
+*.auto.tfvars
+local.tfvars

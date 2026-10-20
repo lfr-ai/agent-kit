@@ -1,0 +1,117 @@
+"""Shared test configuration: tiers by directory, determinism and isolation.
+
+Copy to 'tests/conftest.py'. It assumes the layout
+
+    tests/unit/         fast, isolated tests          -> marker 'unit'
+    tests/property/     Hypothesis properties         -> marker 'property'
+    tests/integration/  real boundaries               -> marker 'integration'
+
+and registers markers in 'pytest.ini' (see 'pytest.ini.template'). Typical runs:
+
+    pytest -m "unit or property"     inner loop
+    pytest -m integration            boundary tier
+    pytest --run-slow                everything, including tests marked slow
+"""
+
+import os
+import random
+import socket
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+import pytest
+from hypothesis import HealthCheck, settings
+
+from app.domain.invoice import Invoice
+from tests.factories import build_invoice
+
+_TIERS = ("unit", "property", "integration")
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+_ENV_PREFIX = "APP_"
+
+settings.register_profile("dev", max_examples=50)
+settings.register_profile(
+    "ci",
+    max_examples=300,
+    derandomize=True,
+    print_blob=True,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add '--run-slow' so slow tests are opt-in during the inner loop."""
+    parser.addoption(
+        "--run-slow", action="store_true", help="also run tests marked 'slow'"
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Mark each test with its tier from its directory and gate slow tests."""
+    run_slow = config.getoption("--run-slow")
+    skip_slow = pytest.mark.skip(reason="slow test; pass --run-slow to include")
+    for item in items:
+        parts = item.path.parts
+        for tier in _TIERS:
+            if tier in parts:
+                item.add_marker(getattr(pytest.mark, tier))
+        if "slow" in item.keywords and not run_slow:
+            item.add_marker(skip_slow)
+
+
+@pytest.fixture(autouse=True)
+def _seeded_random() -> None:
+    """Make code that uses the global 'random' module repeatable per test."""
+    random.seed(1234)
+
+
+@pytest.fixture(autouse=True)
+def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove application settings so no test depends on the developer's shell."""
+    for name in list(os.environ):
+        if name.startswith(_ENV_PREFIX):
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _no_external_network(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail fast on non-loopback connections outside the integration tier."""
+    if request.node.get_closest_marker("integration"):
+        return
+    original = socket.socket.connect
+
+    def guarded(sock: socket.socket, address: object) -> None:
+        is_inet = sock.family in {socket.AF_INET, socket.AF_INET6}
+        host = address[0] if isinstance(address, tuple) else address
+        if is_inet and host not in _LOOPBACK:
+            raise RuntimeError(f"network access to {host!r} in a non-integration test")
+        original(sock, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded)
+
+
+@pytest.fixture
+def fixed_now() -> datetime:
+    """A single aware timestamp to inject wherever code asks for 'now'."""
+    return datetime(2030, 1, 15, 9, 30, tzinfo=UTC)
+
+
+@pytest.fixture
+def clock(fixed_now: datetime) -> Callable[[], datetime]:
+    """A clock port that always returns 'fixed_now'."""
+    return lambda: fixed_now
+
+
+@pytest.fixture
+def make_invoice() -> Callable[..., Invoice]:
+    """Factory fixture: valid defaults, override only what the test is about.
+
+    Returns:
+        The 'build_invoice' factory from 'tests/factories.py'.
+    """
+    return build_invoice

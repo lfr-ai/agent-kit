@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "repository": "lfr-ai/agent-kit",
+  "owners": ["@lfr-ai"],
+  "security_contact": "mailto:lfr@tik-ai.dk",
+  "conduct_contact": "mailto:lfr@tik-ai.dk"
+}

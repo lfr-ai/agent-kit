@@ -1,0 +1,20 @@
+"""Cross-field validation for a transport contract."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
+class DateRangeRequest(BaseModel):
+    """Request with an ordered inclusive date range."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: int
+    end: int
+
+    @model_validator(mode="after")
+    def _validate_order(self) -> DateRangeRequest:
+        if self.end < self.start:
+            raise ValueError("end must not precede start")
+        return self

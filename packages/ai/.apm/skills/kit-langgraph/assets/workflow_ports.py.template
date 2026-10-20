@@ -1,0 +1,101 @@
+"""Ports, value objects and errors for an approval workflow.
+
+Copy to 'workflows/ports.py'. The graph module depends on these protocols; the
+model client and the side-effecting gateway are injected, so the graph can be
+tested deterministically with fakes and never imports a provider SDK.
+"""
+
+from dataclasses import dataclass
+from typing import Protocol
+
+
+class WorkflowError(Exception):
+    """Base class for workflow failures callers can handle."""
+
+
+class TransientError(WorkflowError):
+    """A dependency failed in a way that is safe to retry."""
+
+
+class PermanentError(WorkflowError):
+    """A dependency rejected the request; retrying cannot succeed."""
+
+
+class IncompatibleCheckpointError(WorkflowError):
+    """A persisted thread was written by an incompatible state schema."""
+
+
+class InvalidDecisionError(WorkflowError):
+    """A human review decision failed validation."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Draft:
+    """Model-proposed action awaiting review.
+
+    Attributes:
+        text: Proposed content, validated before it enters graph state.
+        model: Model identifier, recorded for audit.
+        prompt_version: Prompt template version, recorded for audit.
+    """
+
+    text: str
+    model: str
+    prompt_version: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Receipt:
+    """Proof that a side effect was applied exactly once per key.
+
+    Attributes:
+        receipt_id: Identifier returned by the downstream system.
+        idempotency_key: Key the side effect was applied under.
+    """
+
+    receipt_id: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReviewDecision:
+    """Validated human decision supplied when resuming an interrupt.
+
+    Attributes:
+        action: 'approve', 'reject' or 'edit'.
+        reviewer: Identifier of the reviewer, for audit.
+        edited_text: Replacement text, required when 'action' is 'edit'.
+        note: Optional short reason.
+    """
+
+    action: str
+    reviewer: str
+    edited_text: str | None = None
+    note: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject decisions that would leave the workflow ambiguous."""
+        if self.action not in {"approve", "reject", "edit"}:
+            raise InvalidDecisionError(f"unknown action {self.action!r}")
+        if not self.reviewer.strip():
+            raise InvalidDecisionError("reviewer is required")
+        if self.action == "edit" and not (
+            self.edited_text and self.edited_text.strip()
+        ):
+            raise InvalidDecisionError("edited_text is required for edit")
+
+
+class DraftModel(Protocol):
+    """Port to a language model that proposes an action."""
+
+    async def draft(self, *, request: str) -> Draft:
+        """Return a proposal; raise 'TransientError' or 'PermanentError'."""
+        ...
+
+
+class ActionGateway(Protocol):
+    """Port to the system that performs the approved side effect."""
+
+    async def apply(self, *, idempotency_key: str, text: str) -> Receipt:
+        """Apply once per key; repeated calls return the original receipt."""
+        ...

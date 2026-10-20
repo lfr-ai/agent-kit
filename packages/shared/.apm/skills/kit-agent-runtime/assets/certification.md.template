@@ -1,0 +1,27 @@
+# Native host certification
+
+- Host, version, provider and supported model/tool availability:
+- Disposable fixture and selected profile/skills:
+- Repository/parent/user/plugin discovery:
+- Expected skill/instruction/role roster:
+
+| Scenario | Native action | Expected outcome | Actual evidence |
+| --- | --- | --- | --- |
+| Selected skill and resource discovery | | | |
+| Unselected role absence | | | |
+| Read-only edit/shell/delegation denial | | | |
+| Implementer bounded operation | | | |
+| Hook event/cwd/single execution | | | |
+| Guard deny shown with reason (per runtime) | | | |
+| Guard ask prompts, or is denied where no user can answer | | | |
+| Guard unmatched call leaves native approval in charge | | | |
+| Guard malformed input or missing policy blocks as configured | | | |
+| Guard timeout behavior for this host version | | | |
+| MCP startup approval and tool filtering | | | |
+| Declined/unavailable authentication | | | |
+
+- Source/CLI checks (separate evidence):
+- Unsupported semantics and exact failure:
+- Operator sign-off and rollback:
+
+A parsed file or model preference is not a passed scenario.

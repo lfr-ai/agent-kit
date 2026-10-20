@@ -1,0 +1,132 @@
+"""Application service (driving port): settle one invoice.
+
+Copy to 'app/application/use_cases/settle_invoice.py'. The use case is an
+ordinary class with one public call; that call *is* the driving port, so no
+separate inbound Protocol is required. It depends only on domain types and
+driven ports, and it owns the transaction boundary and the order of effects.
+"""
+
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from app.application.ports.invoices import UnitOfWork
+from app.application.ports.notifications import (
+    InvoiceNotifier,
+    InvoicePaidNotice,
+    NotificationError,
+)
+from app.application.ports.payments import PaymentGateway
+from app.domain.invoice import InvoiceError
+
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SettleInvoiceCommand:
+    """Input of the use case, already parsed by the driving adapter.
+
+    Attributes:
+        invoice_id: Invoice to settle.
+    """
+
+    invoice_id: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SettlementResult:
+    """Output of the use case; the driving adapter maps it to its own format.
+
+    Attributes:
+        invoice_id: Settled invoice.
+        payment_reference: Provider reference of the charge.
+        already_paid: True when the invoice had been settled earlier.
+    """
+
+    invoice_id: str
+    payment_reference: str
+    already_paid: bool
+
+
+class SettleInvoice:
+    """Charge an open invoice once, record it as paid, then notify the customer."""
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: Callable[[], UnitOfWork],
+        payments: PaymentGateway,
+        notifier: InvoiceNotifier,
+    ) -> None:
+        """Receive driven ports; construction happens in the composition root.
+
+        Args:
+            unit_of_work: Returns a fresh unit of work per call.
+            payments: Payment gateway port.
+            notifier: Customer notification port.
+        """
+        self._unit_of_work = unit_of_work
+        self._payments = payments
+        self._notifier = notifier
+
+    def __call__(self, command: SettleInvoiceCommand) -> SettlementResult:
+        """Settle the invoice; calling again for a paid invoice is a no-op.
+
+        Order of effects: read, charge with a deterministic idempotency key,
+        persist, commit, then notify. If the commit fails after a successful
+        charge, a retry reuses the key and the provider returns the same receipt
+        instead of charging twice. Notification happens after commit and its
+        failure never undoes a durable payment.
+
+        Args:
+            command: Parsed input.
+
+        Returns:
+            The settlement outcome.
+
+        Raises:
+            InvoiceNotFoundError: The invoice does not exist.
+            InvoiceError: The invoice is void.
+            PaymentDeclinedError: The provider refused the charge.
+            PaymentUnavailableError: Safe to retry later with the same command.
+        """
+        with self._unit_of_work() as unit:
+            invoice = unit.invoices.get(command.invoice_id)
+            if invoice.payment_reference is not None:
+                return SettlementResult(
+                    invoice_id=invoice.invoice_id,
+                    payment_reference=invoice.payment_reference,
+                    already_paid=True,
+                )
+            if not invoice.is_payable:
+                raise InvoiceError(f"invoice {invoice.invoice_id} is {invoice.status}")
+            receipt = self._payments.charge(
+                invoice_id=invoice.invoice_id,
+                amount=invoice.amount,
+                currency=invoice.currency,
+                idempotency_key=f"settle-{invoice.invoice_id}",
+            )
+            paid = invoice.mark_paid(payment_reference=receipt.reference)
+            unit.invoices.save(paid)
+            unit.commit()
+        try:
+            self._notifier.invoice_paid(
+                InvoicePaidNotice(
+                    invoice_id=paid.invoice_id,
+                    customer_id=paid.customer_id,
+                    amount=paid.amount,
+                    currency=paid.currency,
+                    payment_reference=receipt.reference,
+                )
+            )
+        except NotificationError:
+            _LOGGER.warning(
+                "invoice paid but notification failed",
+                extra={"invoice_id": paid.invoice_id},
+                exc_info=True,
+            )
+        return SettlementResult(
+            invoice_id=paid.invoice_id,
+            payment_reference=receipt.reference,
+            already_paid=False,
+        )

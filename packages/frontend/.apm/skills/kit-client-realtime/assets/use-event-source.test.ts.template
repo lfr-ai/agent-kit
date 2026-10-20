@@ -1,0 +1,106 @@
+// src/shared/realtime/use-event-source.test.ts
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { useEventSource, type EventSourceFactory, type EventSourceHandlers } from "./use-event-source";
+
+type FakeConnection = { url: string; handlers: EventSourceHandlers; closed: boolean };
+
+function fakeFactory(): { connections: FakeConnection[]; factory: EventSourceFactory } {
+  const connections: FakeConnection[] = [];
+  const factory: EventSourceFactory = (url, _init, handlers) => {
+    const connection: FakeConnection = { url, handlers, closed: false };
+    connections.push(connection);
+    return {
+      close: () => {
+        connection.closed = true;
+      },
+    };
+  };
+  return { connections, factory };
+}
+
+const noticeSchema = z.object({ id: z.string(), text: z.string() });
+const parse = (_type: string, data: unknown) => {
+  const result = noticeSchema.safeParse(data);
+  return result.success ? result.data : null;
+};
+
+describe("useEventSource", () => {
+  it("connects, reports status, and delivers parsed named events", () => {
+    const { connections, factory } = fakeFactory();
+    const onEvent = vi.fn();
+    const { result } = renderHook(() =>
+      useEventSource({ url: "/api/notices/stream", eventTypes: ["notice"], parse, onEvent, factory }),
+    );
+    expect(result.current).toBe("connecting");
+
+    const connection = connections.at(-1);
+    act(() => connection?.handlers.open());
+    act(() => connection?.handlers.message("notice", '{"id":"n1","text":"Hello"}', "41"));
+
+    expect(result.current).toBe("open");
+    expect(onEvent).toHaveBeenCalledWith({ id: "n1", text: "Hello" }, "41");
+  });
+
+  it("routes malformed frames to onInvalid", () => {
+    const { connections, factory } = fakeFactory();
+    const onEvent = vi.fn();
+    const onInvalid = vi.fn();
+    renderHook(() =>
+      useEventSource({ url: "/s", eventTypes: ["notice"], parse, onEvent, onInvalid, factory }),
+    );
+
+    act(() => connections.at(-1)?.handlers.message("notice", "{oops", ""));
+    act(() => connections.at(-1)?.handlers.message("notice", '{"id":1}', ""));
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(onInvalid).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes browser reconnection from a terminal close", () => {
+    const { connections, factory } = fakeFactory();
+    const { result } = renderHook(() =>
+      useEventSource({ url: "/s", eventTypes: ["notice"], parse, onEvent: vi.fn(), factory }),
+    );
+
+    act(() => connections.at(-1)?.handlers.error(false));
+    expect(result.current).toBe("reconnecting");
+    act(() => connections.at(-1)?.handlers.error(true));
+    expect(result.current).toBe("closed");
+  });
+
+  it("closes on unmount, on URL change, and when disabled; ignores late events", () => {
+    const { connections, factory } = fakeFactory();
+    const onEvent = vi.fn();
+    const { rerender, unmount, result } = renderHook(
+      ({ url }: { url: string | null }) =>
+        useEventSource({ url, eventTypes: ["notice"], parse, onEvent, factory }),
+      { initialProps: { url: "/a" as string | null } },
+    );
+    const first = connections.at(-1);
+
+    rerender({ url: "/b" });
+    act(() => first?.handlers.message("notice", '{"id":"late","text":"x"}', "1"));
+    expect(first?.closed).toBe(true);
+    expect(onEvent).not.toHaveBeenCalled();
+
+    rerender({ url: null });
+    expect(result.current).toBe("idle");
+    expect(connections.at(-1)?.closed).toBe(true);
+
+    unmount();
+    expect(connections.every((connection) => connection.closed)).toBe(true);
+  });
+
+  it("does not reconnect when only the callback identity changes", () => {
+    const { connections, factory } = fakeFactory();
+    const { rerender } = renderHook(
+      ({ onEvent }: { onEvent: (event: unknown) => void }) =>
+        useEventSource({ url: "/s", eventTypes: ["notice"], parse, onEvent, factory }),
+      { initialProps: { onEvent: vi.fn() } },
+    );
+    rerender({ onEvent: vi.fn() });
+    expect(connections).toHaveLength(1);
+  });
+});

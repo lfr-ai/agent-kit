@@ -1,0 +1,45 @@
+# pytest configuration template. Copy to 'pytest.ini' at the repository root.
+# Every option below is part of pytest itself; plugin options (timeouts,
+# coverage, xdist) belong in their own sections or command lines so that
+# '--strict-config' does not fail when a plugin is not installed.
+
+[pytest]
+minversion = 8.0
+testpaths = tests
+
+# -ra                     summary line for every non-passing outcome
+# --strict-markers        an unregistered or misspelled marker is an error
+# --strict-config         an unknown ini key is an error
+# --import-mode=importlib test modules need no __init__.py and cannot shadow each other
+# --durations=10          print the ten slowest phases so regressions are visible
+addopts =
+    -ra
+    --strict-markers
+    --strict-config
+    --import-mode=importlib
+    --durations=10
+
+# A test marked xfail that starts passing is reported as a failure, so stale
+# expectations are removed instead of silently passing.
+xfail_strict = true
+
+# Parametrize with an empty list is almost always a bug in the data source.
+empty_parameter_set_mark = fail_at_collect
+
+# Every tier is a registered marker; conftest.py applies them by directory.
+markers =
+    unit: fast and isolated; no network, no real services, filesystem only via tmp_path
+    property: property-based tests driven by Hypothesis
+    integration: exercises a real boundary (database, subprocess, HTTP server)
+    slow: takes more than about a second; skipped unless --run-slow is given
+
+# Warnings are errors in the project's own code. Add narrowly scoped ignores
+# for third-party warnings you cannot fix, with a reason and an owner, e.g.
+#     ignore:some message:DeprecationWarning:third_party_module
+filterwarnings =
+    error
+
+# Dump tracebacks of a hung test after this many seconds (built-in faulthandler).
+faulthandler_timeout = 120
+
+log_level = INFO

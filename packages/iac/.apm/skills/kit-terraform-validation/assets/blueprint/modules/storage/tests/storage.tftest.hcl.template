@@ -1,0 +1,69 @@
+# Offline module tests. Copy to infra/modules/storage/tests/storage.tftest.hcl.
+# Run from the module directory: terraform init && terraform test
+# The mock provider returns synthetic values, so no cloud credentials are used.
+mock_provider "azurerm" {}
+
+variables {
+  name                = "stordersdev001"
+  resource_group_name = "rg-orders-dev-westeurope-001"
+  location            = "westeurope"
+  tags = {
+    owner       = "platform-team"
+    cost_center = "cc-0000"
+  }
+}
+
+run "secure_defaults" {
+  command = plan
+
+  assert {
+    condition     = azurerm_storage_account.this.min_tls_version == "TLS1_2"
+    error_message = "Storage must require TLS 1.2."
+  }
+
+  assert {
+    condition     = azurerm_storage_account.this.shared_access_key_enabled == false
+    error_message = "Shared key authorization must be disabled."
+  }
+
+  assert {
+    condition     = azurerm_storage_account.this.public_network_access_enabled == false
+    error_message = "Public network access must be disabled by default."
+  }
+
+  assert {
+    condition     = azurerm_storage_account.this.blob_properties[0].versioning_enabled
+    error_message = "Blob versioning must be enabled."
+  }
+}
+
+run "rejects_invalid_name" {
+  command = plan
+
+  variables {
+    name = "Invalid_Name"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "rejects_unknown_replication" {
+  command = plan
+
+  variables {
+    replication_type = "PREMIUM"
+  }
+
+  expect_failures = [var.replication_type]
+}
+
+run "public_lrs_fails_precondition" {
+  command = plan
+
+  variables {
+    public_network_access_enabled = true
+    replication_type              = "LRS"
+  }
+
+  expect_failures = [azurerm_storage_account.this]
+}

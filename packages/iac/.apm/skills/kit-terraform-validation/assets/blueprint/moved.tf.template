@@ -1,0 +1,28 @@
+# Refactoring and adoption records. Copy to infra/moved.tf.
+# Keep each block until every state that could contain the old address has
+# applied it; removing a moved block early turns a rename into destroy/create.
+
+# Example: a storage account that used to live in the root module was moved
+# into modules/storage. The plan shows "has moved to" instead of a replacement.
+moved {
+  from = azurerm_storage_account.this
+  to   = module.storage.azurerm_storage_account.this
+}
+
+# Adoption of an existing resource (Terraform 1.5+). Generate configuration
+# with 'terraform plan -generate-config-out=generated.tf' when needed, review
+# the plan shows "will be imported" with no changes, then apply.
+# import {
+#   to = azurerm_resource_group.this
+#   id = "/subscriptions/<subscription-id>/resourceGroups/<name>"
+# }
+
+# Stop managing a resource without destroying it (Terraform 1.7+). Delete the
+# resource block first; the plan must show "will no longer be managed".
+# removed {
+#   from = azurerm_storage_account.legacy
+#
+#   lifecycle {
+#     destroy = false
+#   }
+# }

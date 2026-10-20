@@ -1,0 +1,29 @@
+# Project facts
+
+## Identity and support
+
+- Package/service:
+- Supported runtime versions and lockfile:
+- Owner and approved support route:
+
+## Commands
+
+| Operation | Exact command | Working directory | External effects |
+| --- | --- | --- | --- |
+| Install locked dependencies | | | |
+| Focused test | | | |
+| Completion gate | | | |
+| Build | | | |
+
+## Boundaries
+
+- Public entry points and contracts:
+- Domain/application/adapters/composition ownership:
+- Generated output and authoring sources:
+- Secrets and local-only configuration locations (names only, never values):
+- Unavailable tools and explicitly unsupported surfaces:
+
+## Knowledge
+
+Link the consumer-owned architecture, decisions, operations and recovery index.
+Record evidence before calling commands or runtime behavior verified.

@@ -1,0 +1,76 @@
+"""Frozen, keyword-only, slotted record with validated invariants.
+
+Copy into 'src/<package>/core/models.py' (or a sibling module) and rename the
+fields. The record validates in '__post_init__', exposes derived values as
+properties, and changes through 'dataclasses.replace' so every new instance is
+validated again.
+"""
+
+import dataclasses
+import re
+from dataclasses import dataclass, field
+from typing import Self
+
+_SKU = re.compile(r"[A-Z0-9][A-Z0-9-]{2,31}")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LineItem:
+    """One priced line of an order.
+
+    Attributes:
+        sku: Stock keeping unit; uppercase letters, digits, and hyphens.
+        quantity: Number of units; always positive.
+        unit_price_minor: Price per unit in minor currency units (for example cents).
+        tags: Optional labels; stored as an immutable tuple.
+        note: Free text kept out of 'repr' because it may contain user input.
+    """
+
+    sku: str
+    quantity: int
+    unit_price_minor: int
+    tags: tuple[str, ...] = ()
+    note: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        """Reject values that would make the line meaningless."""
+        if not _SKU.fullmatch(self.sku):
+            raise ValueError(f"sku must match {_SKU.pattern!r}, got {self.sku!r}")
+        if self.quantity <= 0:
+            raise ValueError(f"quantity must be positive, got {self.quantity}")
+        if self.unit_price_minor < 0:
+            raise ValueError(
+                f"unit_price_minor must not be negative, got {self.unit_price_minor}"
+            )
+        if len(set(self.tags)) != len(self.tags):
+            raise ValueError("tags must be unique")
+
+    @classmethod
+    def parse(cls, *, sku: str, quantity: str, unit_price_minor: str) -> Self:
+        """Build a line from untrusted text, normalizing the SKU case.
+
+        Args:
+            sku: SKU text in any case; surrounding whitespace is ignored.
+            quantity: Decimal integer text.
+            unit_price_minor: Decimal integer text in minor units.
+
+        Returns:
+            A validated line item.
+
+        Raises:
+            ValueError: If any value is not a valid integer or violates an invariant.
+        """
+        return cls(
+            sku=sku.strip().upper(),
+            quantity=int(quantity),
+            unit_price_minor=int(unit_price_minor),
+        )
+
+    @property
+    def total_minor(self) -> int:
+        """Line total in minor currency units."""
+        return self.quantity * self.unit_price_minor
+
+    def with_quantity(self, quantity: int, /) -> Self:
+        """Return a validated copy with a different quantity."""
+        return dataclasses.replace(self, quantity=quantity)

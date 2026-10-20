@@ -1,0 +1,55 @@
+// src/main.tsx
+// Boot order: load and validate runtime config, then create clients that depend
+// on it, then render. A config failure renders an accessible static error instead
+// of an app that silently calls the wrong host.
+import { QueryClientProvider } from "@tanstack/react-query";
+import { StrictMode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { RouterProvider } from "react-router/dom";
+import { createQueryClient } from "@/app/query-client";
+import { createAppRouter } from "@/app/router";
+import { getSession } from "@/features/auth";
+import { loadRuntimeConfig, RuntimeConfigError } from "@/config/runtime-config";
+import "./index.css";
+
+function renderConfigError(root: Root, error: unknown): void {
+  const detail = error instanceof RuntimeConfigError ? error.message : "Unexpected startup error";
+  // Diagnostic detail goes to the console for operators; users get a plain message.
+  console.error(detail, error instanceof RuntimeConfigError ? error.issues : error);
+  root.render(
+    <main>
+      <h1>The application could not start</h1>
+      <p>Its configuration could not be loaded. Reload the page, or try again later.</p>
+      <button type="button" onClick={() => window.location.reload()}>
+        Reload
+      </button>
+    </main>,
+  );
+}
+
+async function start(): Promise<void> {
+  const container = document.getElementById("root");
+  if (container === null) {
+    throw new Error("Missing #root element in index.html");
+  }
+  const root = createRoot(container);
+  try {
+    await loadRuntimeConfig({ url: import.meta.env.VITE_CONFIG_URL ?? "/config.json" });
+  } catch (error) {
+    renderConfigError(root, error);
+    return;
+  }
+
+  const queryClient = createQueryClient();
+  const router = createAppRouter({ queryClient, getSession });
+
+  root.render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+
+void start();

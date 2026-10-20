@@ -1,0 +1,17 @@
+// Shared parameter values. Copy to infra/parameters/base.bicepparam.
+// Environment files inherit these with 'extends' and override what differs.
+// Never put secrets here; reference Key Vault with az.getSecret() in the
+// environment file when a secure parameter is required, for example:
+//   param adminPassword = az.getSecret('<subscription-id>', '<rg>', '<vault>', '<secret>')
+using none
+
+param workload = 'orders'
+
+param instance = '001'
+
+param storageSkuName = 'Standard_ZRS'
+
+param tags = {
+  owner: 'platform-team'
+  costCenter: 'cc-0000'
+}

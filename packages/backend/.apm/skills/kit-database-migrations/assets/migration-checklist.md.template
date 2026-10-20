@@ -1,0 +1,41 @@
+# Migration review checklist
+
+Revision id and message:
+Owner and reviewer:
+
+## Classification
+
+- [ ] Phase: expand / backfill / switch / contract / data fix
+- [ ] Rollback mode: reversible / forward-only / destructive
+- [ ] Point of no return (release or step):
+- [ ] Application releases that must be fully deployed before this runs:
+
+## Compatibility
+
+- [ ] Every running application version works before, during, and after the change.
+- [ ] No rename or type change in place; new objects added beside old ones.
+- [ ] ORM models no longer reference dropped objects (contract only).
+- [ ] New NOT NULL columns have a constant `server_default` or follow add-backfill-validate.
+
+## Locks and duration
+
+- [ ] Lock level of each statement reviewed for the target engine version.
+- [ ] `lock_timeout` and `statement_timeout` set for the migration session.
+- [ ] Index builds and drops use `postgresql_concurrently=True` inside `autocommit_block()` (PostgreSQL).
+- [ ] Foreign keys and checks added `NOT VALID`, validated in a later step.
+- [ ] Measured duration on a production-sized snapshot:
+
+## Data
+
+- [ ] Backfill is batched, idempotent, resumable, and does not overwrite newer writes.
+- [ ] Conversion rules cover nulls, empty values, boundaries, and invalid legacy data.
+- [ ] Verification query proves completion:
+- [ ] No personal or secret data in scripts, logs, or test fixtures.
+
+## Evidence
+
+- [ ] `check_migration_safety.py` clean or every waiver has a written reason.
+- [ ] Single head; upgrade, stairway, and drift tests pass on the production engine.
+- [ ] Data conversion test with representative rows passes.
+- [ ] Backup or point-in-time recovery confirmed for destructive steps.
+- [ ] Operator runbook updated with order of operations and roll-forward plan.

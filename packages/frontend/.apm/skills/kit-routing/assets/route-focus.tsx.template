@@ -1,0 +1,50 @@
+// src/app/route-focus.tsx
+// After client-side navigation, set the document title from the deepest route
+// handle and move focus to the page heading so assistive technology users hear
+// where they are. Search-param changes (filters) do not move focus.
+import { useEffect, useRef } from "react";
+import { useLocation, useMatches } from "react-router";
+
+type TitledHandle = Readonly<{ title: string }>;
+
+function hasTitle(handle: unknown): handle is TitledHandle {
+  return (
+    typeof handle === "object" &&
+    handle !== null &&
+    "title" in handle &&
+    typeof handle.title === "string"
+  );
+}
+
+export function RouteFocus({ appName }: Readonly<{ appName: string }>): null {
+  const { pathname } = useLocation();
+  const matches = useMatches();
+  const isFirstRender = useRef(true);
+  const title = matches
+    .map((match) => match.handle)
+    .filter(hasTitle)
+    .at(-1)?.title;
+
+  useEffect(() => {
+    document.title = title ? `${title} | ${appName}` : appName;
+  }, [title, appName]);
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      // Initial load: the browser already starts at the top of the document.
+      isFirstRender.current = false;
+      return;
+    }
+    const heading = document.querySelector<HTMLElement>("main h1");
+    const target = heading ?? document.getElementById("main");
+    if (target === null) {
+      return;
+    }
+    if (!target.hasAttribute("tabindex")) {
+      target.setAttribute("tabindex", "-1");
+    }
+    target.focus();
+  }, [pathname]);
+
+  return null;
+}

@@ -1,0 +1,18 @@
+# Optional integration decision
+
+- Missing capability and why existing local tools are insufficient:
+- Selected server, upstream source/license and reviewed release or image digest:
+- Native host/version and configuration owner:
+- Exact transport, command/args or endpoint:
+- Data leaving the workspace and approved classification:
+- Authentication owner, least-privilege scopes and secret storage (no values):
+- Tool allowlist and native approval/startup settings:
+- APM policy/dependency review (separate from native configuration):
+- Timeout, unavailable-auth and denied-action behavior:
+- Disposable connection, tool-discovery and negative-action evidence:
+- Removal/credential-revocation steps:
+- Approval, limitations and review trigger:
+
+Copy only the selected server definition after replacing REVIEWED_* placeholders.
+Do not enable the template roster wholesale. A server's presence in a catalog
+does not certify its license, behavior, tool safety or availability for your account.

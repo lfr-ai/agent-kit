@@ -1,0 +1,38 @@
+# Import-linter contracts for <package>.
+# Copy to '.importlinter' at the repository root (or translate into the
+# [tool.importlinter] table of pyproject.toml) and run 'lint-imports'.
+# Replace 'shop' and the module names with the real package layout.
+# Every ignore_imports entry needs a comment with a reason and an owner.
+
+[importlinter]
+root_package = shop
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Layers: interface over application over domain
+type = layers
+layers =
+    shop.api
+    shop.application
+    shop.domain
+ignore_imports =
+    # Reason: legacy health check reads domain constants; owner @orders-team.
+    shop.domain.health -> shop.api.status
+
+[importlinter:contract:domain-is-framework-free]
+name = Domain does not import web or persistence frameworks
+type = forbidden
+source_modules =
+    shop.domain
+forbidden_modules =
+    fastapi
+    sqlalchemy
+    requests
+
+[importlinter:contract:features-are-independent]
+name = Feature packages do not import each other
+type = independence
+modules =
+    shop.application.orders
+    shop.application.invoices
+    shop.application.documents

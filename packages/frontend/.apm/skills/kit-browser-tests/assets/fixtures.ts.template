@@ -1,0 +1,63 @@
+// e2e/fixtures.ts
+// Shared fixtures: page objects, a console/page-error guard that fails tests on
+// unexpected runtime errors, and helpers to fake API failures at the network edge.
+import { test as base, expect, type Page, type Route } from "@playwright/test";
+import { OrdersPage } from "./pages/orders.page";
+
+type Fixtures = {
+  /** Console errors a test deliberately provokes, for example a simulated 503. */
+  expectedConsoleErrors: readonly RegExp[];
+  ordersPage: OrdersPage;
+  runtimeErrors: string[];
+  failApiOnce: (pattern: string | RegExp, status: number) => Promise<void>;
+};
+
+const ignoredConsole: readonly RegExp[] = [
+  // Add narrowly scoped, justified patterns only (for example a known third-party warning).
+];
+
+function watchRuntimeErrors(page: Page, sink: string[], allowed: readonly RegExp[]): void {
+  page.on("pageerror", (error) => sink.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const text = message.text();
+    if (![...ignoredConsole, ...allowed].some((pattern) => pattern.test(text))) {
+      sink.push(`console: ${text}`);
+    }
+  });
+}
+
+export const test = base.extend<Fixtures>({
+  expectedConsoleErrors: [[], { option: true }],
+  runtimeErrors: [
+    async ({ page, expectedConsoleErrors }, use) => {
+      const errors: string[] = [];
+      watchRuntimeErrors(page, errors, expectedConsoleErrors);
+      await use(errors);
+      expect(errors, "unexpected runtime errors in the page").toEqual([]);
+    },
+    { auto: true },
+  ],
+  ordersPage: async ({ page }, use) => {
+    await use(new OrdersPage(page));
+  },
+  failApiOnce: async ({ page }, use) => {
+    await use(async (pattern, status) => {
+      let failed = false;
+      await page.route(pattern, async (route: Route) => {
+        if (failed) {
+          await route.fallback();
+          return;
+        }
+        failed = true;
+        await route.fulfill({
+          status,
+          contentType: "application/problem+json",
+          body: JSON.stringify({ title: "Simulated failure", status }),
+        });
+      });
+    });
+  },
+});
+
+export { expect };

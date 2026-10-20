@@ -1,0 +1,38 @@
+# Contract change record: <interface and version>
+
+- Contract file and revision: `<path>@<commit>`
+- Contract owner: `<handle>`
+- Consumers: `<frontend apps, services, integrations>`
+- Reviewers and decision date: `<handles, date>`
+
+## Changes
+
+| Element | Change | Additive or breaking | Compatibility handling |
+| --- | --- | --- | --- |
+| `GET /orders/{orderId}` response `billingName` | added, optional | additive | clients ignore unknown fields |
+| `GET /orders/{orderId}` response `customerName` | deprecated | breaking at removal | removed after window closes |
+| `<element>` | `<change>` | `<classification>` | `<versioning, expand-contract, switch>` |
+
+## Decisions
+
+- Naming and casing:
+- Nullability and required fields:
+- Pagination and sort order:
+- Error types added (stable identifiers):
+- Authorization per operation:
+- Idempotency and concurrency control:
+- Limits (size, rate, timeout):
+
+## Derived artifacts
+
+- [ ] Server validation or stubs regenerated
+- [ ] Typed client regenerated and committed
+- [ ] Consumer fixtures validated against the contract
+- [ ] Provider contract tests updated
+- [ ] Reference documentation published
+
+## Deprecation
+
+- Deprecated elements and signal used (documentation, deprecation header):
+- Window end date or condition:
+- Telemetry that proves no remaining use:

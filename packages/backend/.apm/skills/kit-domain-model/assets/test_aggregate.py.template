@@ -1,0 +1,127 @@
+"""Behavior tests for the order aggregate template.
+
+Replace the 'shop' imports with the project's modules.
+"""
+
+from datetime import UTC, datetime
+
+import pytest
+from shop.core.events import OrderConfirmed, OrderLineAdded, OrderOpened
+from shop.core.orders import MAX_LINES, Order, OrderLimitError, OrderStateError, OrderStatus
+from shop.core.values import Money, OrderId
+
+_NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+_ID = OrderId(value="0b6f8a52-4a1e-4a8e-9a43-2f6f1d6f0c11")
+
+
+def _draft() -> Order:
+    return Order.open(order_id=_ID, customer_id="customer-1", currency="EUR", now=_NOW)
+
+
+def _with_line(order: Order, *, sku: str = "SKU-1", quantity: int = 2) -> Order:
+    order.add_line(sku=sku, quantity=quantity, unit_price=Money.of("2.50", "EUR"), now=_NOW)
+    return order
+
+
+def test_opening_records_one_event_and_starts_as_draft() -> None:
+    """A new order is a draft and announces itself once."""
+    order = _draft()
+    assert order.status is OrderStatus.DRAFT
+    assert [type(event) for event in order.pull_events()] == [OrderOpened]
+    assert order.pull_events() == []
+
+
+def test_total_is_the_sum_of_line_subtotals() -> None:
+    """The total invariant holds after every successful command."""
+    order = _with_line(_with_line(_draft()), sku="SKU-2", quantity=1)
+    assert order.total == Money.of("7.50", "EUR")
+
+
+def test_confirm_requires_at_least_one_line() -> None:
+    """An empty order cannot be confirmed, and nothing is recorded."""
+    order = _draft()
+    order.pull_events()
+    with pytest.raises(OrderStateError, match="without lines"):
+        order.confirm(now=_NOW)
+    assert order.status is OrderStatus.DRAFT
+    assert order.pull_events() == []
+
+
+def test_confirm_records_the_final_total() -> None:
+    """Consumers receive the confirmed total in the event payload."""
+    order = _with_line(_draft())
+    order.pull_events()
+    order.confirm(now=_NOW)
+    (event,) = order.pull_events()
+    assert isinstance(event, OrderConfirmed)
+    assert event.total == Money.of("5.00", "EUR")
+
+
+def test_lines_cannot_change_after_confirmation() -> None:
+    """Commands that need a draft are rejected in other states."""
+    order = _with_line(_draft())
+    order.confirm(now=_NOW)
+    with pytest.raises(OrderStateError, match="confirmed"):
+        _with_line(order, sku="SKU-9")
+
+
+def test_rejected_line_leaves_state_unchanged() -> None:
+    """A failed command has no partial effect."""
+    order = _with_line(_draft())
+    order.pull_events()
+    with pytest.raises(OrderLimitError):
+        _with_line(order)
+    assert len(order.lines) == 1
+    assert order.pull_events() == []
+
+
+def test_currency_mismatch_is_rejected() -> None:
+    """Lines share the order currency."""
+    with pytest.raises(ValueError, match="currency"):
+        _draft().add_line(sku="SKU-1", quantity=1, unit_price=Money.of("1", "USD"), now=_NOW)
+
+
+def test_line_limit_is_enforced() -> None:
+    """The documented maximum number of lines cannot be exceeded."""
+    order = _draft()
+    for index in range(MAX_LINES):
+        _with_line(order, sku=f"SKU-{index}", quantity=1)
+    with pytest.raises(OrderLimitError, match="at most"):
+        _with_line(order, sku="SKU-extra", quantity=1)
+
+
+def test_line_events_are_recorded_in_order() -> None:
+    """Events preserve command order."""
+    order = _with_line(_with_line(_draft()), sku="SKU-2")
+    events = [event for event in order.pull_events() if isinstance(event, OrderLineAdded)]
+    assert [event.sku for event in events] == ["SKU-1", "SKU-2"]
+
+
+def test_cancel_twice_is_rejected() -> None:
+    """Cancellation is terminal."""
+    order = _draft()
+    order.cancel()
+    with pytest.raises(OrderStateError, match="already cancelled"):
+        order.cancel()
+
+
+def test_equality_and_hash_use_identity_only() -> None:
+    """Two snapshots of the same aggregate are the same aggregate."""
+    first = _draft()
+    second = _with_line(_draft())
+    assert first == second
+    assert len({first, second}) == 1
+
+
+def test_restore_does_not_emit_events() -> None:
+    """Loading from storage is not a business fact."""
+    restored = Order.restore(
+        order_id=_ID,
+        customer_id="customer-1",
+        currency="EUR",
+        status=OrderStatus.CONFIRMED,
+        lines=(),
+        version=3,
+    )
+    assert restored.pull_events() == []
+    assert restored.version == 3

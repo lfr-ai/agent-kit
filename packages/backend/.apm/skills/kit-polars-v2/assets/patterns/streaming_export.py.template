@@ -1,0 +1,46 @@
+"""Stream a large aggregation from Parquet to Parquet without collecting it.
+
+Copy into the consumer's batch adapter. Paths and storage options come from
+typed settings passed in by the composition root.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+
+import polars as pl
+
+
+def settled_totals(events: pl.LazyFrame) -> pl.LazyFrame:
+    """Aggregate settled amounts per customer with a deterministic order."""
+    return (
+        events.filter(pl.col("status") == "settled")
+        .group_by("customer_id")
+        .agg(
+            pl.col("amount").sum().alias("settled_amount"),
+            pl.len().alias("settled_orders"),
+        )
+        .sort("customer_id")
+    )
+
+
+def export_settled_totals(
+    source: str,
+    target: Path,
+    *,
+    storage_options: Mapping[str, str] | None = None,
+) -> None:
+    """Scan partitioned source files and sink the result in streaming batches."""
+    events = pl.scan_parquet(
+        source,
+        hive_partitioning=True,
+        storage_options=dict(storage_options) if storage_options else None,
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    settled_totals(events).sink_parquet(target)
+
+
+def explain_settled_totals(source: str) -> str:
+    """Return the optimized plan so reviewers can confirm filter pushdown."""
+    return settled_totals(pl.scan_parquet(source)).explain()

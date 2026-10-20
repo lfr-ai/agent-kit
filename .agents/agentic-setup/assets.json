@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "assets": {
+    "agent-knowledge-base": [
+      ".apm/skills/kit-apm-adopt/assets/PROJECT.template.md",
+      ".apm/skills/kit-apm-adopt/assets/llms.template.txt",
+      "packages/shared/.apm/skills/kit-context-onboarding/assets/PROJECT.md.template",
+      "packages/shared/.apm/skills/kit-context-onboarding/assets/knowledge-index.md.template",
+      "packages/shared/.apm/skills/kit-context-onboarding/assets/check_context.py"
+    ],
+    "workspace-workflows": [
+      "packages/shared/.apm/skills/kit-editor/assets/settings.json.template",
+      "packages/shared/.apm/skills/kit-editor/assets/tasks.json.template",
+      "packages/shared/.apm/skills/kit-editor/assets/mcp-optional.json.template",
+      "packages/shared/.apm/skills/kit-editor/assets/integration-catalog.json",
+      "packages/shared/.apm/skills/kit-editor/assets/mcp-vscode.json.template",
+      "packages/shared/.apm/skills/kit-editor/assets/mcp-claude.json.template",
+      "packages/shared/.apm/skills/kit-editor/assets/integration.md.template",
+      "packages/shared/.apm/skills/kit-agent-runtime/assets/certification.md.template"
+    ],
+    "backend-blueprint": [
+      "packages/backend/.apm/skills/kit-python-service/assets/service.py.template",
+      "packages/backend/.apm/skills/kit-python-service/assets/check_python.py",
+      "packages/backend/.apm/skills/kit-python-service/assets/agents.json"
+    ],
+    "frontend-blueprint": [
+      "packages/frontend/.apm/skills/kit-react-feature/assets/agents.json",
+      "packages/frontend/.apm/skills/kit-react-feature/assets/feature-acceptance.md"
+    ],
+    "iac-blueprint": [
+      ".apm/skills/kit-apm-audit/assets/apm-audit-steps.yml.template",
+      "packages/iac/.apm/skills/kit-infra-review/assets/templates/infrastructure-evidence-template.md"
+    ]
+  }
+}

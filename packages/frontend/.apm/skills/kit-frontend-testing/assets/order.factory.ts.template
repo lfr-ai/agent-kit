@@ -1,0 +1,30 @@
+// src/test/factories/order.factory.ts
+// Test data builder: valid by default, override only what the test is about.
+// Deterministic ids keep snapshots and failure messages stable.
+import type { Order } from "@/features/orders";
+
+let sequence = 0;
+
+export function resetOrderFactory(): void {
+  sequence = 0;
+}
+
+export function buildOrder(overrides: Partial<Order> = {}): Order {
+  sequence += 1;
+  return {
+    id: `ord_${sequence}`,
+    reference: `ORD-${1000 + sequence}`,
+    status: "submitted",
+    totalMinor: 1000 * sequence,
+    currency: "EUR",
+    updatedAt: new Date(Date.UTC(2026, 0, 1, 12, sequence)).toISOString(),
+    ...overrides,
+  };
+}
+
+export function buildOrderPage(count: number, overrides: Partial<Order> = {}) {
+  return {
+    items: Array.from({ length: count }, () => buildOrder(overrides)),
+    nextCursor: null,
+  };
+}

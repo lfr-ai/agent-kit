@@ -1,0 +1,52 @@
+# Impact report: <target>
+
+- Target (module, symbol, field, route, event or key): `<target>`
+- Change kind: behavior / signature / rename-move / deletion / data shape
+- Revision analyzed: `<commit>`
+- Tools and versions: `<tool and version>`
+- Expected answer written before querying: <what you expected>
+
+## Commands
+
+```text
+python assets/import_graph.py src/<package>
+python assets/import_graph.py src/<package> --reverse <module> --depth 1
+python assets/import_graph.py src/<package> --reverse <module>
+rg -n -w "<symbol>"
+```
+
+## Cycles
+
+- Cycles involving the target: none / `<a -> b -> a>`
+
+## Direct dependents (depth 1)
+
+| Module | Importing line | Uses changed behavior? | Tests in reach | Owner |
+| --- | --- | --- | --- | --- |
+| `<module>` | `<path:line>` | yes / no / false positive | `<test ids or none>` | `<handle>` |
+
+## Transitive dependents (depth 2+)
+
+| Package | Count | Affected through public surface? | Notes |
+| --- | --- | --- | --- |
+| `<package>` | `<n>` | yes / no | |
+
+## Blind spots
+
+| Category | Checked how | Result |
+| --- | --- | --- |
+| Dynamic imports and plugins | `<search>` | none / `<hits>` |
+| Serialized names and configuration | `<search>` | none / `<hits>` |
+| Other repositories and deployed consumers | `<search or owner query>` | none / unverified |
+
+## Risk
+
+- Score: low / medium / high
+- Deciding factor: <factor from the risk table>
+- Mitigation: <tests to add, staged rollout, compatibility window>
+
+## Actions
+
+- Tests to run: `<commands>`
+- Owners to notify: `<handles>`
+- Contracts to add or update: `<contract names>`

@@ -1,0 +1,100 @@
+// src/features/orders/realtime/order-events.ts
+// Event contract for live order updates. Every frame is validated, sequenced, and
+// applied to the query cache without letting an older event replace newer data.
+import type { QueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+import { orderKeys, ordersQueries } from "../api/orders.queries";
+import { orderSchema } from "../model/order";
+
+export const orderEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("order.updated"),
+    sequence: z.number().int().nonnegative(),
+    order: orderSchema,
+  }),
+  z.object({
+    type: z.literal("order.deleted"),
+    sequence: z.number().int().nonnegative(),
+    orderId: z.string().min(1),
+  }),
+  z.object({ type: z.literal("heartbeat") }),
+]);
+export type OrderEvent = z.infer<typeof orderEventSchema>;
+
+export type GateDecision = "apply" | "duplicate" | "gap";
+
+/**
+ * Tracks the per-stream sequence. Duplicates and replays are dropped; a gap means
+ * events were missed and the caller must resynchronize from the server.
+ */
+export function createSequenceGate(): Readonly<{
+  check: (sequence: number) => GateDecision;
+  reset: () => void;
+}> {
+  let last: number | null = null;
+  return {
+    check(sequence) {
+      if (last !== null && sequence <= last) {
+        return "duplicate";
+      }
+      const decision: GateDecision = last !== null && sequence > last + 1 ? "gap" : "apply";
+      last = sequence;
+      return decision;
+    },
+    reset() {
+      last = null;
+    },
+  };
+}
+
+export async function resynchronize(queryClient: QueryClient): Promise<void> {
+  await queryClient.invalidateQueries({ queryKey: orderKeys.all });
+}
+
+export function applyOrderEvent(queryClient: QueryClient, event: OrderEvent): void {
+  switch (event.type) {
+    case "order.updated": {
+      const { queryKey } = ordersQueries.detail(event.order.id);
+      queryClient.setQueryData(queryKey, (existing) =>
+        existing && Date.parse(existing.updatedAt) > Date.parse(event.order.updatedAt)
+          ? existing
+          : event.order,
+      );
+      void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
+      return;
+    }
+    case "order.deleted": {
+      queryClient.removeQueries({ queryKey: orderKeys.detail(event.orderId), exact: true });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.lists() });
+      return;
+    }
+    case "heartbeat":
+      return;
+  }
+}
+
+/** Parse, sequence, and apply one raw payload; returns what happened for metrics. */
+export function handleOrderPayload(
+  queryClient: QueryClient,
+  gate: ReturnType<typeof createSequenceGate>,
+  payload: unknown,
+): "applied" | "ignored" | "invalid" | "resync" {
+  const parsed = orderEventSchema.safeParse(payload);
+  if (!parsed.success) {
+    return "invalid";
+  }
+  const event = parsed.data;
+  if (event.type === "heartbeat") {
+    return "ignored";
+  }
+  const decision = gate.check(event.sequence);
+  if (decision === "duplicate") {
+    return "ignored";
+  }
+  applyOrderEvent(queryClient, event);
+  if (decision === "gap") {
+    void resynchronize(queryClient);
+    return "resync";
+  }
+  return "applied";
+}

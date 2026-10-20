@@ -1,0 +1,87 @@
+// src/features/orders/realtime/order-events.test.ts
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
+import { orderKeys, ordersQueries } from "../api/orders.queries";
+import type { Order } from "../model/order";
+import { createSequenceGate, handleOrderPayload } from "./order-events";
+
+const order: Order = {
+  id: "ord_3",
+  reference: "ORD-1003",
+  status: "submitted",
+  totalMinor: 990,
+  currency: "EUR",
+  updatedAt: "2026-03-01T12:00:00Z",
+};
+
+function seeded(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(ordersQueries.detail(order.id).queryKey, order);
+  client.setQueryData(ordersQueries.list({}).queryKey, { items: [order], nextCursor: null });
+  return client;
+}
+
+describe("createSequenceGate", () => {
+  it("applies in-order events, drops duplicates, and flags gaps", () => {
+    const gate = createSequenceGate();
+    expect(gate.check(5)).toBe("apply");
+    expect(gate.check(6)).toBe("apply");
+    expect(gate.check(6)).toBe("duplicate");
+    expect(gate.check(4)).toBe("duplicate");
+    expect(gate.check(9)).toBe("gap");
+    gate.reset();
+    expect(gate.check(1)).toBe("apply");
+  });
+});
+
+describe("handleOrderPayload", () => {
+  it("rejects payloads that do not match the event contract", () => {
+    const client = seeded();
+    expect(handleOrderPayload(client, createSequenceGate(), { type: "order.updated" })).toBe("invalid");
+    expect(handleOrderPayload(client, createSequenceGate(), "garbage")).toBe("invalid");
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)).toEqual(order);
+  });
+
+  it("applies a newer update and invalidates lists", () => {
+    const client = seeded();
+    const newer = { ...order, status: "paid", updatedAt: "2026-03-01T12:05:00Z" };
+
+    const result = handleOrderPayload(client, createSequenceGate(), {
+      type: "order.updated",
+      sequence: 1,
+      order: newer,
+    });
+
+    expect(result).toBe("applied");
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("paid");
+    expect(client.getQueryState(orderKeys.list({}))?.isInvalidated).toBe(true);
+  });
+
+  it("never lets an older event overwrite newer cached data", () => {
+    const client = seeded();
+    const older = { ...order, status: "draft", updatedAt: "2026-03-01T11:00:00Z" };
+
+    handleOrderPayload(client, createSequenceGate(), { type: "order.updated", sequence: 1, order: older });
+
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)?.status).toBe("submitted");
+  });
+
+  it("removes deleted orders and requests a resync after a gap", () => {
+    const client = seeded();
+    const gate = createSequenceGate();
+    gate.check(1);
+
+    const result = handleOrderPayload(client, gate, { type: "order.deleted", sequence: 4, orderId: order.id });
+
+    expect(result).toBe("resync");
+    expect(client.getQueryData(ordersQueries.detail(order.id).queryKey)).toBeUndefined();
+  });
+
+  it("ignores heartbeats and duplicate sequences", () => {
+    const client = seeded();
+    const gate = createSequenceGate();
+    expect(handleOrderPayload(client, gate, { type: "heartbeat" })).toBe("ignored");
+    handleOrderPayload(client, gate, { type: "order.updated", sequence: 2, order });
+    expect(handleOrderPayload(client, gate, { type: "order.updated", sequence: 2, order })).toBe("ignored");
+  });
+});

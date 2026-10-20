@@ -1,0 +1,142 @@
+"""One contract suite, run against every implementation of the repository port.
+
+Copy to 'tests/contract/test_invoice_repository_contract.py'. The abstract class
+holds the behavior every adapter must show; each concrete subclass supplies a
+unit-of-work factory. When the fake and the real adapter pass the same suite,
+tests that use the fake are evidence about production behavior too.
+
+Run the SQLite subclass in the integration tier if your real store needs a
+server; here it uses a file in 'tmp_path', so it is fast enough for unit runs.
+"""
+
+from collections.abc import Callable
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from app.adapters.persistence.sqlite_invoices import SqliteUnitOfWork, connect
+from app.application.ports.invoices import (
+    DuplicateInvoiceError,
+    InvoiceNotFoundError,
+    UnitOfWork,
+)
+from app.domain.invoice import Invoice, InvoiceStatus
+from tests.fakes import InMemoryUnitOfWork
+
+type UnitOfWorkFactory = Callable[[], UnitOfWork]
+
+
+def _invoice(invoice_id: str = "inv-001", customer_id: str = "cus-1") -> Invoice:
+    return Invoice(
+        invoice_id=invoice_id,
+        customer_id=customer_id,
+        amount=Decimal("125.50"),
+        currency="EUR",
+    )
+
+
+class InvoiceRepositoryContract:
+    """Behavior shared by every 'InvoiceRepository' and 'UnitOfWork' pair."""
+
+    @pytest.fixture
+    def unit_of_work(self) -> UnitOfWorkFactory:
+        raise NotImplementedError("each adapter subclass provides this fixture")
+
+    def test_added_invoice_is_returned_after_commit(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            unit.invoices.add(_invoice())
+            unit.commit()
+        with unit_of_work() as unit:
+            assert unit.invoices.get("inv-001") == _invoice()
+
+    def test_uncommitted_changes_are_discarded_on_exit(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            unit.invoices.add(_invoice())
+        with unit_of_work() as unit, pytest.raises(InvoiceNotFoundError):
+            unit.invoices.get("inv-001")
+
+    def test_rollback_discards_staged_changes_but_keeps_committed_ones(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            unit.invoices.add(_invoice("inv-001"))
+            unit.commit()
+            unit.invoices.add(_invoice("inv-002"))
+            unit.rollback()
+            unit.commit()
+        with unit_of_work() as unit:
+            assert unit.invoices.get("inv-001").invoice_id == "inv-001"
+            with pytest.raises(InvoiceNotFoundError):
+                unit.invoices.get("inv-002")
+
+    def test_missing_invoice_raises_port_error_not_driver_error(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit, pytest.raises(InvoiceNotFoundError) as caught:
+            unit.invoices.get("absent")
+        assert caught.value.invoice_id == "absent"
+
+    def test_adding_a_duplicate_identifier_is_rejected(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            unit.invoices.add(_invoice())
+            with pytest.raises(DuplicateInvoiceError):
+                unit.invoices.add(_invoice())
+
+    def test_saving_an_unknown_invoice_is_rejected(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit, pytest.raises(InvoiceNotFoundError):
+            unit.invoices.save(_invoice("never-added"))
+
+    def test_saved_status_and_reference_survive_a_round_trip(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            unit.invoices.add(_invoice())
+            unit.commit()
+        with unit_of_work() as unit:
+            paid = unit.invoices.get("inv-001").mark_paid(payment_reference="pay-9")
+            unit.invoices.save(paid)
+            unit.commit()
+        with unit_of_work() as unit:
+            stored = unit.invoices.get("inv-001")
+        assert stored.status is InvoiceStatus.PAID
+        assert stored.payment_reference == "pay-9"
+        assert stored.amount == Decimal("125.50")
+
+    def test_list_open_filters_by_customer_and_status_in_id_order_with_limit(
+        self, unit_of_work: UnitOfWorkFactory
+    ) -> None:
+        with unit_of_work() as unit:
+            for invoice_id in ("inv-003", "inv-001", "inv-002"):
+                unit.invoices.add(_invoice(invoice_id))
+            unit.invoices.add(_invoice("inv-900", customer_id="cus-2"))
+            unit.invoices.save(unit.invoices.get("inv-002").void())
+            unit.commit()
+        with unit_of_work() as unit:
+            listed = unit.invoices.list_open(customer_id="cus-1", limit=1)
+            everything = unit.invoices.list_open(customer_id="cus-1")
+        assert [item.invoice_id for item in listed] == ["inv-001"]
+        assert [item.invoice_id for item in everything] == ["inv-001", "inv-003"]
+
+
+class TestInMemoryInvoiceRepository(InvoiceRepositoryContract):
+    @pytest.fixture
+    def unit_of_work(self) -> UnitOfWorkFactory:
+        shared = InMemoryUnitOfWork()
+        return lambda: shared
+
+
+class TestSqliteInvoiceRepository(InvoiceRepositoryContract):
+    @pytest.fixture
+    def unit_of_work(self, tmp_path: Path) -> UnitOfWorkFactory:
+        database = str(tmp_path / "invoices.sqlite3")
+        connect(database).close()
+        return lambda: SqliteUnitOfWork(lambda: connect(database))

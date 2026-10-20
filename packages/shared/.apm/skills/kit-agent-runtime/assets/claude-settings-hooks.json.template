@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.agents/hooks/tool_guard.py",
+              "hook",
+              "--runtime",
+              "claude",
+              "--policy",
+              "${CLAUDE_PROJECT_DIR}/.agents/hooks/tool_guard_policy.json"
+            ],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

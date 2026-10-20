@@ -1,0 +1,237 @@
+"""Aggregate root: the only entry point for changing an order and its lines.
+
+Copy into 'src/<package>/core/orders.py' and adapt. The aggregate enforces its
+invariants in command methods, records domain events, compares by identity, and
+carries a version for optimistic concurrency. It imports no framework.
+"""
+
+import enum
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Self
+
+from shop.core.events import DomainEvent, OrderConfirmed, OrderLineAdded, OrderOpened
+from shop.core.values import Money, OrderId
+
+MAX_LINES = 100
+
+
+class OrderError(Exception):
+    """Base class for rejected order commands."""
+
+
+class OrderStateError(OrderError):
+    """The command is not allowed in the order's current status."""
+
+
+class OrderLimitError(OrderError):
+    """The command would exceed a documented order limit."""
+
+
+@enum.unique
+class OrderStatus(StrEnum):
+    """Lifecycle state of an order."""
+
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderLine:
+    """Entity inside the aggregate; never changed from outside the root."""
+
+    sku: str
+    quantity: int
+    unit_price: Money
+
+    def __post_init__(self) -> None:
+        """Reject empty SKUs and non-positive quantities."""
+        if not self.sku.strip():
+            raise ValueError("sku must not be empty")
+        if self.quantity <= 0:
+            raise ValueError(f"quantity must be positive, got {self.quantity}")
+
+    @property
+    def subtotal(self) -> Money:
+        """Quantity times unit price."""
+        return self.unit_price.times(self.quantity)
+
+
+class Order:
+    """Order aggregate root.
+
+    Invariants:
+        - All lines share the order currency.
+        - A confirmed order has at least one line and a non-negative total.
+        - Lines change only while the order is a draft.
+        - At most 'MAX_LINES' lines; one line per SKU.
+    """
+
+    __slots__ = ("_currency", "_customer_id", "_events", "_id", "_lines", "_status", "_version")
+
+    def __init__(
+        self,
+        *,
+        order_id: OrderId,
+        customer_id: str,
+        currency: str,
+        status: OrderStatus,
+        lines: Iterable[OrderLine],
+        version: int,
+    ) -> None:
+        """Hold already-validated state; use 'open' or 'restore' to construct.
+
+        Args:
+            order_id: Aggregate identity.
+            customer_id: Reference to the customer aggregate by identifier only.
+            currency: ISO 4217 code shared by every line.
+            status: Current lifecycle state.
+            lines: Current lines in insertion order.
+            version: Persisted version for optimistic concurrency.
+        """
+        self._id = order_id
+        self._customer_id = customer_id
+        self._currency = currency
+        self._status = status
+        self._lines = list(lines)
+        self._version = version
+        self._events: list[DomainEvent] = []
+
+    @classmethod
+    def open(cls, *, order_id: OrderId, customer_id: str, currency: str, now: datetime) -> Self:
+        """Start a new draft order and record 'OrderOpened'."""
+        Money.zero(currency)  # Validates the currency code with the value object rule.
+        order = cls(
+            order_id=order_id,
+            customer_id=customer_id,
+            currency=currency,
+            status=OrderStatus.DRAFT,
+            lines=(),
+            version=0,
+        )
+        order._events.append(OrderOpened(occurred_at=now, order_id=order_id, customer_id=customer_id))
+        return order
+
+    @classmethod
+    def restore(
+        cls,
+        *,
+        order_id: OrderId,
+        customer_id: str,
+        currency: str,
+        status: OrderStatus,
+        lines: Iterable[OrderLine],
+        version: int,
+    ) -> Self:
+        """Rebuild from storage without re-running creation rules or emitting events."""
+        return cls(
+            order_id=order_id,
+            customer_id=customer_id,
+            currency=currency,
+            status=status,
+            lines=lines,
+            version=version,
+        )
+
+    @property
+    def id(self) -> OrderId:
+        """Aggregate identity."""
+        return self._id
+
+    @property
+    def customer_id(self) -> str:
+        """Identifier of the owning customer aggregate."""
+        return self._customer_id
+
+    @property
+    def currency(self) -> str:
+        """ISO 4217 code shared by every line."""
+        return self._currency
+
+    @property
+    def status(self) -> OrderStatus:
+        """Current lifecycle state."""
+        return self._status
+
+    @property
+    def version(self) -> int:
+        """Version the aggregate was loaded with; adapters bump it on save."""
+        return self._version
+
+    @property
+    def lines(self) -> tuple[OrderLine, ...]:
+        """Read-only view of the lines."""
+        return tuple(self._lines)
+
+    @property
+    def total(self) -> Money:
+        """Sum of line subtotals in the order currency."""
+        total = Money.zero(self._currency)
+        for line in self._lines:
+            total = total + line.subtotal
+        return total
+
+    def add_line(self, *, sku: str, quantity: int, unit_price: Money, now: datetime) -> None:
+        """Add a line to a draft order.
+
+        Raises:
+            OrderStateError: If the order is not a draft.
+            OrderLimitError: If the SKU is already present or the line limit is reached.
+            ValueError: If the line itself is invalid or uses another currency.
+        """
+        self._require_draft("add a line")
+        if unit_price.currency != self._currency:
+            raise ValueError(f"line currency {unit_price.currency} differs from {self._currency}")
+        if any(line.sku == sku for line in self._lines):
+            raise OrderLimitError(f"sku {sku!r} is already on the order")
+        if len(self._lines) >= MAX_LINES:
+            raise OrderLimitError(f"an order holds at most {MAX_LINES} lines")
+        line = OrderLine(sku=sku, quantity=quantity, unit_price=unit_price)
+        self._lines.append(line)
+        self._events.append(
+            OrderLineAdded(occurred_at=now, order_id=self._id, sku=sku, quantity=quantity)
+        )
+
+    def confirm(self, *, now: datetime) -> None:
+        """Confirm a non-empty draft and record 'OrderConfirmed'.
+
+        Raises:
+            OrderStateError: If the order is not a draft or has no lines.
+        """
+        self._require_draft("confirm")
+        if not self._lines:
+            raise OrderStateError("cannot confirm an order without lines")
+        self._status = OrderStatus.CONFIRMED
+        self._events.append(OrderConfirmed(occurred_at=now, order_id=self._id, total=self.total))
+
+    def cancel(self) -> None:
+        """Cancel a draft or confirmed order; cancelling twice is rejected."""
+        if self._status is OrderStatus.CANCELLED:
+            raise OrderStateError("order is already cancelled")
+        self._status = OrderStatus.CANCELLED
+
+    def pull_events(self) -> list[DomainEvent]:
+        """Return pending events in order and clear them."""
+        events, self._events = self._events, []
+        return events
+
+    def __eq__(self, other: object) -> bool:
+        """Aggregates are equal when they have the same identity."""
+        if not isinstance(other, Order):
+            return NotImplemented
+        return self._id == other._id
+
+    def __hash__(self) -> int:
+        """Hash by identity so state changes never move the object in a set."""
+        return hash(self._id)
+
+    def __repr__(self) -> str:
+        """Developer representation without line details."""
+        return f"Order(id={self._id.value!r}, status={self._status.value!r}, lines={len(self._lines)})"
+
+    def _require_draft(self, action: str) -> None:
+        if self._status is not OrderStatus.DRAFT:
+            raise OrderStateError(f"cannot {action} when the order is {self._status.value}")

@@ -1,0 +1,82 @@
+// e2e/accessibility.spec.ts
+// Automated WCAG checks with axe-core on each key page and on states revealed by
+// interaction. Automated scans find a subset of issues; manual checks still apply.
+import AxeBuilder from "@axe-core/playwright";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
+
+const wcagTags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
+
+function scan(page: Page): AxeBuilder {
+  return (
+    new AxeBuilder({ page })
+      .withTags(wcagTags)
+      // Exclusions need an owner and a ticket; never exclude your own components to pass.
+      .exclude("[data-third-party-widget]")
+  );
+}
+
+function summarize(violations: Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"]): string[] {
+  return violations.map(
+    (violation) =>
+      `${violation.id} (${violation.impact ?? "unknown"}): ${violation.nodes
+        .map((node) => node.target.join(" "))
+        .join(", ")}`,
+  );
+}
+
+const pages = [
+  { name: "orders list", path: "/orders" },
+  { name: "order detail", path: "/orders/ord_1001" },
+  { name: "new invoice form", path: "/invoices/new" },
+] as const;
+
+for (const { name, path } of pages) {
+  test(`${name} has no detectable WCAG A/AA violations`, async ({ page }) => {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+
+    const results = await scan(page).analyze();
+
+    expect(summarize(results.violations)).toEqual([]);
+  });
+}
+
+test("form error state has no detectable violations", async ({ page }) => {
+  await page.goto("/invoices/new");
+  await page.getByRole("button", { name: "Save invoice" }).click();
+  await expect(page.getByLabel("Customer email")).toHaveAttribute("aria-invalid", "true");
+
+  const results = await scan(page).include("form").analyze();
+
+  expect(summarize(results.violations)).toEqual([]);
+});
+
+test("keyboard focus is always visible and never trapped on the orders page", async ({ page }) => {
+  await page.goto("/orders");
+  const seen = new Set<string>();
+
+  for (let step = 0; step < 25; step += 1) {
+    await page.keyboard.press("Tab");
+    const focused = page.locator(":focus");
+    await expect(focused).toBeVisible();
+    const outline = await focused.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return `${style.outlineStyle}|${style.outlineWidth}|${style.boxShadow}`;
+    });
+    expect(outline, "focused element needs a visible focus indicator").not.toBe("none|0px|none");
+    seen.add(await focused.evaluate((element) => element.outerHTML.slice(0, 80)));
+  }
+
+  expect(seen.size, "focus should move through several distinct elements").toBeGreaterThan(3);
+});
+
+test.describe("reduced motion", () => {
+  test.use({ colorScheme: "dark", reducedMotion: "reduce" });
+
+  test("orders page stays accessible in dark mode with reduced motion", async ({ page }) => {
+    await page.goto("/orders");
+    const results = await scan(page).analyze();
+    expect(summarize(results.violations)).toEqual([]);
+  });
+});

@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Check canonical toolkit",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent_kit",
+      "args": ["check", "--root", "${workspaceFolder}", "--json"],
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Compose a profile into build/",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent_kit",
+      "args": [
+        "compose",
+        "${input:profile}",
+        "--root",
+        "${workspaceFolder}",
+        "--output",
+        "${input:composeOutput}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug current test file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-p", "no:xdist"],
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "profile",
+      "type": "pickString",
+      "description": "Catalog profile to compose",
+      "options": ["toolkit", "shared", "backend", "frontend", "fullstack", "iac", "workflows", "ai"],
+      "default": "backend"
+    },
+    {
+      "id": "composeOutput",
+      "type": "promptString",
+      "description": "New output directory; it must not exist (relative to the workspace)",
+      "default": "build/debug-candidate"
+    }
+  ]
+}

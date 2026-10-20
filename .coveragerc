@@ -1,0 +1,17 @@
+[run]
+source = agent_kit
+branch = true
+parallel = true
+# Measure `python -m agent_kit` child processes started by integration tests.
+patch = subprocess
+relative_files = true
+
+[report]
+show_missing = true
+skip_empty = true
+fail_under = 90
+exclude_also =
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    \.\.\.

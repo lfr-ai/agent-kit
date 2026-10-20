@@ -1,0 +1,104 @@
+"""Composition root: the only place that knows every concrete adapter.
+
+Copy to 'app/composition.py'. Read configuration once, construct adapters,
+inject them into use cases and hand the result to a driving adapter (CLI, HTTP
+handler, worker). No other module imports adapters, and no module below this
+one reads environment variables.
+"""
+
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from functools import partial
+from typing import Self
+
+from app.adapters.notifications.smtp_notifier import (
+    SmtpInvoiceNotifier,
+    starttls_factory,
+)
+from app.adapters.payments.http_payment_gateway import HttpPaymentGateway
+from app.adapters.persistence.sqlite_invoices import SqliteUnitOfWork, connect
+from app.application.use_cases.settle_invoice import SettleInvoice
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Settings:
+    """Validated configuration; secrets are read here and passed inward.
+
+    Attributes:
+        database: SQLite database path.
+        payments_url: Payment provider HTTPS base URL.
+        payments_token: Bearer token for the payment provider.
+        smtp_host: SMTP submission host.
+        smtp_port: SMTP submission port.
+        sender: From address for customer e-mail.
+    """
+
+    database: str
+    payments_url: str
+    payments_token: str
+    smtp_host: str
+    smtp_port: int
+    sender: str
+
+    @classmethod
+    def from_environment(cls, environ: Mapping[str, str] = os.environ) -> Self:
+        """Read required settings and fail fast with the missing names.
+
+        Args:
+            environ: Variable source; tests pass a plain dictionary.
+
+        Returns:
+            Validated settings.
+
+        Raises:
+            KeyError: Listing every missing variable at once.
+        """
+        names = {
+            "database": "APP_DATABASE",
+            "payments_url": "APP_PAYMENTS_URL",
+            "payments_token": "APP_PAYMENTS_TOKEN",
+            "smtp_host": "APP_SMTP_HOST",
+            "smtp_port": "APP_SMTP_PORT",
+            "sender": "APP_SENDER",
+        }
+        missing = sorted(name for name in names.values() if not environ.get(name))
+        if missing:
+            raise KeyError(f"missing settings: {', '.join(missing)}")
+        values = {field: environ[name] for field, name in names.items()}
+        return cls(
+            database=values["database"],
+            payments_url=values["payments_url"],
+            payments_token=values["payments_token"],
+            smtp_host=values["smtp_host"],
+            smtp_port=int(values["smtp_port"]),
+            sender=values["sender"],
+        )
+
+
+def build_settle_invoice(
+    settings: Settings, *, address_book: Mapping[str, str]
+) -> SettleInvoice:
+    """Wire the settle-invoice use case with production adapters.
+
+    Args:
+        settings: Validated configuration.
+        address_book: Customer id to e-mail address lookup.
+
+    Returns:
+        A ready-to-call use case.
+    """
+    return SettleInvoice(
+        unit_of_work=partial(SqliteUnitOfWork, partial(connect, settings.database)),
+        payments=HttpPaymentGateway(
+            base_url=settings.payments_url,
+            token=lambda: settings.payments_token,
+        ),
+        notifier=SmtpInvoiceNotifier(
+            connect=starttls_factory(
+                host=settings.smtp_host, port=settings.smtp_port, timeout=10.0
+            ),
+            sender=settings.sender,
+            address_of=address_book.__getitem__,
+        ),
+    )

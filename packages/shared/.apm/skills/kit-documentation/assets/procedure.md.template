@@ -1,0 +1,26 @@
+# Task-oriented procedure
+
+## Outcome and audience
+
+## Prerequisites
+
+- Supported version and working directory:
+- Inputs, approvals and external effects:
+
+## Steps
+
+1. Record the existing state.
+2. Run the exact reviewed command.
+3. Compare the result with the expected output.
+
+## Failure and recovery
+
+- Error meaning:
+- Safe retry:
+- Rollback and irreversible boundary:
+
+## Evidence and ownership
+
+- Owning source and related test:
+- Last executed command/environment/result:
+- Unavailable checks:

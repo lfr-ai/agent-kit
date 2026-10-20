@@ -1,0 +1,31 @@
+cache = true
+max_concurrency = 16
+timeout = 30
+max_redirects = 5
+retry_wait_time = 5
+# 403/429: bot-protected or rate-limited hosts that are reachable in a browser.
+accept = ["200..=204", "301..=308", "403", "429"]
+
+exclude = [
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://example\\.(com|org)",
+  # Placeholders and templated values.
+  "\\{\\{",
+  "\\$\\{",
+  "%7B.*%7D",
+]
+
+exclude_path = [
+  "\\.venv",
+  "\\.tox",
+  "build",
+  "dist",
+  "apm_modules",
+  "node_modules",
+  "htmlcov",
+  # Generated APM projections duplicate their .apm/ sources.
+  "\\.agents/skills",
+  "\\.claude/skills",
+  "CHANGELOG\\.md",
+]

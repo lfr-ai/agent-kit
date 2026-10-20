@@ -1,0 +1,139 @@
+// src/app/router.test.tsx
+// Router behavior through a memory router: redirects, loaders, boundaries, retry,
+// and URL-state parsing. Assumes the shared test setup has loaded runtime config.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import { createMemoryRouter, RouterProvider, type RouteObject } from "react-router";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { OrderDetailPage, orderDetailLoader } from "@/features/orders/routes/order-detail.route";
+import { RouteErrorBoundary } from "./route-error-boundary";
+import { requireSession, type Session } from "./router";
+import { parseOrderSearch, safeReturnTo, serializeOrderSearch } from "./search-params";
+
+const order = {
+  id: "ord_42",
+  reference: "ORD-1042",
+  status: "paid",
+  totalMinor: 5000,
+  currency: "EUR",
+  updatedAt: "2026-05-01T08:00:00Z",
+};
+const signedIn: Session = { userId: "u_1", displayName: "Test User" };
+
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function renderAt(path: string, session: Session | null = signedIn) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const routes: RouteObject[] = [
+    {
+      path: "/",
+      ErrorBoundary: RouteErrorBoundary,
+      children: [
+        { path: "sign-in", element: <h1>Sign in</h1> },
+        { path: "orders", element: <h1>Orders</h1> },
+        {
+          loader: requireSession(() => Promise.resolve(session)),
+          children: [
+            {
+              path: "orders/:orderId",
+              loader: orderDetailLoader(queryClient),
+              Component: OrderDetailPage,
+              ErrorBoundary: RouteErrorBoundary,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  const router = createMemoryRouter(routes, { initialEntries: [path] });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return router;
+}
+
+describe("order detail route", () => {
+  it("redirects anonymous users to sign-in and keeps a safe return path", async () => {
+    const router = renderAt("/orders/ord_42?tab=items", null);
+
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/sign-in");
+    expect(new URLSearchParams(router.state.location.search).get("returnTo")).toBe("/orders/ord_42?tab=items");
+  });
+
+  it("loads the order before rendering", async () => {
+    server.use(http.get("*/api/orders/:id", () => HttpResponse.json(order)));
+
+    renderAt("/orders/ord_42");
+
+    expect(await screen.findByRole("heading", { name: "Order ORD-1042" })).toBeVisible();
+    expect(screen.getByText("Paid")).toBeVisible();
+  });
+
+  it("answers a malformed id with not-found and makes no request", async () => {
+    const handler = vi.fn(() => HttpResponse.json(order));
+    server.use(http.get("*/api/orders/:id", handler));
+
+    renderAt("/orders/not-an-id");
+
+    const heading = await screen.findByRole("heading", { name: "Page not found" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [403, "You do not have access to this page"],
+    [404, "Page not found"],
+  ])("maps API status %i to a route error", async (status, title) => {
+    server.use(http.get("*/api/orders/:id", () => HttpResponse.json({ title: "x" }, { status })));
+
+    renderAt("/orders/ord_42");
+
+    expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("offers a retry for server failures that re-runs the loader", async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    server.use(
+      http.get("*/api/orders/:id", () => new HttpResponse(null, { status: 503 }), { once: true }),
+      http.get("*/api/orders/:id", () => HttpResponse.json(order)),
+    );
+
+    renderAt("/orders/ord_42");
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("heading", { name: "Order ORD-1042" })).toBeVisible();
+    // Unexpected errors are reported once by the boundary.
+    expect(consoleError).toHaveBeenCalled();
+  });
+});
+
+describe("search params", () => {
+  it("falls back to defaults for invalid values and omits defaults when serializing", () => {
+    const parsed = parseOrderSearch(new URLSearchParams("status=bogus&page=-3&sort=evil&q=%20shoes%20"));
+
+    expect(parsed).toEqual({ status: undefined, q: "shoes", page: 1, sort: "updated-desc" });
+    expect(serializeOrderSearch(parsed).toString()).toBe("q=shoes");
+    expect(serializeOrderSearch({ ...parsed, page: 3, status: "paid" }).toString()).toBe("status=paid&q=shoes&page=3");
+  });
+
+  it.each([
+    ["/orders?page=2", "/orders?page=2"],
+    ["https://evil.example/", "/"],
+    ["//evil.example/path", "/"],
+    ["/\\evil.example", "/"],
+    [null, "/"],
+  ])("safeReturnTo(%s) is %s", (value, expected) => {
+    expect(safeReturnTo(value)).toBe(expected);
+  });
+});
