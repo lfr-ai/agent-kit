@@ -8,6 +8,10 @@ public repository owner. The reporting route follows that owner's documented
 security/conduct contact.
 `uv run --locked python scripts/check_governance.py --publication` checks this metadata.
 The intended `lfr-ai/agent-kit` remote and its hosted settings have not been created.
+The repository includes optional [Codecov](../.codecov.yml) and
+[CodeRabbit](../.coderabbit.yaml) configuration, plus the existing
+[pull request template](../.github/PULL_REQUEST_TEMPLATE.md). These files do
+not install either service, upload coverage, or enforce hosted status checks.
 
 Set [.github/maintainers.json](../.github/maintainers.json) to the approved
 repository coordinate, code owners, and private HTTPS/mailto contact routes.
@@ -38,6 +42,8 @@ An account can be real without being the approved publishing identity.
 | Dependency visibility | Enable the dependency graph, Dependabot alerts, and Dependabot security updates; version updates are configured in [dependabot.yml](../.github/dependabot.yml) and need the `dependencies` label from [labels.yml](../.github/labels.yml) |
 | Code scanning | Enable Actions and verify the Python scanning workflow's first result |
 | Supply-chain posture | Dependency review and OpenSSF Scorecard run only on public repositories; check their first hosted results |
+| Code coverage | Install/authorize Codecov and configure CI report upload before relying on `.codecov.yml` statuses; the local branch-coverage gate remains authoritative until hosted checks are verified |
+| Automated review | Install/authorize CodeRabbit and inspect its resolved configuration; `.coderabbit.yaml` enables assertive reviews and disables author self-approval and automatic approval. GitHub rulesets still control required reviews and checks |
 | Review independence | Add a second trusted maintainer; a single owner cannot independently approve their own changes |
 | Labels | Create the labels in [labels.yml](../.github/labels.yml) (UI or `gh label create`); issue forms and release-note categories use only these |
 | Issue intake | Blank issues are disabled; the config links to private vulnerability reporting, which must be enabled for the link to work |
@@ -46,6 +52,8 @@ CODEOWNERS alone does not enable required approval.
 Ruleset JSON files are importable definitions, not evidence they are applied.
 An environment name in YAML alone does not create reviewer protection.
 Workflow files alone do not prove Actions or code scanning ran.
+Codecov and CodeRabbit configuration files alone do not prove an integration,
+coverage upload, review, or required status check is active.
 
 ## Fork contributions
 

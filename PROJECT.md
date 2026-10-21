@@ -60,6 +60,9 @@ task apm:smoke
   facade for configuration-only gates; `task verify` already includes these checks.
 - [VS Code setup](docs/editor.md): workspace-local editor, interpreter, task,
   debugging and customization contracts; no user-global settings are installed.
+- Hosted review templates are [.codecov.yml](.codecov.yml) and
+  [.coderabbit.yaml](.coderabbit.yaml); they do not install or activate either
+  hosted service. See [GitHub setup](docs/github-setup.md).
 - `task verify -- conventions`: execute the portable AST convention checker.
 - Task exposes ten recurring workflows, not aliases for every executable.
   `task verify -- <gate>` selects a named gate; one-off tools use their own CLI.

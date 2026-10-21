@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  allow_author_approval: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Treat violations of AGENTS.md and Python instructions as blocking:
+        Any or casts, hidden failures, boundary violations, and behavior
+        changes without focused tests.
+    - path: ".vscode/**"
+      instructions: |
+        Treat machine-specific paths, automatic installs, unsafe approvals,
+        and MCP autostart as blocking. Require alignment with Taskfile.yml,
+        root tool configuration, and docs/editor.md.
