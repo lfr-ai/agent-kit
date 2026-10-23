@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.27.0"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -50,7 +50,7 @@ default-groups = ["dev", "audit"]
 # Pin the isolated build backend closure; uv.lock covers only runtime and
 # development dependencies. Add hashes when the minimum uv supports them.
 build-constraint-dependencies = [
-  "hatchling==1.27.0",
+  "hatchling==1.32.4",
   "packaging==26.3",
   "pathspec==1.1.1",
   "pluggy==1.6.0",
