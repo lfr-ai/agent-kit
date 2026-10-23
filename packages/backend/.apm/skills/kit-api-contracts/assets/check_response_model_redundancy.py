@@ -1,16 +1,16 @@
-"""Flag FastAPI routes whose 'response_model' repeats the return annotation.
+"""Flag FastAPI routes whose ``response_model`` repeats the return annotation.
 
 FastAPI uses the return annotation as the response model. Passing the same type
-again in 'response_model=' is redundant and drifts when only one copy is
-changed. 'response_model' is meaningful only when it differs from the
-annotation (for example to filter an internal object) or is 'None' to disable
+again in ``response_model=`` is redundant and drifts when only one copy is
+changed. ``response_model`` is meaningful only when it differs from the
+annotation (for example to filter an internal object) or is ``None`` to disable
 the generated model; those cases are not reported.
 
-Annotations are normalized before comparison, so 'List[X]' equals 'list[X]',
-'Optional[X]' equals 'X | None', and 'Union[A, B]' equals 'A | B'.
+Annotations are normalized before comparison, so ``List[X]`` equals ``list[X]``,
+``Optional[X]`` equals ``X | None``, and ``Union[A, B]`` equals ``A | B``.
 
-With '--require-type', routes that declare neither a return annotation nor a
-'response_model' are reported too.
+With ``--require-type``, routes that declare neither a return annotation nor a
+``response_model`` are reported too.
 """
 
 import argparse
@@ -55,7 +55,7 @@ def check_source(
         require_type: Also report routes without any response type.
 
     Returns:
-        Findings formatted as 'path:line: message', sorted by line.
+        Findings formatted as ``path:line: message``, sorted by line.
     """
     tree = ast.parse(text, filename=path)
     findings: list[tuple[int, str]] = []
@@ -118,7 +118,7 @@ class _Normalizer(ast.NodeTransformer):
     """Rewrite legacy typing spellings into builtin and union syntax."""
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
-        """Drop a 'typing.' prefix so 'typing.List' matches 'List'."""
+        """Drop a ``typing.`` prefix so ``typing.List`` matches ``List``."""
         self.generic_visit(node)
         if isinstance(node.value, ast.Name) and node.value.id == "typing":
             return ast.Name(id=_ALIASES.get(node.attr, node.attr), ctx=ast.Load())
@@ -129,7 +129,7 @@ class _Normalizer(ast.NodeTransformer):
         return ast.Name(id=_ALIASES.get(node.id, node.id), ctx=ast.Load())
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
-        """Turn 'Optional[X]' and 'Union[A, B]' into '|' unions."""
+        """Turn ``Optional[X]`` and ``Union[A, B]`` into ``|`` unions."""
         self.generic_visit(node)
         if not isinstance(node.value, ast.Name):
             return node
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     """Scan files or directories for redundant response models.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         Zero without findings, otherwise one.

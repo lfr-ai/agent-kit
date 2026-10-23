@@ -1,16 +1,16 @@
 """Validate task envelope samples against the queue message contract.
 
 Input: one or more JSON files, each holding a list of envelope objects as
-produced by 'TaskEnvelope.to_json()'. Use it on fixtures, contract samples,
+produced by ``TaskEnvelope.to_json()``. Use it on fixtures, contract samples,
 or dead-letter exports before replay.
 
-Checks per envelope: required string fields 'task_id', 'task_type' and
-'idempotency_key'; integer 'version' of at least 1; object 'payload';
-timezone-aware ISO 8601 'created_at'; no secret-like payload keys; compact
-size within '--max-bytes'; and, when '--supported TYPE:VERSION' is given, a
-supported type and version. Across files: duplicate 'task_id' values are
-findings; duplicate 'idempotency_key' values are findings unless
-'--allow-duplicate-keys' is given (useful for duplicate-delivery fixtures).
+Checks per envelope: required string fields ``task_id``, ``task_type`` and
+``idempotency_key``; integer ``version`` of at least 1; object ``payload``;
+timezone-aware ISO 8601 ``created_at``; no secret-like payload keys; compact
+size within ``--max-bytes``; and, when ``--supported TYPE:VERSION`` is given, a
+supported type and version. Across files: duplicate ``task_id`` values are
+findings; duplicate ``idempotency_key`` values are findings unless
+``--allow-duplicate-keys`` is given (useful for duplicate-delivery fixtures).
 
 Exit codes: 0 clean, 1 findings, 2 unreadable input or bad arguments.
 Limitations: validates message bodies only; it does not inspect broker
@@ -18,13 +18,15 @@ configuration, visibility timeouts, or delivery guarantees.
 """
 
 import argparse
-import json
-import sys
 from datetime import datetime
 from enum import StrEnum
+import json
 from pathlib import Path
+import sys
 
 SECRET_KEYS = frozenset({"password", "secret", "token", "api_key", "authorization"})
+_DEFAULT_MAX_ENVELOPE_BYTES = 64 * 1024
+_EXIT_USAGE = 2
 
 
 class QueueInputIssue(StrEnum):
@@ -68,8 +70,7 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
     index += 1
     items: list[tuple[int, object]] = []
     while True:
-        while index < len(text) and text[index] in " \t\r\n,":
-            index += 1
+        index = _skip_separators(text, index)
         if index >= len(text):
             raise QueueInputError(QueueInputIssue.UNTERMINATED_ARRAY)
         if text[index] == "]":
@@ -81,8 +82,14 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
         items.append((line, value))
 
 
+def _skip_separators(text: str, index: int) -> int:
+    while index < len(text) and text[index] in " \t\r\n,":
+        index += 1
+    return index
+
+
 def parse_supported(values: list[str]) -> dict[str, set[int]]:
-    """Parse '--supported TYPE:VERSION' values.
+    """Parse ``--supported TYPE:VERSION`` values.
 
     Args:
         values: Raw option values.
@@ -113,7 +120,7 @@ def check_envelope(
 
     Args:
         item: Decoded element.
-        where: 'path:line' prefix.
+        where: ``path:line`` prefix.
         max_bytes: Maximum compact JSON size.
         supported: Task type to versions; empty means accept any.
 
@@ -130,28 +137,77 @@ def check_envelope(
     version = item.get("version")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         findings.append(f"{where}: 'version' must be an integer >= 1")
-    payload = item.get("payload")
-    if not isinstance(payload, dict):
-        findings.append(f"{where}: 'payload' must be an object")
-    else:
-        leaked = sorted(key for key in payload if str(key).casefold() in SECRET_KEYS)
-        if leaked:
-            findings.append(f"{where}: payload carries secret-like keys {leaked}")
-    created = item.get("created_at")
-    try:
-        if datetime.fromisoformat(str(created)).tzinfo is None:
-            findings.append(f"{where}: 'created_at' must include a timezone offset")
-    except ValueError:
-        findings.append(f"{where}: 'created_at' must be ISO 8601")
+    findings.extend(_payload_findings(item.get("payload"), where=where))
+    findings.extend(_created_at_findings(item.get("created_at"), where=where))
     size = len(json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode())
     if size > max_bytes:
         findings.append(f"{where}: envelope is {size} bytes, limit {max_bytes}")
-    task_type = item.get("task_type")
-    if supported and isinstance(task_type, str) and isinstance(version, int):
-        if task_type not in supported:
-            findings.append(f"{where}: unsupported task type {task_type!r}")
-        elif version not in supported[task_type]:
-            findings.append(f"{where}: unsupported version {version} for {task_type!r}")
+    findings.extend(
+        _support_findings(
+            item.get("task_type"), version, where=where, supported=supported
+        )
+    )
+    return findings
+
+
+def _payload_findings(payload: object, *, where: str) -> list[str]:
+    if not isinstance(payload, dict):
+        return [f"{where}: 'payload' must be an object"]
+    leaked = sorted(key for key in payload if str(key).casefold() in SECRET_KEYS)
+    if leaked:
+        return [f"{where}: payload carries secret-like keys {leaked}"]
+    return []
+
+
+def _created_at_findings(created: object, *, where: str) -> list[str]:
+    try:
+        if datetime.fromisoformat(str(created)).tzinfo is None:
+            return [f"{where}: 'created_at' must include a timezone offset"]
+    except ValueError:
+        return [f"{where}: 'created_at' must be ISO 8601"]
+    return []
+
+
+def _support_findings(
+    task_type: object,
+    version: object,
+    *,
+    where: str,
+    supported: dict[str, set[int]],
+) -> list[str]:
+    if not (supported and isinstance(task_type, str) and isinstance(version, int)):
+        return []
+    if task_type not in supported:
+        return [f"{where}: unsupported task type {task_type!r}"]
+    if version not in supported[task_type]:
+        return [f"{where}: unsupported version {version} for {task_type!r}"]
+    return []
+
+
+def _duplicate_findings(
+    item: object,
+    *,
+    where: str,
+    seen_ids: dict[str, str],
+    seen_keys: dict[str, str],
+    allow_duplicate_keys: bool,
+) -> list[str]:
+    if not isinstance(item, dict):
+        return []
+    findings: list[str] = []
+    task_id, key = item.get("task_id"), item.get("idempotency_key")
+    if isinstance(task_id, str) and task_id:
+        if task_id in seen_ids:
+            findings.append(
+                f"{where}: duplicate task_id (first at {seen_ids[task_id]})"
+            )
+        seen_ids.setdefault(task_id, where)
+    if isinstance(key, str) and key:
+        if key in seen_keys and not allow_duplicate_keys:
+            findings.append(
+                f"{where}: duplicate idempotency_key (first at {seen_keys[key]})"
+            )
+        seen_keys.setdefault(key, where)
     return findings
 
 
@@ -159,14 +215,14 @@ def main(argv: list[str] | None = None) -> int:
     """Validate each sample file and print findings.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 with findings, 2 on unreadable input or bad arguments.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", type=Path, help="JSON envelope samples")
-    parser.add_argument("--max-bytes", type=int, default=64 * 1024)
+    parser.add_argument("--max-bytes", type=int, default=_DEFAULT_MAX_ENVELOPE_BYTES)
     parser.add_argument(
         "--supported",
         action="append",
@@ -183,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         supported = parse_supported(args.supported)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     findings: list[str] = []
     seen_ids: dict[str, str] = {}
     seen_keys: dict[str, str] = {}
@@ -192,34 +248,51 @@ def main(argv: list[str] | None = None) -> int:
             items = items_with_lines(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError) as error:
             print(f"{path}:1: cannot read envelopes: {error}", file=sys.stderr)
-            return 2
-        if not items:
-            findings.append(f"{path}:1: sample has no envelopes")
-        for line, item in items:
-            where = f"{path}:{line}"
-            findings.extend(
-                check_envelope(
-                    item, where=where, max_bytes=args.max_bytes, supported=supported
-                )
+            return _EXIT_USAGE
+        findings.extend(
+            _sample_findings(
+                path,
+                items,
+                max_bytes=args.max_bytes,
+                supported=supported,
+                seen_ids=seen_ids,
+                seen_keys=seen_keys,
+                allow_duplicate_keys=args.allow_duplicate_keys,
             )
-            if not isinstance(item, dict):
-                continue
-            task_id, key = item.get("task_id"), item.get("idempotency_key")
-            if isinstance(task_id, str) and task_id:
-                if task_id in seen_ids:
-                    findings.append(
-                        f"{where}: duplicate task_id (first at {seen_ids[task_id]})"
-                    )
-                seen_ids.setdefault(task_id, where)
-            if isinstance(key, str) and key:
-                if key in seen_keys and not args.allow_duplicate_keys:
-                    findings.append(
-                        f"{where}: duplicate idempotency_key (first at {seen_keys[key]})"
-                    )
-                seen_keys.setdefault(key, where)
+        )
     for finding in findings:
         print(finding)
     return 1 if findings else 0
+
+
+def _sample_findings(
+    path: Path,
+    items: list[tuple[int, object]],
+    *,
+    max_bytes: int,
+    supported: dict[str, set[int]],
+    seen_ids: dict[str, str],
+    seen_keys: dict[str, str],
+    allow_duplicate_keys: bool,
+) -> list[str]:
+    if not items:
+        return [f"{path}:1: sample has no envelopes"]
+    findings: list[str] = []
+    for line, item in items:
+        where = f"{path}:{line}"
+        findings.extend(
+            check_envelope(item, where=where, max_bytes=max_bytes, supported=supported)
+        )
+        findings.extend(
+            _duplicate_findings(
+                item,
+                where=where,
+                seen_ids=seen_ids,
+                seen_keys=seen_keys,
+                allow_duplicate_keys=allow_duplicate_keys,
+            )
+        )
+    return findings
 
 
 if __name__ == "__main__":

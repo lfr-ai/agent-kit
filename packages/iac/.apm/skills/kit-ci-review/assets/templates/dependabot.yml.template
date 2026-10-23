@@ -1,6 +1,7 @@
 # Dependabot template. Copy to .github/dependabot.yml and keep only the
-# ecosystems the repository uses. Pinned action SHAs are updated together with
-# their trailing version comments.
+# ecosystems the repository uses. Pinned action SHAs and frozen pre-commit
+# revisions are updated together with their trailing version comments.
+# Version updates wait 14 days; security updates are never delayed.
 version: 2
 
 updates:
@@ -10,7 +11,7 @@ updates:
       interval: weekly
       day: monday
     cooldown:
-      default-days: 7
+      default-days: 14
     groups:
       actions-minor-and-patch:
         update-types: [minor, patch]
@@ -18,23 +19,46 @@ updates:
       prefix: ci
     open-pull-requests-limit: 5
 
-  - package-ecosystem: pip
+  # uv.lock and pyproject.toml are updated together.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
     cooldown:
-      default-days: 7
-      semver-major-days: 30
+      default-days: 14
     groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
       python-minor-and-patch:
         update-types: [minor, patch]
     commit-message:
       prefix: deps
 
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: build
 
@@ -42,5 +66,7 @@ updates:
     directory: /infra
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: infra

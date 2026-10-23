@@ -60,7 +60,7 @@ license: MIT
   and mirror a Taskfile target.
 - Recommended and unwanted extensions agree with the committed formatter and
   linter configuration.
-- No MCP server is active by default; any adopted server has a filled decision
-  record.
+- APM package composition does not activate MCP servers; consumer-owned native
+  configurations require a filled decision record.
 - File checks are not reported as a tested editor session; a live check (open
   the folder in a fresh profile and run each task) is listed as done or pending.

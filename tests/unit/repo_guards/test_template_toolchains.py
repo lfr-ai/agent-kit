@@ -3,11 +3,11 @@
 import ast
 import importlib.util
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -95,31 +95,38 @@ def _is_local(node: ast.ImportFrom) -> bool:
     return node.level > 0 or module.split(".")[0] in _LOCAL_ROOTS
 
 
+def _node_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        return {
+            name.id
+            for target in node.targets
+            for name in ast.walk(target)
+            if isinstance(name, ast.Name)
+        }
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return {node.target.id}
+    if isinstance(node, ast.TypeAlias):
+        return {node.name.id}
+    return _imported_names(node)
+
+
+def _imported_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Import):
+        return {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+    if isinstance(node, ast.ImportFrom) and not _is_local(node):
+        return {alias.asname or alias.name for alias in node.names}
+    return set()
+
+
 def _defined_names(tree: ast.Module) -> set[str]:
     names: set[str] = set()
     pending: list[ast.AST] = list(tree.body)
     while pending:
         node = pending.pop()
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            names.update(
-                name.id
-                for target in node.targets
-                for name in ast.walk(target)
-                if isinstance(name, ast.Name)
-            )
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-        elif isinstance(node, ast.TypeAlias):
-            names.add(node.name.id)
-        elif isinstance(node, ast.Import):
-            names.update(
-                (alias.asname or alias.name).split(".")[0] for alias in node.names
-            )
-        elif isinstance(node, ast.ImportFrom) and not _is_local(node):
-            names.update(alias.asname or alias.name for alias in node.names)
-        elif isinstance(node, ast.If | ast.Try | ast.With | ast.ExceptHandler):
+        names |= _node_names(node)
+        if isinstance(node, ast.If | ast.Try | ast.With | ast.ExceptHandler):
             pending.extend(ast.iter_child_nodes(node))
     return names
 
@@ -201,7 +208,7 @@ def test_import_gate_reports_a_renamed_function(tmp_path: Path) -> None:
 
 
 def test_terraform_blueprint_is_canonically_formatted(tmp_path: Path) -> None:
-    """The Terraform blueprint passes 'terraform fmt -check' without network access."""
+    """The Terraform blueprint passes ``terraform fmt -check`` without network access."""
     terraform = shutil.which("terraform")
     if terraform is None:
         pytest.skip("terraform is not installed")

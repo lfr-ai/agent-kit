@@ -39,6 +39,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@REVIEWED_COMMIT_SHA # v7
         with:
+          version: "REVIEWED_UV_VERSION"
           enable-cache: false
 
       - name: Verify the tag matches the package version

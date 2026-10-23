@@ -1,20 +1,20 @@
 """Flag risky GitHub Actions workflow patterns with a line-based scan.
 
-Reports a missing top-level 'permissions' key in workflow files, 'write-all'
-grants, 'uses:' references that are not pinned to a full commit SHA (or an image
-digest), and '${{' expressions inside 'run:' scripts. The scan reads files only;
+Reports a missing top-level ``permissions`` key in workflow files, ``write-all``
+grants, ``uses:`` references that are not pinned to a full commit SHA (or an image
+digest), and ``${{`` expressions inside ``run:`` scripts. The scan reads files only;
 it never contacts GitHub, resolves tags, or executes workflow content.
 
 Exit codes: 0 clean, 1 findings, 2 unreadable input or bad arguments.
 """
 
 import argparse
-import re
-import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+import re
+import sys
 
 _FINDINGS = 1
 _INVALID = 2
@@ -29,6 +29,7 @@ _EXPRESSION = re.compile(r"\$\{\{\s*(?P<body>.*?)\s*\}\}")
 _COMMENT = re.compile(r"(?:^|\s+)#.*$")
 _MAPPING_KEY = re.compile(r"^\s+[A-Za-z_][\w-]*\s*:(?:\s|$)")
 _WORKFLOW_SUFFIXES = (".yml", ".yaml")
+_SELF_TEST_RISKY_LINES = (1, 4, 6, 7, 8, 9, 12)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -46,7 +47,7 @@ class Finding:
     message: str
 
     def render(self) -> str:
-        """Return the deterministic 'path:line: message' form."""
+        """Return the deterministic ``path:line: message`` form."""
         return f"{self.path.as_posix()}:{self.line}: {self.message}"
 
 
@@ -55,8 +56,8 @@ class Options:
     """Scan configuration supplied on the command line.
 
     Attributes:
-        trusted_owners: Action owners exempt from SHA pinning (for example 'my-org').
-        allowed_expressions: Expression prefixes tolerated inside 'run:' scripts.
+        trusted_owners: Action owners exempt from SHA pinning (for example ``my-org``).
+        allowed_expressions: Expression prefixes tolerated inside ``run:`` scripts.
         require_permissions: Whether workflow files must declare top-level permissions.
     """
 
@@ -66,23 +67,25 @@ class Options:
 
 
 def check_reference(reference: str, options: Options) -> str | None:
-    """Explain why a 'uses:' reference is unpinned, or return None when acceptable.
+    """Explain why a ``uses:`` reference is unpinned, or return None when acceptable.
 
     Args:
-        reference: Raw value of a 'uses:' key without quotes.
+        reference: Raw value of a ``uses:`` key without quotes.
         options: Scan configuration.
 
     Returns:
-        A finding message, or None for local, digest-pinned, SHA-pinned or trusted refs.
+        A finding message, or None for local, self-repository, digest-pinned,
+        SHA-pinned or trusted refs.
     """
     message: str | None = None
     target, separator, ref = reference.partition("@")
     if reference.startswith("docker://"):
         if not _DIGEST.search(reference):
             message = f"container action '{reference}' is not pinned to a digest"
-    elif reference.startswith("./") or target.split("/", 1)[0] in (
+    elif reference.startswith(("./", "$/")) or target.split("/", 1)[0] in (
         options.trusted_owners
     ):
+        # ``$/`` resolves to the running commit, so it is already pinned.
         message = None
     elif not separator or not ref:
         message = f"action '{reference}' has no ref; pin a full 40-character SHA"
@@ -92,7 +95,7 @@ def check_reference(reference: str, options: Options) -> str | None:
 
 
 def _run_block_end(lines: Sequence[str], start: int, key_column: int) -> int:
-    """Return the index after the last continuation line of a 'run:' value."""
+    """Return the index after the last continuation line of a ``run:`` value."""
     index = start + 1
     while index < len(lines):
         text = lines[index]
@@ -103,10 +106,10 @@ def _run_block_end(lines: Sequence[str], start: int, key_column: int) -> int:
 
 
 def _is_mapping(rest: str, following: Sequence[str]) -> bool:
-    """Tell a 'defaults: run:' settings mapping apart from a 'run:' script.
+    """Tell a ``defaults: run:`` settings mapping apart from a ``run:`` script.
 
     Args:
-        rest: Text after 'run:' on the key line.
+        rest: Text after ``run:`` on the key line.
         following: Lines after the key line.
 
     Returns:
@@ -121,7 +124,7 @@ def _is_mapping(rest: str, following: Sequence[str]) -> bool:
 def _expression_findings(
     path: Path, number: int, text: str, options: Options
 ) -> list[Finding]:
-    """Report every disallowed '${{' expression in one line of a 'run:' script."""
+    """Report every disallowed ``${{`` expression in one line of a ``run:`` script."""
     findings: list[Finding] = []
     for match in _EXPRESSION.finditer(text):
         body = match.group("body")
@@ -148,6 +151,63 @@ def _expression_findings(
     return findings
 
 
+def _permissions_findings(
+    path: Path, lines: Sequence[str], options: Options
+) -> list[Finding]:
+    """Report a workflow that lacks top-level least-privilege permissions."""
+    is_workflow = any(_TOP_ON.match(line) for line in lines)
+    has_permissions = any(_TOP_PERMISSIONS.match(line) for line in lines)
+    if not (options.require_permissions and is_workflow and not has_permissions):
+        return []
+    return [
+        Finding(
+            path=path,
+            line=1,
+            message=(
+                "workflow has no top-level 'permissions'; declare least "
+                "privilege (for example 'contents: read')"
+            ),
+        )
+    ]
+
+
+def _run_block_findings(
+    path: Path, lines: Sequence[str], index: int, options: Options
+) -> tuple[list[Finding], int] | None:
+    """Scan a ``run:`` script starting at ``index`` and return its end index."""
+    run = _RUN.match(lines[index])
+    if run is None or _is_mapping(run.group("rest"), lines[index + 1 :]):
+        return None
+    number = index + 1
+    end = _run_block_end(lines, index, len(run.group("indent")))
+    findings = _expression_findings(path, number, run.group("rest"), options)
+    for offset, body in enumerate(lines[index + 1 : end], start=number + 1):
+        findings.extend(_expression_findings(path, offset, body, options))
+    return findings, end
+
+
+def _line_findings(
+    path: Path, number: int, line: str, options: Options
+) -> list[Finding]:
+    """Report ``write-all`` permissions and unpinned ``uses:`` references."""
+    findings: list[Finding] = []
+    if _WRITE_ALL.match(line):
+        findings.append(
+            Finding(
+                path=path,
+                line=number,
+                message="'permissions: write-all' grants every scope; list scopes",
+            )
+        )
+    uses = _USES.match(line)
+    if uses is not None:
+        reference = uses.group("ref").strip("\"'")
+        message = check_reference(reference, options)
+        if message is not None:
+            findings.append(Finding(path=path, line=number, message=message))
+    return findings
+
+
 def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
     """Scan one workflow or action file and return its findings in line order.
 
@@ -160,57 +220,25 @@ def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
         Findings sorted by line number.
     """
     lines = text.splitlines()
-    findings: list[Finding] = []
-    is_workflow = any(_TOP_ON.match(line) for line in lines)
-    has_permissions = any(_TOP_PERMISSIONS.match(line) for line in lines)
-    if options.require_permissions and is_workflow and not has_permissions:
-        findings.append(
-            Finding(
-                path=path,
-                line=1,
-                message=(
-                    "workflow has no top-level 'permissions'; declare least "
-                    "privilege (for example 'contents: read')"
-                ),
-            )
-        )
+    findings = _permissions_findings(path, lines, options)
     index = 0
     while index < len(lines):
         line = lines[index]
-        number = index + 1
         if line.lstrip().startswith("#"):
             index += 1
             continue
-        run = _RUN.match(line)
-        if run is not None and not _is_mapping(run.group("rest"), lines[index + 1 :]):
-            end = _run_block_end(lines, index, len(run.group("indent")))
-            findings.extend(
-                _expression_findings(path, number, run.group("rest"), options)
-            )
-            for offset, body in enumerate(lines[index + 1 : end], start=index + 2):
-                findings.extend(_expression_findings(path, offset, body, options))
-            index = end
+        block = _run_block_findings(path, lines, index, options)
+        if block is not None:
+            block_findings, index = block
+            findings.extend(block_findings)
             continue
-        if _WRITE_ALL.match(line):
-            findings.append(
-                Finding(
-                    path=path,
-                    line=number,
-                    message="'permissions: write-all' grants every scope; list scopes",
-                )
-            )
-        uses = _USES.match(line)
-        if uses is not None:
-            reference = uses.group("ref").strip("\"'")
-            message = check_reference(reference, options)
-            if message is not None:
-                findings.append(Finding(path=path, line=number, message=message))
+        findings.extend(_line_findings(path, index + 1, line, options))
         index += 1
     return sorted(findings, key=lambda finding: finding.line)
 
 
 class WorkflowInputError(ValueError):
-    """An input violates the workflowinput contract."""
+    """An input violates the workflow input contract."""
 
     def __init__(self, *, path: Path) -> None:
         """Describe the violated invariant.
@@ -299,7 +327,7 @@ def self_test() -> None:
         "      - run: |\n          echo ok\n          echo ${{ github.head_ref }}\n"
     )
     lines = [finding.line for finding in scan_text(Path("risky.yml"), risky, options)]
-    if lines != [1, 4, 6, 7, 8, 9, 12]:
+    if tuple(lines) != _SELF_TEST_RISKY_LINES:
         raise SelfTestError(SelfTestIssue.RISKY_WORKFLOW_FINDINGS, lines=lines)
     action = "runs:\n  using: composite\n  steps:\n    - run: echo hi\n"
     if scan_text(Path("action.yml"), action, options):
@@ -307,10 +335,10 @@ def self_test() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Scan workflow files and print one 'path:line: message' line per finding.
+    """Scan workflow files and print one ``path:line: message`` line per finding.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when clean, 1 with findings, 2 for unreadable input.

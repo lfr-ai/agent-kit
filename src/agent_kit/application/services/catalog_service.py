@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from enum import StrEnum, unique
 import hashlib
 import json
-import re
-from enum import StrEnum, unique
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Literal, TypeGuard
+import re
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import unquote, urlsplit
 
 from agent_kit.application.services.native_delivery import (
@@ -29,6 +29,9 @@ from agent_kit.core.models import (
     SourceDocument,
 )
 from agent_kit.core.text import visible_text
+
+if TYPE_CHECKING:
+    from urllib.parse import SplitResult
 
 _CATALOG_FIELDS = {
     "schema_version",
@@ -62,7 +65,10 @@ _PROMPT_PATH_DEPTH = 2  # prompts/<name>.prompt.md
 _PROMPT_FIELDS = frozenset({"description", "argument-hint", "agent"})
 _CATALOG_NAME = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\Z")
-_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
+_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<(?P<angled>[^>]+)>|(?P<bare>[^\s)]+))")
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_JSON_INDENT = 2
+_DEFAULT_POLICY_LINES = 120
 _POLICY = {
     "name": "Agent Kit source and dependency policy",
     "version": "1.0.0",
@@ -70,7 +76,7 @@ _POLICY = {
     "fetch_failure": "block",
     "dependencies": {"allow": []},
     "mcp": {
-        "allow": [],
+        "allow": ["context7", "github", "microsoft-learn"],
         "self_defined": "deny",
         "trust_transitive": False,
     },
@@ -85,6 +91,37 @@ _POLICY = {
         "audit": {"fail_on_drift": True},
     },
 }
+_POLICY_SCALARS = ("name", "version", "enforcement", "fetch_failure")
+_POLICY_SECTIONS = {
+    "dependencies": {"allow"},
+    "mcp": {"allow", "self_defined", "trust_transitive"},
+    "manifest": {"required_fields", "require_explicit_includes", "scripts"},
+    "executables": {"deny_all"},
+    "security": {"integrity", "audit"},
+}
+_SECURITY_SECTIONS = (("integrity", {"require_hashes"}), ("audit", {"fail_on_drift"}))
+_MANIFEST_REQUIRED = frozenset(
+    {
+        "name",
+        "version",
+        "targets",
+        "includes",
+        "dependencies",
+        "executables",
+        "license",
+    }
+)
+_MANIFEST_ALLOWED = _MANIFEST_REQUIRED | {"description"}
+_MANIFEST_EMPTY_FIELDS = ("dependencies", "executables")
+_SKILL_SCOPE_KEYS = frozenset({"applyto", "apply_to", "scope", "paths"})
+
+
+class _SkillRecord(NamedTuple):
+    """Validated skill facts used by budget and profile summaries."""
+
+    description: str
+    body_lines: int
+    bundle: str
 
 
 @unique
@@ -263,15 +300,22 @@ def _same_value(actual: object, expected: object) -> bool:
     return actual == expected
 
 
+def _is_absolute(value: str) -> bool:
+    """Detect POSIX, Windows, and drive-qualified absolute paths."""
+    windows = PureWindowsPath(value)
+    return (
+        PurePosixPath(value).is_absolute()
+        or windows.is_absolute()
+        or bool(windows.drive)
+    )
+
+
 def _contained_catalog_path(value: object) -> str | None:
     """Validate a normalized, relative source bundle path."""
     if not isinstance(value, str) or not value or "\\" in value:
         return None
     posix = PurePosixPath(value)
-    windows = PureWindowsPath(value)
-    if posix.is_absolute() or windows.is_absolute() or windows.drive:
-        return None
-    if any(part == ".." for part in posix.parts):
+    if _is_absolute(value) or any(part == ".." for part in posix.parts):
         return None
     normalized = posix.as_posix()
     if normalized == ".":
@@ -281,25 +325,25 @@ def _contained_catalog_path(value: object) -> str | None:
     return normalized
 
 
+def _unvisited_members(current: object, visited: set[int]) -> tuple[object, ...]:
+    """Return the keys, values, or items of a container not yet traversed."""
+    if not isinstance(current, dict | list) or id(current) in visited:
+        return ()
+    visited.add(id(current))
+    if isinstance(current, dict):
+        return tuple(part for pair in current.items() for part in pair)
+    return tuple(current)
+
+
 def _contains_hidden_unicode(value: object) -> bool:
     """Find unsupported format and control characters in decoded content."""
-    pending = [value]
+    pending: list[object] = [value]
     visited: set[int] = set()
     while pending:
         current = pending.pop()
         if isinstance(current, str) and not visible_text(current):
             return True
-        if isinstance(current, dict):
-            identity = id(current)
-            if identity not in visited:
-                visited.add(identity)
-                for key, item in current.items():
-                    pending.extend((key, item))
-        elif isinstance(current, list):
-            identity = id(current)
-            if identity not in visited:
-                visited.add(identity)
-                pending.extend(current)
+        pending.extend(_unvisited_members(current, visited))
     return False
 
 
@@ -330,7 +374,63 @@ def _body_text(text: str) -> str | None:
     return None
 
 
-def _link_target(  # noqa: C901, PLR0911, PLR0912
+def _is_project_contact(parsed: SplitResult) -> bool:
+    """Accept a plain ``mailto:`` address without query, fragment, or escapes."""
+    address = unquote(parsed.path)
+    return (
+        parsed.scheme.lower() == "mailto"
+        and not parsed.netloc
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path == address
+        and _EMAIL.fullmatch(address) is not None
+    )
+
+
+def _external_link_allowed(parsed: SplitResult, *, base_is_bundle: bool) -> bool:
+    """Allow web links everywhere and project contacts outside bundles."""
+    if parsed.scheme.lower() in {"http", "https"} and parsed.netloc:
+        return True
+    return not base_is_bundle and _is_project_contact(parsed)
+
+
+def _resolved_link(raw_path: str, document_path: str) -> str | None:
+    """Resolve a relative link beside its document; ``None`` when it escapes."""
+    stack = list(PurePosixPath(document_path).parent.parts)
+    for part in PurePosixPath(raw_path).parts:
+        if part == "..":
+            if not stack:
+                return None
+            stack.pop()
+        elif part not in {"", "."}:
+            stack.append(part)
+    return "/".join(stack)
+
+
+def _link_exists(target: str, available_paths: set[str]) -> bool:
+    """Match a resolved target to a file or directory case-insensitively."""
+    folded = target.casefold()
+    candidates = {item.casefold() for item in available_paths}
+    return folded in candidates or (
+        bool(target) and any(item.startswith(f"{folded}/") for item in candidates)
+    )
+
+
+def _local_link_issue(
+    raw_path: str, document_path: str, available_paths: set[str]
+) -> tuple[str, str] | None:
+    """Return the finding code and message for an invalid local link."""
+    if "\\" in raw_path:
+        return "links.path", "resource link is not a portable path"
+    target = None if _is_absolute(raw_path) else _resolved_link(raw_path, document_path)
+    if target is None:
+        return "links.escape", "resource link escapes its source root"
+    if _link_exists(target, available_paths):
+        return None
+    return "links.missing", f"resource link target does not exist: {raw_path}"
+
+
+def _link_target(
     link: str,
     document_path: str,
     available_paths: set[str],
@@ -341,79 +441,21 @@ def _link_target(  # noqa: C901, PLR0911, PLR0912
     """Verify a Markdown resource target stays in its owning source root."""
     parsed = urlsplit(link)
     if parsed.scheme or parsed.netloc:
-        if parsed.scheme.lower() in {"http", "https"} and parsed.netloc:
-            return
-        project_contact = (
-            not base_is_bundle
-            and parsed.scheme.lower() == "mailto"
-            and not parsed.netloc
-            and not parsed.query
-            and not parsed.fragment
-            and parsed.path == unquote(parsed.path)
-            and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", unquote(parsed.path))
-            is not None
-        )
-        if project_contact:
-            return
-        _finding(
-            findings,
-            "links.scheme",
-            "unsupported external link or invalid project contact",
-            document_path,
-        )
+        if not _external_link_allowed(parsed, base_is_bundle=base_is_bundle):
+            _finding(
+                findings,
+                "links.scheme",
+                "unsupported external link or invalid project contact",
+                document_path,
+            )
         return
     raw_path = unquote(parsed.path)
     if not raw_path:
         return
-    if "\\" in raw_path:
-        _finding(
-            findings,
-            "links.path",
-            "resource link is not a portable path",
-            document_path,
-        )
-        return
-    posix = PurePosixPath(raw_path)
-    windows = PureWindowsPath(raw_path)
-    if posix.is_absolute() or windows.is_absolute() or windows.drive:
-        _finding(
-            findings,
-            "links.escape",
-            "resource link escapes its source root",
-            document_path,
-        )
-        return
-    parent = PurePosixPath(document_path).parent
-    stack = [] if not base_is_bundle else list(parent.parts)
-    if not base_is_bundle:
-        stack = list(parent.parts)
-    for part in posix.parts:
-        if part in {"", "."}:
-            continue
-        if part == "..":
-            if not stack:
-                _finding(
-                    findings,
-                    "links.escape",
-                    "resource link escapes its source root",
-                    document_path,
-                )
-                return
-            stack.pop()
-        else:
-            stack.append(part)
-    target = "/".join(stack)
-    candidates = {item.casefold() for item in available_paths}
-    if target.casefold() in candidates:
-        return
-    if target and any(item.startswith(f"{target.casefold()}/") for item in candidates):
-        return
-    _finding(
-        findings,
-        "links.missing",
-        f"resource link target does not exist: {raw_path}",
-        document_path,
-    )
+    issue = _local_link_issue(raw_path, document_path, available_paths)
+    if issue is not None:
+        code, message = issue
+        _finding(findings, code, message, document_path)
 
 
 def _check_links(
@@ -430,7 +472,7 @@ def _check_links(
     if text is None or not markdown or ".template." in name:
         return
     for match in _LINK.finditer(text):
-        link = match.group(1) or match.group(2)
+        link = match.group("angled") or match.group("bare")
         if link is not None:
             _link_target(
                 link,
@@ -441,68 +483,138 @@ def _check_links(
             )
 
 
-def _policy_mapping(value: object, path: str, findings: list[Finding]) -> bool:  # noqa: C901
+def _policy_value_finding(findings: list[Finding], key: str, path: str) -> None:
+    """Report one policy value that differs from the released contract."""
+    _finding(findings, "policy.value", f"unsupported policy value for '{key}'", path)
+
+
+def _policy_scalars_valid(
+    top: dict[str, object], path: str, findings: list[Finding]
+) -> bool:
+    """Compare top-level scalar policy values with the released contract."""
+    valid = True
+    for key in _POLICY_SCALARS:
+        if top.get(key) != _POLICY[key]:
+            _policy_value_finding(findings, key, path)
+            valid = False
+    return valid
+
+
+def _security_policy_valid(
+    security: dict[str, object], path: str, findings: list[Finding]
+) -> bool:
+    """Require the exact nested integrity and audit security settings."""
+    expected_security = _POLICY.get("security")
+    expected = expected_security if _mapping(expected_security) else {}
+    valid = True
+    for child, child_fields in _SECURITY_SECTIONS:
+        nested = _exact_mapping(
+            security.get(child), child_fields, f"{path}:security:{child}", findings
+        )
+        if nested is None:
+            valid = False
+        elif not _same_value(nested, expected.get(child)):
+            _policy_value_finding(findings, child, path)
+            valid = False
+    return valid
+
+
+def _policy_section_valid(
+    top: dict[str, object], key: str, path: str, findings: list[Finding]
+) -> bool:
+    """Require one nested policy section to match its released shape and values."""
+    nested = _exact_mapping(
+        top.get(key), _POLICY_SECTIONS[key], f"{path}:{key}", findings
+    )
+    if nested is None:
+        return False
+    if key == "security":
+        return _security_policy_valid(nested, path, findings)
+    if _same_value(nested, _POLICY.get(key)):
+        return True
+    _policy_value_finding(findings, key, path)
+    return False
+
+
+def _policy_mapping(value: object, path: str, findings: list[Finding]) -> bool:
     """Require the exact released strict policy contract."""
     top = _exact_mapping(value, _POLICY_FIELDS, path, findings)
     if top is None:
         return False
-    valid = True
-    for key in ("name", "version", "enforcement", "fetch_failure"):
-        if top.get(key) != _POLICY[key]:
-            _finding(
-                findings, "policy.value", f"unsupported policy value for '{key}'", path
-            )
-            valid = False
-    nested_shapes = {
-        "dependencies": {"allow"},
-        "mcp": {"allow", "self_defined", "trust_transitive"},
-        "manifest": {"required_fields", "require_explicit_includes", "scripts"},
-        "executables": {"deny_all"},
-        "security": {"integrity", "audit"},
-    }
-    for key, fields in nested_shapes.items():
-        nested = _exact_mapping(top.get(key), fields, f"{path}:{key}", findings)
-        if nested is None:
-            valid = False
-            continue
-        if key == "security":
-            for child, child_fields in (
-                ("integrity", {"require_hashes"}),
-                ("audit", {"fail_on_drift"}),
-            ):
-                nested_child = _exact_mapping(
-                    nested.get(child), child_fields, f"{path}:{key}:{child}", findings
-                )
-                if nested_child is None:
-                    valid = False
-                    continue
-                expected_security = _POLICY.get("security")
-                expected_security_mapping = (
-                    expected_security if _mapping(expected_security) else {}
-                )
-                expected_child = expected_security_mapping.get(child)
-                if not _same_value(nested_child, expected_child):
-                    _finding(
-                        findings,
-                        "policy.value",
-                        f"unsupported policy value for '{child}'",
-                        path,
-                    )
-                    valid = False
-        elif not _same_value(nested, _POLICY.get(key)):
+    results = [_policy_scalars_valid(top, path, findings)]
+    results.extend(
+        _policy_section_valid(top, key, path, findings) for key in _POLICY_SECTIONS
+    )
+    return all(results) and _same_value(top, _POLICY)
+
+
+def _catalog_schema_version(
+    raw: dict[str, object], findings: list[Finding]
+) -> int | None:
+    """Return the supported catalog schema version or report it."""
+    value = raw.get("schema_version")
+    if type(value) is int and value == 1:
+        return value
+    _finding(findings, "catalog.version", "schema_version must be 1", "catalog.json")
+    return None
+
+
+def _catalog_version(raw: dict[str, object], findings: list[Finding]) -> str | None:
+    """Return the semantic catalog version or report it."""
+    value = raw.get("version")
+    if isinstance(value, str) and _VERSION.fullmatch(value) is not None:
+        return value
+    _finding(
+        findings,
+        "catalog.version",
+        "version must be a semantic version",
+        "catalog.json",
+    )
+    return None
+
+
+def _catalog_runtimes(
+    raw: dict[str, object], findings: list[Finding]
+) -> tuple[str, ...] | None:
+    """Return the exact supported runtime list or report it."""
+    location = "catalog.json:supported_runtimes"
+    runtimes = _string_list(raw.get("supported_runtimes"), location, findings)
+    if runtimes is None or runtimes == ("copilot", "claude"):
+        return runtimes
+    _finding(
+        findings,
+        "catalog.runtime",
+        "supported runtimes must be exactly copilot and claude",
+        location,
+    )
+    return None
+
+
+def _catalog_budgets(
+    raw: dict[str, object], findings: list[Finding]
+) -> tuple[tuple[str, int], ...]:
+    """Return every valid positive budget in sorted field order."""
+    budgets_raw = _exact_mapping(
+        raw.get("budgets"), _BUDGET_FIELDS, "catalog.json:budgets", findings
+    )
+    if budgets_raw is None:
+        return ()
+    budgets: list[tuple[str, int]] = []
+    for key in sorted(_BUDGET_FIELDS):
+        value = budgets_raw.get(key)
+        if not _positive_integer(value):
             _finding(
                 findings,
-                "policy.value",
-                f"unsupported policy value for '{key}'",
-                path,
+                "catalog.budget",
+                f"'{key}' must be a positive integer",
+                "catalog.json:budgets",
             )
-            valid = False
-    if not _same_value(top, _POLICY):
-        valid = False
-    return valid
+        elif isinstance(value, int):
+            budgets.append((key, value))
+    return tuple(budgets)
 
 
-def _parse_catalog(  # noqa: C901
+def _parse_catalog(
     snapshot: CatalogSnapshot, findings: list[Finding]
 ) -> Catalog | None:
     """Validate exact catalog fields and build typed selection values."""
@@ -517,53 +629,10 @@ def _parse_catalog(  # noqa: C901
     raw = _exact_mapping(snapshot.catalog, _CATALOG_FIELDS, "catalog.json", findings)
     if raw is None:
         return None
-
-    schema_version = raw.get("schema_version")
-    if type(schema_version) is not int or schema_version != 1:
-        _finding(
-            findings, "catalog.version", "schema_version must be 1", "catalog.json"
-        )
-        schema_version = None
-
-    version = raw.get("version")
-    if not isinstance(version, str) or _VERSION.fullmatch(version) is None:
-        _finding(
-            findings,
-            "catalog.version",
-            "version must be a semantic version",
-            "catalog.json",
-        )
-        version = None
-
-    runtimes = _string_list(
-        raw.get("supported_runtimes"), "catalog.json:supported_runtimes", findings
-    )
-    if runtimes is not None and (runtimes != ("copilot", "claude")):
-        _finding(
-            findings,
-            "catalog.runtime",
-            "supported runtimes must be exactly copilot and claude",
-            "catalog.json:supported_runtimes",
-        )
-        runtimes = None
-
-    budgets_raw = _exact_mapping(
-        raw.get("budgets"), _BUDGET_FIELDS, "catalog.json:budgets", findings
-    )
-    budgets: list[tuple[str, int]] = []
-    if budgets_raw is not None:
-        for key in sorted(_BUDGET_FIELDS):
-            value = budgets_raw.get(key)
-            if not _positive_integer(value):
-                _finding(
-                    findings,
-                    "catalog.budget",
-                    f"'{key}' must be a positive integer",
-                    "catalog.json:budgets",
-                )
-            elif isinstance(value, int):
-                budgets.append((key, value))
-
+    schema_version = _catalog_schema_version(raw, findings)
+    version = _catalog_version(raw, findings)
+    runtimes = _catalog_runtimes(raw, findings)
+    budgets = _catalog_budgets(raw, findings)
     bundles = _parse_bundles(raw.get("bundles"), findings)
     profiles = _parse_profiles(raw.get("profiles"), findings)
     if bundles is not None and profiles is not None:
@@ -580,13 +649,39 @@ def _parse_catalog(  # noqa: C901
     ):
         return None
     return Catalog(
-        budgets=tuple(budgets),
+        budgets=budgets,
         bundles=bundles,
         profiles=profiles,
         schema_version=schema_version,
         supported_runtimes=runtimes,
         version=version,
     )
+
+
+def _parse_bundle(
+    name: str, raw_bundle: object, findings: list[Finding]
+) -> Bundle | None:
+    """Validate one named source bundle declaration."""
+    location = f"catalog.json:bundles:{name}"
+    if _CATALOG_NAME.fullmatch(name) is None:
+        _finding(findings, "catalog.name", "bundle name is not legal", location)
+    item = _exact_mapping(raw_bundle, {"path", "kind"}, location, findings)
+    if item is None:
+        return None
+    path = _contained_catalog_path(item.get("path"))
+    if path is None:
+        _finding(
+            findings,
+            "catalog.path",
+            "bundle path must be relative and contained in the source root",
+            location,
+        )
+        return None
+    kind = item.get("kind")
+    if not isinstance(kind, str) or kind not in {"project", "portable"}:
+        _finding(findings, "catalog.kind", "bundle kind is invalid", location)
+        return None
+    return Bundle(kind=kind, name=name, path=path)
 
 
 def _parse_bundles(value: object, findings: list[Finding]) -> tuple[Bundle, ...] | None:
@@ -596,28 +691,8 @@ def _parse_bundles(value: object, findings: list[Finding]) -> tuple[Bundle, ...]
             findings, "catalog.bundles", "bundles must be an object", "catalog.json"
         )
         return None
-    bundles: list[Bundle] = []
-    for name, raw_bundle in value.items():
-        location = f"catalog.json:bundles:{name}"
-        if _CATALOG_NAME.fullmatch(name) is None:
-            _finding(findings, "catalog.name", "bundle name is not legal", location)
-        item = _exact_mapping(raw_bundle, {"path", "kind"}, location, findings)
-        if item is None:
-            continue
-        path = _contained_catalog_path(item.get("path"))
-        kind = item.get("kind")
-        if path is None:
-            _finding(
-                findings,
-                "catalog.path",
-                "bundle path must be relative and contained in the source root",
-                location,
-            )
-            continue
-        if not isinstance(kind, str) or kind not in {"project", "portable"}:
-            _finding(findings, "catalog.kind", "bundle kind is invalid", location)
-            continue
-        bundles.append(Bundle(kind=kind, name=name, path=path))
+    parsed = (_parse_bundle(name, item, findings) for name, item in value.items())
+    bundles = tuple(bundle for bundle in parsed if bundle is not None)
     if not bundles:
         _finding(
             findings,
@@ -625,7 +700,24 @@ def _parse_bundles(value: object, findings: list[Finding]) -> tuple[Bundle, ...]
             "at least one bundle is required",
             "catalog.json",
         )
-    return tuple(bundles)
+    return bundles
+
+
+def _parse_profile(
+    name: str, raw_profile: object, findings: list[Finding]
+) -> Profile | None:
+    """Validate one profile's inheritance and direct bundle references."""
+    location = f"catalog.json:profiles:{name}"
+    if _CATALOG_NAME.fullmatch(name) is None:
+        _finding(findings, "catalog.name", "profile name is not legal", location)
+    item = _exact_mapping(raw_profile, {"extends", "bundles"}, location, findings)
+    if item is None:
+        return None
+    extends = _string_list(item.get("extends"), f"{location}:extends", findings)
+    bundles = _string_list(item.get("bundles"), f"{location}:bundles", findings)
+    if extends is None or bundles is None:
+        return None
+    return Profile(bundles=bundles, extends=extends, name=name)
 
 
 def _parse_profiles(
@@ -637,19 +729,8 @@ def _parse_profiles(
             findings, "catalog.profiles", "profiles must be an object", "catalog.json"
         )
         return None
-    profiles: list[Profile] = []
-    for name, raw_profile in value.items():
-        location = f"catalog.json:profiles:{name}"
-        if _CATALOG_NAME.fullmatch(name) is None:
-            _finding(findings, "catalog.name", "profile name is not legal", location)
-        item = _exact_mapping(raw_profile, {"extends", "bundles"}, location, findings)
-        if item is None:
-            continue
-        extends = _string_list(item.get("extends"), f"{location}:extends", findings)
-        bundles = _string_list(item.get("bundles"), f"{location}:bundles", findings)
-        if extends is None or bundles is None:
-            continue
-        profiles.append(Profile(bundles=bundles, extends=extends, name=name))
+    parsed = (_parse_profile(name, item, findings) for name, item in value.items())
+    profiles = tuple(profile for profile in parsed if profile is not None)
     if not profiles:
         _finding(
             findings,
@@ -657,7 +738,7 @@ def _parse_profiles(
             "at least one profile is required",
             "catalog.json",
         )
-    return tuple(profiles)
+    return profiles
 
 
 def _check_references(
@@ -716,6 +797,26 @@ def _check_profile_cycles(
         visit(profile.name)
 
 
+def _include_profile(
+    name: str,
+    profiles: dict[str, Profile],
+    selected: list[str],
+    visited: set[str],
+) -> None:
+    """Append a profile's inherited and direct bundles in first-seen order."""
+    profile = profiles.get(name)
+    if profile is None:
+        raise UnknownProfileError(name)
+    if name in visited:
+        return
+    visited.add(name)
+    for parent in profile.extends:
+        _include_profile(parent, profiles, selected, visited)
+    for bundle in profile.bundles:
+        if bundle not in selected:
+            selected.append(bundle)
+
+
 def _effective_bundles(
     catalog: Catalog, profile_names: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -723,53 +824,37 @@ def _effective_bundles(
     profiles = {item.name: item for item in catalog.profiles}
     selected: list[str] = []
     visited: set[str] = set()
-
-    def include(name: str) -> None:
-        profile = profiles.get(name)
-        if profile is None:
-            raise UnknownProfileError(name)
-        if name in visited:
-            return
-        visited.add(name)
-        for parent in profile.extends:
-            include(parent)
-        for bundle in profile.bundles:
-            if bundle not in selected:
-                selected.append(bundle)
-
     for name in profile_names:
-        include(name)
+        _include_profile(name, profiles, selected, visited)
     return tuple(selected)
 
 
-def _included_paths(  # noqa: C901, PLR0912
-    bundle: BundleSource,
-    findings: list[Finding],
-    version: str,
-    supported_runtimes: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Validate source APM metadata and return explicit .apm include roots."""
-    location = f"{bundle.path}/apm.yml"
+def _covers(prefix: str, path: str) -> bool:
+    """Check whether ``path`` equals ``prefix`` or lies beneath it."""
+    return path == prefix or path.startswith(f"{prefix}/")
+
+
+def _manifest_mapping(
+    bundle: BundleSource, location: str, findings: list[Finding]
+) -> dict[str, object] | None:
+    """Return a readable manifest object or report why it is unusable."""
     if bundle.manifest_error or bundle.manifest is None:
         _finding(findings, "manifest.read", "apm.yml is missing or invalid", location)
-        return ()
+        return None
     manifest = bundle.manifest
     if not _mapping(manifest):
         _finding(findings, "manifest.schema", "manifest must be an object", location)
-        return ()
-    required = {
-        "name",
-        "version",
-        "targets",
-        "includes",
-        "dependencies",
-        "executables",
-        "license",
-    }
-    allowed = required | {"description"}
-    for field in sorted(required - set(manifest)):
+        return None
+    return manifest
+
+
+def _check_manifest_fields(
+    manifest: dict[str, object], location: str, findings: list[Finding]
+) -> None:
+    """Report missing, unknown, prohibited, and unlicensed manifest fields."""
+    for field in sorted(_MANIFEST_REQUIRED - set(manifest)):
         _finding(findings, "manifest.missing", f"missing field '{field}'", location)
-    for field in sorted(set(manifest) - allowed):
+    for field in sorted(set(manifest) - _MANIFEST_ALLOWED):
         _finding(findings, "manifest.unknown", f"unknown field '{field}'", location)
     if "scripts" in manifest:
         _finding(
@@ -779,10 +864,15 @@ def _included_paths(  # noqa: C901, PLR0912
         _finding(
             findings, "manifest.license", "toolkit bundles must declare MIT", location
         )
-
     name = manifest.get("name")
     if not isinstance(name, str) or not name:
         _finding(findings, "manifest.name", "manifest name is required", location)
+
+
+def _check_manifest_version(
+    manifest: dict[str, object], version: str, location: str, findings: list[Finding]
+) -> None:
+    """Require a semantic manifest version equal to the catalog version."""
     manifest_version = manifest.get("version")
     if (
         not isinstance(manifest_version, str)
@@ -796,21 +886,98 @@ def _included_paths(  # noqa: C901, PLR0912
             "manifest version must match catalog version",
             location,
         )
-    targets = _string_list(manifest.get("targets"), f"{location}:targets", findings)
-    includes = _string_list(manifest.get("includes"), f"{location}:includes", findings)
+
+
+def _check_manifest_targets(
+    targets: tuple[str, ...] | None,
+    supported_runtimes: tuple[str, ...],
+    location: str,
+    findings: list[Finding],
+) -> None:
+    """Require non-empty manifest targets drawn from supported runtimes."""
     if targets is not None and (
         not targets or any(runtime not in supported_runtimes for runtime in targets)
     ):
         _finding(findings, "manifest.targets", "manifest targets are invalid", location)
-    if not _mapping(manifest.get("dependencies")) or manifest.get("dependencies") != {}:
-        _finding(
-            findings, "manifest.dependencies", "dependencies must be empty", location
-        )
-    if not _mapping(manifest.get("executables")) or manifest.get("executables") != {}:
-        _finding(
-            findings, "manifest.executables", "executables must be empty", location
-        )
 
+
+def _check_manifest_empty_fields(
+    manifest: dict[str, object], location: str, findings: list[Finding]
+) -> None:
+    """Require empty dependency and executable declarations."""
+    for field in _MANIFEST_EMPTY_FIELDS:
+        value = manifest.get(field)
+        if not _mapping(value) or value != {}:
+            _finding(findings, f"manifest.{field}", f"{field} must be empty", location)
+
+
+def _include_issue(include: str, path: PurePosixPath) -> str | None:
+    """Return why an include is not a contained ``.apm`` path, if it is not."""
+    if not include.startswith(".apm/") or "\\" in include:
+        return "includes must name paths beneath .apm"
+    if path.is_absolute() or any(part in {"..", "."} for part in path.parts[1:]):
+        return "include path escapes .apm"
+    return None
+
+
+def _normalized_includes(
+    includes: tuple[str, ...], location: str, findings: list[Finding]
+) -> tuple[str, ...]:
+    """Return valid includes relative to ``.apm`` and report the others."""
+    normalized: list[str] = []
+    for include in includes:
+        path = PurePosixPath(include.rstrip("/"))
+        issue = _include_issue(include, path)
+        if issue is None:
+            normalized.append(path.relative_to(".apm").as_posix())
+        else:
+            _finding(findings, "manifest.includes", issue, location)
+    return tuple(normalized)
+
+
+def _check_include_coverage(
+    bundle: BundleSource,
+    normalized: tuple[str, ...],
+    location: str,
+    findings: list[Finding],
+) -> None:
+    """Require every include to match resources and every resource to be included."""
+    available = {item.relative_path for item in bundle.files}
+    for include in normalized:
+        if not any(_covers(include, item) for item in available):
+            _finding(
+                findings,
+                "manifest.includes",
+                f"include path has no resources: .apm/{include}",
+                location,
+            )
+    for source in bundle.files:
+        if not any(_covers(include, source.relative_path) for include in normalized):
+            _finding(
+                findings,
+                "manifest.includes",
+                f"resource is not covered by an include: {source.relative_path}",
+                location,
+            )
+
+
+def _included_paths(
+    bundle: BundleSource,
+    findings: list[Finding],
+    version: str,
+    supported_runtimes: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Validate source APM metadata and return explicit .apm include roots."""
+    location = f"{bundle.path}/apm.yml"
+    manifest = _manifest_mapping(bundle, location, findings)
+    if manifest is None:
+        return ()
+    _check_manifest_fields(manifest, location, findings)
+    _check_manifest_version(manifest, version, location, findings)
+    targets = _string_list(manifest.get("targets"), f"{location}:targets", findings)
+    includes = _string_list(manifest.get("includes"), f"{location}:includes", findings)
+    _check_manifest_targets(targets, supported_runtimes, location, findings)
+    _check_manifest_empty_fields(manifest, location, findings)
     if includes is None:
         return ()
     if not includes:
@@ -821,52 +988,66 @@ def _included_paths(  # noqa: C901, PLR0912
             location,
         )
         return ()
-    normalized: list[str] = []
-    for include in includes:
-        if not include.startswith(".apm/") or "\\" in include:
-            _finding(
-                findings,
-                "manifest.includes",
-                "includes must name paths beneath .apm",
-                location,
-            )
-            continue
-        path = PurePosixPath(include.rstrip("/"))
-        if path.is_absolute() or any(part in {"..", "."} for part in path.parts[1:]):
-            _finding(
-                findings,
-                "manifest.includes",
-                "include path escapes .apm",
-                location,
-            )
-            continue
-        normalized.append(path.relative_to(".apm").as_posix())
-    available = {item.relative_path for item in bundle.files}
-    for include in normalized:
-        if not any(
-            item == include or item.startswith(f"{include}/") for item in available
-        ):
-            _finding(
-                findings,
-                "manifest.includes",
-                f"include path has no resources: .apm/{include}",
-                location,
-            )
-    for source in bundle.files:
-        if source.relative_path not in available:
-            continue
-        if not any(
-            source.relative_path == include
-            or source.relative_path.startswith(f"{include}/")
-            for include in normalized
-        ):
-            _finding(
-                findings,
-                "manifest.includes",
-                f"resource is not covered by an include: {source.relative_path}",
-                location,
-            )
-    return tuple(normalized)
+    normalized = _normalized_includes(includes, location, findings)
+    _check_include_coverage(bundle, normalized, location, findings)
+    return normalized
+
+
+def _usable_document(
+    document: SourceDocument, bundle: BundleSource, findings: list[Finding]
+) -> bool:
+    """Report unsafe or malformed documents; reject symlinks from validation."""
+    location = f"{bundle.path}/.apm/{document.relative_path}"
+    if document.is_symlink:
+        _finding(
+            findings, "source.symlink", "source bundle contains a symlink", location
+        )
+        return False
+    if document.parse_error:
+        _finding(
+            findings,
+            "source.parse",
+            "source metadata is malformed or unreadable",
+            location,
+        )
+    if document.frontmatter_error:
+        _finding(
+            findings,
+            "frontmatter.parse",
+            "Markdown frontmatter is malformed",
+            location,
+        )
+    return True
+
+
+def _is_markdown_source(relative_path: str) -> bool:
+    """Select Markdown sources whose links are validated, excluding templates."""
+    path = PurePosixPath(relative_path)
+    return (
+        path.suffix.lower() in {".md", ".markdown"}
+        and ".template." not in path.name.casefold()
+    )
+
+
+def _validate_metadata(
+    document: SourceDocument,
+    bundle: BundleSource,
+    records: dict[str, _SkillRecord],
+    prompts: set[str],
+    findings: list[Finding],
+    description_limit: int,
+    body_limit: int,
+) -> None:
+    """Dispatch a document to its instruction, prompt, or skill validator."""
+    relative = document.relative_path
+    if relative.endswith(".instructions.md"):
+        _validate_instruction(document, bundle, findings)
+    if relative.startswith("prompts/"):
+        _validate_prompt(document, bundle, prompts, findings, description_limit)
+    if relative.endswith("/SKILL.md") or relative == "SKILL.md":
+        _validate_skill(
+            document, bundle, records, findings, description_limit, body_limit
+        )
 
 
 def _skill_records(
@@ -874,62 +1055,26 @@ def _skill_records(
     findings: list[Finding],
     description_limit: int,
     body_limit: int,
-) -> dict[str, tuple[str, int, str]]:
+) -> dict[str, _SkillRecord]:
     """Validate skill metadata and return each skill's description and body."""
-    records: dict[str, tuple[str, int, str]] = {}
+    records: dict[str, _SkillRecord] = {}
     prompts: set[str] = set()
     for bundle in bundles:
         paths = {item.relative_path for item in bundle.files if not item.is_directory}
         for document in bundle.files:
-            if document.is_symlink:
-                _finding(
-                    findings,
-                    "source.symlink",
-                    "source bundle contains a symlink",
-                    f"{bundle.path}/.apm/{document.relative_path}",
-                )
+            if not _usable_document(document, bundle, findings):
                 continue
-            if document.parse_error:
-                _finding(
-                    findings,
-                    "source.parse",
-                    "source metadata is malformed or unreadable",
-                    f"{bundle.path}/.apm/{document.relative_path}",
-                )
-            if document.frontmatter_error:
-                _finding(
-                    findings,
-                    "frontmatter.parse",
-                    "Markdown frontmatter is malformed",
-                    f"{bundle.path}/.apm/{document.relative_path}",
-                )
-            if document.relative_path.endswith(".instructions.md"):
-                _validate_instruction(document, bundle, findings)
-            if document.relative_path.startswith("prompts/"):
-                _validate_prompt(document, bundle, prompts, findings, description_limit)
-            if document.relative_path.endswith("/SKILL.md") or (
-                document.relative_path == "SKILL.md"
-            ):
-                _validate_skill(
-                    document,
-                    bundle,
-                    records,
-                    findings,
-                    description_limit,
-                    body_limit,
-                )
-            source_name = PurePosixPath(document.relative_path).name.casefold()
-            if (
-                PurePosixPath(document.relative_path).suffix.lower()
-                in {".md", ".markdown"}
-                and ".template." not in source_name
-            ):
-                _check_links(
-                    document,
-                    paths,
-                    findings,
-                    base_is_bundle=True,
-                )
+            _validate_metadata(
+                document,
+                bundle,
+                records,
+                prompts,
+                findings,
+                description_limit,
+                body_limit,
+            )
+            if _is_markdown_source(document.relative_path):
+                _check_links(document, paths, findings, base_is_bundle=True)
     return records
 
 
@@ -960,6 +1105,52 @@ def _validate_instruction(
             )
 
 
+def _prompt_name(relative_path: str) -> str | None:
+    """Return a legal flat ``prompts/kit-<name>.prompt.md`` name, if any."""
+    parts = PurePosixPath(relative_path).parts
+    name = parts[-1].removesuffix(".prompt.md")
+    if (
+        len(parts) != _PROMPT_PATH_DEPTH
+        or not parts[-1].endswith(".prompt.md")
+        or _SKILL_NAME.fullmatch(name) is None
+    ):
+        return None
+    return name
+
+
+def _one_line(value: object, limit: int) -> TypeGuard[str]:
+    """Check for a non-blank, single-line string within ``limit`` characters."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and "\n" not in value
+        and len(value) <= limit
+    )
+
+
+def _check_prompt_metadata(
+    metadata: dict[str, object],
+    location: str,
+    findings: list[Finding],
+    description_limit: int,
+) -> None:
+    """Allow only discovery metadata and a bounded one-line description."""
+    for field in sorted(set(metadata) - _PROMPT_FIELDS):
+        _finding(
+            findings,
+            "prompt.metadata",
+            f"prompt metadata '{field}' is not allowed; tools and models stay native",
+            location,
+        )
+    if not _one_line(metadata.get("description"), description_limit):
+        _finding(
+            findings,
+            "prompt.description",
+            f"prompt description must be one line of at most {description_limit} characters",
+            location,
+        )
+
+
 def _validate_prompt(
     document: SourceDocument,
     bundle: BundleSource,
@@ -971,13 +1162,8 @@ def _validate_prompt(
     location = f"{bundle.path}/.apm/{document.relative_path}"
     if document.is_directory:
         return
-    parts = PurePosixPath(document.relative_path).parts
-    name = parts[-1].removesuffix(".prompt.md")
-    if (
-        len(parts) != _PROMPT_PATH_DEPTH
-        or not parts[-1].endswith(".prompt.md")
-        or _SKILL_NAME.fullmatch(name) is None
-    ):
+    name = _prompt_name(document.relative_path)
+    if name is None:
         _finding(
             findings,
             "prompt.name",
@@ -994,56 +1180,32 @@ def _validate_prompt(
             findings, "prompt.frontmatter", "prompt metadata is required", location
         )
         return
-    for field in sorted(set(metadata) - _PROMPT_FIELDS):
-        _finding(
-            findings,
-            "prompt.metadata",
-            f"prompt metadata '{field}' is not allowed; tools and models stay native",
-            location,
-        )
-    description = metadata.get("description")
-    if (
-        not isinstance(description, str)
-        or not description.strip()
-        or "\n" in description
-        or len(description) > description_limit
-    ):
-        _finding(
-            findings,
-            "prompt.description",
-            f"prompt description must be one line of at most {description_limit} characters",
-            location,
-        )
+    _check_prompt_metadata(metadata, location, findings, description_limit)
 
 
-def _validate_skill(  # noqa: C901
-    document: SourceDocument,
-    bundle: BundleSource,
-    records: dict[str, tuple[str, int, str]],
+def _legal_skill_name(name: object) -> TypeGuard[str]:
+    """Check the bounded ``kit-`` skill identifier grammar."""
+    return (
+        isinstance(name, str)
+        and len(name) <= _MAX_SKILL_NAME_CHARS
+        and _SKILL_NAME.fullmatch(name) is not None
+    )
+
+
+def _check_skill_identity(
+    name: str,
+    metadata: dict[str, object],
+    relative_path: str,
+    records: dict[str, _SkillRecord],
+    location: str,
     findings: list[Finding],
-    description_limit: int,
-    body_limit: int,
 ) -> None:
-    """Validate a skill name, description, body, and portable metadata."""
-    location = f"{bundle.path}/.apm/{document.relative_path}"
-    if not _mapping(document.frontmatter):
-        _finding(findings, "skill.frontmatter", "skill metadata is required", location)
-        return
-    metadata = document.frontmatter
-    name = metadata.get("name")
-    description = metadata.get("description")
-    parts = PurePosixPath(document.relative_path).parts
-    if (
-        not isinstance(name, str)
-        or len(name) > _MAX_SKILL_NAME_CHARS
-        or _SKILL_NAME.fullmatch(name) is None
-    ):
-        _finding(findings, "skill.name", "skill name is not legal", location)
-        return
+    """Check skill placement, uniqueness, and absence of native scope metadata."""
+    parts = PurePosixPath(relative_path).parts
     if (
         len(parts) != _SKILL_PATH_DEPTH
         or parts[0] != "skills"
-        or parts[2] != "SKILL.md"
+        or parts[-1] != "SKILL.md"
     ):
         _finding(
             findings,
@@ -1062,20 +1224,28 @@ def _validate_skill(  # noqa: C901
         _finding(
             findings, "skill.duplicate", f"duplicate skill name '{name}'", location
         )
-    if any(
-        key.casefold() in {"applyto", "apply_to", "scope", "paths"} for key in metadata
-    ):
+    if any(key.casefold() in _SKILL_SCOPE_KEYS for key in metadata):
         _finding(
             findings,
             "skill.scope",
             "native scope metadata is not allowed in skill frontmatter",
             location,
         )
+
+
+def _skill_description(
+    metadata: dict[str, object],
+    description_limit: int,
+    location: str,
+    findings: list[Finding],
+) -> str | None:
+    """Return a required skill description, reporting budget overruns."""
+    description = metadata.get("description")
     if not isinstance(description, str) or not description:
         _finding(
             findings, "skill.description", "skill description is required", location
         )
-        return
+        return None
     if len(description) > description_limit:
         _finding(
             findings,
@@ -1083,13 +1253,19 @@ def _validate_skill(  # noqa: C901
             f"skill description exceeds {description_limit} characters",
             location,
         )
-    text = _document_text(document)
-    body = _body_text(text)
+    return description
+
+
+def _skill_body_lines(
+    document: SourceDocument, body_limit: int, location: str, findings: list[Finding]
+) -> int | None:
+    """Return the skill body line count, reporting delimiters and budget."""
+    body = _body_text(_document_text(document))
     if body is None:
         _finding(
             findings, "skill.body", "skill frontmatter delimiters are invalid", location
         )
-        return
+        return None
     lines = len(body.splitlines())
     if lines > body_limit:
         _finding(
@@ -1098,7 +1274,448 @@ def _validate_skill(  # noqa: C901
             f"skill body exceeds {body_limit} lines",
             location,
         )
-    records[name] = (description, lines, bundle.name)
+    return lines
+
+
+def _validate_skill(
+    document: SourceDocument,
+    bundle: BundleSource,
+    records: dict[str, _SkillRecord],
+    findings: list[Finding],
+    description_limit: int,
+    body_limit: int,
+) -> None:
+    """Validate a skill name, description, body, and portable metadata."""
+    location = f"{bundle.path}/.apm/{document.relative_path}"
+    metadata = document.frontmatter
+    if not _mapping(metadata):
+        _finding(findings, "skill.frontmatter", "skill metadata is required", location)
+        return
+    name = metadata.get("name")
+    if not _legal_skill_name(name):
+        _finding(findings, "skill.name", "skill name is not legal", location)
+        return
+    _check_skill_identity(
+        name, metadata, document.relative_path, records, location, findings
+    )
+    description = _skill_description(metadata, description_limit, location, findings)
+    if description is None:
+        return
+    lines = _skill_body_lines(document, body_limit, location, findings)
+    if lines is not None:
+        records[name] = _SkillRecord(
+            description=description, body_lines=lines, bundle=bundle.name
+        )
+
+
+def _check_root_symlinks(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
+    """Report a symlinked source root and any captured root links."""
+    if snapshot.root_is_symlink:
+        _finding(findings, "source.symlink", "source root is a symlink", ".")
+    for relative in snapshot.root_symlinks:
+        _finding(
+            findings,
+            "source.symlink",
+            "source root contains a symlink or junction",
+            relative,
+        )
+
+
+def _check_policy(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
+    """Require a readable policy document with the strict released contract."""
+    if snapshot.policy_error or snapshot.policy_document is None:
+        _finding(
+            findings,
+            "policy.read",
+            "apm-policy.yml is missing or invalid",
+            "apm-policy.yml",
+        )
+    else:
+        _policy_mapping(snapshot.policy, "apm-policy.yml", findings)
+
+
+def _check_source_unicode(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
+    """Reject hidden Unicode in catalog, policy, manifest, and bundle content."""
+    if snapshot.catalog_document is not None:
+        _check_hidden_unicode(
+            snapshot.catalog_document.text or "", "catalog.json", findings
+        )
+    _check_hidden_unicode(snapshot.catalog, "catalog.json", findings)
+    if snapshot.policy_document is not None:
+        _check_hidden_unicode(
+            snapshot.policy_document.text or "", "apm-policy.yml", findings
+        )
+    _check_hidden_unicode(snapshot.policy, "apm-policy.yml", findings)
+    for bundle in snapshot.bundles:
+        manifest_path = f"{bundle.path}/apm.yml"
+        _check_hidden_unicode(
+            bundle.manifest_document.text or "", manifest_path, findings
+        )
+        _check_hidden_unicode(bundle.manifest, manifest_path, findings)
+        for document in bundle.files:
+            path = f"{bundle.path}/.apm/{document.relative_path}"
+            _check_hidden_unicode(document.relative_path, path, findings)
+            _check_hidden_unicode(document.text or "", path, findings)
+            _check_hidden_unicode(document.frontmatter, path, findings)
+            _check_hidden_unicode(document.yaml_value, path, findings)
+
+
+def _policy_line_count(snapshot: CatalogSnapshot) -> int:
+    """Count readable policy lines, treating an unreadable policy as empty."""
+    document = snapshot.policy_document
+    if document is None or document.text is None:
+        return 0
+    return len(document.text.splitlines())
+
+
+def _check_root_files(
+    root_documents: dict[str, SourceDocument],
+    policy_limit: int,
+    findings: list[Finding],
+) -> None:
+    """Require the MIT license and docs index and bound ``AGENTS.md``."""
+    license_document = root_documents.get("LICENSE")
+    if (
+        license_document is None
+        or license_document.text is None
+        or not license_document.text.startswith("MIT License")
+    ):
+        _finding(
+            findings,
+            "license.read",
+            "root MIT license text is missing or invalid",
+            "LICENSE",
+        )
+    if "llms.txt" not in root_documents:
+        _finding(findings, "docs.index", "root llms.txt index is missing", "llms.txt")
+    agents = root_documents.get("AGENTS.md")
+    if (
+        agents is not None
+        and agents.text is not None
+        and len(agents.text.splitlines()) > policy_limit
+    ):
+        _finding(
+            findings,
+            "budget.agents",
+            f"AGENTS.md exceeds {policy_limit} lines",
+            "AGENTS.md",
+        )
+
+
+def _check_root_documentation(
+    snapshot: CatalogSnapshot,
+    root_documents: dict[str, SourceDocument],
+    findings: list[Finding],
+) -> None:
+    """Require readable, link-safe, non-symlink root documentation."""
+    root_available = set(snapshot.root_paths) | set(root_documents)
+    root_available.update(
+        f"{bundle.path}/.apm/{source.relative_path}"
+        for bundle in snapshot.bundles
+        for source in bundle.files
+    )
+    for document in snapshot.root_documents:
+        if document.is_symlink:
+            _finding(
+                findings,
+                "docs.symlink",
+                "root documentation must not be a symlink",
+                document.relative_path,
+            )
+        if document.parse_error or document.text is None:
+            _finding(
+                findings,
+                "docs.read",
+                "root documentation is unreadable or not UTF-8 text",
+                document.relative_path,
+            )
+        _check_hidden_unicode(document.text or "", document.relative_path, findings)
+        _check_links(document, root_available, findings, base_is_bundle=False)
+
+
+def _native_assets(snapshot: CatalogSnapshot) -> dict[str, bytes]:
+    """Map every bundle file to its source-root-relative ``.apm`` path."""
+    assets: dict[str, bytes] = {}
+    for bundle in snapshot.bundles:
+        prefix = "" if bundle.path == "." else f"{bundle.path}/"
+        for document in bundle.files:
+            if not document.is_directory:
+                assets[f"{prefix}.apm/{document.relative_path}"] = document.content
+    return assets
+
+
+def _check_native_assets(
+    snapshot: CatalogSnapshot, catalog: Catalog, findings: list[Finding]
+) -> None:
+    """Report native role assets that cannot be rendered for supported runtimes."""
+    try:
+        validate_native_assets(_native_assets(snapshot), catalog.supported_runtimes)
+    except (ValueError, InputTypeError) as error:
+        _finding(
+            findings,
+            "native.assets",
+            f"native role assets are invalid: {error}",
+            "catalog.json",
+        )
+
+
+def _check_bundle_source(
+    definition: Bundle,
+    source: BundleSource,
+    source_paths: dict[str, BundleSource],
+    findings: list[Finding],
+) -> None:
+    """Require a captured bundle to match its declaration and safe ``.apm`` root."""
+    if source.path != definition.path or source.kind != definition.kind:
+        _finding(
+            findings,
+            "bundle.mapping",
+            "captured bundle does not match its catalog declaration",
+            definition.path,
+        )
+    if source.root_is_symlink or not source.apm_exists:
+        _finding(
+            findings,
+            "bundle.root",
+            "bundle .apm source root is missing or contains a symlink",
+            f"{definition.path}/.apm",
+        )
+    if definition.path in source_paths and source.root_is_symlink:
+        _finding(
+            findings,
+            "source.symlink",
+            "bundle source path contains a symlink",
+            definition.path,
+        )
+
+
+class _SkillSelection(NamedTuple):
+    """Skills available to a composition and the subset made active."""
+
+    requested: tuple[str, ...]
+    available: dict[str, _SkillRecord]
+    active: set[str]
+    description_chars: int
+
+
+class _Outputs(NamedTuple):
+    """Planned output files with case-insensitive destination tracking."""
+
+    files: dict[str, bytes]
+    folded: dict[str, str]
+    include_paths: set[str]
+    documents: list[SourceDocument]
+
+
+def _check_profile_selection(
+    catalog: Catalog, profile: str, features: tuple[str, ...]
+) -> None:
+    """Reject an unknown base profile or feature profile."""
+    profile_names = {item.name for item in catalog.profiles}
+    if profile not in profile_names:
+        raise UnknownProfileError(profile)
+    unknown = next((name for name in features if name not in profile_names), None)
+    if unknown is not None:
+        raise UnknownProfileError(unknown, kind="feature profile")
+
+
+def _selected_runtimes(catalog: Catalog, runtimes: tuple[str, ...]) -> tuple[str, ...]:
+    """Default to every supported runtime and reject invalid selections."""
+    selected = runtimes or catalog.supported_runtimes
+    if not selected or len(set(selected)) != len(selected):
+        raise CompositionError(CompositionIssue.RUNTIME_SELECTION)
+    if any(runtime not in catalog.supported_runtimes for runtime in selected):
+        raise CompositionError(CompositionIssue.UNSUPPORTED_RUNTIME)
+    return selected
+
+
+def _skill_selection(
+    snapshot: CatalogSnapshot,
+    catalog: Catalog,
+    selected: tuple[str, ...],
+    skills: tuple[str, ...],
+) -> _SkillSelection:
+    """Resolve requested session skills within the selected bundles' budget."""
+    limits = dict(catalog.budgets)
+    records = _skill_records(
+        snapshot.bundles, [], limits["description_chars"], limits["skill_body_lines"]
+    )
+    available = {
+        name: record for name, record in records.items() if record.bundle in selected
+    }
+    if len(skills) != len(set(skills)):
+        raise CompositionError(CompositionIssue.DUPLICATE_SKILLS)
+    if unavailable := set(skills) - available.keys():
+        raise UnavailableSkillsError(unavailable)
+    active = set(skills) if skills else set(available)
+    description_chars = sum(len(available[name].description) for name in active)
+    if description_chars > limits["profile_description_chars"]:
+        raise CompositionError(CompositionIssue.DESCRIPTION_BUDGET)
+    return _SkillSelection(
+        requested=skills,
+        available=available,
+        active=active,
+        description_chars=description_chars,
+    )
+
+
+def _instruction_name(document: SourceDocument) -> str:
+    """Return the instruction identifier without its ``.instructions.md`` suffix."""
+    return PurePosixPath(document.relative_path).name.removesuffix(".instructions.md")
+
+
+def _is_instruction(document: SourceDocument) -> bool:
+    """Check whether a document lives in the ``instructions`` directory."""
+    return PurePosixPath(document.relative_path).parts[0] == "instructions"
+
+
+def _document_selected(document: SourceDocument, selection: _SkillSelection) -> bool:
+    """Select a source file for the composition's project or session mode."""
+    if document.is_symlink or document.is_directory:
+        return False
+    parts = PurePosixPath(document.relative_path).parts
+    if parts[0] == "skills" and parts[1] not in selection.active:
+        return False
+    # Prompts are project workflows that may link any selected skill.
+    if selection.requested and parts[0] == "prompts":
+        return False
+    if not selection.requested or not _is_instruction(document):
+        return True
+    name = _instruction_name(document)
+    return name not in selection.available or name in selection.active
+
+
+def _add_output(outputs: _Outputs, relative: str, content: bytes) -> None:
+    """Plan one output file, rejecting case-insensitive destination collisions."""
+    folded = relative.casefold()
+    previous = outputs.folded.get(folded)
+    if previous is not None:
+        raise CompositionCollisionError(previous=previous, relative=relative)
+    outputs.folded[folded] = relative
+    outputs.files[relative] = content
+
+
+def _collect_sources(
+    snapshot: CatalogSnapshot,
+    catalog: Catalog,
+    selected: tuple[str, ...],
+    selection: _SkillSelection,
+) -> _Outputs:
+    """Plan every selected bundle file and its manifest include roots."""
+    source_bundles = {item.name: item for item in snapshot.bundles}
+    outputs = _Outputs(files={}, folded={}, include_paths=set(), documents=[])
+    for name in selected:
+        source = source_bundles.get(name)
+        if source is None:
+            raise UnavailableBundleError(name)
+        included = _included_paths(
+            source, [], catalog.version, catalog.supported_runtimes
+        )
+        outputs.include_paths.update(f".apm/{item}/" for item in included)
+        for document in source.files:
+            if _document_selected(document, selection):
+                _add_output(outputs, f".apm/{document.relative_path}", document.content)
+                outputs.documents.append(document)
+    return outputs
+
+
+def _require_session_resources(outputs: _Outputs) -> None:
+    """Reject a session selection whose links reference omitted resources."""
+    available_paths = {name.removeprefix(".apm/") for name in outputs.files}
+    missing_links: list[Finding] = []
+    for document in outputs.documents:
+        _check_links(document, available_paths, missing_links, base_is_bundle=True)
+    if missing_links:
+        raise OmittedResourceError(missing_links[0])
+
+
+def _json_bytes(value: object, *, ensure_ascii: bool) -> bytes:
+    """Serialize deterministic, newline-terminated, indented JSON."""
+    text = json.dumps(value, indent=_JSON_INDENT, ensure_ascii=ensure_ascii)
+    return f"{text}\n".encode()
+
+
+def _selection_record(
+    selection: _SkillSelection, outputs: _Outputs, native_role_files: int
+) -> dict[str, object]:
+    """Describe the composition mode, active skills, and instruction budget."""
+    instructions = {
+        _instruction_name(item) for item in outputs.documents if _is_instruction(item)
+    }
+    return {
+        "mode": "session" if selection.requested else "project",
+        "skills": sorted(selection.active),
+        "instructions": sorted(instructions),
+        "description_chars": selection.description_chars,
+        "instruction_chars": sum(
+            len(item.text or "")
+            for item in outputs.documents
+            if item.relative_path.startswith("instructions/")
+        ),
+        "native_role_files": native_role_files,
+    }
+
+
+def _manifest_record(
+    profile: str,
+    catalog: Catalog,
+    runtimes: tuple[str, ...],
+    include_paths: set[str],
+) -> dict[str, object]:
+    """Build the composed APM manifest for the selected runtimes."""
+    return {
+        "name": f"agent-kit-{profile}",
+        "version": catalog.version,
+        "targets": list(runtimes),
+        "includes": sorted(include_paths),
+        "dependencies": {},
+        "executables": {},
+        "license": "MIT",
+        "compilation": {"exclude": [".apm/skills", ".agents/skills", ".claude/skills"]},
+    }
+
+
+def _policy_content(snapshot: CatalogSnapshot) -> bytes:
+    """Return the readable source policy bytes."""
+    policy_document = snapshot.policy_document
+    if policy_document is None or policy_document.text is None:
+        raise CompositionError(CompositionIssue.POLICY_UNAVAILABLE)
+    return policy_document.content
+
+
+def _license_content(snapshot: CatalogSnapshot) -> bytes:
+    """Return the root license bytes."""
+    license_document = next(
+        (item for item in snapshot.root_documents if item.relative_path == "LICENSE"),
+        None,
+    )
+    if license_document is None:
+        raise CompositionError(CompositionIssue.LICENSE_UNAVAILABLE)
+    return license_document.content
+
+
+def _provenance_record(
+    catalog: Catalog,
+    profile: str,
+    selected: tuple[str, ...],
+    files: dict[str, bytes],
+) -> dict[str, object]:
+    """Record source bundles and content hashes for every planned file."""
+    bundle_paths = {item.name: item.path for item in catalog.bundles}
+    return {
+        "schema_version": 1,
+        "source": {
+            "catalog_version": catalog.version,
+            "profile": profile,
+            "bundles": [
+                {"name": name, "path": bundle_paths[name]} for name in selected
+            ],
+        },
+        "files": {
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in sorted(files.items())
+        },
+    }
 
 
 class CatalogService:
@@ -1107,66 +1724,17 @@ class CatalogService:
     def __init__(self) -> None:
         """Create the stateless catalog application service."""
 
-    def validate(self, snapshot: CatalogSnapshot) -> CheckReport:  # noqa: C901, PLR0912, PLR0915
+    def validate(self, snapshot: CatalogSnapshot) -> CheckReport:
         """Validate every source bundle, catalog profile, and strict policy."""
         findings: list[Finding] = []
         catalog = _parse_catalog(snapshot, findings)
-        if snapshot.root_is_symlink:
-            _finding(findings, "source.symlink", "source root is a symlink", ".")
-        for relative in snapshot.root_symlinks:
-            _finding(
-                findings,
-                "source.symlink",
-                "source root contains a symlink or junction",
-                relative,
-            )
-        if snapshot.catalog_document is not None:
-            _check_hidden_unicode(
-                snapshot.catalog_document.text or "",
-                "catalog.json",
-                findings,
-            )
-        _check_hidden_unicode(snapshot.catalog, "catalog.json", findings)
-        if snapshot.policy_error or snapshot.policy_document is None:
-            _finding(
-                findings,
-                "policy.read",
-                "apm-policy.yml is missing or invalid",
-                "apm-policy.yml",
-            )
-        else:
-            _policy_mapping(snapshot.policy, "apm-policy.yml", findings)
-        if snapshot.policy_document is not None:
-            _check_hidden_unicode(
-                snapshot.policy_document.text or "",
-                "apm-policy.yml",
-                findings,
-            )
-        _check_hidden_unicode(snapshot.policy, "apm-policy.yml", findings)
-
-        for bundle in snapshot.bundles:
-            manifest_path = f"{bundle.path}/apm.yml"
-            _check_hidden_unicode(
-                bundle.manifest_document.text or "",
-                manifest_path,
-                findings,
-            )
-            _check_hidden_unicode(bundle.manifest, manifest_path, findings)
-            for document in bundle.files:
-                path = f"{bundle.path}/.apm/{document.relative_path}"
-                _check_hidden_unicode(document.relative_path, path, findings)
-                _check_hidden_unicode(document.text or "", path, findings)
-                _check_hidden_unicode(document.frontmatter, path, findings)
-                _check_hidden_unicode(document.yaml_value, path, findings)
+        _check_root_symlinks(snapshot, findings)
+        _check_policy(snapshot, findings)
+        _check_source_unicode(snapshot, findings)
 
         limits = dict(catalog.budgets) if catalog is not None else {}
-        policy_limit = limits.get("policy_lines", 120)
-        policy_lines = (
-            len(snapshot.policy_document.text.splitlines())
-            if snapshot.policy_document is not None
-            and snapshot.policy_document.text is not None
-            else 0
-        )
+        policy_limit = limits.get("policy_lines", _DEFAULT_POLICY_LINES)
+        policy_lines = _policy_line_count(snapshot)
         if policy_lines > policy_limit:
             _finding(
                 findings,
@@ -1174,90 +1742,15 @@ class CatalogService:
                 f"policy exceeds {policy_limit} lines",
                 "apm-policy.yml",
             )
-
         root_documents = {item.relative_path: item for item in snapshot.root_documents}
-        license_document = root_documents.get("LICENSE")
-        if (
-            license_document is None
-            or license_document.text is None
-            or not license_document.text.startswith("MIT License")
-        ):
-            _finding(
-                findings,
-                "license.read",
-                "root MIT license text is missing or invalid",
-                "LICENSE",
-            )
-        for required in ("llms.txt",):
-            if required not in root_documents:
-                _finding(
-                    findings, "docs.index", "root llms.txt index is missing", required
-                )
-        agents = root_documents.get("AGENTS.md")
-        if agents is not None and agents.text is not None:
-            agent_lines = len(agents.text.splitlines())
-            if agent_lines > policy_limit:
-                _finding(
-                    findings,
-                    "budget.agents",
-                    f"AGENTS.md exceeds {policy_limit} lines",
-                    "AGENTS.md",
-                )
+        _check_root_files(root_documents, policy_limit, findings)
+        _check_root_documentation(snapshot, root_documents, findings)
 
-        root_available = set(snapshot.root_paths) | set(root_documents)
-        root_available.update(
-            f"{bundle.path}/.apm/{source.relative_path}"
-            for bundle in snapshot.bundles
-            for source in bundle.files
-        )
-        for document in snapshot.root_documents:
-            if document.is_symlink:
-                _finding(
-                    findings,
-                    "docs.symlink",
-                    "root documentation must not be a symlink",
-                    document.relative_path,
-                )
-            if document.parse_error or document.text is None:
-                _finding(
-                    findings,
-                    "docs.read",
-                    "root documentation is unreadable or not UTF-8 text",
-                    document.relative_path,
-                )
-            _check_hidden_unicode(
-                document.text or "",
-                document.relative_path,
-                findings,
-            )
-            _check_links(
-                document,
-                root_available,
-                findings,
-                base_is_bundle=False,
-            )
-
-        skill_records: dict[str, tuple[str, int, str]] = {}
+        skill_records: dict[str, _SkillRecord] = {}
         if catalog is not None:
             skill_records = self._validate_bundles(snapshot, catalog, findings)
             self._validate_profile_budgets(catalog, skill_records, findings)
-            native_assets: dict[str, bytes] = {}
-            for bundle in snapshot.bundles:
-                prefix = "" if bundle.path == "." else f"{bundle.path}/"
-                for document in bundle.files:
-                    if not document.is_directory:
-                        native_assets[f"{prefix}.apm/{document.relative_path}"] = (
-                            document.content
-                        )
-            try:
-                validate_native_assets(native_assets, catalog.supported_runtimes)
-            except (ValueError, InputTypeError) as error:
-                _finding(
-                    findings,
-                    "native.assets",
-                    f"native role assets are invalid: {error}",
-                    "catalog.json",
-                )
+            _check_native_assets(snapshot, catalog, findings)
         deduplicated = tuple(
             sorted(
                 set(findings),
@@ -1270,7 +1763,7 @@ class CatalogService:
             version=catalog.version if catalog is not None else None,
         )
 
-    def compose(  # noqa: C901, PLR0912, PLR0915
+    def compose(
         self,
         snapshot: CatalogSnapshot,
         profile: str,
@@ -1286,186 +1779,36 @@ class CatalogService:
         catalog = _parse_catalog(snapshot, [])
         if catalog is None:
             raise CompositionError(CompositionIssue.CATALOG_INVALID)
-        profile_names = (profile, *features)
-        if profile not in {item.name for item in catalog.profiles}:
-            raise UnknownProfileError(profile)
-        if any(
-            name not in {item.name for item in catalog.profiles} for name in features
-        ):
-            unknown = next(
-                name
-                for name in features
-                if name not in {item.name for item in catalog.profiles}
-            )
-            raise UnknownProfileError(unknown, kind="feature profile")
-        selected_runtimes = runtimes or catalog.supported_runtimes
-        if not selected_runtimes or len(set(selected_runtimes)) != len(
-            selected_runtimes
-        ):
-            raise CompositionError(CompositionIssue.RUNTIME_SELECTION)
-        if any(
-            runtime not in catalog.supported_runtimes for runtime in selected_runtimes
-        ):
-            raise CompositionError(CompositionIssue.UNSUPPORTED_RUNTIME)
-
-        selected = _effective_bundles(catalog, profile_names)
-        limits = dict(catalog.budgets)
-        selected_skills = _skill_records(
-            snapshot.bundles,
-            [],
-            limits["description_chars"],
-            limits["skill_body_lines"],
-        )
-        available_skills = {
-            name: record
-            for name, record in selected_skills.items()
-            if record[2] in selected
-        }
-        if len(skills) != len(set(skills)):
-            raise CompositionError(CompositionIssue.DUPLICATE_SKILLS)
-        if unavailable := set(skills) - available_skills.keys():
-            raise UnavailableSkillsError(unavailable)
-        active_skills = set(skills) if skills else set(available_skills)
-        selected_descriptions = sum(
-            len(available_skills[name][0]) for name in active_skills
-        )
-        if selected_descriptions > limits["profile_description_chars"]:
-            raise CompositionError(CompositionIssue.DESCRIPTION_BUDGET)
-
-        bundle_definitions = {item.name: item for item in catalog.bundles}
-        source_bundles = {item.name: item for item in snapshot.bundles}
-        output_files: dict[str, bytes] = {}
-        folded_destinations: dict[str, str] = {}
-        include_paths: set[str] = set()
-        selected_documents: list[SourceDocument] = []
-        selected_instructions: set[str] = set()
-        for name in selected:
-            source = source_bundles.get(name)
-            if source is None:
-                raise UnavailableBundleError(name)
-            included = _included_paths(
-                source, [], catalog.version, catalog.supported_runtimes
-            )
-            include_paths.update(f".apm/{item}/" for item in included)
-            for document in source.files:
-                if document.is_symlink or document.is_directory:
-                    continue
-                parts = PurePosixPath(document.relative_path).parts
-                if parts[0] == "skills" and parts[1] not in active_skills:
-                    continue
-                # Prompts are project workflows that may link any selected skill.
-                if skills and parts[0] == "prompts":
-                    continue
-                if parts[0] == "instructions":
-                    instruction_name = PurePosixPath(
-                        document.relative_path
-                    ).name.removesuffix(".instructions.md")
-                    if (
-                        skills
-                        and instruction_name in available_skills
-                        and instruction_name not in active_skills
-                    ):
-                        continue
-                    selected_instructions.add(instruction_name)
-                relative = f".apm/{document.relative_path}"
-                folded = relative.casefold()
-                if folded in folded_destinations:
-                    previous = folded_destinations[folded]
-                    raise CompositionCollisionError(
-                        previous=previous, relative=relative
-                    )
-                folded_destinations[folded] = relative
-                output_files[relative] = document.content
-                selected_documents.append(document)
-
+        _check_profile_selection(catalog, profile, features)
+        selected_runtimes = _selected_runtimes(catalog, runtimes)
+        selected = _effective_bundles(catalog, (profile, *features))
+        selection = _skill_selection(snapshot, catalog, selected, skills)
+        outputs = _collect_sources(snapshot, catalog, selected, selection)
         if skills:
-            available_paths = {name.removeprefix(".apm/") for name in output_files}
-            missing_links: list[Finding] = []
-            for document in selected_documents:
-                _check_links(
-                    document, available_paths, missing_links, base_is_bundle=True
-                )
-            if missing_links:
-                first = missing_links[0]
-                raise OmittedResourceError(first)
+            _require_session_resources(outputs)
         native_agents = (
-            {} if skills else render_native_agents(output_files, selected_runtimes)
+            {} if skills else render_native_agents(outputs.files, selected_runtimes)
         )
         for relative, content in native_agents.items():
-            folded = relative.casefold()
-            if folded in folded_destinations:
-                previous = folded_destinations[folded]
-                raise CompositionCollisionError(previous=previous, relative=relative)
-            folded_destinations[folded] = relative
-            output_files[relative] = content
+            _add_output(outputs, relative, content)
 
-        selection = {
-            "mode": "session" if skills else "project",
-            "skills": sorted(active_skills),
-            "instructions": sorted(selected_instructions),
-            "description_chars": selected_descriptions,
-            "instruction_chars": sum(
-                len(item.text or "")
-                for item in selected_documents
-                if item.relative_path.startswith("instructions/")
-            ),
-            "native_role_files": len(native_agents),
-        }
-        output_files[".apm/selection.json"] = (
-            json.dumps(selection, indent=2) + "\n"
-        ).encode("utf-8")
-        manifest = {
-            "name": f"agent-kit-{profile}",
-            "version": catalog.version,
-            "targets": list(selected_runtimes),
-            "includes": sorted(include_paths),
-            "dependencies": {},
-            "executables": {},
-            "license": "MIT",
-            "compilation": {
-                "exclude": [".apm/skills", ".agents/skills", ".claude/skills"]
-            },
-        }
-        output_files["apm.yml"] = (
-            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
-        ).encode("utf-8")
-        policy_document = snapshot.policy_document
-        if policy_document is None or policy_document.text is None:
-            raise CompositionError(CompositionIssue.POLICY_UNAVAILABLE)
-        output_files["apm-policy.yml"] = policy_document.content
-        license_document = next(
-            (
-                item
-                for item in snapshot.root_documents
-                if item.relative_path == "LICENSE"
-            ),
-            None,
+        output_files = outputs.files
+        output_files[".apm/selection.json"] = _json_bytes(
+            _selection_record(selection, outputs, len(native_agents)),
+            ensure_ascii=True,
         )
-        if license_document is None:
-            raise CompositionError(CompositionIssue.LICENSE_UNAVAILABLE)
-        output_files["LICENSE"] = license_document.content
-
-        provenance = {
-            "schema_version": 1,
-            "source": {
-                "catalog_version": catalog.version,
-                "profile": profile,
-                "bundles": [
-                    {
-                        "name": name,
-                        "path": bundle_definitions[name].path,
-                    }
-                    for name in selected
-                ],
-            },
-            "files": {
-                name: hashlib.sha256(content).hexdigest()
-                for name, content in sorted(output_files.items())
-            },
-        }
-        output_files["provenance.json"] = (
-            json.dumps(provenance, indent=2, ensure_ascii=False) + "\n"
-        ).encode("utf-8")
+        output_files["apm.yml"] = _json_bytes(
+            _manifest_record(
+                profile, catalog, selected_runtimes, outputs.include_paths
+            ),
+            ensure_ascii=False,
+        )
+        output_files["apm-policy.yml"] = _policy_content(snapshot)
+        output_files["LICENSE"] = _license_content(snapshot)
+        output_files["provenance.json"] = _json_bytes(
+            _provenance_record(catalog, profile, selected, output_files),
+            ensure_ascii=False,
+        )
         return CompositionPlan(
             bundles=selected,
             files=tuple(
@@ -1484,7 +1827,7 @@ class CatalogService:
         snapshot: CatalogSnapshot,
         catalog: Catalog,
         findings: list[Finding],
-    ) -> dict[str, tuple[str, int, str]]:
+    ) -> dict[str, _SkillRecord]:
         """Validate source roots, manifests, metadata, and every inactive bundle."""
         sources = {item.name: item for item in snapshot.bundles}
         source_paths = {item.path: item for item in snapshot.bundles}
@@ -1498,56 +1841,22 @@ class CatalogService:
                     definition.path,
                 )
                 continue
-            if source.path != definition.path or source.kind != definition.kind:
-                _finding(
-                    findings,
-                    "bundle.mapping",
-                    "captured bundle does not match its catalog declaration",
-                    definition.path,
-                )
-            if source.root_is_symlink or not source.apm_exists:
-                _finding(
-                    findings,
-                    "bundle.root",
-                    "bundle .apm source root is missing or contains a symlink",
-                    f"{definition.path}/.apm",
-                )
-            if definition.path in source_paths and source.root_is_symlink:
-                _finding(
-                    findings,
-                    "source.symlink",
-                    "bundle source path contains a symlink",
-                    definition.path,
-                )
+            _check_bundle_source(definition, source, source_paths, findings)
             _included_paths(
                 source, findings, catalog.version, catalog.supported_runtimes
             )
         limits = dict(catalog.budgets)
-        skill_records = _skill_records(
+        return _skill_records(
             snapshot.bundles,
             findings,
             limits["description_chars"],
             limits["skill_body_lines"],
         )
-        duplicate_names: set[str] = set()
-        seen: set[str] = set()
-        for name in skill_records:
-            if name in seen:
-                duplicate_names.add(name)
-            seen.add(name)
-        for name in sorted(duplicate_names):
-            _finding(
-                findings,
-                "skill.duplicate",
-                f"duplicate skill name '{name}'",
-                "catalog.json",
-            )
-        return skill_records
 
     def _validate_profile_budgets(
         self,
         catalog: Catalog,
-        skills: dict[str, tuple[str, int, str]],
+        skills: dict[str, _SkillRecord],
         findings: list[Finding],
     ) -> None:
         """Enforce the aggregate description budget for every declared profile."""
@@ -1573,7 +1882,7 @@ class CatalogService:
     def _summaries(
         self,
         catalog: Catalog | None,
-        skills: dict[str, tuple[str, int, str]],
+        skills: dict[str, _SkillRecord],
         policy_lines: int,
     ) -> tuple[ProfileSummary, ...]:
         """Build effective profile counts without mutating source data."""
@@ -1586,11 +1895,11 @@ class CatalogService:
                 selected = _effective_bundles(catalog, (profile.name,))
             except ValueError:
                 continue
-            effective = [value for value in skills.values() if value[2] in selected]
+            effective = [value for value in skills.values() if value.bundle in selected]
             summaries.append(
                 ProfileSummary(
-                    body_lines=sum(item[1] for item in effective),
-                    description_chars=sum(len(item[0]) for item in effective),
+                    body_lines=sum(item.body_lines for item in effective),
+                    description_chars=sum(len(item.description) for item in effective),
                     limits=limits,
                     policy_lines=policy_lines,
                     profile=profile.name,

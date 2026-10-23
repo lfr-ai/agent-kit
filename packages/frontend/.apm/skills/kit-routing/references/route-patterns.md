@@ -136,7 +136,7 @@ URL state and history rules are in [URL state and history](url-state-and-history
 - React Router, error boundaries: <https://reactrouter.com/how-to/error-boundary>
 - React Router, pending UI: <https://reactrouter.com/start/data/pending-ui>
 - React Router, `createMemoryRouter` for testing: <https://reactrouter.com/api/data-routers/createMemoryRouter>
-- TanStack Query, `ensureQueryData`: <https://tanstack.com/query/latest/docs/reference/QueryClient/>
+- TanStack Query, `QueryClient` (`ensureQueryData`): <https://tanstack.com/query/latest/docs/framework/react/reference/classes/QueryClient>
 - Vite, `base` option: <https://vite.dev/config/shared-options.html#base>
 - WAI-ARIA Authoring Practices, landmarks: <https://www.w3.org/WAI/ARIA/apg/practices/landmark-regions/>
 - OWASP, unvalidated redirects: <https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html>

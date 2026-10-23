@@ -3,29 +3,29 @@
 Rules:
 
 - Python module file names are snake_case and not Python keywords, so they can
-  be imported ('__init__', '__main__' and similar dunder modules are exempt).
+  be imported (``__init__``, ``__main__`` and similar dunder modules are exempt).
 - Directories that directly contain Python modules are snake_case too.
-- Directories below each '--kebab-root' that hold no Python modules are
+- Directories below each ``--kebab-root`` that hold no Python modules are
   kebab-case (lower-case words joined by hyphens), for example docs, assets
   and configuration trees.
-- With '--forbid-stdlib-shadow', a module outside any package that is named
+- With ``--forbid-stdlib-shadow``, a module outside any package that is named
   like a standard-library module is reported, because it can shadow the real
-  module when its directory is on 'sys.path'.
+  module when its directory is on ``sys.path``.
 
-Hidden names (starting with '.') are not checked but their children are.
-Findings are printed as 'path:1: message'; the exit status is 1 on findings.
+Hidden names (starting with ``.``) are not checked but their children are.
+Findings are printed as ``path:1: message``; the exit status is 1 on findings.
 
 Example:
     python check_naming.py . --kebab-root docs --kebab-root .apm/skills
 """
 
 import argparse
+from collections.abc import Iterable, Sequence
 import fnmatch
 import keyword
+from pathlib import Path, PurePosixPath
 import re
 import sys
-from collections.abc import Iterable, Sequence
-from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 _SNAKE = re.compile(r"_?[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
@@ -43,6 +43,7 @@ _DEFAULT_EXCLUDES = (
     "htmlcov",
     "*.egg-info",
 )
+_EXIT_USAGE = 2
 
 
 class Finding(NamedTuple):
@@ -57,7 +58,7 @@ class Finding(NamedTuple):
     message: str
 
     def render(self) -> str:
-        """Return the finding as 'path:1: message'."""
+        """Return the finding as ``path:1: message``."""
         return f"{self.path}:1: {self.message}"
 
 
@@ -66,7 +67,7 @@ class Options(NamedTuple):
 
     Attributes:
         kebab_roots: Directories whose non-Python descendants must be kebab-case.
-        packages_only: Only directories with '__init__.py' must be snake_case.
+        packages_only: Only directories with ``__init__.py`` must be snake_case.
         forbid_stdlib_shadow: Report top-level modules named like stdlib modules.
         ignore: fnmatch patterns of relative paths that are never reported.
     """
@@ -78,25 +79,25 @@ class Options(NamedTuple):
 
 
 def is_snake_case(name: str) -> bool:
-    """Return whether 'name' is lower snake_case without double underscores.
+    """Return whether ``name`` is lower snake_case without double underscores.
 
     Args:
         name: A module stem or directory name.
 
     Returns:
-        True for names such as 'invoice_repository' or '_private'.
+        True for names such as ``invoice_repository`` or ``_private``.
     """
     return _SNAKE.fullmatch(name) is not None
 
 
 def is_kebab_case(name: str) -> bool:
-    """Return whether 'name' is lower-case words joined by single hyphens.
+    """Return whether ``name`` is lower-case words joined by single hyphens.
 
     Args:
         name: A directory name.
 
     Returns:
-        True for names such as 'getting-started' or 'v2'.
+        True for names such as ``getting-started`` or ``v2``.
     """
     return _KEBAB.fullmatch(name) is not None
 
@@ -118,10 +119,53 @@ def _module_problem(stem: str) -> str | None:
 
 
 def _under(path: PurePosixPath, root: PurePosixPath) -> bool:
-    """Return whether 'path' is strictly below 'root' ('.' contains everything)."""
+    """Return whether ``path`` is strictly below ``root`` (``.`` contains everything)."""
     if str(root) == ".":
         return str(path) != "."
     return path != root and path.is_relative_to(root)
+
+
+def _module_finding(
+    module: PurePosixPath, *, packages: set[PurePosixPath], options: Options
+) -> str | None:
+    """Describe a module naming or standard-library shadowing problem, if any."""
+    problem = _module_problem(module.stem)
+    if problem:
+        return problem
+    if (
+        options.forbid_stdlib_shadow
+        and module.parent not in packages
+        and module.stem in sys.stdlib_module_names
+    ):
+        return (
+            f"module '{module.name}' shadows the standard-library "
+            f"module '{module.stem}'"
+        )
+    return None
+
+
+def _directory_problem(
+    directory: PurePosixPath,
+    *,
+    snake_dirs: set[PurePosixPath],
+    python_dirs: set[PurePosixPath],
+    options: Options,
+) -> str | None:
+    """Describe a directory naming problem, if any."""
+    name = directory.name
+    if _hidden(name):
+        return None
+    if directory in snake_dirs:
+        if is_snake_case(name):
+            return None
+        return f"Python directory '{name}' is not snake_case"
+    if directory in python_dirs or not any(
+        _under(directory, root) for root in options.kebab_roots
+    ):
+        return None
+    if is_kebab_case(name):
+        return None
+    return f"directory '{name}' is not kebab-case"
 
 
 def check_tree(files: Iterable[PurePosixPath], *, options: Options) -> list[Finding]:
@@ -144,39 +188,13 @@ def check_tree(files: Iterable[PurePosixPath], *, options: Options) -> list[Find
     }
     findings: list[Finding] = []
     for module in modules:
-        problem = _module_problem(module.stem)
+        problem = _module_finding(module, packages=packages, options=options)
         if problem:
             findings.append(Finding(str(module), problem))
-        elif (
-            options.forbid_stdlib_shadow
-            and module.parent not in packages
-            and module.stem in sys.stdlib_module_names
-        ):
-            findings.append(
-                Finding(
-                    str(module),
-                    f"module '{module.name}' shadows the standard-library "
-                    f"module '{module.stem}'",
-                )
-            )
     for directory in sorted(directories):
-        name = directory.name
-        if _hidden(name):
-            continue
-        if directory in snake_dirs:
-            problem = (
-                None
-                if is_snake_case(name)
-                else f"Python directory '{name}' is not snake_case"
-            )
-        elif directory in python_dirs or not any(
-            _under(directory, root) for root in options.kebab_roots
-        ):
-            problem = None
-        else:
-            problem = (
-                None if is_kebab_case(name) else f"directory '{name}' is not kebab-case"
-            )
+        problem = _directory_problem(
+            directory, snake_dirs=snake_dirs, python_dirs=python_dirs, options=options
+        )
         if problem:
             findings.append(Finding(f"{directory}/", problem))
     return sorted(
@@ -190,7 +208,7 @@ def check_tree(files: Iterable[PurePosixPath], *, options: Options) -> list[Find
 
 
 def collect(root: Path, *, excludes: Sequence[str]) -> list[PurePosixPath]:
-    """List files below 'root' as relative POSIX paths, skipping excluded names.
+    """List files below ``root`` as relative POSIX paths, skipping excluded names.
 
     Args:
         root: Directory to scan.
@@ -306,28 +324,33 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_self_test() -> int:
+    """Run the self-test, print its outcome and return the exit status."""
+    failures = self_test()
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    if failures:
+        return 1
+    print("check_naming self-test passed.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Scan a tree and print naming findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv[1:]' when None.
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
 
     Returns:
         0 when clean, 1 when findings exist, 2 when the root is unusable.
     """
     args = _parser().parse_args(argv)
     if args.self_test:
-        failures = self_test()
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        if failures:
-            return 1
-        print("check_naming self-test passed.")
-        return 0
+        return _run_self_test()
     root: Path = args.root
     if not root.is_dir():
         print(f"{root.as_posix()}: not a directory", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     options = Options(
         kebab_roots=tuple(PurePosixPath(item) for item in args.kebab_root),
         packages_only=args.packages_only,

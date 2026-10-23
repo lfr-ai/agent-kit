@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-from collections.abc import Callable
 from dataclasses import dataclass
+import json
 from pathlib import Path
-from typing import TextIO
+import sys
+from typing import TYPE_CHECKING, TextIO
 
 from agent_kit.core.errors import InputTypeError
-from agent_kit.core.models import CheckReport, SessionContext
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from agent_kit.core.models import CheckReport, SessionContext
 
 _MAX_CONTEXT_CHARS = 1_000_000
+_JSON_INDENT = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -134,7 +138,7 @@ def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
     """Validate the source catalog and print a text or JSON report."""
     report = actions.check(arguments.root or actions.default_root())
     if arguments.json:
-        print(json.dumps(_report_dict(report), indent=2, ensure_ascii=False))
+        print(json.dumps(_report_dict(report), indent=_JSON_INDENT, ensure_ascii=False))
     elif report.valid:
         print(f"source catalog valid: {report.version}")
     else:

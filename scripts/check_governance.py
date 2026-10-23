@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import json
 import os
+from pathlib import Path
 import re
 import sys
-from enum import Enum
-from pathlib import Path
-from typing import TypedDict, TypeGuard, override
+from typing import TYPE_CHECKING, TypedDict, TypeGuard, override
 from urllib.parse import urlsplit
 
 import yaml
-from yaml.nodes import MappingNode
+
+if TYPE_CHECKING:
+    from yaml.nodes import MappingNode
 
 _ROOT = Path(__file__).resolve().parents[1]
 _FIELDS = {
@@ -36,9 +38,14 @@ _DOCS = (
 _WORKFLOWS = {
     "ci.yml",
     "codeql.yml",
+    "dependency-audit.yml",
     "dependency-review.yml",
     "release.yml",
     "scorecard.yml",
+}
+_REUSABLE = {
+    "ci.yml": "$/.github/workflows/dependency-audit.yml",
+    "release.yml": "$/.github/workflows/ci.yml",
 }
 
 
@@ -64,7 +71,35 @@ _RULESET_RULES = {
 }
 _REQUIRED_CHECK = "Required toolkit checks"
 _DEPENDABOT_VERSION = 2
-_DEPENDABOT_ECOSYSTEMS = frozenset({"uv", "github-actions", "pre-commit"})
+_DEPENDABOT_ECOSYSTEMS = frozenset(
+    {"uv", "github-actions", "pre-commit", "devcontainers"}
+)
+_AUDIT_COMMAND = "uv run --locked --no-sync python scripts/audit_dependencies.py"
+_SYNC_COMMAND = "uv sync --locked"
+_REVIEW_SCOPES = {"runtime", "development", "unknown"}
+_OIDC_READ = {"contents": "read", "id-token": "write"}
+_PERMISSIONS = {
+    ("release.yml", "publish"): {
+        "contents": "write",
+        "id-token": "write",
+        "attestations": "write",
+    },
+    # Caller grant for the reusable gate's Codecov OIDC upload job.
+    ("release.yml", "verify"): _OIDC_READ,
+    ("ci.yml", "coverage"): _OIDC_READ,
+    ("codeql.yml", "analyze"): {"contents": "read", "security-events": "write"},
+    ("scorecard.yml", "analysis"): {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "security-events": "write",
+    },
+}
+_UPLOADS = {
+    ("release-artifacts", "build/release/*", "error"),
+    ("coverage-report", "build/coverage/coverage.xml", "error"),
+}
+_DOWNLOADS = {("release-artifacts", "artifacts"), ("coverage-report", "build/coverage")}
 _PULL_REQUEST_GUARDS = (
     "dismiss_stale_reviews_on_push",
     "require_code_owner_review",
@@ -131,6 +166,32 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def _valid_owners(owners: object) -> bool:
+    """Return whether owners are unique GitHub account or team handles."""
+    return (
+        isinstance(owners, list)
+        and all(isinstance(owner, str) and _OWNER.fullmatch(owner) for owner in owners)
+        and len(set(owners)) == len(owners)
+    )
+
+
+def _verify_contact(field: str, contact: object) -> None:
+    """Accept an absent contact or a private HTTPS or mailto route."""
+    if contact is None:
+        return
+    if not isinstance(contact, str) or any(char.isspace() for char in contact):
+        raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
+    parsed = urlsplit(contact)
+    allowed = (
+        parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username
+    ) or (
+        parsed.scheme == "mailto"
+        and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", parsed.path))
+    )
+    if not allowed:
+        raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
+
+
 def _maintainers(root: Path) -> dict[str, object]:
     """Read the explicit account-neutral ownership source."""
     raw: object = json.loads(
@@ -141,14 +202,7 @@ def _maintainers(root: Path) -> dict[str, object]:
         raise _GovernanceInputError(_GovernanceIssue.INVALID_MAINTAINER_FIELDS)
     if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
         raise _GovernanceInputError(_GovernanceIssue.INVALID_MAINTAINER_SCHEMA)
-    owners = raw["owners"]
-    if (
-        not isinstance(owners, list)
-        or not all(
-            isinstance(owner, str) and _OWNER.fullmatch(owner) for owner in owners
-        )
-        or len(set(owners)) != len(owners)
-    ):
+    if not _valid_owners(raw["owners"]):
         raise _GovernanceInputError(_GovernanceIssue.INVALID_OWNERS)
     repository = raw["repository"]
     if repository is not None and (
@@ -156,20 +210,7 @@ def _maintainers(root: Path) -> dict[str, object]:
     ):
         raise _GovernanceInputError(_GovernanceIssue.INVALID_REPOSITORY)
     for field in ("security_contact", "conduct_contact"):
-        contact = raw[field]
-        if contact is None:
-            continue
-        if not isinstance(contact, str) or any(char.isspace() for char in contact):
-            raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
-        parsed = urlsplit(contact)
-        allowed = (
-            parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username
-        ) or (
-            parsed.scheme == "mailto"
-            and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", parsed.path))
-        )
-        if not allowed:
-            raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
+        _verify_contact(field, raw[field])
     return raw
 
 
@@ -213,178 +254,334 @@ def publication_blockers(root: Path) -> list[str]:
     return findings
 
 
-def _workflow(root: Path, name: str) -> list[str]:  # noqa: C901, PLR0912, PLR0915
-    """Reject unsafe or unreviewed executable workflow surfaces."""
-    path = root / ".github/workflows" / name
+def _load_workflow(path: Path) -> object:
+    """Parse one workflow with string scalars and unique mapping keys."""
     loader = _WorkflowLoader(path.read_text(encoding="utf-8"))
     try:
-        raw: object = loader.get_single_data()
+        return loader.get_single_data()
     finally:
         loader.dispose()
-    if not _mapping(raw):
-        return [f"{name}: workflow must be a mapping"]
+
+
+def _checkout_reviewed(options: object) -> bool:
+    """Return whether checkout disables persistent credentials."""
+    return _mapping(options) and options.get("persist-credentials") == "false"
+
+
+def _upload_reviewed(options: object) -> bool:
+    """Return whether an artifact upload uses a reviewed name and path."""
+    return (
+        _mapping(options)
+        and (
+            options.get("name"),
+            options.get("path"),
+            options.get("if-no-files-found"),
+        )
+        in _UPLOADS
+    )
+
+
+def _download_reviewed(options: object) -> bool:
+    """Return whether an artifact download matches a reviewed upload."""
+    return (
+        _mapping(options) and (options.get("name"), options.get("path")) in _DOWNLOADS
+    )
+
+
+def _codecov_reviewed(options: object) -> bool:
+    """Return whether Codecov pins its CLI, keeps validation, and uses OIDC."""
+    return (
+        _mapping(options)
+        and str(options.get("version", "")).startswith("v")
+        and options.get("skip_validation") in {None, "false"}
+        and "token" not in options
+    )
+
+
+_ACTION_OPTION_RULES = (
+    (
+        "actions/checkout@",
+        _checkout_reviewed,
+        "checkout must disable persistent credentials",
+    ),
+    (
+        "actions/upload-artifact@",
+        _upload_reviewed,
+        "artifact upload must use a reviewed name and path",
+    ),
+    (
+        "actions/download-artifact@",
+        _download_reviewed,
+        "artifact download must match a reviewed upload",
+    ),
+    (
+        "codecov/codecov-action@",
+        _codecov_reviewed,
+        "Codecov must pin its CLI, keep validation, and use OIDC",
+    ),
+)
+
+
+def _step_findings(name: str, step: object) -> list[str]:
+    """Reject mutable actions, interpolated scripts, and unreviewed options."""
+    if not _mapping(step):
+        return [f"{name}: malformed workflow step"]
     findings: list[str] = []
-    triggers = raw.get("on")
-    if not _mapping(triggers):
-        return [f"{name}: explicit trigger mapping is required"]
+    action = step.get("uses")
+    if action is not None and (
+        not isinstance(action, str) or not _ACTION.fullmatch(action)
+    ):
+        findings.append(f"{name}: actions must use an immutable full commit SHA")
+    command = step.get("run")
+    if isinstance(command, str) and "${{" in command:
+        findings.append(
+            f"{name}: expressions belong in env, not interpolated run scripts"
+        )
+    if isinstance(action, str):
+        findings.extend(
+            f"{name}: {message}"
+            for prefix, reviewed, message in _ACTION_OPTION_RULES
+            if action.startswith(prefix) and not reviewed(step.get("with"))
+        )
+    return findings
+
+
+def _job_policy_findings(
+    name: str, identifier: str, job: dict[str, object]
+) -> list[str]:
+    """Require timeouts, approved permissions, no secrets, and reviewed reuse."""
+    findings: list[str] = []
+    if "steps" in job and not isinstance(job.get("timeout-minutes"), str):
+        findings.append(f"{name}: job {identifier} needs an explicit timeout")
+    permissions = job.get("permissions")
+    permitted = _PERMISSIONS.get((name, identifier), {"contents": "read"})
+    if permissions is not None and permissions != permitted:
+        findings.append(f"{name}: job {identifier} has unapproved permissions")
+    if "secrets" in job:
+        findings.append(f"{name}: job secrets must not be inherited or declared")
+    reusable = job.get("uses")
+    if reusable is not None and reusable != _REUSABLE.get(name):
+        findings.append(f"{name}: unapproved reusable workflow")
+    return findings
+
+
+def _job_findings(name: str, identifier: str, job: object) -> list[str]:
+    """Check one job's policy and every step it runs."""
+    if not _mapping(job):
+        return [f"{name}: job {identifier} must be a mapping"]
+    findings = _job_policy_findings(name, identifier, job)
+    steps = job.get("steps", [])
+    if not isinstance(steps, list):
+        findings.append(f"{name}: steps must be a list")
+        return findings
+    for step in steps:
+        findings.extend(_step_findings(name, step))
+    return findings
+
+
+def _root_findings(
+    name: str, raw: dict[str, object], triggers: dict[str, object]
+) -> list[str]:
+    """Reject privileged triggers and broader default permissions."""
+    findings: list[str] = []
     if "pull_request_target" in triggers:
         findings.append(f"{name}: pull_request_target is not an approved trigger")
     if raw.get("permissions") != {"contents": "read"}:
         findings.append(f"{name}: root permissions must be contents: read only")
+    return findings
+
+
+def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[str]:
+    """Require gate triggers, an always-run summary, and the audit job."""
+    findings: list[str] = []
+    if not {"pull_request", "merge_group", "workflow_call"}.issubset(triggers):
+        findings.append(
+            "ci.yml: PR, merge queue, and reusable verification triggers are required"
+        )
+    summary = jobs.get("checks")
+    needs = summary.get("needs") if _mapping(summary) else None
+    needed = [needs] if isinstance(needs, str) else needs
+    if (
+        not _mapping(summary)
+        or not isinstance(needed, list)
+        or sorted(str(item) for item in needed) != sorted(set(jobs) - {"checks"})
+        or summary.get("if") != "always()"
+    ):
+        findings.append(
+            "ci.yml: the required summary must always run and need every other job"
+        )
+    audit = jobs.get("audit")
+    if not _mapping(audit) or audit.get("uses") != _REUSABLE["ci.yml"]:
+        findings.append("ci.yml: the dependency audit must be a required job")
+    return findings
+
+
+def _release_command_findings(publish: dict[str, object]) -> list[str]:
+    """Require one draft prerelease creation that verifies an existing tag."""
+    steps = publish.get("steps")
+    commands = (
+        [step.get("run") for step in steps if _mapping(step)]
+        if isinstance(steps, list)
+        else []
+    )
+    release_commands = [
+        command
+        for command in commands
+        if isinstance(command, str) and "gh release create " in command
+    ]
+    if len(release_commands) != 1 or any(
+        flag not in release_commands[0].split()
+        for flag in ("--draft", "--prerelease", "--verify-tag")
+    ):
+        return ["release.yml: draft prerelease creation must verify an existing tag"]
+    return []
+
+
+def _release_findings(
+    triggers: dict[str, object], jobs: dict[str, object]
+) -> list[str]:
+    """Require verified, environment-gated publication from a tag push."""
+    findings: list[str] = []
+    publish = jobs.get("publish")
+    verify = jobs.get("verify")
+    if not _mapping(verify) or verify.get("uses") != _REUSABLE["release.yml"]:
+        findings.append(
+            "release.yml: publication must depend on the shared verification gate"
+        )
+    arguments = verify.get("with") if _mapping(verify) else None
+    if (
+        not _mapping(arguments)
+        or arguments.get("release-tag") != "${{ github.ref_name }}"
+    ):
+        findings.append(
+            "release.yml: verification must validate the actual release tag"
+        )
+    if (
+        not _mapping(publish)
+        or publish.get("needs") != "verify"
+        or publish.get("environment") != "release"
+        or publish.get("if") != "github.event.repository.visibility == 'public'"
+    ):
+        findings.append(
+            "release.yml: approved release environment and verified public tag are required"
+        )
+    if "push" not in triggers or len(triggers) != 1:
+        findings.append("release.yml: only tag push may start the release workflow")
+    if _mapping(publish):
+        findings.extend(_release_command_findings(publish))
+    return findings
+
+
+def _dependency_review_workflow(
+    triggers: dict[str, object], jobs: dict[str, object]
+) -> list[str]:
+    """Require complete dependency review limited to pull requests."""
+    findings = _dependency_review(jobs)
+    if set(triggers) != {"pull_request"}:
+        findings.append(
+            "dependency-review.yml: dependency review is supported only for pull_request events"
+        )
+    return findings
+
+
+def _workflow_specific(
+    name: str, triggers: dict[str, object], jobs: dict[str, object]
+) -> list[str]:
+    """Apply the contract owned by one named workflow, if any."""
+    if name == "ci.yml":
+        return _ci_findings(triggers, jobs)
+    if name == "dependency-audit.yml":
+        return _dependency_audit(triggers, jobs)
+    if name == "dependency-review.yml":
+        return _dependency_review_workflow(triggers, jobs)
+    if name == "release.yml":
+        return _release_findings(triggers, jobs)
+    return []
+
+
+def _workflow(root: Path, name: str) -> list[str]:
+    """Reject unsafe or unreviewed executable workflow surfaces."""
+    raw = _load_workflow(root / ".github/workflows" / name)
+    if not _mapping(raw):
+        return [f"{name}: workflow must be a mapping"]
+    triggers = raw.get("on")
+    if not _mapping(triggers):
+        return [f"{name}: explicit trigger mapping is required"]
+    findings = _root_findings(name, raw, triggers)
     jobs = raw.get("jobs")
     if not _mapping(jobs):
         return [*findings, f"{name}: jobs must be explicit"]
     for identifier, job in jobs.items():
-        if not _mapping(job):
-            findings.append(f"{name}: job {identifier} must be a mapping")
-            continue
-        if "steps" in job and not isinstance(job.get("timeout-minutes"), str):
-            findings.append(f"{name}: job {identifier} needs an explicit timeout")
-        permissions = job.get("permissions")
-        permitted = {"contents": "read"}
-        if name == "release.yml" and identifier == "publish":
-            permitted = {
-                "contents": "write",
-                "id-token": "write",
-                "attestations": "write",
-            }
-        elif name == "codeql.yml" and identifier == "analyze":
-            permitted = {"contents": "read", "security-events": "write"}
-        elif name == "scorecard.yml" and identifier == "analysis":
-            permitted = {
-                "contents": "read",
-                "actions": "read",
-                "id-token": "write",
-                "security-events": "write",
-            }
-        if permissions is not None and permissions != permitted:
-            findings.append(f"{name}: job {identifier} has unapproved permissions")
-        if "secrets" in job:
-            findings.append(f"{name}: job secrets must not be inherited or declared")
-        reusable = job.get("uses")
-        if reusable is not None and reusable != "./.github/workflows/ci.yml":
-            findings.append(f"{name}: unapproved reusable workflow")
-        steps = job.get("steps", [])
-        if not isinstance(steps, list):
-            findings.append(f"{name}: steps must be a list")
-            continue
-        for step in steps:
-            if not _mapping(step):
-                findings.append(f"{name}: malformed workflow step")
-                continue
-            action = step.get("uses")
-            if action is not None and (
-                not isinstance(action, str) or not _ACTION.fullmatch(action)
-            ):
-                findings.append(
-                    f"{name}: actions must use an immutable full commit SHA"
-                )
-            command = step.get("run")
-            if isinstance(command, str) and "${{" in command:
-                findings.append(
-                    f"{name}: expressions belong in env, not interpolated run scripts"
-                )
-            if isinstance(action, str) and action.startswith("actions/checkout@"):
-                options = step.get("with")
-                if (
-                    not _mapping(options)
-                    or options.get("persist-credentials") != "false"
-                ):
-                    findings.append(
-                        f"{name}: checkout must disable persistent credentials"
-                    )
-            if isinstance(action, str) and action.startswith(
-                "actions/upload-artifact@"
-            ):
-                options = step.get("with")
-                if (
-                    not _mapping(options)
-                    or options.get("name") != "release-artifacts"
-                    or options.get("path") != "build/release/*"
-                    or options.get("if-no-files-found") != "error"
-                ):
-                    findings.append(
-                        f"{name}: release artifact upload must use the verified flat stage"
-                    )
-            if isinstance(action, str) and action.startswith(
-                "actions/download-artifact@"
-            ):
-                options = step.get("with")
-                if (
-                    not _mapping(options)
-                    or options.get("name") != "release-artifacts"
-                    or options.get("path") != "artifacts"
-                ):
-                    findings.append(
-                        f"{name}: release artifact download must match its flat upload"
-                    )
-    if name == "ci.yml":
-        if not {"pull_request", "merge_group", "workflow_call"}.issubset(triggers):
-            findings.append(
-                "ci.yml: PR, merge queue, and reusable verification triggers are required"
-            )
-        summary = jobs.get("checks")
-        needs = summary.get("needs") if _mapping(summary) else None
-        needed = [needs] if isinstance(needs, str) else needs
-        if (
-            not _mapping(summary)
-            or not isinstance(needed, list)
-            or sorted(str(item) for item in needed) != sorted(set(jobs) - {"checks"})
-            or summary.get("if") != "always()"
-        ):
-            findings.append(
-                "ci.yml: the required summary must always run and need every other job"
-            )
-    if name == "dependency-review.yml" and set(triggers) != {"pull_request"}:
-        findings.append(
-            "dependency-review.yml: dependency review is supported only for pull_request events"
-        )
-    if name == "release.yml":
-        publish = jobs.get("publish")
-        verify = jobs.get("verify")
-        if not _mapping(verify) or verify.get("uses") != "./.github/workflows/ci.yml":
-            findings.append(
-                "release.yml: publication must depend on the shared verification gate"
-            )
-        arguments = verify.get("with") if _mapping(verify) else None
-        if (
-            not _mapping(arguments)
-            or arguments.get("release-tag") != "${{ github.ref_name }}"
-        ):
-            findings.append(
-                "release.yml: verification must validate the actual release tag"
-            )
-        if (
-            not _mapping(publish)
-            or publish.get("needs") != "verify"
-            or publish.get("environment") != "release"
-            or publish.get("if") != "github.event.repository.visibility == 'public'"
-        ):
-            findings.append(
-                "release.yml: approved release environment and verified public tag are required"
-            )
-        if "push" not in triggers or len(triggers) != 1:
-            findings.append("release.yml: only tag push may start the release workflow")
-        if _mapping(publish):
-            steps = publish.get("steps")
-            commands = (
-                [step.get("run") for step in steps if _mapping(step)]
-                if isinstance(steps, list)
-                else []
-            )
-            release_commands = [
-                command
-                for command in commands
-                if isinstance(command, str) and "gh release create " in command
-            ]
-            if len(release_commands) != 1 or any(
-                flag not in release_commands[0].split()
-                for flag in ("--draft", "--prerelease", "--verify-tag")
-            ):
-                findings.append(
-                    "release.yml: draft prerelease creation must verify an existing tag"
-                )
+        findings.extend(_job_findings(name, identifier, job))
+    findings.extend(_workflow_specific(name, triggers, jobs))
     return findings
+
+
+def _run_commands(job: object) -> list[str]:
+    """Return a job's literal shell commands in step order."""
+    steps = job.get("steps") if _mapping(job) else None
+    if not isinstance(steps, list):
+        return []
+    return [
+        command
+        for step in steps
+        if _mapping(step) and isinstance(command := step.get("run"), str)
+    ]
+
+
+def _dependency_audit(
+    triggers: dict[str, object], jobs: dict[str, object]
+) -> list[str]:
+    """Require scheduled, reusable auditing that precedes installing the lock."""
+    findings: list[str] = []
+    if not {"schedule", "workflow_call"}.issubset(triggers):
+        findings.append(
+            "dependency-audit.yml: scheduled and reusable triggers are required"
+        )
+    commands = _run_commands(jobs.get("audit"))
+    if (
+        _AUDIT_COMMAND not in commands
+        or _SYNC_COMMAND not in commands
+        or commands.index(_AUDIT_COMMAND) > commands.index(_SYNC_COMMAND)
+    ):
+        findings.append(
+            "dependency-audit.yml: the lock must be audited before it is installed"
+        )
+    return findings
+
+
+def _dependency_review(jobs: dict[str, object]) -> list[str]:
+    """Require vulnerability and license review for every dependency scope."""
+    job = jobs.get("review")
+    steps = job.get("steps") if _mapping(job) else None
+    options = next(
+        (
+            step.get("with")
+            for step in (steps if isinstance(steps, list) else [])
+            if _mapping(step)
+            and str(step.get("uses", "")).startswith(
+                "actions/dependency-review-action@"
+            )
+        ),
+        None,
+    )
+    scopes = (
+        {scope.strip() for scope in str(options.get("fail-on-scopes", "")).split(",")}
+        if _mapping(options)
+        else set()
+    )
+    if (
+        not _mapping(options)
+        or options.get("vulnerability-check") != "true"
+        or options.get("license-check") != "true"
+        or options.get("fail-on-severity") != "low"
+        or not str(options.get("allow-licenses", "")).strip()
+        or scopes != _REVIEW_SCOPES
+    ):
+        return [
+            "dependency-review.yml: vulnerability and license review must cover every dependency scope"
+        ]
+    return []
 
 
 def _ruleset(root: Path, name: str) -> list[str]:
@@ -399,18 +596,7 @@ def _ruleset(root: Path, name: str) -> list[str]:
         return [f"rulesets/{name}: missing, invalid, or duplicate-key JSON"]
     if not _mapping(raw):
         return [f"rulesets/{name}: ruleset must be a mapping"]
-    findings: list[str] = []
-    conditions = raw.get("conditions")
-    ref_name = conditions.get("ref_name") if _mapping(conditions) else None
-    if (
-        raw.get("target") != expected["target"]
-        or raw.get("enforcement") != "active"
-        or not _mapping(ref_name)
-        or ref_name.get("include") != expected["include"]
-    ):
-        findings.append(f"rulesets/{name}: target, scope, and enforcement are fixed")
-    if raw.get("bypass_actors") != []:
-        findings.append(f"rulesets/{name}: bypass actors require explicit review")
+    findings = _ruleset_scope_findings(name, raw, expected)
     rules = raw.get("rules")
     typed: dict[str, object] = (
         {
@@ -425,6 +611,25 @@ def _ruleset(root: Path, name: str) -> list[str]:
         findings.append(f"rulesets/{name}: required protection rules are missing")
     if name == "main.json":
         findings.extend(_main_ruleset_parameters(typed))
+    return findings
+
+
+def _ruleset_scope_findings(
+    name: str, raw: dict[str, object], expected: _RulesetContract
+) -> list[str]:
+    """Require the fixed target, scope, enforcement, and no bypass actors."""
+    findings: list[str] = []
+    conditions = raw.get("conditions")
+    ref_name = conditions.get("ref_name") if _mapping(conditions) else None
+    if (
+        raw.get("target") != expected["target"]
+        or raw.get("enforcement") != "active"
+        or not _mapping(ref_name)
+        or ref_name.get("include") != expected["include"]
+    ):
+        findings.append(f"rulesets/{name}: target, scope, and enforcement are fixed")
+    if raw.get("bypass_actors") != []:
+        findings.append(f"rulesets/{name}: bypass actors require explicit review")
     return findings
 
 
@@ -486,11 +691,8 @@ def _yaml_mapping(path: Path) -> dict[str, object] | None:
     return raw if _mapping(raw) else None
 
 
-def _intake(root: Path, repository: object) -> list[str]:  # noqa: C901
-    """Keep public intake private-first and labels defined, not hosted-verified."""
-    labels = _labels(root)
-    if labels is None:
-        return ["labels.yml: must list unique name, description, and hex color"]
+def _issue_config_findings(root: Path, repository: object) -> list[str]:
+    """Require disabled blank issues and a private security route."""
     findings: list[str] = []
     config = _yaml_mapping(root / ".github/ISSUE_TEMPLATE/config.yml")
     if config is None or config.get("blank_issues_enabled") is not False:
@@ -505,13 +707,25 @@ def _intake(root: Path, repository: object) -> list[str]:  # noqa: C901
         if isinstance(links, list)
         else []
     )
-    advisory = [url for url in urls if url.endswith("/security/advisories/new")]
-    if not advisory:
-        findings.append("issue config: a private security reporting link is required")
+    security_routes = [
+        url
+        for url in urls
+        if url.endswith(("/security/advisories/new", "/blob/main/SECURITY.md"))
+    ]
+    if not security_routes:
+        findings.append(
+            "issue config: private security reporting or SECURITY.md instructions are required"
+        )
     elif isinstance(repository, str) and not all(
         url.startswith(f"https://github.com/{repository}/") for url in urls
     ):
         findings.append("issue config: contact links must use the approved repository")
+    return findings
+
+
+def _issue_form_findings(root: Path, labels: set[str]) -> list[str]:
+    """Require issue forms to apply only declared labels."""
+    findings: list[str] = []
     for form in ("bug.yml", "feature.yml"):
         data = _yaml_mapping(root / ".github/ISSUE_TEMPLATE" / form)
         form_labels = data.get("labels") if data is not None else None
@@ -523,22 +737,36 @@ def _intake(root: Path, repository: object) -> list[str]:  # noqa: C901
             for label in form_labels
             if label not in labels
         )
-    release = _yaml_mapping(root / ".github/release.yml")
-    changelog = release.get("changelog") if release is not None else None
-    categories = changelog.get("categories") if _mapping(changelog) else None
+    return findings
+
+
+def _release_labels(changelog: object) -> set[str]:
+    """Collect labels named by release-note categories and exclusions."""
+    if not _mapping(changelog):
+        return set()
     used: set[str] = set()
+    categories = changelog.get("categories")
     if isinstance(categories, list):
         for category in categories:
             if _mapping(category) and isinstance(
                 category_labels := category.get("labels"), list
             ):
                 used.update(str(label) for label in category_labels)
-    if _mapping(changelog):
-        exclude = changelog.get("exclude")
-        if _mapping(exclude) and isinstance(
-            exclude_labels := exclude.get("labels"), list
-        ):
-            used.update(str(label) for label in exclude_labels)
+    exclude = changelog.get("exclude")
+    if _mapping(exclude) and isinstance(exclude_labels := exclude.get("labels"), list):
+        used.update(str(label) for label in exclude_labels)
+    return used
+
+
+def _intake(root: Path, repository: object) -> list[str]:
+    """Require a private security route and valid labels without claiming host state."""
+    labels = _labels(root)
+    if labels is None:
+        return ["labels.yml: must list unique name, description, and hex color"]
+    findings = _issue_config_findings(root, repository)
+    findings.extend(_issue_form_findings(root, labels))
+    release = _yaml_mapping(root / ".github/release.yml")
+    used = _release_labels(release.get("changelog") if release is not None else None)
     findings.extend(
         f"release.yml: label {label!r} is not in labels.yml"
         for label in sorted(used - {"*"} - labels)

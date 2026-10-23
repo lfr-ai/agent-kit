@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from dataclasses import replace
 from io import StringIO
+import json
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 import pytest
 
@@ -15,6 +14,9 @@ from agent_kit.core.errors import InputTypeError
 from agent_kit.core.models import CheckReport, Finding, ProfileSummary, SessionContext
 from agent_kit.infrastructure.session_context import session_context
 from agent_kit.presentation.cli import CliActions, main
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _ok(_root: Path) -> CheckReport:

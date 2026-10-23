@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from enum import StrEnum, unique
 import importlib.metadata
 import os
 import shutil
 import subprocess
-from enum import StrEnum, unique
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_APM_VERSION = "0.33.0"
+_DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
 class ApmCliError(RuntimeError):
@@ -18,8 +24,8 @@ class ApmCliError(RuntimeError):
 class ApmAvailabilityIssue(StrEnum):
     """Pinned executable prerequisites that can prevent an APM invocation."""
 
-    MISSING_PACKAGE = "pinned apm-cli==0.33.0 is not installed"
-    VERSION_MISMATCH = "installed apm-cli version does not match 0.33.0"
+    MISSING_PACKAGE = f"pinned apm-cli=={_APM_VERSION} is not installed"
+    VERSION_MISMATCH = f"installed apm-cli version does not match {_APM_VERSION}"
     MISSING_EXECUTABLE = "apm executable is unavailable"
 
 
@@ -80,7 +86,7 @@ class InvalidApmTimeoutError(ValueError):
 class ApmCliAdapter:
     """Run only explicit, read-oriented APM policy and audit commands."""
 
-    def __init__(self, timeout_seconds: float = 120.0) -> None:
+    def __init__(self, timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS) -> None:
         """Create the process adapter.
 
         Args:
@@ -92,62 +98,80 @@ class ApmCliAdapter:
 
     def check(self, root: Path) -> None:
         """Run explicit policy status and CI audit commands."""
-        try:
-            installed_version = importlib.metadata.version("apm-cli")
-        except importlib.metadata.PackageNotFoundError as error:
-            raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_PACKAGE) from error
-        if installed_version != "0.33.0":
-            raise ApmAvailabilityError(ApmAvailabilityIssue.VERSION_MISMATCH)
-        executable = shutil.which("apm")
-        if executable is None:
-            raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_EXECUTABLE)
-
+        executable = _pinned_executable()
         environment = os.environ.copy()
         environment["APM_NO_SCRIPTS"] = "1"
         environment["APM_NON_INTERACTIVE"] = "1"
-        commands = (
-            (
-                "policy status",
-                [
-                    executable,
-                    "policy",
-                    "status",
-                    "--policy-source",
-                    "./apm-policy.yml",
-                    "--check",
-                    "--json",
-                ],
-            ),
-            (
+        for label, arguments in _commands(executable):
+            self._run(label, arguments, root=root, environment=environment)
+
+    def _run(
+        self,
+        label: str,
+        arguments: list[str],
+        *,
+        root: Path,
+        environment: dict[str, str],
+    ) -> None:
+        """Run one fixed APM command, reporting only its label and status."""
+        try:
+            result = subprocess.run(  # noqa: S603 -- executable and argv are constrained above
+                arguments,
+                cwd=root,
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=self._timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ApmCommandError(
+                command=label, issue=ApmCommandIssue.TIMEOUT
+            ) from error
+        except OSError as error:
+            raise ApmCommandError(command=label, issue=ApmCommandIssue.START) from error
+        if result.returncode != 0:
+            raise ApmExitError(command=label, returncode=result.returncode)
+
+
+def _pinned_executable() -> str:
+    """Return the ``apm`` executable after verifying the pinned package version."""
+    try:
+        installed_version = importlib.metadata.version("apm-cli")
+    except importlib.metadata.PackageNotFoundError as error:
+        raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_PACKAGE) from error
+    if installed_version != _APM_VERSION:
+        raise ApmAvailabilityError(ApmAvailabilityIssue.VERSION_MISMATCH)
+    executable = shutil.which("apm")
+    if executable is None:
+        raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_EXECUTABLE)
+    return executable
+
+
+def _commands(executable: str) -> tuple[tuple[str, list[str]], ...]:
+    """Build the fixed policy status and CI audit invocations."""
+    return (
+        (
+            "policy status",
+            [
+                executable,
+                "policy",
+                "status",
+                "--policy-source",
+                "./apm-policy.yml",
+                "--check",
+                "--json",
+            ],
+        ),
+        (
+            "audit",
+            [
+                executable,
                 "audit",
-                [
-                    executable,
-                    "audit",
-                    "--ci",
-                    "--policy",
-                    "./apm-policy.yml",
-                    "--no-fail-fast",
-                ],
-            ),
-        )
-        for label, arguments in commands:
-            try:
-                result = subprocess.run(  # noqa: S603 -- executable and argv are constrained above
-                    arguments,
-                    cwd=root,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout_seconds,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as error:
-                raise ApmCommandError(
-                    command=label, issue=ApmCommandIssue.TIMEOUT
-                ) from error
-            except OSError as error:
-                raise ApmCommandError(
-                    command=label, issue=ApmCommandIssue.START
-                ) from error
-            if result.returncode != 0:
-                raise ApmExitError(command=label, returncode=result.returncode)
+                "--ci",
+                "--policy",
+                "./apm-policy.yml",
+                "--no-fail-fast",
+            ],
+        ),
+    )

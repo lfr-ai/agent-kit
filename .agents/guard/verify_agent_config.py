@@ -1,9 +1,9 @@
 """Invoke the toolkit's canonical gates from an explicit repository target."""
 
 import argparse
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 
 def main() -> int:

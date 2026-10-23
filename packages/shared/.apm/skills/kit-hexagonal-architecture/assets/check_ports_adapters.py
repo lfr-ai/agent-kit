@@ -1,14 +1,14 @@
 """Check that adapters implement port Protocols with matching signatures.
 
-The checker parses source with 'ast' and never imports or executes it. Ports are
-'typing.Protocol' classes found under the '--ports' paths. An implementation is
+The checker parses source with ``ast`` and never imports or executes it. Ports are
+``typing.Protocol`` classes found under the ``--ports`` paths. An implementation is
 either a class that names the port as a base class (explicit) or, with
-'--structural', any other class that defines every member of the port.
+``--structural``, any other class that defines every member of the port.
 
 For each implementation it reports missing members, extra public methods,
 sync/async differences, parameter name, order or kind differences, and default
 value differences. Return annotations are left to a type checker. Output lines
-are 'path:line: message'; the exit status is 1 when anything is reported.
+are ``path:line: message``; the exit status is 1 when anything is reported.
 
 Example:
     python check_ports_adapters.py src tests --ports src/app/application/ports
@@ -16,9 +16,9 @@ Example:
 
 import argparse
 import ast
-import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+import sys
 from typing import NamedTuple
 
 _EXCLUDED_DIRS = frozenset(
@@ -42,14 +42,15 @@ _PROPERTY_DECORATORS = frozenset({"property", "cached_property"})
 _DATA_KINDS = frozenset({"attribute", "property"})
 _CALLABLE_KINDS = frozenset({"method", "classmethod", "staticmethod"})
 _ANY_DEFAULT = "..."
+_EXIT_USAGE = 2
 
 
 class Param(NamedTuple):
-    """One parameter of a method signature, excluding 'self' and 'cls'.
+    """One parameter of a method signature, excluding ``self`` and ``cls``.
 
     Attributes:
         name: Parameter name as written.
-        kind: 'positional-only', 'positional', '*args', 'keyword-only' or '**kwargs'.
+        kind: ``positional-only``, ``positional``, ``*args``, ``keyword-only`` or ``**kwargs``.
         default: Unparsed default expression, or None when there is no default.
     """
 
@@ -63,8 +64,8 @@ class Member(NamedTuple):
 
     Attributes:
         name: Member name.
-        kind: 'method', 'async method', 'classmethod', 'staticmethod',
-            'property' or 'attribute'.
+        kind: ``method``, ``async method``, ``classmethod``, ``staticmethod``,
+            ``property`` or ``attribute``.
         params: Parameters after the implicit first argument.
         line: Line of the declaration.
     """
@@ -81,10 +82,10 @@ class ClassInfo(NamedTuple):
     Attributes:
         name: Class name.
         path: Source path as given to the checker.
-        line: Line of the 'class' statement.
+        line: Line of the ``class`` statement.
         bases: Simple names of the base classes.
         members: Members declared in the class body, by name.
-        is_protocol: True when 'Protocol' is a direct base.
+        is_protocol: True when ``Protocol`` is a direct base.
     """
 
     name: str
@@ -127,12 +128,12 @@ class Finding(NamedTuple):
     message: str
 
     def render(self) -> str:
-        """Return the finding as 'path:line: message'."""
+        """Return the finding as ``path:line: message``."""
         return f"{self.path}:{self.line}: {self.message}"
 
 
 def _simple_name(node: ast.expr) -> str:
-    """Return 'Protocol' for 'Protocol', 'typing.Protocol' and 'Protocol[T]'."""
+    """Return ``Protocol`` for ``Protocol``, ``typing.Protocol`` and ``Protocol[T]``."""
     if isinstance(node, ast.Subscript):
         return _simple_name(node.value)
     if isinstance(node, ast.Attribute):
@@ -145,7 +146,7 @@ def _simple_name(node: ast.expr) -> str:
 
 
 def _unparse(node: ast.expr | None) -> str | None:
-    """Render a default expression, keeping None for 'no default'."""
+    """Render a default expression, keeping None for ``no default``."""
     return None if node is None else ast.unparse(node)
 
 
@@ -178,7 +179,7 @@ def _params(arguments: ast.arguments) -> tuple[Param, ...]:
 
 
 def _decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
-    """Return simple decorator names, for example 'property' or 'setter'."""
+    """Return simple decorator names, for example ``property`` or ``setter``."""
     return {_simple_name(item) for item in node.decorator_list}
 
 
@@ -202,7 +203,7 @@ def _function_member(node: ast.FunctionDef | ast.AsyncFunctionDef) -> Member:
 
 
 def _instance_attributes(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[Member]:
-    """Find 'self.name = ...' assignments inside an initializer."""
+    """Find ``self.name = ...`` assignments inside an initializer."""
     if not node.args.args:
         return []
     owner = node.args.args[0].arg
@@ -228,23 +229,28 @@ def _members(node: ast.ClassDef) -> dict[str, Member]:
     members: dict[str, Member] = {}
     attributes: list[Member] = []
     for item in node.body:
-        if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
-            if _decorators(item) & _SKIPPED_DECORATORS:
-                continue
+        if not isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+            attributes.extend(_assigned_attributes(item))
+        elif not _decorators(item) & _SKIPPED_DECORATORS:
             members[item.name] = _function_member(item)
             if item.name == "__init__":
                 attributes.extend(_instance_attributes(item))
-        elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-            attributes.append(Member(item.target.id, "attribute", (), item.lineno))
-        elif isinstance(item, ast.Assign):
-            attributes.extend(
-                Member(target.id, "attribute", (), item.lineno)
-                for target in item.targets
-                if isinstance(target, ast.Name)
-            )
     for attribute in attributes:
         members.setdefault(attribute.name, attribute)
     return members
+
+
+def _assigned_attributes(item: ast.stmt) -> list[Member]:
+    """Describe class-level attributes assigned by one class body statement."""
+    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+        return [Member(item.target.id, "attribute", (), item.lineno)]
+    if isinstance(item, ast.Assign):
+        return [
+            Member(target.id, "attribute", (), item.lineno)
+            for target in item.targets
+            if isinstance(target, ast.Name)
+        ]
+    return []
 
 
 def parse_classes(path: str, text: str) -> list[ClassInfo]:
@@ -319,7 +325,7 @@ def _resolved_members(
 
 
 def _render(params: Sequence[Param]) -> str:
-    """Render parameters roughly like 'inspect.signature' would."""
+    """Render parameters roughly like ``inspect.signature`` would."""
     parts: list[str] = []
     keyword_marker_needed = True
     for index, param in enumerate(params):
@@ -377,26 +383,33 @@ def _compare(
         ]
     findings: list[Finding] = []
     for wanted, got in zip(expected.params, actual.params, strict=True):
-        if wanted.default is not None and got.default is None:
-            message = f"{where} parameter '{got.name}' needs a default as in {declared}"
-        elif wanted.default is None and got.default is not None:
-            message = (
-                f"{where} parameter '{got.name}' has a default that {declared} "
-                "does not declare"
-            )
-        elif wanted.default not in {None, _ANY_DEFAULT, got.default}:
-            message = (
-                f"{where} parameter '{got.name}' defaults to {got.default} but "
-                f"{declared} defaults to {wanted.default}"
-            )
-        else:
-            continue
-        findings.append(Finding(owner.path, actual.line, message))
+        message = _default_mismatch(wanted, got, where=where, declared=declared)
+        if message is not None:
+            findings.append(Finding(owner.path, actual.line, message))
     return findings
 
 
+def _default_mismatch(
+    wanted: Param, got: Param, *, where: str, declared: str
+) -> str | None:
+    """Describe how an implemented default differs from the port, if it does."""
+    if wanted.default is not None and got.default is None:
+        return f"{where} parameter '{got.name}' needs a default as in {declared}"
+    if wanted.default is None and got.default is not None:
+        return (
+            f"{where} parameter '{got.name}' has a default that {declared} "
+            "does not declare"
+        )
+    if wanted.default not in {None, _ANY_DEFAULT, got.default}:
+        return (
+            f"{where} parameter '{got.name}' defaults to {got.default} but "
+            f"{declared} defaults to {wanted.default}"
+        )
+    return None
+
+
 def _article(kind: str) -> str:
-    """Return 'an async method' or 'a property' style phrases."""
+    """Return ``an async method`` or ``a property`` style phrases."""
     return f"an {kind}" if kind.startswith(("a", "e", "i", "o", "u")) else f"a {kind}"
 
 
@@ -448,11 +461,11 @@ def analyze(
     *,
     options: Options = Options(),  # noqa: B008 - immutable NamedTuple default
 ) -> list[Finding]:
-    """Check every implementation of every port found in 'port_sources'.
+    """Check every implementation of every port found in ``port_sources``.
 
     Args:
-        port_sources: '(path, text)' pairs whose Protocol classes are ports.
-        sources: '(path, text)' pairs searched for implementations.
+        port_sources: ``(path, text)`` pairs whose Protocol classes are ports.
+        sources: ``(path, text)`` pairs searched for implementations.
         options: Reporting switches.
 
     Returns:
@@ -461,15 +474,7 @@ def analyze(
     by_path = dict(sources)
     by_path.update(port_sources)
     port_paths = {path for path, _ in port_sources}
-    findings: list[Finding] = []
-    all_classes: list[ClassInfo] = []
-    for path, text in sorted(by_path.items()):
-        try:
-            all_classes.extend(parse_classes(path, text))
-        except SyntaxError as error:
-            findings.append(
-                Finding(path, error.lineno or 1, f"cannot parse: {error.msg}")
-            )
+    all_classes, findings = _parse_sources(by_path)
     protocols = {
         cls.name: cls
         for cls in all_classes
@@ -485,12 +490,7 @@ def analyze(
         if cls.is_protocol or cls.name in options.skip:
             continue
         resolved = _resolved_members(cls, known, frozenset())
-        matched = [
-            (protocols[name], members)
-            for name, members in sorted(port_members.items())
-            if name in cls.bases
-            or (options.structural and members and set(members) <= set(resolved))
-        ]
+        matched = _matched_ports(cls, resolved, protocols, port_members, options)
         if matched:
             implemented.update(port.name for port, _ in matched)
             findings.extend(_check_implementation(cls, matched, resolved, options))
@@ -501,6 +501,38 @@ def analyze(
             if name not in implemented
         )
     return sorted(set(findings))
+
+
+def _parse_sources(
+    by_path: dict[str, str],
+) -> tuple[list[ClassInfo], list[Finding]]:
+    """Parse every source in path order, reporting unparsable modules."""
+    findings: list[Finding] = []
+    all_classes: list[ClassInfo] = []
+    for path, text in sorted(by_path.items()):
+        try:
+            all_classes.extend(parse_classes(path, text))
+        except SyntaxError as error:
+            findings.append(
+                Finding(path, error.lineno or 1, f"cannot parse: {error.msg}")
+            )
+    return all_classes, findings
+
+
+def _matched_ports(
+    cls: ClassInfo,
+    resolved: dict[str, Member],
+    protocols: dict[str, ClassInfo],
+    port_members: dict[str, dict[str, Member]],
+    options: Options,
+) -> list[tuple[ClassInfo, dict[str, Member]]]:
+    """Return the ports a class implements explicitly or structurally."""
+    return [
+        (protocols[name], members)
+        for name, members in sorted(port_members.items())
+        if name in cls.bases
+        or (options.structural and members and set(members) <= set(resolved))
+    ]
 
 
 def _python_files(paths: Iterable[Path]) -> list[Path]:
@@ -519,7 +551,7 @@ def _python_files(paths: Iterable[Path]) -> list[Path]:
 
 
 def _read(paths: Iterable[Path]) -> list[tuple[str, str]]:
-    """Read sources as '(posix path, text)' pairs."""
+    """Read sources as ``(posix path, text)`` pairs."""
     return [
         (path.as_posix(), path.read_text(encoding="utf-8"))
         for path in _python_files(paths)
@@ -669,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker and print findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv[1:]' when None.
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
 
     Returns:
         0 when clean, 1 when findings exist, 2 on usage or read errors.
@@ -677,26 +709,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        failures = self_test()
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        if failures:
-            return 1
-        print("check_ports_adapters self-test passed.")
-        return 0
+        return _run_self_test()
     if not args.ports:
         parser.error("at least one '--ports' path is required")
-    missing = [path for path in [*args.ports, *args.paths] if not path.exists()]
-    if missing:
-        for path in missing:
-            print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
-        return 2
+    if _report_missing([*args.ports, *args.paths]):
+        return _EXIT_USAGE
     try:
         port_sources = _read(args.ports)
         sources = _read(args.paths)
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read sources: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     options = Options(
         structural=not args.explicit_only,
         report_extra=not args.ignore_extra,
@@ -705,11 +728,35 @@ def main(argv: list[str] | None = None) -> int:
         skip=frozenset(args.skip),
     )
     findings = analyze(port_sources, sources, options=options)
+    return _report(findings, port_module_count=len(port_sources))
+
+
+def _report(findings: list[Finding], *, port_module_count: int) -> int:
+    """Print findings or a success line and return the exit status."""
     for finding in findings:
         print(finding.render())
     if not findings:
-        print(f"Ports and adapters agree ({len(port_sources)} port module(s)).")
+        print(f"Ports and adapters agree ({port_module_count} port module(s)).")
     return 1 if findings else 0
+
+
+def _run_self_test() -> int:
+    """Print self-test failures and return the matching exit status."""
+    failures = self_test()
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    if failures:
+        return 1
+    print("check_ports_adapters self-test passed.")
+    return 0
+
+
+def _report_missing(paths: Iterable[Path]) -> bool:
+    """Print each path that does not exist and return whether any is missing."""
+    missing = [path for path in paths if not path.exists()]
+    for path in missing:
+        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+    return bool(missing)
 
 
 if __name__ == "__main__":

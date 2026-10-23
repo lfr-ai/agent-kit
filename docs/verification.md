@@ -6,10 +6,12 @@
 [Taskfile.yml](../Taskfile.yml) and the CI workflow invoke it without formatting
 or refreshing generated sources. Pre-commit is supplementary, not the only CI gate.
 
-The [CI workflow](../.github/workflows/ci.yml) runs three independent jobs in
+The [CI workflow](../.github/workflows/ci.yml) runs four independent jobs in
 parallel: `verify` (the gate above plus packaging, on Ubuntu and Windows with
 Python 3.13 and 3.14), `precommit` (all hooks once on Ubuntu, with cached hook
-environments) and `smoke` (real APM delivery on the same OS/Python matrix).
+environments), `smoke` (real APM delivery on the same OS/Python matrix) and
+`audit` (the reusable [dependency audit](../.github/workflows/dependency-audit.yml),
+which also runs daily).
 `Required toolkit checks` is the only status the branch ruleset requires; the
 governance gate rejects a summary that omits any other job and any step job
 without an explicit timeout. CI pins uv 0.13.3; `pyproject.toml` declares the
@@ -24,6 +26,9 @@ second copy into the environment.
 | Conventions | One portable AST checker plus Ruff, types and import boundaries |
 | Existing delivery drift | Explicit APM policy and native output audit before regeneration |
 | Open-source governance | Ownership consistency, community entries, immutable workflow pins and narrow permissions |
+| Dependency licenses | Installed distributions against the reviewed, expiring license policy |
+| Version pins | Exact tool pins, frozen hook commits, image and feature digests, no package runners or unlocked installs |
+| Dependency vulnerabilities | Explicit network gate: hashed lock audit and wheel-only installs before syncing; required in CI and scheduled daily |
 | Release products | Exact artifact inventory, version/license alignment, independent source composition, checksums |
 | Unit/property tests | Synthetic profile, collision, path, provenance, and process boundaries |
 | Architecture | Declarative inward import contracts |

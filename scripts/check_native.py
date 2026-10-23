@@ -1,13 +1,45 @@
 """Validate this repository's explicit native adapter contract."""
 
 import json
-import sys
 from pathlib import Path
+import sys
 
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
 _COMMAND = "uv run --locked agent-kit context"
+_HOOK_TIMEOUT_SECONDS = 10
+_FRONTMATTER_FENCES = 2  # split into empty prefix, metadata, and body
+# Dependencies change through a reviewed, audited lock; agents never install ad hoc.
+_PACKAGE_INSTALL_DENY = [
+    "Bash(pip install *)",
+    "Bash(pip3 install *)",
+    "Bash(python -m pip install *)",
+    "Bash(python3 -m pip install *)",
+    "Bash(pipx *)",
+    "Bash(uv add *)",
+    "Bash(uv pip install *)",
+    "Bash(uv tool install *)",
+    "Bash(uv tool run *)",
+    "Bash(uvx *)",
+    "Bash(npm install *)",
+    "Bash(npm i *)",
+    "Bash(npm exec *)",
+    "Bash(npx *)",
+    "Bash(pnpm add *)",
+    "Bash(pnpm dlx *)",
+    "Bash(yarn add *)",
+    "Bash(yarn dlx *)",
+    "Bash(bun add *)",
+    "Bash(bunx *)",
+]
+# VS Code false rules always require approval; they are not a sandbox.
+_PACKAGE_INSTALL_APPROVAL = {
+    "/^(pip|pip3|pipx|uvx|npx|bunx)(\\s|$)/": False,
+    "/^python[0-9.]*(\\.exe)?\\s+-m\\s+pip\\s+install\\b/": False,
+    "/^uv\\s+(add|pip\\s+install|tool\\s+(install|run))\\b/": False,
+    "/^(npm|pnpm|yarn|bun)\\s+(add|i|install|exec|dlx|x)\\b/": False,
+}
 _COPILOT_FIELDS = {
     "name",
     "description",
@@ -33,12 +65,15 @@ _VSCODE_TOOLCHAIN = {
     "chat.useAgentsMdFile": True,
     "chat.useClaudeMdFile": False,
     "chat.mcp.autostart": "never",
+    "chat.tools.terminal.autoApprove": _PACKAGE_INSTALL_APPROVAL,
 }
 
 
 def _reviewer(path: Path) -> tuple[object, str]:
     """Read metadata and body without importing provider code."""
-    header, body = path.read_text(encoding="utf-8").split("---", 2)[1:]
+    header, body = path.read_text(encoding="utf-8").split("---", _FRONTMATTER_FENCES)[
+        1:
+    ]
     return yaml.safe_load(header), body.strip()
 
 
@@ -62,17 +97,16 @@ def _vscode_contract(settings: object) -> list[str]:
     return failures
 
 
-def check(root: Path) -> list[str]:
-    """Find changed reviewer tools, policy scope, or hook execution ownership."""
+def _reviewer_failures(root: Path) -> list[str]:
+    """Require matching, least-privilege native reviewer definitions."""
     failures: list[str] = []
     copilot, copilot_body = _reviewer(root / ".github/agents/kit-reviewer.agent.md")
     claude, claude_body = _reviewer(root / ".claude/agents/kit-reviewer.md")
-    for metadata, fields in (
-        (copilot, _COPILOT_FIELDS),
-        (claude, _CLAUDE_FIELDS),
-    ):
-        if not isinstance(metadata, dict) or set(metadata) != fields:
-            failures.append("Native reviewer metadata requires explicit review.")
+    failures.extend(
+        "Native reviewer metadata requires explicit review."
+        for metadata, fields in ((copilot, _COPILOT_FIELDS), (claude, _CLAUDE_FIELDS))
+        if not isinstance(metadata, dict) or set(metadata) != fields
+    )
     if not isinstance(copilot, dict) or copilot.get("tools") != ["read", "search"]:
         failures.append("Copilot reviewer must use the approved read/search tools.")
     if isinstance(copilot, dict) and copilot.get("agents") != []:
@@ -81,21 +115,44 @@ def check(root: Path) -> list[str]:
         failures.append("Claude reviewer must use the approved Read/Grep/Glob tools.")
     if copilot_body != claude_body:
         failures.append("Native reviewer procedure bodies diverged.")
+    return failures
+
+
+def _copilot_hook_failures(root: Path) -> list[str]:
+    """Require the reviewed Copilot session hook."""
     copilot_hook = json.loads((root / ".github/hooks/session-context.json").read_text())
     expected_copilot = {
         "version": 1,
         "hooks": {
-            "sessionStart": [{"type": "command", "command": _COMMAND, "timeoutSec": 10}]
+            "sessionStart": [
+                {
+                    "type": "command",
+                    "command": _COMMAND,
+                    "timeoutSec": _HOOK_TIMEOUT_SECONDS,
+                }
+            ]
         },
     }
     if copilot_hook != expected_copilot:
-        failures.append("Copilot hook contract changed without a contract review.")
+        return ["Copilot hook contract changed without a contract review."]
+    return []
+
+
+def _claude_settings_failures(root: Path) -> list[str]:
+    """Require the reviewed Claude session hook and permission defaults."""
+    failures: list[str] = []
     settings = json.loads((root / ".claude/settings.json").read_text())
     expected_hooks = {
         "SessionStart": [
             {
                 "matcher": "startup|resume|clear|compact",
-                "hooks": [{"type": "command", "command": _COMMAND, "timeout": 10}],
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _COMMAND,
+                        "timeout": _HOOK_TIMEOUT_SECONDS,
+                    }
+                ],
             }
         ]
     }
@@ -103,9 +160,17 @@ def check(root: Path) -> list[str]:
         failures.append("Claude hook contract changed without a contract review.")
     if settings.get("permissions") != {
         "defaultMode": "default",
-        "deny": ["Read(.env)", "Read(.env.*)"],
+        "deny": ["Read(.env)", "Read(.env.*)", *_PACKAGE_INSTALL_DENY],
     }:
         failures.append("Claude native permission defaults changed.")
+    return failures
+
+
+def check(root: Path) -> list[str]:
+    """Find changed reviewer tools, policy scope, or hook execution ownership."""
+    failures = _reviewer_failures(root)
+    failures.extend(_copilot_hook_failures(root))
+    failures.extend(_claude_settings_failures(root))
     vscode = json.loads((root / ".vscode/settings.json").read_text())
     failures.extend(_vscode_contract(vscode))
     return failures

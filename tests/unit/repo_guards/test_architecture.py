@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import ast
-import sys
 from pathlib import Path
+import sys
 
 SOURCE = Path(__file__).parents[3] / "src" / "agent_kit"
 
@@ -39,33 +39,53 @@ def _first_party_imports(tree: ast.Module) -> set[str]:
     return modules
 
 
+_OUTWARD_IMPORTS = (
+    (
+        "application/",
+        ("agent_kit.infrastructure", "agent_kit.presentation"),
+        "Application imports outward",
+    ),
+    (
+        "infrastructure/",
+        ("agent_kit.application", "agent_kit.presentation"),
+        "Infrastructure imports outward",
+    ),
+    (
+        "presentation/",
+        ("agent_kit.infrastructure", "agent_kit.composition"),
+        "Presentation imports outward",
+    ),
+)
+
+
+def _core_violations(tree: ast.Module, imports: set[str]) -> list[str]:
+    """Describe Core imports of other layers or non-stdlib dependencies."""
+    violations: list[str] = []
+    if any(not item.startswith("agent_kit.core.") for item in imports):
+        violations.append("Core imports outside Core")
+    if _nonstandard_imports(tree):
+        violations.append("Core imports a non-stdlib dependency")
+    return violations
+
+
+def _layer_violations(relative: str, tree: ast.Module) -> list[str]:
+    """Describe every dependency-direction violation of one source module."""
+    imports = _first_party_imports(tree)
+    messages = _core_violations(tree, imports) if relative.startswith("core/") else []
+    messages.extend(
+        message
+        for prefix, forbidden, message in _OUTWARD_IMPORTS
+        if relative.startswith(prefix)
+        and any(item.startswith(forbidden) for item in imports)
+    )
+    return [f"{relative}: {message}" for message in messages]
+
+
 def test_core_is_stdlib_only_and_other_layers_point_inward() -> None:
     violations: list[str] = []
     for path in SOURCE.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        imports = _first_party_imports(tree)
-        relative = path.relative_to(SOURCE).as_posix()
-        if relative.startswith("core/") and any(
-            not item.startswith("agent_kit.core.") for item in imports
-        ):
-            violations.append(f"{relative}: Core imports outside Core")
-        if relative.startswith("core/") and _nonstandard_imports(tree):
-            violations.append(f"{relative}: Core imports a non-stdlib dependency")
-        if relative.startswith("application/") and any(
-            item.startswith(("agent_kit.infrastructure", "agent_kit.presentation"))
-            for item in imports
-        ):
-            violations.append(f"{relative}: Application imports outward")
-        if relative.startswith("infrastructure/") and any(
-            item.startswith(("agent_kit.application", "agent_kit.presentation"))
-            for item in imports
-        ):
-            violations.append(f"{relative}: Infrastructure imports outward")
-        if relative.startswith("presentation/") and any(
-            item.startswith(("agent_kit.infrastructure", "agent_kit.composition"))
-            for item in imports
-        ):
-            violations.append(f"{relative}: Presentation imports outward")
+        violations.extend(_layer_violations(path.relative_to(SOURCE).as_posix(), tree))
     assert violations == []
 
 

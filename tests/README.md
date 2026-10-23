@@ -27,8 +27,8 @@ task verify -- tests              # every tier with enforced branch coverage
 uv run --locked tox -e 3.14       # isolated environment for one interpreter
 ```
 
-`pytest.ini` owns discovery, markers, and strictness (`--strict-markers`,
-`--strict-config`, `xfail_strict`, warnings as errors). Coverage settings live
+`pytest.ini` owns discovery, markers, and strictness (`strict = true` for config,
+markers, unique parametrization ids, and xfail; warnings as errors). Coverage settings live
 in `.coveragerc`; subprocesses started by integration tests are measured too.
 
 ## Adding a test

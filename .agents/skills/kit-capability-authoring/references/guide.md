@@ -10,7 +10,7 @@ provide usable templates or deterministic checks, not decorative empty folders.
 Every canonical toolkit skill has a linked reference and usable asset.
 The resource gate checks their presence, containment, discoverability and
 structured-template/Python syntax. This is a structural minimum, not a
-semantic completeness score or a claim of golden-standard byte parity.
+semantic completeness score or a provenance certification.
 
 ## Quality gates
 

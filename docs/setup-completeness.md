@@ -15,7 +15,7 @@ not a claim that generated configuration certifies production behavior.
 | Agents | All 24 recorded roles reach an all-stack selection in both native formats; workers retain least privilege | Native projection contracts |
 | Knowledge/setup | Consumer project/knowledge/adoption/evidence templates and a read-only context check are delivered | Consumer fills actual facts |
 | Guards/scripts | Implemented replacements name real files; parser failures have runnable regressions | Explicit accepted input schema |
-| MCP | All 11 integrations have native examples, sources, approval criteria and removal steps; active defaults stay empty | Consumer identity, version and policy review |
+| MCP | All 11 integrations have native examples, sources, approval criteria and removal steps; portable defaults stay inactive | Consumer identity, version and policy review |
 | Integrity | Audit precedes regeneration; selected resources retain original bytes and provenance | Pinned APM |
 | Open-source delivery | Community, ownership, workflow, release and publication checks are executable | Operator configures hosted controls |
 | Handoff | Full verification and actual APM smoke run after changes; limitations are reported separately | Integrated source |
@@ -26,18 +26,12 @@ Consolidation intentionally does not produce 74 near-duplicate discovery entries
 The [coverage mapping](../.agents/agentic-setup/coverage.json) is authoritative
 for individual identities and exclusions.
 
-### Reference limitation
+### Runtime limitation
 
-The currently available adjacent reference checkout does **not** match that
-recorded inventory: it exposes 27 skills, nine instructions and nine roles.
-The expected template/backend reference was unavailable during this refresh.
-Consequently, this work does not certify exact live golden-standard parity.
-Do not rewrite the recorded baseline to make a different checkout appear equal.
-For the actual original checkout, run:
-
-```powershell
-uv run --locked python -m scripts.check_coverage --source-root <original-checkout>
-```
+Static inventory and policy checks do not certify behavior in a native editor
+session. MCP discovery, authentication, approval prompts, and live tool behavior
+must be checked in the intended host; verification does not start or authenticate
+MCP servers.
 
 ## 2. Inspect the library, then select it
 

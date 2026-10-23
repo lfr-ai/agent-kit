@@ -1,12 +1,12 @@
 """Containment, collision, and no-replace guarantees of composed output writes."""
 
-import sys
 from pathlib import Path
+import sys
 
 import pytest
 
-import agent_kit.infrastructure.output_adapter as output_module
 from agent_kit.core.models import CompositionPlan, PlannedFile
+import agent_kit.infrastructure.output_adapter as output_module
 from agent_kit.infrastructure.output_adapter import OutputAdapter
 
 

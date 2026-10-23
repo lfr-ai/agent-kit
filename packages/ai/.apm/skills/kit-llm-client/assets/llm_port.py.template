@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+_PROMPT_FINGERPRINT_HEX_CHARS = 16
+_DEFAULT_MAX_OUTPUT_TOKENS = 512
+_DEFAULT_TIMEOUT_SECONDS = 30.0
+_MAX_OUTPUT_TOKENS = 32_000
+_MAX_SAMPLING_TEMPERATURE = 2.0
+
 
 class LlmError(Exception):
     """Base class for model-call failures callers can handle."""
@@ -120,7 +126,7 @@ class PromptTemplate:
     def fingerprint(self) -> str:
         """Hash of the template text; detects edits without a version bump."""
         digest = hashlib.sha256(f"{self.system}\x1f{self.user}".encode())
-        return digest.hexdigest()[:16]
+        return digest.hexdigest()[:_PROMPT_FINGERPRINT_HEX_CHARS]
 
     def render(self, variables: Mapping[str, str]) -> tuple[ChatMessage, ...]:
         """Fill placeholders; missing or extra variables are errors.
@@ -168,9 +174,9 @@ class CompletionRequest:
     operation: str
     model: str
     messages: tuple[ChatMessage, ...]
-    max_output_tokens: int = 512
+    max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS
     temperature: float = 0.0
-    timeout_s: float = 30.0
+    timeout_s: float = _DEFAULT_TIMEOUT_SECONDS
     json_schema: Mapping[str, object] | None = None
     prompt_name: str = ""
     prompt_version: str = ""
@@ -180,9 +186,9 @@ class CompletionRequest:
         """Reject requests no provider should receive."""
         if not self.messages:
             raise LlmInvalidRequestError("messages are required")
-        if not 1 <= self.max_output_tokens <= 32_000:  # noqa: PLR2004 - sanity cap
+        if not 1 <= self.max_output_tokens <= _MAX_OUTPUT_TOKENS:
             raise LlmInvalidRequestError("max_output_tokens out of range")
-        if not 0.0 <= self.temperature <= 2.0:  # noqa: PLR2004 - provider range
+        if not 0.0 <= self.temperature <= _MAX_SAMPLING_TEMPERATURE:
             raise LlmInvalidRequestError("temperature out of range")
         if self.timeout_s <= 0:
             raise LlmInvalidRequestError("timeout_s must be positive")

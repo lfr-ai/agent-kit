@@ -55,7 +55,7 @@ cannot override parent/global skills, plugins or tool exposure.
 - [Hexagonal Architecture](.agents/knowledge-base/architecture.md) covers source boundaries.
 - [Sources](docs/sources.md) records research and licensing provenance.
 - [Verification](docs/verification.md) defines the local/CI evidence contract.
-- [VS Code setup](docs/editor.md) covers golden-reference alignment, interpreter,
+- [VS Code setup](docs/editor.md) covers workspace settings, interpreter,
   formatting, tasks, debugging and native-agent boundaries.
 - [Setup review](docs/setup-review.md) explains every original capability's disposition.
 - [Complete setup walkthrough](docs/setup-completeness.md) gives acceptance criteria,

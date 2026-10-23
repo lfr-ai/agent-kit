@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 from scripts.check_native import check
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 _FILES = (
@@ -85,6 +85,30 @@ def test_permission_widening_is_rejected(native_root: Path) -> None:
     path.write_text(json.dumps(settings), encoding="utf-8")
 
     assert any("permission" in finding for finding in check(native_root))
+
+
+@pytest.mark.parametrize("rule", ["Bash(uv add *)", "Bash(npx *)", "Bash(uvx *)"])
+def test_agent_package_install_denials_cannot_be_dropped(
+    native_root: Path, rule: str
+) -> None:
+    """Agents cannot install unreviewed packages outside the audited lockfile."""
+    path = native_root / ".claude/settings.json"
+    settings = json.loads(path.read_text())
+    settings["permissions"]["deny"].remove(rule)
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert any("permission" in finding for finding in check(native_root))
+
+
+def test_vscode_package_install_approval_cannot_be_relaxed(native_root: Path) -> None:
+    """A workspace auto-approval cannot replace the required installer prompt."""
+    path = native_root / ".vscode/settings.json"
+    settings = json.loads(path.read_text(encoding="utf-8"))
+    rules = settings["chat.tools.terminal.autoApprove"]
+    rules[next(iter(rules))] = True
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert any("VS Code" in finding for finding in check(native_root))
 
 
 @pytest.mark.parametrize(

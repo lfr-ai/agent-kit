@@ -1,11 +1,11 @@
 """Shared quality skills ship runnable checkers and parseable templates."""
 
 import ast
+from collections.abc import Callable
 import configparser
 import json
-import runpy
-from collections.abc import Callable
 from pathlib import Path
+import runpy
 
 import pytest
 import yaml

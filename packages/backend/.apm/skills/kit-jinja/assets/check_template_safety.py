@@ -1,24 +1,24 @@
 """Flag unsafe Jinja environment setup and risky template constructs.
 
-Python sources are parsed without importing them. Calls to Jinja 'Environment'
-classes are reported when 'autoescape' is missing or literally False and when
-'undefined' is not set (lenient undefined values render as empty text). Direct
-'jinja2.Template(...)' construction, 'Markup' around formatted strings, and
-'from_string' on non-literal source are reported too. Template files are
-scanned line by line for the 'safe' filter, disabled autoescape blocks, dunder
-attribute access, the 'attr' filter, environment access, and include/import/
+Python sources are parsed without importing them. Calls to Jinja ``Environment``
+classes are reported when ``autoescape`` is missing or literally False and when
+``undefined`` is not set (lenient undefined values render as empty text). Direct
+``jinja2.Template(...)`` construction, ``Markup`` around formatted strings, and
+``from_string`` on non-literal source are reported too. Template files are
+scanned line by line for the ``safe`` filter, disabled autoescape blocks, dunder
+attribute access, the ``attr`` filter, environment access, and include/import/
 extends targets taken from variables. A line containing
-'template-safety: reviewed' (in a Python or Jinja comment) is waived.
+``template-safety: reviewed`` (in a Python or Jinja comment) is waived.
 Exit 0 means no findings, 1 means findings or unreadable sources.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
 import ast
-import re
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+import re
 
 _WAIVER = "template-safety: reviewed"
 _DEFAULT_SUFFIXES = (".j2", ".jinja", ".jinja2", ".html", ".htm", ".xml")
@@ -73,13 +73,28 @@ def _jinja_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
             ("jinja2", "markupsafe")
         ):
-            for alias in node.names:
-                names[alias.asname or alias.name] = alias.name
+            names.update(
+                (alias.asname or alias.name, alias.name) for alias in node.names
+            )
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("jinja2"):
-                    modules.add(alias.asname or alias.name.split(".")[0])
+            modules.update(_package_aliases(node))
     return names, modules
+
+
+def _package_aliases(node: ast.Import) -> set[str]:
+    """Return local names that an ``import`` statement binds to Jinja.
+
+    Args:
+        node: Import statement.
+
+    Returns:
+        Local package aliases.
+    """
+    return {
+        alias.asname or alias.name.split(".")[0]
+        for alias in node.names
+        if alias.name.startswith("jinja2")
+    }
 
 
 def _callee(call: ast.Call, names: dict[str, str], modules: set[str]) -> str | None:
@@ -127,7 +142,7 @@ def _is_dynamic_text(node: ast.expr) -> bool:
         node: Expression node.
 
     Returns:
-        True for f-strings, '%' or '+' formatting, and '.format()' calls.
+        True for f-strings, ``%`` or ``+`` formatting, and ``.format()`` calls.
     """
     if isinstance(node, ast.JoinedStr):
         return True
@@ -140,6 +155,65 @@ def _is_dynamic_text(node: ast.expr) -> bool:
     )
 
 
+def _template_issues(_call: ast.Call) -> list[str]:
+    """Return the issue for direct ``Template`` construction.
+
+    Args:
+        _call: Call node.
+
+    Returns:
+        One message.
+    """
+    return [
+        (
+            "jinja2.Template uses an implicit environment; load templates through "
+            "a configured Environment"
+        )
+    ]
+
+
+def _markup_issues(call: ast.Call) -> list[str]:
+    """Return the issue for ``Markup`` around formatted text.
+
+    Args:
+        call: Call node.
+
+    Returns:
+        Zero or one message.
+    """
+    if call.args and _is_dynamic_text(call.args[0]):
+        return ["Markup around formatted text marks untrusted input as safe"]
+    return []
+
+
+def _from_string_issues(call: ast.Call) -> list[str]:
+    """Return the issue for ``from_string`` on non-literal source.
+
+    Args:
+        call: Call node.
+
+    Returns:
+        Zero or one message.
+    """
+    if not call.args or (
+        isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+    ):
+        return []
+    return [
+        (
+            "from_string on non-literal source; never render untrusted template "
+            "text outside a sandboxed environment"
+        )
+    ]
+
+
+_CALL_CHECKS = {
+    "Template": _template_issues,
+    "Markup": _markup_issues,
+    "from_string": _from_string_issues,
+}
+
+
 def _python_issue(call: ast.Call, name: str) -> list[str]:
     """Return issues for one resolved Jinja call.
 
@@ -150,36 +224,32 @@ def _python_issue(call: ast.Call, name: str) -> list[str]:
     Returns:
         Zero or more messages.
     """
-    issues: list[str] = []
     if name in _ENVIRONMENTS:
-        autoescape = _keyword(call, "autoescape")
-        if autoescape is None:
-            issues.append(f"{name} without autoescape (defaults to False)")
-        elif isinstance(autoescape, ast.Constant) and autoescape.value is False:
-            issues.append(f"{name} with autoescape=False")
-        if _keyword(call, "undefined") is None:
-            issues.append(
-                f"{name} without undefined=StrictUndefined renders missing values "
-                "as empty text"
-            )
-    elif name == "Template":
+        return _environment_issues(call, name)
+    check = _CALL_CHECKS.get(name)
+    return check(call) if check is not None else []
+
+
+def _environment_issues(call: ast.Call, name: str) -> list[str]:
+    """Return issues for an ``Environment`` construction.
+
+    Args:
+        call: Call node.
+        name: Original environment class name.
+
+    Returns:
+        Zero or more messages.
+    """
+    issues: list[str] = []
+    autoescape = _keyword(call, "autoescape")
+    if autoescape is None:
+        issues.append(f"{name} without autoescape (defaults to False)")
+    elif isinstance(autoescape, ast.Constant) and autoescape.value is False:
+        issues.append(f"{name} with autoescape=False")
+    if _keyword(call, "undefined") is None:
         issues.append(
-            "jinja2.Template uses an implicit environment; load templates through "
-            "a configured Environment"
-        )
-    elif name == "Markup" and call.args and _is_dynamic_text(call.args[0]):
-        issues.append("Markup around formatted text marks untrusted input as safe")
-    elif (
-        name == "from_string"
-        and call.args
-        and not (
-            isinstance(call.args[0], ast.Constant)
-            and isinstance(call.args[0].value, str)
-        )
-    ):
-        issues.append(
-            "from_string on non-literal source; never render untrusted template "
-            "text outside a sandboxed environment"
+            f"{name} without undefined=StrictUndefined renders missing values "
+            "as empty text"
         )
     return issues
 
@@ -192,7 +262,7 @@ def check_python(text: str, path: str) -> list[str]:
         path: Display path.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
 
     Raises:
         SyntaxError: The source cannot be parsed.
@@ -224,7 +294,7 @@ def check_template(text: str, path: str) -> list[str]:
         path: Display path.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
     """
     findings: list[str] = []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -327,6 +397,18 @@ def self_test() -> None:
     Raises:
         AssertionError: A regression was detected.
     """
+    _self_test_risky_python()
+    _self_test_clean_python()
+    _self_test_risky_templates()
+    _self_test_clean_templates()
+
+
+def _self_test_risky_python() -> None:
+    """Require a finding for each unsafe Python construct.
+
+    Raises:
+        SelfTestError: An unsafe construct was missed.
+    """
     risky_python = {
         "from jinja2 import Environment\nenv = Environment()\n": "autoescape",
         "import jinja2\nenv = jinja2.Environment(autoescape=False)\n": (
@@ -345,6 +427,14 @@ def self_test() -> None:
             raise SelfTestError(
                 SelfTestIssue.MISSED_PYTHON_ISSUE, source=source, found=found
             )
+
+
+def _self_test_clean_python() -> None:
+    """Require no findings for configured, unrelated, and waived Python.
+
+    Raises:
+        SelfTestError: A clean source was reported.
+    """
     clean_python = (
         (
             "from jinja2 import Environment, StrictUndefined, select_autoescape\n"
@@ -361,6 +451,14 @@ def self_test() -> None:
     for source in clean_python:
         if check_python(source, "app/render.py"):
             raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+
+
+def _self_test_risky_templates() -> None:
+    """Require a finding for each risky template construct.
+
+    Raises:
+        SelfTestError: A risky construct was missed.
+    """
     risky_templates = {
         "{{ body|safe }}": "safe",
         "{% autoescape false %}{{ x }}{% endautoescape %}": "autoescape",
@@ -375,6 +473,14 @@ def self_test() -> None:
             raise SelfTestError(
                 SelfTestIssue.MISSED_TEMPLATE_ISSUE, source=source, found=found
             )
+
+
+def _self_test_clean_templates() -> None:
+    """Require no findings for literal targets, waivers, and plain output.
+
+    Raises:
+        SelfTestError: A clean template was reported.
+    """
     clean_templates = (
         "{% include 'partials/footer.html' %}",
         "{% include ['a.html', 'b.html'] %}",
@@ -390,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

@@ -1,10 +1,10 @@
 """Enforce layer import rules in a backend package without importing it.
 
 Each rule names a source layer and the layers it must not import, using the
-first segment below the package: with '--package shop', the module
-'shop.presentation.api' belongs to layer 'presentation'. Relative imports are
+first segment below the package: with ``--package shop``, the module
+``shop.presentation.api`` belongs to layer ``presentation``. Relative imports are
 resolved before matching. Without any rule, the default is
-'presentation:infrastructure' (transports receive wired services from the
+``presentation:infrastructure`` (transports receive wired services from the
 composition root and never import adapters directly).
 
 Examples:
@@ -16,13 +16,14 @@ Examples:
 
 import argparse
 import ast
-import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _DEFAULT_RULE = "presentation:infrastructure"
+_EXIT_USAGE = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -32,7 +33,7 @@ class Rule:
     Attributes:
         source: Layer whose modules are checked.
         targets: Forbidden layers (below the package) or absolute module prefixes.
-        absolute: Whether 'targets' are absolute module prefixes instead of layers.
+        absolute: Whether ``targets`` are absolute module prefixes instead of layers.
     """
 
     source: str
@@ -41,7 +42,7 @@ class Rule:
 
 
 class ImportRuleError(ValueError):
-    """An input violates the importrule contract."""
+    """An input violates the import rule contract."""
 
     def __init__(self, *, text: str) -> None:
         """Describe the violated invariant.
@@ -53,7 +54,7 @@ class ImportRuleError(ValueError):
 
 
 def parse_rule(text: str, *, absolute: bool = False) -> Rule:
-    """Parse 'SOURCE:TARGET[,TARGET...]' into a rule.
+    """Parse ``SOURCE:TARGET[,TARGET...]`` into a rule.
 
     Args:
         text: Rule text from the command line.
@@ -73,7 +74,7 @@ def parse_rule(text: str, *, absolute: bool = False) -> Rule:
 
 
 def module_name(path: Path, root: Path) -> str:
-    """Return the dotted module name of 'path' relative to the source root."""
+    """Return the dotted module name of ``path`` relative to the source root."""
     parts = list(path.relative_to(root).with_suffix("").parts)
     if parts and parts[-1] == "__init__":
         parts.pop()
@@ -96,13 +97,13 @@ def check_module(
         text: Python source text.
         path: Display path used as the finding prefix.
         module: Dotted name of the module.
-        is_package: Whether the module is a package '__init__'.
+        is_package: Whether the module is a package ``__init__``.
         packages: Top-level package names whose layers are checked.
         rules: Forbidden dependencies.
-        ignore_type_checking: Skip imports guarded by 'if TYPE_CHECKING:'.
+        ignore_type_checking: Skip imports guarded by ``if TYPE_CHECKING:``.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
     """
     source_layer = _layer(module, packages)
     if source_layer is None:
@@ -116,15 +117,20 @@ def check_module(
     for node, imported in _imports(tree, module=module, is_package=is_package):
         if id(node) in skipped:
             continue
-        for rule in applicable:
-            violated = _violated_target(imported, rule, packages)
-            if violated is not None:
-                findings.append(
-                    f"{path}:{node.lineno}: {source_layer} module '{module}' imports "
-                    f"'{imported}' from forbidden {violated}"
-                )
-                break
+        violated = _first_violation(imported, applicable, packages)
+        if violated is not None:
+            findings.append(
+                f"{path}:{node.lineno}: {source_layer} module '{module}' imports "
+                f"'{imported}' from forbidden {violated}"
+            )
     return findings
+
+
+def _first_violation(
+    imported: str, rules: Iterable[Rule], packages: frozenset[str]
+) -> str | None:
+    violations = (_violated_target(imported, rule, packages) for rule in rules)
+    return next((violated for violated in violations if violated is not None), None)
 
 
 def _layer(module: str, packages: frozenset[str]) -> str | None:
@@ -157,11 +163,21 @@ def _imports(
             for alias in node.names:
                 yield node, alias.name
         elif isinstance(node, ast.ImportFrom):
-            base = _resolve(node, module=module, is_package=is_package)
-            if base is None:
-                continue
-            for alias in node.names:
-                yield node, base if alias.name == "*" else f"{base}.{alias.name}"
+            for imported in _from_import_names(
+                node, module=module, is_package=is_package
+            ):
+                yield node, imported
+
+
+def _from_import_names(
+    node: ast.ImportFrom, *, module: str, is_package: bool
+) -> list[str]:
+    base = _resolve(node, module=module, is_package=is_package)
+    if base is None:
+        return []
+    return [
+        base if alias.name == "*" else f"{base}.{alias.name}" for alias in node.names
+    ]
 
 
 def _resolve(node: ast.ImportFrom, *, module: str, is_package: bool) -> str | None:
@@ -190,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     """Check every module under the source roots against the layer rules.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         Zero when no forbidden import exists, one on findings, two on usage errors.
@@ -220,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
     except ValueError as error:
         print(error, file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     if not rules:
         rules = [parse_rule(_DEFAULT_RULE)]
     findings = _check_roots(

@@ -1,26 +1,27 @@
 """Statically flag risky operations in Alembic revision files.
 
 The checker parses revision modules without importing them and inspects the
-'upgrade' function (and 'downgrade' with '--include-downgrade'). It reports
+``upgrade`` function (and ``downgrade`` with ``--include-downgrade``). It reports
 destructive or locking operations that need an expand/contract plan:
-'drop_table', 'drop_column', renames, 'alter_column' type changes, tightening a
-column to NOT NULL, adding a NOT NULL column without 'server_default', raw SQL
+``drop_table``, ``drop_column``, renames, ``alter_column`` type changes, tightening a
+column to NOT NULL, adding a NOT NULL column without ``server_default``, raw SQL
 that drops or truncates, and, for PostgreSQL, index creation without
-'postgresql_concurrently=True' or concurrent creation outside an
-'autocommit_block()'. A finding is waived by the comment
-'# migration-safety: reviewed' on the operation's first line or the line above.
+``postgresql_concurrently=True`` or concurrent creation outside an
+``autocommit_block()``. A finding is waived by the comment
+``# migration-safety: reviewed`` on the operation's first line or the line above.
 Exit 0 means no findings, 1 means findings or unreadable sources.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
 import ast
-import re
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+import re
 
 _WAIVER = "# migration-safety: reviewed"
+_WAIVER_WINDOW_LINES = 2  # the operation line and the line above it
 _DIALECTS = ("postgresql", "generic")
 _RAW_SQL = re.compile(
     r"\b(DROP\s+(TABLE|COLUMN|SCHEMA|INDEX)|TRUNCATE|ALTER\s+COLUMN\s+\w+\s+TYPE)\b",
@@ -48,38 +49,38 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
 
 
 def _is_true(node: ast.expr | None) -> bool:
-    """Return whether a node is the literal 'True'.
+    """Return whether a node is the literal ``True``.
 
     Args:
         node: Expression or None.
 
     Returns:
-        True only for a literal 'True' constant.
+        True only for a literal ``True`` constant.
     """
     return isinstance(node, ast.Constant) and node.value is True
 
 
 def _is_false(node: ast.expr | None) -> bool:
-    """Return whether a node is the literal 'False'.
+    """Return whether a node is the literal ``False``.
 
     Args:
         node: Expression or None.
 
     Returns:
-        True only for a literal 'False' constant.
+        True only for a literal ``False`` constant.
     """
     return isinstance(node, ast.Constant) and node.value is False
 
 
 def _column_not_null_without_default(call: ast.Call) -> bool:
-    """Return whether an 'add_column' call adds NOT NULL without server default.
+    """Return whether an ``add_column`` call adds NOT NULL without server default.
 
     Args:
-        call: The 'add_column' call.
+        call: The ``add_column`` call.
 
     Returns:
-        True when a 'Column(...)' argument has 'nullable=False' and no
-        'server_default'.
+        True when a ``Column(...)`` argument has ``nullable=False`` and no
+        ``server_default``.
     """
     for argument in call.args:
         if not isinstance(argument, ast.Call):
@@ -96,10 +97,10 @@ def _column_not_null_without_default(call: ast.Call) -> bool:
 
 
 def _sql_text(call: ast.Call) -> str:
-    """Extract literal SQL from 'op.execute' arguments, including 'sa.text'.
+    """Extract literal SQL from ``op.execute`` arguments, including ``sa.text``.
 
     Args:
-        call: The 'execute' call.
+        call: The ``execute`` call.
 
     Returns:
         Concatenated literal SQL, or an empty string when not literal.
@@ -144,10 +145,10 @@ def _schema_risk(name: str, call: ast.Call) -> str | None:
 
 
 def _sql_risk(call: ast.Call) -> str | None:
-    """Return a risk for literal destructive SQL passed to 'op.execute'.
+    """Return a risk for literal destructive SQL passed to ``op.execute``.
 
     Args:
-        call: The 'execute' call.
+        call: The ``execute`` call.
 
     Returns:
         Human-readable risk, or None.
@@ -165,8 +166,8 @@ class _RevisionScanner(ast.NodeVisitor):
         """Create a scanner.
 
         Args:
-            operations: Local names bound to Alembic 'op' or batch operations.
-            dialect: Target dialect, 'postgresql' or 'generic'.
+            operations: Local names bound to Alembic ``op`` or batch operations.
+            dialect: Target dialect, ``postgresql`` or ``generic``.
         """
         self.operations = operations
         self.dialect = dialect
@@ -179,25 +180,34 @@ class _RevisionScanner(ast.NodeVisitor):
         Args:
             node: With statement.
         """
-        autocommit = False
-        for item in node.items:
-            expression = item.context_expr
-            if not isinstance(expression, ast.Call) or not isinstance(
-                expression.func, ast.Attribute
-            ):
-                continue
-            if expression.func.attr == "autocommit_block":
-                autocommit = True
-            if expression.func.attr == "batch_alter_table" and isinstance(
-                item.optional_vars, ast.Name
-            ):
-                self.operations.add(item.optional_vars.id)
+        entered = [self._enter(item) for item in node.items]
+        autocommit = any(entered)
         self.autocommit_depth += int(autocommit)
         for item in node.items:
             self.visit(item.context_expr)
         for statement in node.body:
             self.visit(statement)
         self.autocommit_depth -= int(autocommit)
+
+    def _enter(self, item: ast.withitem) -> bool:
+        """Register a batch-operation alias and report an autocommit context.
+
+        Args:
+            item: One context manager of a with statement.
+
+        Returns:
+            True when the item opens an ``autocommit_block``.
+        """
+        expression = item.context_expr
+        if not isinstance(expression, ast.Call) or not isinstance(
+            expression.func, ast.Attribute
+        ):
+            return False
+        if expression.func.attr == "batch_alter_table" and isinstance(
+            item.optional_vars, ast.Name
+        ):
+            self.operations.add(item.optional_vars.id)
+        return expression.func.attr == "autocommit_block"
 
     def visit_Call(self, node: ast.Call) -> None:
         """Classify one operation call.
@@ -261,13 +271,13 @@ class _RevisionScanner(ast.NodeVisitor):
 
 
 def _operation_names(tree: ast.Module) -> set[str]:
-    """Return local names bound to 'alembic.op'.
+    """Return local names bound to ``alembic.op``.
 
     Args:
         tree: Parsed module.
 
     Returns:
-        Names such as 'op' or an alias.
+        Names such as ``op`` or an alias.
     """
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -288,7 +298,7 @@ def _waived(lines: list[str], line: int) -> bool:
     Returns:
         True when the waiver comment is present.
     """
-    candidates = lines[max(line - 2, 0) : line]
+    candidates = lines[max(line - _WAIVER_WINDOW_LINES, 0) : line]
     return any(_WAIVER in candidate for candidate in candidates)
 
 
@@ -304,11 +314,11 @@ def check_revision(
     Args:
         text: Revision source.
         path: Display path.
-        dialect: 'postgresql' enables index-concurrency checks.
-        include_downgrade: Also scan the 'downgrade' function.
+        dialect: ``postgresql`` enables index-concurrency checks.
+        include_downgrade: Also scan the ``downgrade`` function.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
 
     Raises:
         SyntaxError: The source cannot be parsed.
@@ -336,7 +346,7 @@ def _revision_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     """Expand targets into revision files.
 
     Args:
-        targets: Files or directories (for example 'migrations/versions').
+        targets: Files or directories (for example ``migrations/versions``).
 
     Returns:
         Sorted Python files and findings for missing targets.
@@ -356,6 +366,11 @@ def _revision_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
             and not path.is_symlink()
         )
     return sorted(files), problems
+
+
+_SELF_TEST_HEADER = (
+    "import sqlalchemy as sa\nfrom alembic import op\n\n\ndef upgrade():\n"
+)
 
 
 class SelfTestIssue(StrEnum):
@@ -394,7 +409,17 @@ def self_test() -> None:
     Raises:
         AssertionError: A regression was detected.
     """
-    header = "import sqlalchemy as sa\nfrom alembic import op\n\n\ndef upgrade():\n"
+    _self_test_risky()
+    _self_test_safe()
+    _self_test_options()
+
+
+def _self_test_risky() -> None:
+    """Require one finding for each risky operation form.
+
+    Raises:
+        SelfTestError: A risky operation was missed.
+    """
     risky = {
         "    op.drop_column('orders', 'note')\n": "destructive",
         "    op.drop_table('orders')\n": "destructive",
@@ -415,11 +440,19 @@ def self_test() -> None:
         ): "destructive",
     }
     for body, fragment in risky.items():
-        found = check_revision(header + body, "versions/a.py")
+        found = check_revision(_SELF_TEST_HEADER + body, "versions/a.py")
         if len(found) != 1 or fragment not in found[0]:
             raise SelfTestError(
                 SelfTestIssue.MISSED_RISKY_OPERATION, body=body, found=found
             )
+
+
+def _self_test_safe() -> None:
+    """Require no findings for additive, waived, and autocommit operations.
+
+    Raises:
+        SelfTestError: A safe operation was reported.
+    """
     safe = (
         "    op.add_column('orders', sa.Column('note', sa.Text(), nullable=True))\n",
         (
@@ -437,8 +470,17 @@ def self_test() -> None:
         ),
     )
     for body in safe:
-        if check_revision(header + body, "versions/a.py"):
+        if check_revision(_SELF_TEST_HEADER + body, "versions/a.py"):
             raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, body=body)
+
+
+def _self_test_options() -> None:
+    """Require downgrade and dialect options to change the scanned scope.
+
+    Raises:
+        SelfTestError: An option did not change the result.
+    """
+    header = _SELF_TEST_HEADER
     downgrade = header + "    pass\n\n\ndef downgrade():\n    op.drop_table('t')\n"
     if check_revision(downgrade, "versions/a.py"):
         raise SelfTestError(SelfTestIssue.DOWNGRADE_SCANNED)
@@ -453,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

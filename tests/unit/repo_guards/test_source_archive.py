@@ -1,9 +1,9 @@
 """Licensed deterministic source-archive contract independent of vendor packing."""
 
+from pathlib import Path
 import subprocess
 import sys
 import zipfile
-from pathlib import Path
 
 import pytest
 import scripts.build_capabilities as archive_module

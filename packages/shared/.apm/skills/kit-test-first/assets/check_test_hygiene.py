@@ -6,16 +6,16 @@ Rules (each can be switched off):
   top of a test module (outside functions) is reported, because every test run
   pays for it during collection, even when the tests that need it are
   deselected. Import it inside the test or fixture, or use
-  'pytest.importorskip'. Imports under 'if TYPE_CHECKING:' are ignored.
-- Sleeping: 'time.sleep(...)' anywhere in test code, and 'asyncio.sleep(...)'
+  ``pytest.importorskip``. Imports under ``if TYPE_CHECKING:`` are ignored.
+- Sleeping: ``time.sleep(...)`` anywhere in test code, and ``asyncio.sleep(...)``
   with anything other than a literal 0, are reported. Wait on an explicit
   condition, inject a clock, or use a fake timer instead.
 - Duplicate basenames: two test modules with the same file name in different
-  directories are reported, because without packages ('__init__.py') or
-  '--import-mode=importlib' pytest cannot import both.
+  directories are reported, because without packages (``__init__.py``) or
+  ``--import-mode=importlib`` pytest cannot import both.
 
-Scanned files: 'test_*.py', '*_test.py' and 'conftest.py'. Output lines are
-'path:line: message'; the exit status is 1 when anything is reported.
+Scanned files: ``test_*.py``, ``*_test.py`` and ``conftest.py``. Output lines are
+``path:line: message``; the exit status is 1 when anything is reported.
 
 Example:
     python check_test_hygiene.py tests --heavy-module polars --heavy-module torch
@@ -23,11 +23,11 @@ Example:
 
 import argparse
 import ast
-import fnmatch
-import sys
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
+import fnmatch
 from pathlib import Path, PurePosixPath
+import sys
 from typing import NamedTuple
 
 _DEFAULT_HEAVY = (
@@ -45,6 +45,7 @@ _TEST_PATTERNS = ("test_*.py", "*_test.py", "conftest.py")
 _EXCLUDED_DIRS = frozenset(
     {".git", ".venv", "venv", ".tox", "node_modules", "__pycache__", "build", "dist"}
 )
+_EXIT_USAGE = 2
 
 
 class Options(NamedTuple):
@@ -76,7 +77,7 @@ class Finding(NamedTuple):
     message: str
 
     def render(self) -> str:
-        """Return the finding as 'path:line: message'."""
+        """Return the finding as ``path:line: message``."""
         return f"{self.path}:{self.line}: {self.message}"
 
 
@@ -87,13 +88,13 @@ def is_test_file(name: str) -> bool:
         name: File name without directories.
 
     Returns:
-        True for 'test_x.py', 'x_test.py' and 'conftest.py'.
+        True for ``test_x.py``, ``x_test.py`` and ``conftest.py``.
     """
     return any(fnmatch.fnmatch(name, pattern) for pattern in _TEST_PATTERNS)
 
 
 def _is_type_checking(node: ast.If) -> bool:
-    """Return whether an 'if' tests 'TYPE_CHECKING' or 'typing.TYPE_CHECKING'."""
+    """Return whether an ``if`` tests ``TYPE_CHECKING`` or ``typing.TYPE_CHECKING``."""
     test = node.test
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
@@ -104,19 +105,24 @@ def _import_time_statements(body: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
     """Yield statements executed at import time, without entering functions."""
     for node in body:
         yield node
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        if isinstance(node, ast.If):
-            if not _is_type_checking(node):
-                yield from _import_time_statements(node.body)
-            yield from _import_time_statements(node.orelse)
-        elif isinstance(node, ast.Try | ast.TryStar):
-            for block in (node.body, node.orelse, node.finalbody):
-                yield from _import_time_statements(block)
-            for handler in node.handlers:
-                yield from _import_time_statements(handler.body)
-        elif isinstance(node, ast.With | ast.ClassDef):
-            yield from _import_time_statements(node.body)
+        for block in _import_time_blocks(node):
+            yield from _import_time_statements(block)
+
+
+def _import_time_blocks(node: ast.stmt) -> list[Sequence[ast.stmt]]:
+    """Return nested statement blocks that run when ``node`` runs at import time."""
+    if isinstance(node, ast.If):
+        return [node.orelse] if _is_type_checking(node) else [node.body, node.orelse]
+    if isinstance(node, ast.Try | ast.TryStar):
+        return [
+            node.body,
+            node.orelse,
+            node.finalbody,
+            *(handler.body for handler in node.handlers),
+        ]
+    if isinstance(node, ast.With | ast.ClassDef):
+        return [node.body]
+    return []
 
 
 def _heavy_imports(tree: ast.Module, path: str, heavy: frozenset[str]) -> list[Finding]:
@@ -147,13 +153,12 @@ def _aliases(tree: ast.Module) -> tuple[set[str], set[str], set[str], set[str]]:
     time_sleeps: set[str] = set()
     asyncio_modules: set[str] = set()
     asyncio_sleeps: set[str] = set()
+    modules = {"time": time_modules, "asyncio": asyncio_modules}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "time":
-                    time_modules.add(alias.asname or "time")
-                elif alias.name == "asyncio":
-                    asyncio_modules.add(alias.asname or "asyncio")
+                if alias.name in modules:
+                    modules[alias.name].add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom) and node.module in {"time", "asyncio"}:
             target = time_sleeps if node.module == "time" else asyncio_sleeps
             target.update(
@@ -178,7 +183,7 @@ def _is_zero(call: ast.Call) -> bool:
 
 
 def _sleeps(tree: ast.Module, path: str) -> list[Finding]:
-    """Report 'time.sleep' and non-zero 'asyncio.sleep' calls."""
+    """Report ``time.sleep`` and non-zero ``asyncio.sleep`` calls."""
     time_modules, time_sleeps, asyncio_modules, asyncio_sleeps = _aliases(tree)
     findings: list[Finding] = []
     for node in ast.walk(tree):
@@ -273,7 +278,7 @@ def check_files(
     """Check several test modules, including the cross-file duplicate rule.
 
     Args:
-        sources: '(path, text)' pairs of test files.
+        sources: ``(path, text)`` pairs of test files.
         options: Rule switches.
 
     Returns:
@@ -404,25 +409,16 @@ def main(argv: list[str] | None = None) -> int:
     """Check test files and print findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv[1:]' when None.
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
 
     Returns:
         0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     args = _parser().parse_args(argv)
     if args.self_test:
-        failures = self_test()
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        if failures:
-            return 1
-        print("check_test_hygiene self-test passed.")
-        return 0
-    missing = [path for path in args.paths if not path.exists()]
-    if missing:
-        for path in missing:
-            print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
-        return 2
+        return _run_self_test()
+    if _report_missing(args.paths):
+        return _EXIT_USAGE
     heavy = set() if args.no_default_heavy else set(_DEFAULT_HEAVY)
     heavy.update(args.heavy_module)
     options = Options(
@@ -437,13 +433,32 @@ def main(argv: list[str] | None = None) -> int:
         ]
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read tests: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     findings = check_files(sources, options=options)
     for finding in findings:
         print(finding.render())
     if not findings:
         print(f"Test hygiene holds for {len(sources)} file(s).")
     return 1 if findings else 0
+
+
+def _run_self_test() -> int:
+    """Print self-test failures and return the matching exit status."""
+    failures = self_test()
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    if failures:
+        return 1
+    print("check_test_hygiene self-test passed.")
+    return 0
+
+
+def _report_missing(paths: Iterable[Path]) -> bool:
+    """Print each path that does not exist and return whether any is missing."""
+    missing = [path for path in paths if not path.exists()]
+    for path in missing:
+        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+    return bool(missing)
 
 
 if __name__ == "__main__":

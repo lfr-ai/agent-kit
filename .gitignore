@@ -12,6 +12,7 @@ Desktop.ini
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+!.vscode/mcp.json
 
 # Python bytecode and packaging
 __pycache__/

@@ -1,15 +1,15 @@
 """IaC skill resources must parse, stay reachable, and gate risky workflows."""
 
 import ast
+from collections.abc import Callable
 import json
+from pathlib import Path
 import re
 import runpy
-from collections.abc import Callable
-from pathlib import Path
 
 import pytest
-import yaml
 from scripts.check_resources import _reachable
+import yaml
 
 _SKILLS = Path(__file__).resolve().parents[3] / "packages/iac/.apm/skills"
 _CHECKER = _SKILLS / "kit-ci-review/assets/check_workflow_permissions.py"
@@ -152,6 +152,8 @@ def test_flags_relax_only_named_policy(tmp_path: Path) -> None:
     ("reference", "accepted"),
     [
         ("./.github/actions/setup", True),
+        ("$/.github/workflows/build.yml", True),
+        ("$/.github/actions/setup", True),
         (f"owner/repo/.github/workflows/build.yml@{_SHA}", True),
         (f"docker://alpine@sha256:{'a' * 64}", True),
         ("docker://alpine:3", False),

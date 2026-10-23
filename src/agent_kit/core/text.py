@@ -12,7 +12,7 @@ def visible_text(value: str) -> bool:
     """Reject control and format characters other than tab, newline and return.
 
     ASCII is checked with one compiled pattern; only the non-ASCII remainder is
-    classified character by character, because format characters ('Cf') are
+    classified character by character, because format characters (``Cf``) are
     never ASCII.
 
     Args:

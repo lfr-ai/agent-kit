@@ -1,9 +1,9 @@
 """Always-on context budget regressions for every selectable profile."""
 
-import json
-import re
 from collections import Counter
+import json
 from pathlib import Path
+import re
 
 import pytest
 

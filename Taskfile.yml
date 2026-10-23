@@ -2,9 +2,13 @@ version: "3"
 
 tasks:
   bootstrap:
-    desc: Install the declared locked environment without modifying global setup
+    desc: Audit the locks, then install the locked environments and repository hooks
     cmds:
+      - uv sync --locked --inexact --only-group audit
+      - uv run --locked --no-sync python scripts/audit_dependencies.py
       - uv sync --locked
+      - bun install --frozen-lockfile
+      - uv run --locked pre-commit install --install-hooks
   lint:
     desc: Ruff lint (read-only)
     cmds:

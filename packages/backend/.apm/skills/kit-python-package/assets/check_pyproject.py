@@ -1,21 +1,21 @@
-"""Check 'pyproject.toml' packaging metadata against PEP 517, 621, 639, and 508.
+"""Check ``pyproject.toml`` packaging metadata against PEP 517, 621, 639, and 508.
 
-The checker reads the file with 'tomllib' and never runs a build backend. It
-reports a missing or incomplete '[build-system]', invalid or missing
-'[project]' fields, fields both static and listed in 'dynamic', legacy license
+The checker reads the file with ``tomllib`` and never runs a build backend. It
+reports a missing or incomplete ``[build-system]``, invalid or missing
+``[project]`` fields, fields both static and listed in ``dynamic``, legacy license
 tables or license classifiers combined with an SPDX expression, missing readme
 files, development tools or local direct references in runtime dependencies,
 duplicate requirements, and malformed entry-point object references.
 Exit 0 means no findings, 1 means findings or unreadable input.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
-import re
-import tomllib
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
+import re
+import tomllib
 
 _DEFAULT_DEV_TOOLS = (
     "black",
@@ -71,7 +71,7 @@ def normalize(name: str) -> str:
         name: Distribution or requirement name.
 
     Returns:
-        Lowercase name with runs of '-', '_' and '.' replaced by '-'.
+        Lowercase name with runs of ``-``, ``_`` and ``.`` replaced by ``-``.
     """
     return re.sub(r"[-_.]+", "-", name).lower()
 
@@ -96,7 +96,7 @@ class _Locator:
         """Return the line of a table header or a key inside that table.
 
         Args:
-            table: Dotted table name such as 'project' or 'project.scripts'.
+            table: Dotted table name such as ``project`` or ``project.scripts``.
             key: Optional key within the table.
 
         Returns:
@@ -151,7 +151,7 @@ def _check_identity(
     """Validate name, version, dynamic, and requires-python.
 
     Args:
-        project: The '[project]' table.
+        project: The ``[project]`` table.
         locate: Line locator.
 
     Returns:
@@ -166,10 +166,8 @@ def _check_identity(
                 "project.name is missing or not a valid PEP 508 name",
             )
         )
-    dynamic = project.get("dynamic", [])
-    if not isinstance(dynamic, list) or not all(
-        isinstance(item, str) for item in dynamic
-    ):
+    dynamic = _dynamic_fields(project)
+    if dynamic is None:
         issues.append(
             (
                 locate.line("project", "dynamic"),
@@ -189,6 +187,40 @@ def _check_identity(
         for field in _STATIC_FIELDS
         if field in project and field in dynamic
     )
+    issues.extend(_check_version(project, locate, dynamic))
+    return issues
+
+
+def _dynamic_fields(project: dict[str, object]) -> list[str] | None:
+    """Return the ``dynamic`` field names, or None when the value is malformed.
+
+    Args:
+        project: The ``[project]`` table.
+
+    Returns:
+        Declared dynamic field names, or None for a non-list or non-string entry.
+    """
+    dynamic = project.get("dynamic", [])
+    if not isinstance(dynamic, list):
+        return None
+    names = [item for item in dynamic if isinstance(item, str)]
+    return names if len(names) == len(dynamic) else None
+
+
+def _check_version(
+    project: dict[str, object], locate: _Locator, dynamic: list[str]
+) -> list[tuple[int, str]]:
+    """Validate the version and requires-python fields.
+
+    Args:
+        project: The ``[project]`` table.
+        locate: Line locator.
+        dynamic: Field names declared dynamic.
+
+    Returns:
+        Line-numbered messages.
+    """
+    issues: list[tuple[int, str]] = []
     version = project.get("version")
     if version is None and "version" not in dynamic:
         issues.append(
@@ -214,7 +246,7 @@ def _check_license(
     """Validate PEP 639 license metadata.
 
     Args:
-        project: The '[project]' table.
+        project: The ``[project]`` table.
         locate: Line locator.
         allow_legacy: Accept the deprecated table form.
 
@@ -261,9 +293,9 @@ def _check_readme(
     """Check that a declared readme file exists.
 
     Args:
-        project: The '[project]' table.
+        project: The ``[project]`` table.
         locate: Line locator.
-        root: Directory containing 'pyproject.toml'.
+        root: Directory containing ``pyproject.toml``.
 
     Returns:
         Line-numbered messages.
@@ -305,21 +337,37 @@ def _requirement_issues(
         if name in seen:
             issues.append((line, f"{label}: duplicate requirement '{name}'"))
         seen.add(name)
-        if name in dev_tools:
-            issues.append(
-                (
-                    line,
-                    f"{label}: development tool '{name}' belongs in a dependency group",
-                )
-            )
-        if _LOCAL_REFERENCE.search(requirement):
-            issues.append(
-                (
-                    line,
-                    f"{label}: local direct reference '{requirement}' cannot be published",
-                )
-            )
+        issues.extend(
+            (line, message)
+            for message in _requirement_risks(requirement, name, label, dev_tools)
+        )
     return issues
+
+
+def _requirement_risks(
+    requirement: str, name: str, label: str, dev_tools: frozenset[str]
+) -> list[str]:
+    """Return publication risks for one parsed requirement.
+
+    Args:
+        requirement: Requirement string.
+        name: Normalized requirement name.
+        label: Field label used in messages.
+        dev_tools: Normalized names that do not belong in runtime dependencies.
+
+    Returns:
+        Messages for development tools and local direct references.
+    """
+    risks: list[str] = []
+    if name in dev_tools:
+        risks.append(
+            f"{label}: development tool '{name}' belongs in a dependency group"
+        )
+    if _LOCAL_REFERENCE.search(requirement):
+        risks.append(
+            f"{label}: local direct reference '{requirement}' cannot be published"
+        )
+    return risks
 
 
 def _check_dependencies(
@@ -328,7 +376,7 @@ def _check_dependencies(
     """Validate runtime and optional dependencies.
 
     Args:
-        project: The '[project]' table.
+        project: The ``[project]`` table.
         locate: Line locator.
         dev_tools: Normalized development tool names.
 
@@ -369,11 +417,32 @@ def _check_entry_points(
     """Validate console, GUI, and plugin entry-point object references.
 
     Args:
-        project: The '[project]' table.
+        project: The ``[project]`` table.
         locate: Line locator.
 
     Returns:
         Line-numbered messages.
+    """
+    issues: list[tuple[int, str]] = []
+    for group, entries in _entry_point_groups(project).items():
+        if not isinstance(entries, dict):
+            continue
+        table = f"project.{group}"
+        for name, reference in entries.items():
+            message = _entry_point_issue(group, name, reference)
+            if message is not None:
+                issues.append((locate.line(table, name), message))
+    return issues
+
+
+def _entry_point_groups(project: dict[str, object]) -> dict[str, object]:
+    """Collect script and plugin entry-point tables by group label.
+
+    Args:
+        project: The ``[project]`` table.
+
+    Returns:
+        Group labels mapped to their raw tables.
     """
     groups: dict[str, object] = {
         "scripts": project.get("scripts", {}),
@@ -384,29 +453,25 @@ def _check_entry_points(
         groups.update(
             {f"entry-points.{name}": value for name, value in plugins.items()}
         )
-    issues: list[tuple[int, str]] = []
-    for group, entries in groups.items():
-        if not isinstance(entries, dict):
-            continue
-        table = f"project.{group}"
-        for name, reference in entries.items():
-            if not isinstance(reference, str) or not _OBJECT_REFERENCE.match(
-                reference.strip()
-            ):
-                issues.append(
-                    (
-                        locate.line(table, name),
-                        f"{group}.{name}: '{reference}' is not 'module:object'",
-                    )
-                )
-            elif ":" not in reference and group in {"scripts", "gui-scripts"}:
-                issues.append(
-                    (
-                        locate.line(table, name),
-                        f"{group}.{name}: console scripts need 'module:function'",
-                    )
-                )
-    return issues
+    return groups
+
+
+def _entry_point_issue(group: str, name: object, reference: object) -> str | None:
+    """Return the problem with one entry-point object reference, if any.
+
+    Args:
+        group: Group label such as ``scripts``.
+        name: Entry-point name.
+        reference: Declared object reference.
+
+    Returns:
+        Message, or None for a valid reference.
+    """
+    if not isinstance(reference, str) or not _OBJECT_REFERENCE.match(reference.strip()):
+        return f"{group}.{name}: '{reference}' is not 'module:object'"
+    if ":" not in reference and group in {"scripts", "gui-scripts"}:
+        return f"{group}.{name}: console scripts need 'module:function'"
+    return None
 
 
 def check_pyproject(
@@ -417,7 +482,7 @@ def check_pyproject(
     dev_tools: Iterable[str] = _DEFAULT_DEV_TOOLS,
     allow_legacy_license: bool = False,
 ) -> list[str]:
-    """Check one 'pyproject.toml' document.
+    """Check one ``pyproject.toml`` document.
 
     Args:
         text: TOML source.
@@ -427,7 +492,7 @@ def check_pyproject(
         allow_legacy_license: Accept the deprecated license table form.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
     """
     try:
         data = tomllib.loads(text)
@@ -537,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

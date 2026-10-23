@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import hashlib
 import json
-import sys
-from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import sys
 from tempfile import NamedTemporaryFile
 
 from agent_kit.application.services.catalog_service import CatalogService
@@ -16,6 +16,13 @@ from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 
 _ROOT = Path(__file__).resolve().parents[1]
 _LOCK_PATH = ".agents/agentic-setup/native-lock.json"
+_JSON_INDENT = 2
+_ROLE_PREFIXES = (
+    ".github/agents/kit-",
+    ".github/agents/subagents/kit-",
+    ".claude/agents/kit-",
+    ".claude/agents/subagents/kit-",
+)
 
 
 class _NativeRoleIssue(Enum):
@@ -125,58 +132,88 @@ def check(root: Path) -> list[str]:
     return failures
 
 
-def write(root: Path) -> None:  # noqa: C901, PLR0912
-    """Refresh only attested role files; preserve any independently edited output."""
-    output = expected(root)
+def _previous_roles(root: Path) -> dict[str, str]:
     lock = _owned_path(root, _LOCK_PATH)
-    previous: dict[str, str] = {}
-    if lock.exists():
-        ledger = json.loads(lock.read_text(encoding="utf-8"))
-        if (
-            not isinstance(ledger, dict)
-            or set(ledger) != {"schema_version", "files"}
-            or ledger.get("schema_version") != 1
-            or not isinstance(ledger.get("files"), dict)
-        ):
-            raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
-        files = ledger["files"]
-        if not all(
-            isinstance(name, str) and isinstance(digest, str)
-            for name, digest in files.items()
-        ):
-            raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
-        previous = files
+    if not lock.exists():
+        return {}
+    ledger = json.loads(lock.read_text(encoding="utf-8"))
+    if (
+        not isinstance(ledger, dict)
+        or set(ledger) != {"schema_version", "files"}
+        or ledger.get("schema_version") != 1
+        or not isinstance(ledger.get("files"), dict)
+    ):
+        raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
+    files = ledger["files"]
+    if not all(
+        isinstance(name, str) and isinstance(digest, str)
+        for name, digest in files.items()
+    ):
+        raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
+    return files
+
+
+def _check_previous_roles(root: Path, previous: dict[str, str]) -> None:
     for name, digest in previous.items():
         parts = PurePosixPath(name)
-        if (
-            "\\" in name
-            or ".." in parts.parts
-            or not name.startswith(
-                (
-                    ".github/agents/kit-",
-                    ".github/agents/subagents/kit-",
-                    ".claude/agents/kit-",
-                    ".claude/agents/subagents/kit-",
-                )
-            )
-        ):
+        if "\\" in name or ".." in parts.parts or not name.startswith(_ROLE_PREFIXES):
             raise _NativeRoleError(_NativeRoleIssue.UNOWNED_LEDGER_PATH)
         path = _owned_path(root, name)
         if path.exists() and (
             path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest
         ):
             raise _NativeRoleError(_NativeRoleIssue.EDITED_ROLE, path=name)
+
+
+def _check_planned_roles(
+    root: Path, output: dict[str, bytes], previous: dict[str, str]
+) -> None:
     for name, data in output.items():
         path = _owned_path(root, name)
         if name not in previous and path.exists() and path.read_bytes() != data:
             raise _NativeRoleError(_NativeRoleIssue.EXISTING_UNOWNED_ROLE, path=name)
         if path.is_symlink():
             raise _NativeRoleError(_NativeRoleIssue.LINKED_OUTPUT)
+
+
+def _restore_roles(root: Path, before: dict[str, bytes | None]) -> None:
+    for name, data in before.items():
+        if data is None:
+            _owned_path(root, name).unlink(missing_ok=True)
+        else:
+            _replace(_owned_path(root, name), data)
+
+
+def _apply_roles(
+    root: Path,
+    planned: dict[str, bytes],
+    removed: set[str],
+    before: dict[str, bytes | None],
+) -> None:
+    completed = False
+    try:
+        for name, data in planned.items():
+            _replace(_owned_path(root, name), data)
+        for name in removed:
+            _owned_path(root, name).unlink(missing_ok=True)
+        completed = True
+    finally:
+        if not completed:
+            _restore_roles(root, before)
+
+
+def write(root: Path) -> None:
+    """Refresh only attested role files; preserve any independently edited output."""
+    output = expected(root)
+    previous = _previous_roles(root)
+    _check_previous_roles(root, previous)
+    _check_planned_roles(root, output, previous)
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in output.items()}
     planned = {
         **output,
         _LOCK_PATH: (
-            json.dumps({"schema_version": 1, "files": hashes}, indent=2) + "\n"
+            json.dumps({"schema_version": 1, "files": hashes}, indent=_JSON_INDENT)
+            + "\n"
         ).encode("utf-8"),
     }
     touched = set(planned) | previous.keys()
@@ -186,20 +223,7 @@ def write(root: Path) -> None:  # noqa: C901, PLR0912
         else None
         for name in touched
     }
-    completed = False
-    try:
-        for name, data in planned.items():
-            _replace(_owned_path(root, name), data)
-        for name in previous.keys() - output.keys():
-            _owned_path(root, name).unlink(missing_ok=True)
-        completed = True
-    finally:
-        if not completed:
-            for name, data in before.items():
-                if data is None:
-                    _owned_path(root, name).unlink(missing_ok=True)
-                else:
-                    _replace(_owned_path(root, name), data)
+    _apply_roles(root, planned, previous.keys() - output.keys(), before)
 
 
 def main() -> int:

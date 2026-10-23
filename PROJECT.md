@@ -10,8 +10,7 @@
 - Repository initialization, remote ownership, branch rules, and publication are
   operator actions.
 - Ownership/contact source: [.github/maintainers.json](.github/maintainers.json);
-  personal owner `@lfr-ai`, intended remote `lfr-ai/agent-kit`.
-  Do not use an authenticated profile as an implicit owner.
+  owner `@lfr-ai`, public repository `lfr-ai/agent-kit` on `main`.
 
 ## Commands
 
@@ -25,7 +24,14 @@ task apm:smoke
 ```
 
 - `task verify`: check-only formatting, lint, types, architecture, source contracts,
-  every test tier with branch coverage, and docs; does not update outputs.
+  dependency licenses, every test tier with branch coverage, and docs; does not
+  update outputs or require network access.
+- `task verify -- dependencies`: network audit of the locked dependencies before
+  installation. `task verify -- pins` rejects floating versions, mutable hook
+  revisions, undigested images and package runners. See
+  [dependency security](docs/dependency-security.md).
+- `task bootstrap` needs uv and Bun: it audits `uv.lock` and `bun.lock`, installs
+  both locked environments, then installs Git hooks.
 - `task test` runs every tier; pass pytest selectors after `--`.
   `task verify -- tests` adds branch coverage. Test tiers are described in
   [tests/README.md](tests/README.md).
@@ -33,7 +39,9 @@ task apm:smoke
   [pytest.ini](pytest.ini), [.coveragerc](.coveragerc), [tox.ini](tox.ini),
   [.cz.toml](.cz.toml) (commitizen), [.yamllint.yaml](.yamllint.yaml),
   [.markdownlint-cli2.yaml](.markdownlint-cli2.yaml), [cspell.json](cspell.json),
-  [lychee.toml](lychee.toml), [.jscpd.json](.jscpd.json), and
+  [lychee.toml](lychee.toml), [.jscpd.json](.jscpd.json),
+  [package.json](package.json) with [bun.lock](bun.lock) and
+  [bunfig.toml](bunfig.toml) (locked JavaScript tooling), and
   [.secrets.baseline](.secrets.baseline) (detect-secrets).
 - `task precommit`: pre-commit-stage hooks on all files (requires a git repository,
   Node.js for upstream Node hooks, Bun for duplication checks, and Docker for links).
@@ -41,7 +49,8 @@ task apm:smoke
 - `task commit`: Conventional Commits; `uv run --locked cz bump --dry-run --yes`
   previews the next version without changing files.
 - Dependency updates: Dependabot ([.github/dependabot.yml](.github/dependabot.yml))
-  for uv, GitHub Actions, and pre-commit hooks.
+  for uv, Bun, GitHub Actions, pre-commit hooks, the dev container image, and
+  dev container features.
 - `task apm:smoke`: real released APM CLI boundary in disposable packages.
 - `task apm:smoke -- --session`: actual one-skill delivery with no native roles.
 - `compose --skill`: explicit task procedures; `.apm/selection.json` records the
@@ -63,7 +72,10 @@ task apm:smoke
 - Hosted review templates are [.codecov.yml](.codecov.yml) and
   [.coderabbit.yaml](.coderabbit.yaml); they do not install or activate either
   hosted service. See [GitHub setup](docs/github-setup.md).
-- `task verify -- conventions`: execute the portable AST convention checker.
+- `task verify -- conventions`: shared AST checker for toolkit Python rules and
+  named numeric values and double-backtick docstrings across the toolkit,
+  portable assets, and production Python templates; the same script runs in
+  the always-on pre-commit hook.
 - Task exposes ten recurring workflows, not aliases for every executable.
   `task verify -- <gate>` selects a named gate; one-off tools use their own CLI.
   See [developer tooling](docs/devtools.md) for defaults, hooks and template guidance.

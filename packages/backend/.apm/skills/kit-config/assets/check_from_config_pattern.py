@@ -2,11 +2,11 @@
 
 Configuration is parsed once by a typed settings object at the composition root
 and passed explicitly to collaborators. This checker parses Python sources
-without importing them and reports 'os.environ', 'os.environb', 'os.getenv',
-and 'os.putenv' use in any file that does not match an '--allow' glob. A source
-line carrying the waiver comment '# config: env-access-reviewed' is accepted.
+without importing them and reports ``os.environ``, ``os.environb``, ``os.getenv``,
+and ``os.putenv`` use in any file that does not match an ``--allow`` glob. A source
+line carrying the waiver comment ``# config: env-access-reviewed`` is accepted.
 Exit 0 means no findings, 1 means findings or unreadable sources.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
@@ -35,32 +35,59 @@ _DEFAULT_EXCLUDE = (
 _WAIVER = "# config: env-access-reviewed"
 _ENV_ATTRIBUTES = frozenset({"environ", "environb", "getenv", "getenvb", "putenv"})
 _MAX_EXPRESSION = 72
+_ELLIPSIS = "..."
 
 
 def _bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
-    """Collect local names bound to the 'os' module and to its environment API.
+    """Collect local names bound to the ``os`` module and to its environment API.
 
     Args:
         tree: Parsed module.
 
     Returns:
-        Names that refer to the 'os' module and names that refer directly to
-        'environ', 'getenv', or a sibling environment attribute.
+        Names that refer to the ``os`` module and names that refer directly to
+        ``environ``, ``getenv``, or a sibling environment attribute.
     """
     modules: set[str] = set()
     direct: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "os" or (
-                    alias.name.startswith("os.") and alias.asname is None
-                ):
-                    modules.add(alias.asname or "os")
+            modules.update(_module_aliases(node))
         elif isinstance(node, ast.ImportFrom) and node.module == "os":
-            for alias in node.names:
-                if alias.name in _ENV_ATTRIBUTES:
-                    direct.add(alias.asname or alias.name)
+            direct.update(_direct_aliases(node))
     return modules, direct
+
+
+def _module_aliases(node: ast.Import) -> set[str]:
+    """Return local names that an ``import`` statement binds to ``os``.
+
+    Args:
+        node: Import statement.
+
+    Returns:
+        Names bound to the ``os`` module.
+    """
+    return {
+        alias.asname or "os"
+        for alias in node.names
+        if alias.name == "os" or (alias.name.startswith("os.") and alias.asname is None)
+    }
+
+
+def _direct_aliases(node: ast.ImportFrom) -> set[str]:
+    """Return local names that ``from os import`` binds to environment attributes.
+
+    Args:
+        node: ``from os import`` statement.
+
+    Returns:
+        Names bound directly to an environment attribute.
+    """
+    return {
+        alias.asname or alias.name
+        for alias in node.names
+        if alias.name in _ENV_ATTRIBUTES
+    }
 
 
 def _parents(tree: ast.Module) -> dict[ast.AST, ast.AST]:
@@ -81,7 +108,7 @@ def _widen(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST:
     """Expand an environment reference to the expression a reviewer recognizes.
 
     Args:
-        node: The 'os.environ' style reference.
+        node: The ``os.environ`` style reference.
         parents: Child-to-parent mapping.
 
     Returns:
@@ -104,11 +131,11 @@ def _is_reference(node: ast.AST, modules: set[str], direct: set[str]) -> bool:
 
     Args:
         node: Candidate node.
-        modules: Local names bound to 'os'.
+        modules: Local names bound to ``os``.
         direct: Local names bound to an environment attribute.
 
     Returns:
-        True for 'os.environ'-style attributes and directly imported names.
+        True for ``os.environ``-style attributes and directly imported names.
     """
     if isinstance(node, ast.Attribute):
         return (
@@ -127,7 +154,7 @@ def find_env_access(text: str, path: str) -> list[str]:
         path: Display path used in findings.
 
     Returns:
-        Findings formatted as 'path:line: message', in source order.
+        Findings formatted as ``path:line: message``, in source order.
 
     Raises:
         SyntaxError: The source cannot be parsed.
@@ -148,7 +175,7 @@ def find_env_access(text: str, path: str) -> list[str]:
             continue
         rendered = ast.unparse(expression)
         if len(rendered) > _MAX_EXPRESSION:
-            rendered = rendered[: _MAX_EXPRESSION - 3] + "..."
+            rendered = rendered[: _MAX_EXPRESSION - len(_ELLIPSIS)] + _ELLIPSIS
         if (line, rendered) in seen:
             continue
         seen.add((line, rendered))
@@ -166,10 +193,10 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
 
     Args:
         path: Path rendered with forward slashes.
-        patterns: Case-sensitive 'fnmatch' patterns; '*' also matches '/'.
+        patterns: Case-sensitive ``fnmatch`` patterns; ``*`` also matches ``/``.
 
     Returns:
-        True when at least one pattern matches the path or '/' + path.
+        True when at least one pattern matches the path or ``/`` + path.
     """
     candidates = (path, f"/{path}")
     return any(
@@ -269,6 +296,17 @@ def self_test() -> None:
     Raises:
         AssertionError: A regression was detected.
     """
+    _self_test_risky()
+    _self_test_clean()
+    _self_test_globs()
+
+
+def _self_test_risky() -> None:
+    """Require one finding for each environment access form.
+
+    Raises:
+        SelfTestError: An access form was missed.
+    """
     risky = {
         "import os\nvalue = os.environ['ORDER_LIMIT']\n": "os.environ['ORDER_LIMIT']",
         "import os\nvalue = os.getenv('REGION', 'west')\n": "os.getenv('REGION'",
@@ -283,6 +321,14 @@ def self_test() -> None:
             raise SelfTestError(
                 SelfTestIssue.MISSED_ENVIRONMENT_ACCESS, source=source, found=found
             )
+
+
+def _self_test_clean() -> None:
+    """Require no findings for unrelated names and waived lines.
+
+    Raises:
+        SelfTestError: A clean source was reported.
+    """
     clean = (
         "import os\npath = os.path.join('a', 'b')\n",
         "environ = {}\nvalue = environ.get('x')\n",
@@ -291,6 +337,14 @@ def self_test() -> None:
     for source in clean:
         if find_env_access(source, "app/service.py"):
             raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+
+
+def _self_test_globs() -> None:
+    """Require the default allow and exclude globs to classify paths correctly.
+
+    Raises:
+        SelfTestError: A default glob misclassified a path.
+    """
     if not matches("src/app/settings.py", _DEFAULT_ALLOW):
         raise SelfTestError(SelfTestIssue.SETTINGS_REJECTED)
     if matches("src/app/orders.py", _DEFAULT_ALLOW):
@@ -303,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

@@ -20,6 +20,8 @@ from app.adapters.payments.http_payment_gateway import HttpPaymentGateway
 from app.adapters.persistence.sqlite_invoices import SqliteUnitOfWork, connect
 from app.application.use_cases.settle_invoice import SettleInvoice
 
+_SMTP_TIMEOUT_SECONDS = 10.0
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Settings:
@@ -96,7 +98,9 @@ def build_settle_invoice(
         ),
         notifier=SmtpInvoiceNotifier(
             connect=starttls_factory(
-                host=settings.smtp_host, port=settings.smtp_port, timeout=10.0
+                host=settings.smtp_host,
+                port=settings.smtp_port,
+                timeout=_SMTP_TIMEOUT_SECONDS,
             ),
             sender=settings.sender,
             address_of=address_book.__getitem__,

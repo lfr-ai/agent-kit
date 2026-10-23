@@ -1,14 +1,14 @@
 """Flag Pydantic v1 APIs and compatibility shims in code that targets v2.
 
 Python sources are parsed without importing them. Only files that import
-'pydantic' are inspected. Findings cover 'pydantic.v1' imports,
-'BaseSettings' imported from 'pydantic', v1 decorators ('validator',
-'root_validator'), inner 'class Config', '__root__' fields, v1 'Field' and
-config keywords, 'parse_obj_as' style helpers, v1 class methods such as
-'parse_obj', and instance calls such as '.dict(exclude_unset=True)'. A line
-carrying '# pydantic: reviewed' is waived.
+``pydantic`` are inspected. Findings cover ``pydantic.v1`` imports,
+``BaseSettings`` imported from ``pydantic``, v1 decorators (``validator``,
+``root_validator``), inner ``class Config``, ``__root__`` fields, v1 ``Field`` and
+config keywords, ``parse_obj_as`` style helpers, v1 class methods such as
+``parse_obj``, and instance calls such as ``.dict(exclude_unset=True)``. A line
+carrying ``# pydantic: reviewed`` is waived.
 Exit 0 means no findings, 1 means findings or unreadable sources.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
@@ -67,6 +67,8 @@ _V1_CONFIG_KEYS = {
     "copy_on_model_validation": "use revalidate_instances",
 }
 
+_KEYWORD_TABLES = {"Field": _V1_FIELD_KEYWORDS, "ConfigDict": _V1_CONFIG_KEYS}
+
 
 class _Scanner(ast.NodeVisitor):
     """Collect v1 API usage in one module."""
@@ -104,7 +106,7 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        """Flag 'import pydantic.v1'.
+        """Flag ``import pydantic.v1``.
 
         Args:
             node: Import statement.
@@ -114,7 +116,7 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _resolve(self, node: ast.expr) -> str | None:
-        """Resolve a name or 'pydantic.attr' to its original pydantic name.
+        """Resolve a name or ``pydantic.attr`` to its original pydantic name.
 
         Args:
             node: Expression to resolve.
@@ -147,25 +149,14 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Flag inner Config classes, v1 config keys, and '__root__' fields.
+        """Flag inner Config classes, v1 config keys, and ``__root__`` fields.
 
         Args:
             node: Class definition.
         """
         for statement in node.body:
             if isinstance(statement, ast.ClassDef) and statement.name == "Config":
-                self._hit(statement, "inner class Config is v1; use model_config")
-                for item in statement.body:
-                    if isinstance(item, ast.Assign):
-                        for target in item.targets:
-                            if (
-                                isinstance(target, ast.Name)
-                                and target.id in _V1_CONFIG_KEYS
-                            ):
-                                self._hit(
-                                    item,
-                                    f"config '{target.id}' is v1; {_V1_CONFIG_KEYS[target.id]}",
-                                )
+                self._config_class(statement)
             if (
                 isinstance(statement, ast.AnnAssign)
                 and isinstance(statement.target, ast.Name)
@@ -173,6 +164,23 @@ class _Scanner(ast.NodeVisitor):
             ):
                 self._hit(statement, "__root__ field is v1; use RootModel[T]")
         self.generic_visit(node)
+
+    def _config_class(self, node: ast.ClassDef) -> None:
+        """Flag an inner Config class and the v1 keys it assigns.
+
+        Args:
+            node: The inner ``Config`` class.
+        """
+        self._hit(node, "inner class Config is v1; use model_config")
+        for item in node.body:
+            if not isinstance(item, ast.Assign):
+                continue
+            for target in item.targets:
+                if isinstance(target, ast.Name) and target.id in _V1_CONFIG_KEYS:
+                    self._hit(
+                        item,
+                        f"config '{target.id}' is v1; {_V1_CONFIG_KEYS[target.id]}",
+                    )
 
     def visit_Call(self, node: ast.Call) -> None:
         """Flag v1 helpers, class methods, dump calls, and keywords.
@@ -183,31 +191,41 @@ class _Scanner(ast.NodeVisitor):
         name = self._resolve(node)
         if name in _V1_HELPERS:
             self._hit(node, f"{name} is v1; {_V1_HELPERS[name]}")
-        if name == "Field":
-            for keyword in node.keywords:
-                if keyword.arg in _V1_FIELD_KEYWORDS:
-                    self._hit(
-                        node,
-                        f"Field({keyword.arg}=...) is v1; {_V1_FIELD_KEYWORDS[keyword.arg]}",
-                    )
-        if name == "ConfigDict":
-            for keyword in node.keywords:
-                if keyword.arg in _V1_CONFIG_KEYS:
-                    self._hit(
-                        node,
-                        f"ConfigDict({keyword.arg}=...) is v1; {_V1_CONFIG_KEYS[keyword.arg]}",
-                    )
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            if func.attr in _V1_CLASS_METHODS:
-                self._hit(node, f".{func.attr}() is v1; {_V1_CLASS_METHODS[func.attr]}")
-            elif func.attr in _V1_DUMP_METHODS and any(
-                keyword.arg in _DUMP_KEYWORDS for keyword in node.keywords
-            ):
-                self._hit(
-                    node, f".{func.attr}(...) is v1; {_V1_DUMP_METHODS[func.attr]}"
-                )
+        if name is not None:
+            self._v1_keywords(node, name)
+        self._v1_method(node)
         self.generic_visit(node)
+
+    def _v1_keywords(self, node: ast.Call, name: str) -> None:
+        """Flag v1 keywords passed to ``Field`` or ``ConfigDict``.
+
+        Args:
+            node: Call expression.
+            name: Original pydantic name of the callee.
+        """
+        table = _KEYWORD_TABLES.get(name, {})
+        for keyword in node.keywords:
+            if keyword.arg in table:
+                self._hit(
+                    node,
+                    f"{name}({keyword.arg}=...) is v1; {table[keyword.arg]}",
+                )
+
+    def _v1_method(self, node: ast.Call) -> None:
+        """Flag v1 class methods and v1 dump calls with v1 keywords.
+
+        Args:
+            node: Call expression.
+        """
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            return
+        if func.attr in _V1_CLASS_METHODS:
+            self._hit(node, f".{func.attr}() is v1; {_V1_CLASS_METHODS[func.attr]}")
+        elif func.attr in _V1_DUMP_METHODS and any(
+            keyword.arg in _DUMP_KEYWORDS for keyword in node.keywords
+        ):
+            self._hit(node, f".{func.attr}(...) is v1; {_V1_DUMP_METHODS[func.attr]}")
 
 
 def check_source(text: str, path: str) -> list[str]:
@@ -218,7 +236,7 @@ def check_source(text: str, path: str) -> list[str]:
         path: Display path.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
 
     Raises:
         SyntaxError: The source cannot be parsed.
@@ -344,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

@@ -1,7 +1,7 @@
 """Build a static import graph for one Python package and query it.
 
-The tool parses source files with 'ast' and never imports or executes them.
-Default mode reports import cycles as 'path:line: import cycle: a -> b -> a'
+The tool parses source files with ``ast`` and never imports or executes them.
+Default mode reports import cycles as ``path:line: import cycle: a -> b -> a``
 and exits 1 when any exist. Query modes list reverse dependencies (who
 imports a module, transitively), forward dependencies, or the shortest import
 chain between two modules, and can export the graph as JSON or Graphviz DOT.
@@ -9,14 +9,17 @@ chain between two modules, and can export the graph as JSON or Graphviz DOT.
 
 import argparse
 import ast
-import json
-import sys
 from collections import deque
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 
 _EXCLUDED = frozenset({"__pycache__", ".venv", "venv", "node_modules", "build"})
+_EXIT_USAGE = 2
+_JSON_INDENT = 2
+_CHAIN_ENDPOINTS = ("FROM", "TO")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -34,7 +37,7 @@ class Graph:
     edges: dict[str, dict[str, int]]
 
     def location(self, source: str, target: str) -> str:
-        """Return 'path:line' of the first import from source to target."""
+        """Return ``path:line`` of the first import from source to target."""
         line = self.edges.get(source, {}).get(target, 1)
         path = self.files.get(source)
         return f"{path.as_posix() if path else source}:{line}"
@@ -60,7 +63,7 @@ class _Collector:
     found: dict[str, int] = field(default_factory=dict)
 
     def add(self, name: str, line: int) -> None:
-        """Record the longest known prefix of 'name', or its external root."""
+        """Record the longest known prefix of ``name``, or its external root."""
         parts = name.split(".")
         for size in range(len(parts), 0, -1):
             candidate = ".".join(parts[:size])
@@ -72,7 +75,7 @@ class _Collector:
             self.found.setdefault(parts[0], line)
 
     def base(self, level: int) -> str:
-        """Resolve the package that a relative import of 'level' refers to."""
+        """Resolve the package that a relative import of ``level`` refers to."""
         parts = self.module.split(".")
         if not self.is_package:
             parts = parts[:-1]
@@ -99,7 +102,7 @@ class _Collector:
 
 
 def _is_type_checking(test: ast.expr) -> bool:
-    """Return whether an 'if' test is 'TYPE_CHECKING' or 'x.TYPE_CHECKING'."""
+    """Return whether an ``if`` test is ``TYPE_CHECKING`` or ``x.TYPE_CHECKING``."""
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
     )
@@ -142,7 +145,7 @@ def _module_name(package_dir: Path, path: Path) -> tuple[str, bool]:
 
 
 class GraphInputError(ValueError):
-    """An input violates the graphinput contract."""
+    """An input violates the graph input contract."""
 
     def __init__(self, *, package_dir: Path) -> None:
         """Describe the violated invariant.
@@ -160,11 +163,11 @@ def build_graph(
     module_level_only: bool = False,
     include_external: bool = False,
 ) -> Graph:
-    """Parse every module under 'package_dir' and resolve its imports.
+    """Parse every module under ``package_dir`` and resolve its imports.
 
     Args:
         package_dir: Directory of the top-level package to analyze.
-        skip_type_checking: Ignore imports under 'if TYPE_CHECKING:'.
+        skip_type_checking: Ignore imports under ``if TYPE_CHECKING:``.
         module_level_only: Ignore imports inside functions and lambdas.
         include_external: Add top-level external packages as nodes.
 
@@ -206,6 +209,65 @@ def build_graph(
     return Graph(root=package_dir.name, files=files, edges=edges)
 
 
+class _Tarjan:
+    """Iterative Tarjan strongly connected component search state."""
+
+    def __init__(self, edges: dict[str, dict[str, int]]) -> None:
+        """Prepare empty traversal state.
+
+        Args:
+            edges: Forward import edges keyed by module.
+        """
+        self._edges = edges
+        self.index: dict[str, int] = {}
+        self._low: dict[str, int] = {}
+        self._stack: list[str] = []
+        self._on_stack: set[str] = set()
+        self.components: list[list[str]] = []
+
+    def _enter(self, node: str) -> list[str]:
+        """Number ``node``, push it, and return its sorted children."""
+        self.index[node] = self._low[node] = len(self.index)
+        self._stack.append(node)
+        self._on_stack.add(node)
+        return sorted(self._edges.get(node, {}))
+
+    def _step(self, node: str, child: str, work: list[tuple[str, list[str]]]) -> None:
+        """Descend into an unvisited child or record a back edge."""
+        if child not in self.index:
+            work.append((child, self._enter(child)))
+        elif child in self._on_stack:
+            self._low[node] = min(self._low[node], self.index[child])
+
+    def _close(self, node: str) -> None:
+        """Pop the component rooted at ``node`` when it is a root."""
+        if self._low[node] != self.index[node]:
+            return
+        component: list[str] = []
+        while True:
+            member = self._stack.pop()
+            self._on_stack.discard(member)
+            component.append(member)
+            if member == node:
+                break
+        if len(component) > 1:
+            self.components.append(sorted(component))
+
+    def run(self, start: str) -> None:
+        """Visit every module reachable from ``start``."""
+        work: list[tuple[str, list[str]]] = [(start, self._enter(start))]
+        while work:
+            node, children = work[-1]
+            if children:
+                self._step(node, children.pop(0), work)
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                self._low[parent] = min(self._low[parent], self._low[node])
+            self._close(node)
+
+
 def strongly_connected(graph: Graph) -> list[list[str]]:
     """Return strongly connected components with more than one module.
 
@@ -215,45 +277,11 @@ def strongly_connected(graph: Graph) -> list[list[str]]:
     Returns:
         Sorted components, each sorted by module name.
     """
-    index: dict[str, int] = {}
-    low: dict[str, int] = {}
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    components: list[list[str]] = []
+    search = _Tarjan(graph.edges)
     for start in sorted(graph.edges):
-        if start in index:
-            continue
-        work: list[tuple[str, list[str]]] = [(start, sorted(graph.edges[start]))]
-        index[start] = low[start] = len(index)
-        stack.append(start)
-        on_stack.add(start)
-        while work:
-            node, children = work[-1]
-            if children:
-                child = children.pop(0)
-                if child not in index:
-                    index[child] = low[child] = len(index)
-                    stack.append(child)
-                    on_stack.add(child)
-                    work.append((child, sorted(graph.edges.get(child, {}))))
-                elif child in on_stack:
-                    low[node] = min(low[node], index[child])
-                continue
-            work.pop()
-            if work:
-                parent = work[-1][0]
-                low[parent] = min(low[parent], low[node])
-            if low[node] == index[node]:
-                component: list[str] = []
-                while True:
-                    member = stack.pop()
-                    on_stack.discard(member)
-                    component.append(member)
-                    if member == node:
-                        break
-                if len(component) > 1:
-                    components.append(sorted(component))
-    return sorted(components)
+        if start not in search.index:
+            search.run(start)
+    return sorted(search.components)
 
 
 def shortest_path(
@@ -264,7 +292,7 @@ def shortest_path(
     Args:
         graph: Import graph.
         source: Starting module.
-        target: Destination module; may equal 'source' to find a cycle.
+        target: Destination module; may equal ``source`` to find a cycle.
         allowed: Optional set of modules the chain may pass through.
 
     Returns:
@@ -292,7 +320,7 @@ def cycle_findings(graph: Graph) -> list[str]:
         graph: Import graph.
 
     Returns:
-        Deterministic 'path:line: import cycle: ...' findings.
+        Deterministic ``path:line: import cycle: ...`` findings.
     """
     findings: list[str] = []
     for component in strongly_connected(graph):
@@ -361,7 +389,7 @@ def to_json(graph: Graph) -> str:
             for target, line in sorted(graph.edges[source].items())
         ],
     }
-    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    return json.dumps(payload, indent=_JSON_INDENT, sort_keys=True) + "\n"
 
 
 def _write_package(root: Path, files: dict[str, str]) -> Path:
@@ -403,31 +431,44 @@ def self_test() -> None:
                 "shop/api/helpers.py": "",
             },
         )
-        graph = build_graph(package)
-        if graph.edges["shop.api"] != {"shop.orders": 1}:
-            raise AssertionError(graph.edges["shop.api"])
-        if set(graph.edges["shop.api.views"]) != {"shop.billing", "shop.api.helpers"}:
-            raise AssertionError(graph.edges["shop.api.views"])
-        findings = cycle_findings(graph)
-        if (
-            len(findings) != 1
-            or "shop.billing -> shop.orders -> shop.billing" not in (findings[0])
-        ):
-            raise AssertionError(findings)
-        filtered = build_graph(package, skip_type_checking=True, module_level_only=True)
-        if filtered.edges["shop.api.views"]:
-            raise AssertionError(filtered.edges["shop.api.views"])
-        importers = [
-            name for _, name, _ in reachable(graph.reverse(), "shop.orders", None)
-        ]
-        if importers != ["shop.api", "shop.billing", "shop.api.views"]:
-            raise AssertionError(importers)
-        if shortest_path(graph, "shop.api.views", "shop.orders") != [
-            "shop.api.views",
-            "shop.billing",
-            "shop.orders",
-        ]:
-            raise ChainQueryRegressionError
+        _check_graph(package)
+
+
+def _check_graph(package: Path) -> None:
+    """Verify edges, cycles, filters and queries for the synthetic package."""
+    graph = build_graph(package)
+    _check_edges(graph)
+    _check_queries(package, graph)
+
+
+def _check_edges(graph: Graph) -> None:
+    """Verify resolved edges and the reported cycle."""
+    if graph.edges["shop.api"] != {"shop.orders": 1}:
+        raise AssertionError(graph.edges["shop.api"])
+    if set(graph.edges["shop.api.views"]) != {"shop.billing", "shop.api.helpers"}:
+        raise AssertionError(graph.edges["shop.api.views"])
+    findings = cycle_findings(graph)
+    if (
+        len(findings) != 1
+        or "shop.billing -> shop.orders -> shop.billing" not in (findings[0])
+    ):
+        raise AssertionError(findings)
+
+
+def _check_queries(package: Path, graph: Graph) -> None:
+    """Verify import filters, reverse reachability and chain queries."""
+    filtered = build_graph(package, skip_type_checking=True, module_level_only=True)
+    if filtered.edges["shop.api.views"]:
+        raise AssertionError(filtered.edges["shop.api.views"])
+    importers = [name for _, name, _ in reachable(graph.reverse(), "shop.orders", None)]
+    if importers != ["shop.api", "shop.billing", "shop.api.views"]:
+        raise AssertionError(importers)
+    if shortest_path(graph, "shop.api.views", "shop.orders") != [
+        "shop.api.views",
+        "shop.billing",
+        "shop.orders",
+    ]:
+        raise ChainQueryRegressionError
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -437,7 +478,7 @@ def _parser() -> argparse.ArgumentParser:
     query = parser.add_mutually_exclusive_group()
     query.add_argument("--reverse", metavar="MODULE", help="who imports MODULE")
     query.add_argument("--forward", metavar="MODULE", help="what MODULE imports")
-    query.add_argument("--chain", nargs=2, metavar=("FROM", "TO"))
+    query.add_argument("--chain", nargs=len(_CHAIN_ENDPOINTS), metavar=_CHAIN_ENDPOINTS)
     query.add_argument("--dot", action="store_true", help="print Graphviz DOT")
     query.add_argument("--json", action="store_true", help="print JSON graph")
     parser.add_argument("--depth", type=int, default=None)
@@ -454,7 +495,7 @@ def _query(graph: Graph, args: argparse.Namespace) -> int:
     unknown = [name for name in modules if name not in graph.files]
     if unknown:
         print(f"unknown module: {unknown[0]}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     if args.chain:
         chain = shortest_path(graph, args.chain[0], args.chain[1])
         print(" -> ".join(chain) if chain else "no import chain")
@@ -472,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
     """Build the graph and run the selected mode.
 
     Args:
-        argv: Command-line arguments; 'sys.argv' when omitted.
+        argv: Command-line arguments; ``sys.argv`` when omitted.
 
     Returns:
         0 on success, 1 when cycles are found, 2 on unusable input.
@@ -485,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.package is None or not args.package.is_dir():
         print("a package directory is required", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     try:
         graph = build_graph(
             args.package,
@@ -495,7 +536,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (OSError, UnicodeError, SyntaxError, ValueError) as error:
         print(f"cannot build graph: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
+    return _report(graph, args)
+
+
+def _report(graph: Graph, args: argparse.Namespace) -> int:
+    """Print the selected rendering, query result, or cycle findings."""
     if args.dot or args.json:
         sys.stdout.write(to_dot(graph) if args.dot else to_json(graph))
         return 0

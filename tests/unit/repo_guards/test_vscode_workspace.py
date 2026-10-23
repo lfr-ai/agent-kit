@@ -12,7 +12,7 @@ def _json(name: str) -> dict[str, object]:
     return value
 
 
-def test_settings_follow_the_golden_reference_section_order() -> None:
+def test_settings_follow_the_documented_section_order() -> None:
     keys = list(_json("settings.json"))
     representatives = [
         "python.defaultInterpreterPath",
@@ -68,6 +68,7 @@ def test_language_formatters_have_a_declared_provider() -> None:
     assert isinstance(unwanted, list)
     assert all(isinstance(name, str) for name in [*recommended, *unwanted])
     assert not set(recommended) & set(unwanted)
+    assert "ms-azuretools.vscode-containers" in recommended
     assert {"charliermarsh.ruff", "astral-sh.ty", "ms-python.python"} <= set(
         recommended
     )
@@ -87,7 +88,7 @@ def test_language_formatters_have_a_declared_provider() -> None:
     }
 
 
-def test_workspace_does_not_import_machine_or_legacy_golden_settings() -> None:
+def test_workspace_does_not_import_machine_or_legacy_settings() -> None:
     settings = _json("settings.json")
     forbidden = {
         "terminal.integrated.profiles.windows",

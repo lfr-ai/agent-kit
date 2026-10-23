@@ -34,6 +34,13 @@ from tasks.contracts import (
 )
 from tasks.worker import HandlerSpec
 
+_TASK_TIME_LIMIT_SECONDS = 900
+_TASK_SOFT_TIME_LIMIT_SECONDS = 840
+_BROKER_VISIBILITY_TIMEOUT_SECONDS = 3600
+_IDEMPOTENCY_LEASE_TIMEOUT_MULTIPLIER = 2
+_RETRY_BACKOFF_SECONDS = 2
+_MAX_RETRY_BACKOFF_SECONDS = 300
+
 app = Celery("tasks")
 app.conf.update(
     broker_url=os.environ.get("TASKS_BROKER_URL", "redis://127.0.0.1:6379/0"),
@@ -43,9 +50,11 @@ app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
-    task_time_limit=900,
-    task_soft_time_limit=840,
-    broker_transport_options={"visibility_timeout": 3600},
+    task_time_limit=_TASK_TIME_LIMIT_SECONDS,
+    task_soft_time_limit=_TASK_SOFT_TIME_LIMIT_SECONDS,
+    broker_transport_options={
+        "visibility_timeout": _BROKER_VISIBILITY_TIMEOUT_SECONDS
+    },
     broker_connection_retry_on_startup=True,
     worker_send_task_events=True,
     task_send_sent_event=True,
@@ -73,7 +82,10 @@ def register(task_type: str, spec: HandlerSpec, store: IdempotencyStore) -> Task
             raise PermanentTaskError(
                 f"unsupported {envelope.task_type} v{envelope.version}"
             )
-        claim = await store.claim(envelope.idempotency_key, lease_s=spec.timeout_s * 2)
+        claim = await store.claim(
+            envelope.idempotency_key,
+            lease_s=spec.timeout_s * _IDEMPOTENCY_LEASE_TIMEOUT_MULTIPLIER,
+        )
         if claim is ClaimState.DONE:
             return
         if claim is ClaimState.IN_PROGRESS:
@@ -102,8 +114,8 @@ def register(task_type: str, spec: HandlerSpec, store: IdempotencyStore) -> Task
         name=task_type,
         bind=True,
         autoretry_for=(RetryableTaskError, TimeoutError, ConnectionError),
-        retry_backoff=2,
-        retry_backoff_max=300,
+        retry_backoff=_RETRY_BACKOFF_SECONDS,
+        retry_backoff_max=_MAX_RETRY_BACKOFF_SECONDS,
         retry_jitter=True,
         max_retries=spec.max_attempts - 1,
         acks_late=True,

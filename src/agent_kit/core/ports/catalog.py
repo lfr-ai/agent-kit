@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from agent_kit.core.models import CatalogSnapshot
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from agent_kit.core.models import CatalogSnapshot
 
 
 class CatalogPort(Protocol):

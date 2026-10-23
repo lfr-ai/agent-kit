@@ -1,8 +1,8 @@
 # Optional integrations
 
 The assets are configuration starting points, **not active delivery**.
-The repository's root MCP manifest is intentionally empty. Composition includes
-templates as resources and does not start or authorize their servers.
+Composition includes templates as resources and does not start or authorize
+their servers.
 
 ## Select, do not activate the inventory
 
@@ -36,6 +36,34 @@ Before enabling, compare effective commands, args, URLs, transports, credentials
 and tool exposure. Matching server names is not equivalence.
 Native authorization and APM policy must both be reviewed; adding a native MCP
 file does not magically satisfy the current deny-by-default APM policy.
+
+## Carry MCP guidance into APM projects
+
+This toolkit keeps `dependencies.mcp` out of portable package manifests because
+APM materializes those dependencies into each detected host during installation.
+This shared capability includes inactive native examples so a consumer can
+select only what its project needs. Keep the consumer
+policy's `mcp.allow` empty until the corresponding native definition and identity
+have been reviewed. For a consumer that adopts the read-only documentation and
+repository examples, the matching policy section is:
+
+```yaml
+mcp:
+  allow:
+    - context7
+    - github
+  self_defined: deny
+  trust_transitive: false
+```
+
+This allowlist grants no credentials and does not authorize write-capable tools.
+Keep it empty in projects that have not reviewed matching native definitions.
+
+Context7 uses its OAuth endpoint in the example. Microsoft Learn serves public
+Microsoft documentation. GitHub is limited to the `repos`, `issues`,
+`pull_requests`, and `actions` toolsets, with read-only mode and lockdown
+requested. The GitHub header is an upstream restriction, not a substitute for
+host authorization or least-privilege account access.
 
 ## Quality gates
 

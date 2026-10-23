@@ -12,7 +12,7 @@ explicit, versioned and owned.
 | Dependencies and tool versions | `pyproject.toml` + `uv.lock` | dev tools in a dependency group so `uv run --locked` pins them |
 | Formatter and linter | `ruff.toml` or `[tool.ruff]` | one place; per-file ignores carry a reason comment |
 | Type checker | `mypy.ini`, `pyrightconfig.json` or `[tool.*]` | strictness flags explicit |
-| Tests | `pytest.ini` or `[tool.pytest.ini_options]` | markers registered, `--strict-markers`, warnings policy |
+| Tests | `pytest.ini` or `[tool.pytest.ini_options]` | markers registered, `strict = true` (pinned pytest 9+) or `--strict-markers`, warnings policy |
 | Coverage | `.coveragerc` or `[tool.coverage]` | `branch = true`, thresholds, justified excludes |
 | Import contracts | `.importlinter` | layer and forbidden contracts |
 | Spelling | `cspell.json` + project word list | see [spell and link checking](spell-and-link-checking.md) |

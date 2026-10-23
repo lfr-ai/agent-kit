@@ -22,6 +22,7 @@ from llm.port import (
 )
 
 _FENCE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n(?P<body>.*?)\n?```\s*$", re.DOTALL)
+_DEFAULT_ERROR_LIMIT = 5
 
 
 def extract_json(text: str) -> str:
@@ -38,7 +39,7 @@ def extract_json(text: str) -> str:
     return match.group("body").strip() if match else stripped
 
 
-def describe_errors(error: ValidationError, *, limit: int = 5) -> str:
+def describe_errors(error: ValidationError, *, limit: int = _DEFAULT_ERROR_LIMIT) -> str:
     """Summarize validation errors by location and type, without input values.
 
     Args:

@@ -1,9 +1,9 @@
 """Invariant checks over pure catalog selection and strict unknown fields."""
 
-import string
 from dataclasses import replace
 from itertools import product
 from pathlib import Path
+import string
 
 from hypothesis import given, settings
 from hypothesis import strategies as st

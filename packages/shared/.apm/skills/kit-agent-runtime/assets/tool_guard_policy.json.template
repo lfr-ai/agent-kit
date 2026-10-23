@@ -83,6 +83,13 @@
       "reason": "publishes or changes remote resources; this is an operator-approved action"
     },
     {
+      "id": "dependency-install",
+      "decision": "ask",
+      "match": "segment",
+      "pattern": "\\b(pip3?|pipx)\\s+install\\b|\\bpython[0-9.]*(\\.exe)?\\s+-m\\s+pip\\s+install\\b|\\buv\\s+(add|pip\\s+install|tool\\s+(install|run))\\b|^\\s*(uvx|npx|bunx|pipx)\\b|\\b(npm|pnpm|yarn|bun)\\s+(add|i|install|exec|dlx|x)\\b",
+      "reason": "installs or runs a package outside the reviewed lockfile; add it to the manifest, audit the lock, then sync"
+    },
+    {
       "id": "privilege-escalation",
       "decision": "ask",
       "match": "segment",

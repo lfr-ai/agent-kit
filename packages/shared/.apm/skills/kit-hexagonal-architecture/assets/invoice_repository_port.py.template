@@ -10,6 +10,8 @@ from typing import Protocol, Self
 
 from app.domain.invoice import Invoice
 
+_DEFAULT_OPEN_INVOICE_LIMIT = 100
+
 
 class InvoiceNotFoundError(LookupError):
     """Raised when no invoice exists for the requested identifier."""
@@ -43,7 +45,9 @@ class InvoiceRepository(Protocol):
         """Stage a changed invoice; raise 'InvoiceNotFoundError' if it is unknown."""
         ...
 
-    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+    def list_open(
+        self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
+    ) -> list[Invoice]:
         """Return up to 'limit' open invoices for a customer, oldest id first."""
         ...
 

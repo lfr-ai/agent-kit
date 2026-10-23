@@ -1,12 +1,12 @@
 """AI package skill resources: checkers behave, templates parse and agree."""
 
 import ast
+from collections.abc import Mapping
 import configparser
 import json
+from pathlib import Path
 import re
 import runpy
-from collections.abc import Mapping
-from pathlib import Path
 
 import pytest
 import yaml

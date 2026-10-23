@@ -1,7 +1,30 @@
 {
   "permissions": {
     "defaultMode": "default",
-    "deny": ["Read(.env)", "Read(.env.*)"]
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python -m pip install *)",
+      "Bash(python3 -m pip install *)",
+      "Bash(pipx *)",
+      "Bash(uv add *)",
+      "Bash(uv pip install *)",
+      "Bash(uv tool install *)",
+      "Bash(uv tool run *)",
+      "Bash(uvx *)",
+      "Bash(npm install *)",
+      "Bash(npm i *)",
+      "Bash(npm exec *)",
+      "Bash(npx *)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm dlx *)",
+      "Bash(yarn add *)",
+      "Bash(yarn dlx *)",
+      "Bash(bun add *)",
+      "Bash(bunx *)"
+    ]
   },
   "hooks": {
     "SessionStart": [

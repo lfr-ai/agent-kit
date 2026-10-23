@@ -33,6 +33,7 @@ type TokenProvider = Callable[[], str]
 
 _DECLINED = frozenset({HTTPStatus.PAYMENT_REQUIRED, HTTPStatus.CONFLICT, 422})
 _TRANSIENT = frozenset({HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS})
+_DEFAULT_TIMEOUT_SECONDS = 10.0
 
 
 def urllib_transport(request: urllib.request.Request, timeout: float) -> bytes:
@@ -62,7 +63,7 @@ class HttpPaymentGateway(PaymentGateway):
         *,
         base_url: str,
         token: TokenProvider,
-        timeout: float = 10.0,
+        timeout: float = _DEFAULT_TIMEOUT_SECONDS,
         transport: Transport = urllib_transport,
     ) -> None:
         """Validate configuration once; no request is made here.

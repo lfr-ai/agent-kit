@@ -37,4 +37,32 @@ def test_coderabbit_uses_strict_review_defaults_and_project_guidance() -> None:
     assert reviews["auto_review"] == {"enabled": True, "drafts": False}
     instructions = reviews["path_instructions"]
     assert isinstance(instructions, list)
-    assert {item["path"] for item in instructions} == {"**/*.py", ".vscode/**"}
+    by_path = {item["path"]: item["instructions"] for item in instructions}
+    supply_chain = (
+        "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,"
+        "package.json,.devcontainer/**,.mcp.json}"
+    )
+    assert set(by_path) == {"**/*.py", ".vscode/**", supply_chain}
+    assert "full commit SHAs" in by_path[supply_chain]
+    assert "unlocked installs" in by_path[supply_chain]
+
+
+def test_hosted_tools_complement_required_local_checks() -> None:
+    reviews = _yaml(".coderabbit.yaml")["reviews"]
+    assert isinstance(reviews, dict)
+    tools = reviews["tools"]
+    assert isinstance(tools, dict)
+    for name in (
+        "ruff",
+        "github-checks",
+        "languagetool",
+        "gitleaks",
+        "osvScanner",
+        "actionlint",
+        "zizmor",
+    ):
+        assert tools[name] == {"enabled": True}
+    for name in ("flake8", "pylint"):
+        assert tools[name] == {"enabled": False}
+    # CodeRabbit has no native ty integration; CI owns type correctness.
+    assert "ty" not in tools

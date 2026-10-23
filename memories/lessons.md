@@ -1,11 +1,10 @@
 # Lessons
 
-## The Koda coverage baseline is a reviewed pin, not a live mirror
+## Keep the recorded coverage inventory explicit
 
-When Koda gains a skill, instruction, or script, `uv run --locked python -m scripts.check_coverage --source-root <koda>`
-fails until `coverage.json` maps it, `_BASELINE_COUNTS`/`_BASELINE_KEYS_SHA256` in
-`scripts/check_coverage.py` are regenerated from the new key sets, and the count asserts
-in `tests/unit/repo_guards/test_capability_coverage.py` change. Run it after any Koda capability change.
+New capabilities require an intentional update to `coverage.json`, the baseline
+counts and digest in `scripts/check_coverage.py`, and the related regression
+tests. Do not infer inventory changes from another checkout.
 
 ## Overlapping scoped instructions cost context on every edit
 
@@ -23,12 +22,12 @@ under `packages/` (even one instruction line) fails it until the owned
 with `task capabilities:build`. Evidence: `source archive: invalid content or license`
 after a docstring-guidance edit; passed after rebuilding.
 
-## Docstring inline code uses single quotes
+## Python docstrings use double-backtick inline literals
 
-Owner decision: docstrings mark inline code with single quotes, never backticks.
-Google and PEP 257 leave inline markup open and no renderer is configured, so this
-is a portable default that consumers with Sphinx/Markdown rendering may override.
-Evidence: `kit-python-service` skill and the `check_python.py` docstring rule.
+Owner decision: use paired double-backtick reStructuredText literals for inline
+code in Python docstrings; Markdown files retain CommonMark single-backtick code
+spans. The shared checker and pre-commit gate enforce the docstring form.
+Evidence: the Sphinx reStructuredText Primer and the `kit-python-service` checker.
 
 ## A local policy filename is not automatic enforcement
 
@@ -101,3 +100,23 @@ detect-secrets flags placeholder passwords, example SHAs and revision IDs in
 templates and tests. Mark each deliberate fixture inline with
 `pragma: allowlist secret` instead of excluding test or template directories, so
 real credentials added later are still caught. Evidence: the all-files hook run.
+
+## detect-secrets filters normalized YAML lines
+
+Its YAML scanner rewrites `rev: <sha>  # frozen: v1` as `rev: "<sha>"` and drops
+the comment before line filters run. The baseline filter therefore matches only
+an exact 40-hex `rev` value with optional quotes; the same value under another
+key is still reported. Evidence: direct hook run and a non-`rev` probe.
+
+## The pyenv uv shim treats less-than signs as redirection
+
+`uv add 'package>=1,<2'` through `pyenv-win`'s `uv.bat` fails with "The system
+cannot find the file specified" because `cmd` parses `<`. Use `~=` for the CLI
+call, or edit `pyproject.toml` and run `uv lock`. Evidence: the pip-audit addition.
+
+## Hashed build constraints need a newer minimum uv
+
+Current uv documents `build-constraint-dependencies` entries as tables with
+`requirement` and `hashes`, but uv 0.10 rejects that form ("invalid type: map,
+expected a string"). Keep exact string pins until `required-version` is raised.
+Evidence: `uv lock` failed with the table form and passed with string pins.

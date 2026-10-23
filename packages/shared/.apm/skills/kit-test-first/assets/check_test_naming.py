@@ -1,19 +1,19 @@
 """Check that test function names describe behavior, not just existence.
 
-A test name is the first line of its failure report. 'test_1' or 'test_it'
-says nothing when it fails; 'test_paid_invoice_cannot_be_voided' says what
+A test name is the first line of its failure report. ``test_1`` or ``test_it``
+says nothing when it fails; ``test_paid_invoice_cannot_be_voided`` says what
 broke. Rules:
 
-- Test functions ('test*' at module level, and 'test*' methods of 'Test*'
-  classes) need at least '--min-words' words after the 'test' prefix
+- Test functions (``test*`` at module level, and ``test*`` methods of ``Test*``
+  classes) need at least ``--min-words`` words after the ``test`` prefix
   (default 3), counting underscore-separated parts.
-- Generic names from a built-in list ('test_it', 'test_works', 'test_basic',
-  ...) and numbered names ('test_1', 'test_case_2') are reported regardless of
-  length; extend the list with '--forbid'.
+- Generic names from a built-in list (``test_it``, ``test_works``, ``test_basic``,
+  ...) and numbered names (``test_1``, ``test_case_2``) are reported regardless of
+  length; extend the list with ``--forbid``.
 - A test defined twice in the same module or class is reported: Python keeps
   only the last definition, so the first one never runs.
 
-Exempt individual names with '--allow'. Output lines are 'path:line: message';
+Exempt individual names with ``--allow``. Output lines are ``path:line: message``;
 the exit status is 1 when anything is reported.
 
 Example:
@@ -22,11 +22,11 @@ Example:
 
 import argparse
 import ast
+from collections.abc import Iterable, Sequence
 import fnmatch
+from pathlib import Path
 import re
 import sys
-from collections.abc import Iterable, Sequence
-from pathlib import Path
 from typing import NamedTuple
 
 _GENERIC = frozenset(
@@ -65,18 +65,20 @@ _TEST_PATTERNS = ("test_*.py", "*_test.py")
 _EXCLUDED_DIRS = frozenset(
     {".git", ".venv", "venv", ".tox", "node_modules", "__pycache__", "build", "dist"}
 )
+_EXIT_USAGE = 2
+_DEFAULT_MIN_WORDS = 3
 
 
 class Options(NamedTuple):
     """Rule switches.
 
     Attributes:
-        min_words: Minimum words after the 'test' prefix.
+        min_words: Minimum words after the ``test`` prefix.
         forbidden: Names that are always reported.
         allowed: Names that are never reported.
     """
 
-    min_words: int = 3
+    min_words: int = _DEFAULT_MIN_WORDS
     forbidden: frozenset[str] = _GENERIC
     allowed: frozenset[str] = frozenset()
 
@@ -95,18 +97,18 @@ class Finding(NamedTuple):
     message: str
 
     def render(self) -> str:
-        """Return the finding as 'path:line: message'."""
+        """Return the finding as ``path:line: message``."""
         return f"{self.path}:{self.line}: {self.message}"
 
 
 def words(name: str) -> list[str]:
-    """Split a test name into the words after its 'test' prefix.
+    """Split a test name into the words after its ``test`` prefix.
 
     Args:
-        name: Function name such as 'test_paid_invoice_cannot_be_voided'.
+        name: Function name such as ``test_paid_invoice_cannot_be_voided``.
 
     Returns:
-        ['paid', 'invoice', 'cannot', 'be', 'voided'].
+        [``paid``, ``invoice``, ``cannot``, ``be``, ``voided``].
     """
     return [part for part in name.removeprefix("test").split("_") if part]
 
@@ -164,7 +166,7 @@ def _scope_tests(
 
 
 def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
-    """Check test names in one module, including 'Test*' classes.
+    """Check test names in one module, including ``Test*`` classes.
 
     Args:
         path: POSIX path used in findings.
@@ -191,7 +193,7 @@ def check_files(
     """Check several test modules.
 
     Args:
-        sources: '(path, text)' pairs.
+        sources: ``(path, text)`` pairs.
         options: Rule switches.
 
     Returns:
@@ -285,7 +287,9 @@ def _parser() -> argparse.ArgumentParser:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("paths", nargs="*", type=Path, default=[Path("tests")])
-    parser.add_argument("--min-words", type=int, default=3, metavar="N")
+    parser.add_argument(
+        "--min-words", type=int, default=_DEFAULT_MIN_WORDS, metavar="N"
+    )
     parser.add_argument(
         "--forbid",
         action="append",
@@ -310,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     """Check test names and print findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv[1:]' when None.
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
 
     Returns:
         0 when clean, 1 when findings exist, 2 on usage or read errors.
@@ -318,20 +322,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        failures = self_test()
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        if failures:
-            return 1
-        print("check_test_naming self-test passed.")
-        return 0
+        return _run_self_test()
     if args.min_words < 1:
         parser.error("--min-words must be at least 1")
-    missing = [path for path in args.paths if not path.exists()]
-    if missing:
-        for path in missing:
-            print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
-        return 2
+    if _report_missing(args.paths):
+        return _EXIT_USAGE
     options = Options(
         min_words=args.min_words,
         forbidden=_GENERIC | frozenset(args.forbid),
@@ -344,13 +339,37 @@ def main(argv: list[str] | None = None) -> int:
         ]
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read tests: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     findings = check_files(sources, options=options)
+    return _report(findings, file_count=len(sources))
+
+
+def _report(findings: list[Finding], *, file_count: int) -> int:
+    """Print findings or a success line and return the exit status."""
     for finding in findings:
         print(finding.render())
     if not findings:
-        print(f"Test names are descriptive in {len(sources)} file(s).")
+        print(f"Test names are descriptive in {file_count} file(s).")
     return 1 if findings else 0
+
+
+def _run_self_test() -> int:
+    """Print self-test failures and return the matching exit status."""
+    failures = self_test()
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    if failures:
+        return 1
+    print("check_test_naming self-test passed.")
+    return 0
+
+
+def _report_missing(paths: Iterable[Path]) -> bool:
+    """Print each path that does not exist and return whether any is missing."""
+    missing = [path for path in paths if not path.exists()]
+    for path in missing:
+        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+    return bool(missing)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,9 @@
 Open the repository root as a single-folder workspace. The committed
 [settings](../.vscode/settings.json), [tasks](../.vscode/tasks.json),
 [debug configurations](../.vscode/launch.json) and
-[extension recommendations](../.vscode/extensions.json) are the shared editor
-entry points. They do not replace the CLI completion gate.
+[extension recommendations](../.vscode/extensions.json), and
+[MCP server definitions](../.vscode/mcp.json) are the shared editor entry
+points. They do not replace the CLI completion gate.
 
 ## Start
 
@@ -23,17 +24,16 @@ entry points. They do not replace the CLI completion gate.
    pre-commit and APM smoke. Use `task verify -- <gate>` or the owning CLI for
    focused checks; editor tasks do not duplicate the complete gate inventory.
 
-## Golden-reference alignment
+## Workspace contract
 
-The setup follows the golden full-stack template's grouped editor structure,
-adapted to this Python CLI and capability library rather than copied wholesale.
-The four workspace files remain strict JSON with blank-line groups, compatible
+The workspace setup is scoped to this Python CLI and capability library. The
+five workspace files remain strict JSON with blank-line groups, compatible
 with the repository's existing parsers; JSONC section comments are not required.
 VS Code requires the `settings.json` filename even though its parser accepts
 JSONC. Do not rename it to `settings.jsonc`: workspace discovery would break.
 The strict subset used here needs no `check-json` exclusion.
 
-| Golden area | Repository adaptation |
+| Area | Contract |
 | --- | --- |
 | Python interpreter and tests | Root `.venv`, root test discovery and the configured workspace interpreter; no backend subfolder or fixed Unix executable |
 | Ruff | Native server and environment-resolved binary; repository `ruff.toml` remains authoritative, without duplicated rule lists or line-length arguments |
@@ -44,7 +44,7 @@ The strict subset used here needs no `check-json` exclusion.
 | Visibility and watching | Exclude environments, builds and caches; omit skill mirrors from ordinary text search without hiding or disabling native discovery watches |
 | Agent setup | Standard native discovery and existing AGENTS entry points; no deprecated duplicate-location roster |
 | Terminal and appearance | Machine shell paths, themes and personal UI preferences are not imported |
-| Git, plugins and MCP | No smart-commit changes, marketplace activation, automatic approvals, remote connection profiles or automatic MCP startup |
+| Git, plugins and MCP | No smart-commit changes, marketplace activation, automatic approvals or MCP auto-start; the reviewed remote connections are confined to the MCP manifest |
 
 The Python code actions explicitly name Ruff's fix and import providers.
 The editor uses the locked environment's Ruff/ty when available; run bootstrap
@@ -86,14 +86,18 @@ repository that has no such application.
 ## Agent boundaries
 
 Keep AGENTS/skill discovery enabled, mirrored Claude entry/hook loading disabled
-for VS Code Local, and MCP autostart at `never`. Native Claude keeps its own
-adapter. Current Copilot harness discovery differs from Local and does not use
+for VS Code Local, and MCP autostart at `never`. Workspace terminal rules set
+package installers and package runners (`pip install`, `uv add`, `uvx`, `npx` and
+similar) to `false`, so they always require approval even when another rule
+would auto-approve them; see [dependency security](dependency-security.md).
+Native Claude keeps its own adapter. Current Copilot harness discovery differs from Local and does not use
 deprecated custom-location settings; this workspace does not pretend those
 settings isolate a harness.
 
-Do not copy the golden template's plugin roster, legacy `chat.mcp.autoStart`,
-duplicate Claude hook locations or trust/approval shortcuts. Adding a server
-still requires the documented integration, identity, toolset and policy review.
+Do not add unreviewed plugin rosters, legacy `chat.mcp.autoStart`, duplicate
+Claude hook locations or trust/approval shortcuts. The configured servers and
+their limits are recorded in [MCP adoption](mcp-adoption.md). VS Code MCP
+auto-start remains `never`; host trust, OAuth and tool consent remain separate.
 
 ## Verification and limits
 
@@ -123,5 +127,6 @@ file rather than assuming folder settings override them.
 - [Ruff editor configuration](https://docs.astral.sh/ruff/editors/settings/)
 - [ty editor integration](https://docs.astral.sh/ty/editors/)
 - [ty editor settings](https://docs.astral.sh/ty/reference/editor-settings/)
+- [VS Code MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers)
 - [Agent skills and harness discovery](https://code.visualstudio.com/docs/agent-customization/agent-skills)
 - [Custom instruction formats](https://code.visualstudio.com/docs/agent-customization/custom-instructions)

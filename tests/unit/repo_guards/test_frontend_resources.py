@@ -1,9 +1,9 @@
 """Frontend skill resources: runnable checkers, parseable templates, and roles."""
 
 import json
+from pathlib import Path
 import re
 import runpy
-from pathlib import Path
 
 import pytest
 

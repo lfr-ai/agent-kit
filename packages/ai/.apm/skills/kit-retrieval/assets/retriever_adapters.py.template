@@ -34,6 +34,13 @@ logger = logging.getLogger(__name__)
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 
+_DEFAULT_BM25_TERM_FREQUENCY_SATURATION = 1.2
+_DEFAULT_BM25_LENGTH_NORMALIZATION = 0.75
+_BM25_DOCUMENT_FREQUENCY_SMOOTHING = 0.5
+_DEFAULT_EMBEDDING_DIMENSIONS = 64
+_TOKEN_HASH_PREFIX_BYTES = 4
+_DEFAULT_CANDIDATE_MULTIPLIER = 4
+
 
 def tokenize(text: str) -> list[str]:
     """Lower-case word tokens; replace with a language-aware analyzer if needed.
@@ -156,8 +163,8 @@ class Bm25Parameters:
         b: Length normalization strength in [0, 1].
     """
 
-    k1: float = 1.2
-    b: float = 0.75
+    k1: float = _DEFAULT_BM25_TERM_FREQUENCY_SATURATION
+    b: float = _DEFAULT_BM25_LENGTH_NORMALIZATION
 
 
 class LexicalRetriever:
@@ -212,7 +219,9 @@ class LexicalRetriever:
                 if not tf:
                     continue
                 idf = math.log(
-                    1 + (total - frequency[term] + 0.5) / (frequency[term] + 0.5)
+                    1
+                    + (total - frequency[term] + _BM25_DOCUMENT_FREQUENCY_SMOOTHING)
+                    / (frequency[term] + _BM25_DOCUMENT_FREQUENCY_SMOOTHING)
                 )
                 score += (
                     idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / average))
@@ -232,7 +241,7 @@ class HashingEmbedder:
     It captures token overlap, not meaning; never use it to judge model quality.
     """
 
-    def __init__(self, *, dimensions: int = 64) -> None:
+    def __init__(self, *, dimensions: int = _DEFAULT_EMBEDDING_DIMENSIONS) -> None:
         """Configure the vector size.
 
         Args:
@@ -261,7 +270,10 @@ class HashingEmbedder:
             vector = [0.0] * self._dimensions
             for token in tokenize(text):
                 digest = hashlib.sha256(token.encode("utf-8")).digest()
-                vector[int.from_bytes(digest[:4], "big") % self._dimensions] += 1.0
+                vector[
+                    int.from_bytes(digest[:_TOKEN_HASH_PREFIX_BYTES], "big")
+                    % self._dimensions
+                ] += 1.0
             norm = math.sqrt(sum(value * value for value in vector)) or 1.0
             vectors.append([value / norm for value in vector])
         return vectors
@@ -352,7 +364,7 @@ class HybridRetriever:
         retrievers: Sequence[Retriever],
         *,
         rrf_k: int = DEFAULT_RRF_K,
-        candidate_multiplier: int = 4,
+        candidate_multiplier: int = _DEFAULT_CANDIDATE_MULTIPLIER,
         reranker: Reranker | None = None,
     ) -> None:
         """Configure the strategies to fuse.

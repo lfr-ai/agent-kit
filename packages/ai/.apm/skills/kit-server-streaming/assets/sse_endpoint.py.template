@@ -41,6 +41,10 @@ from streaming.hub import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_HEARTBEAT_SECONDS = 15.0
+_DEFAULT_MAX_CONNECTION_SECONDS = 300.0
+_DEFAULT_RETRY_MILLISECONDS = 3000
+
 # Returns True when the request's authenticated principal may read the stream.
 # Authenticate with headers or cookies; never accept tokens in the query string.
 Authorizer = Callable[[Request, str], Awaitable[bool]]
@@ -62,9 +66,9 @@ class StreamSettings:
         retry_ms: Reconnection delay hint sent to clients.
     """
 
-    heartbeat_s: float = 15.0
-    max_connection_s: float = 300.0
-    retry_ms: int = 3000
+    heartbeat_s: float = _DEFAULT_HEARTBEAT_SECONDS
+    max_connection_s: float = _DEFAULT_MAX_CONNECTION_SECONDS
+    retry_ms: int = _DEFAULT_RETRY_MILLISECONDS
 
 
 async def _next_event(events: AsyncGenerator[StreamEvent]) -> StreamEvent:

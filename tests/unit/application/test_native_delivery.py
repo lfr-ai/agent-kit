@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
@@ -15,6 +15,9 @@ from agent_kit.application.services.native_delivery import (
     validate_native_assets,
 )
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _role(

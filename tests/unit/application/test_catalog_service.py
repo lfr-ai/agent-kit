@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.core.models import CheckReport
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from agent_kit.core.models import CheckReport
 
 
 def _report(root: Path) -> CheckReport:

@@ -1,15 +1,57 @@
 """Check explicit consumer context entries and their local links without execution."""
 
 import argparse
-import re
-import sys
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
+import re
+import sys
 from tempfile import TemporaryDirectory
 from urllib.parse import unquote
 
 _LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 _DEFAULT_ENTRIES = ("AGENTS.md", "PROJECT.md", "llms.txt")
+_SELF_TEST_INVALID_LINKS = 2
+
+
+def _is_unsafe_relative(value: str) -> bool:
+    """Return whether ``value`` is absolute, drive-qualified or parent-relative."""
+    relative = Path(value)
+    return (
+        relative.is_absolute()
+        or bool(PureWindowsPath(value).drive)
+        or ".." in relative.parts
+    )
+
+
+def _entry_failure(root: Path, base: Path, entry: str) -> str | None:
+    """Return why ``entry`` cannot be read as a contained context file."""
+    if _is_unsafe_relative(entry):
+        return f"unsafe entry path: {entry}"
+    path = root / entry
+    if not path.resolve().is_relative_to(base):
+        return f"escaping entry: {entry}"
+    if not path.is_file():
+        return f"missing entry: {entry}"
+    return None
+
+
+def _link_failures(entry: str, path: Path, base: Path, text: str) -> list[str]:
+    """Return missing or unsafe local link failures found in ``text``."""
+    failures: list[str] = []
+    for raw in _LINK.findall(text):
+        target = raw.strip().strip("<>").split(" ", 1)[0]
+        if target.startswith(("https://", "http://", "mailto:", "#")):
+            continue
+        local = unquote(target.partition("#")[0])
+        linked = path.parent / local
+        if (
+            Path(local).is_absolute()
+            or PureWindowsPath(local).drive
+            or not linked.resolve().is_relative_to(base)
+            or not linked.exists()
+        ):
+            failures.append(f"{entry}: missing or unsafe link: {local}")
+    return failures
 
 
 def check(root: Path, *, entries: tuple[str, ...] = _DEFAULT_ENTRIES) -> list[str]:
@@ -17,37 +59,15 @@ def check(root: Path, *, entries: tuple[str, ...] = _DEFAULT_ENTRIES) -> list[st
     failures: list[str] = []
     base = root.resolve()
     for entry in entries:
-        relative = Path(entry)
-        if (
-            relative.is_absolute()
-            or PureWindowsPath(entry).drive
-            or ".." in relative.parts
-        ):
-            failures.append(f"unsafe entry path: {entry}")
+        failure = _entry_failure(root, base, entry)
+        if failure is not None:
+            failures.append(failure)
             continue
-        path = root / relative
-        if not path.resolve().is_relative_to(base):
-            failures.append(f"escaping entry: {entry}")
-            continue
-        if not path.is_file():
-            failures.append(f"missing entry: {entry}")
-            continue
+        path = root / entry
         text = path.read_text(encoding="utf-8")
         if not text.strip():
             failures.append(f"empty entry: {entry}")
-        for raw in _LINK.findall(text):
-            target = raw.strip().strip("<>").split(" ", 1)[0]
-            if target.startswith(("https://", "http://", "mailto:", "#")):
-                continue
-            local = unquote(target.partition("#")[0])
-            linked = path.parent / local
-            if (
-                Path(local).is_absolute()
-                or PureWindowsPath(local).drive
-                or not linked.resolve().is_relative_to(base)
-                or not linked.exists()
-            ):
-                failures.append(f"{entry}: missing or unsafe link: {local}")
+        failures.extend(_link_failures(entry, path, base, text))
     return failures
 
 
@@ -73,26 +93,36 @@ class SelfTestError(AssertionError):
         super().__init__(issue.value)
 
 
+def _expect(issue: SelfTestIssue, *, holds: bool) -> None:
+    """Raise ``SelfTestError`` for ``issue`` unless the expectation ``holds``."""
+    if not holds:
+        raise SelfTestError(issue)
+
+
 def self_test() -> None:
     """Exercise missing, empty, valid and escaping links with synthetic files."""
     with TemporaryDirectory(prefix="agent-kit-context-") as directory:
         root = Path(directory)
-        if len(check(root)) != len(_DEFAULT_ENTRIES):
-            raise SelfTestError(SelfTestIssue.MISSING_CONTEXT_ACCEPTED)
+        _expect(
+            SelfTestIssue.MISSING_CONTEXT_ACCEPTED,
+            holds=len(check(root)) == len(_DEFAULT_ENTRIES),
+        )
         for entry in _DEFAULT_ENTRIES:
             (root / entry).write_text("# Synthetic context\n", encoding="utf-8")
-        if check(root):
-            raise SelfTestError(SelfTestIssue.VALID_CONTEXT_REJECTED)
+        _expect(SelfTestIssue.VALID_CONTEXT_REJECTED, holds=not check(root))
         (root / "PROJECT.md").write_text("", encoding="utf-8")
-        if not check(root):
-            raise SelfTestError(SelfTestIssue.EMPTY_CONTEXT_ACCEPTED)
+        _expect(SelfTestIssue.EMPTY_CONTEXT_ACCEPTED, holds=bool(check(root)))
         (root / "PROJECT.md").write_text(
             "[outside](../outside.md)\n[missing](absent.md)", encoding="utf-8"
         )
-        if len(check(root)) != 2:  # noqa: PLR2004 - two invalid links
-            raise SelfTestError(SelfTestIssue.INVALID_LINK_ACCEPTED)
-        if not check(root, entries=("../outside.md",)):
-            raise SelfTestError(SelfTestIssue.ESCAPING_ENTRY_ACCEPTED)
+        _expect(
+            SelfTestIssue.INVALID_LINK_ACCEPTED,
+            holds=len(check(root)) == _SELF_TEST_INVALID_LINKS,
+        )
+        _expect(
+            SelfTestIssue.ESCAPING_ENTRY_ACCEPTED,
+            holds=bool(check(root, entries=("../outside.md",))),
+        )
 
 
 def main() -> int:

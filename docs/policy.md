@@ -30,7 +30,9 @@ is pinned in the Python manifest and lock, then checked at the executable bounda
 
 - `APM_NO_SCRIPTS=1` is required for the controlled APM process.
 - Root first-party content is trusted by APM; review it as executable context.
-- Native hooks/permissions and pre-existing MCP servers are outside this policy.
+- Native host authorization remains separate from this policy. Its MCP
+  allowlist checks server identities, not endpoint equivalence, authentication,
+  or effective tool permissions.
 - The session-entry hook is advisory and grants no authorization.
 - There is no bundled shell-filter security boundary. Enforce restrictions through
   native approval modes, least-privilege identities, and managed controls.

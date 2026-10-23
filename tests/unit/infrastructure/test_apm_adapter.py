@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -11,8 +11,14 @@ import agent_kit.infrastructure.apm_adapter as apm_module
 from agent_kit.infrastructure.apm_adapter import ApmCliAdapter, ApmCliError
 
 
+@pytest.mark.parametrize(
+    ("timeout_seconds", "expected_timeout"), [(None, 300.0), (5.0, 5.0)]
+)
 def test_apm_commands_use_fixed_version_no_scripts_and_explicit_policy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    timeout_seconds: float | None,
+    expected_timeout: float,
 ) -> None:
     calls: list[tuple[list[str], Path, dict[str, str]]] = []
 
@@ -21,21 +27,29 @@ def test_apm_commands_use_fixed_version_no_scripts_and_explicit_policy(
         *,
         cwd: Path,
         env: dict[str, str],
-        capture_output: bool,
-        text: bool,
+        stdout: int,
+        stderr: int,
         timeout: float,
         check: bool,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess[bytes]:
+        assert stdout == subprocess.DEVNULL
+        assert stderr == subprocess.DEVNULL
+        assert timeout == expected_timeout
         calls.append((arguments, cwd, env.copy()))
-        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(arguments, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(
-        apm_module.importlib.metadata, "version", lambda _name: "0.33.0"
+        apm_module.importlib.metadata, "version", lambda _name: apm_module._APM_VERSION
     )
     monkeypatch.setattr(apm_module.shutil, "which", lambda _name: "apm")
     monkeypatch.setattr(apm_module.subprocess, "run", run)
 
-    ApmCliAdapter(timeout_seconds=5).check(tmp_path)
+    adapter = (
+        ApmCliAdapter()
+        if timeout_seconds is None
+        else ApmCliAdapter(timeout_seconds=timeout_seconds)
+    )
+    adapter.check(tmp_path)
 
     assert len(calls) == 2
     assert calls[0][0][1:] == [
@@ -82,17 +96,17 @@ def test_apm_nonzero_error_does_not_echo_process_output(
         *,
         cwd: Path,
         env: dict[str, str],
-        capture_output: bool,
-        text: bool,
+        stdout: int,
+        stderr: int,
         timeout: float,
         check: bool,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(
-            arguments, 9, stdout="credential-value", stderr="credential-value"
+            arguments, 9, stdout=b"credential-value", stderr=b"credential-value"
         )
 
     monkeypatch.setattr(
-        apm_module.importlib.metadata, "version", lambda _name: "0.33.0"
+        apm_module.importlib.metadata, "version", lambda _name: apm_module._APM_VERSION
     )
     monkeypatch.setattr(apm_module.shutil, "which", lambda _name: "apm")
     monkeypatch.setattr(apm_module.subprocess, "run", run)
@@ -124,7 +138,9 @@ def test_missing_apm_distribution_is_reported(monkeypatch: pytest.MonkeyPatch) -
 
 def test_missing_apm_executable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     """A matching distribution without an executable on PATH fails clearly."""
-    monkeypatch.setattr(apm_module.importlib.metadata, "version", lambda _: "0.33.0")
+    monkeypatch.setattr(
+        apm_module.importlib.metadata, "version", lambda _: apm_module._APM_VERSION
+    )
     monkeypatch.setattr(apm_module.shutil, "which", lambda _name: None)
 
     with pytest.raises(ApmCliError, match="unavailable"):
@@ -149,7 +165,9 @@ def test_process_failures_become_adapter_errors(
     def run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise failure
 
-    monkeypatch.setattr(apm_module.importlib.metadata, "version", lambda _: "0.33.0")
+    monkeypatch.setattr(
+        apm_module.importlib.metadata, "version", lambda _: apm_module._APM_VERSION
+    )
     monkeypatch.setattr(apm_module.shutil, "which", lambda _name: "apm")
     monkeypatch.setattr(apm_module.subprocess, "run", run)
 

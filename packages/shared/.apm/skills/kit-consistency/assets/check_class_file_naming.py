@@ -1,21 +1,21 @@
 """Check that each module is named after the public class it defines.
 
-A module 'invoice_repository.py' is expected to define 'InvoiceRepository'.
+A module ``invoice_repository.py`` is expected to define ``InvoiceRepository``.
 Rules applied to every scanned module that is not exempt:
 
 - The public top-level classes are counted, ignoring classes whose names end
-  with an '--ignore-suffix' (default: Error, Exception, Warning) or that derive
-  directly from an '--ignore-base'.
-- One counted class must correspond to the module name. With '--match exact'
-  (default) its snake_case name equals the module stem; with '--match affix'
+  with an ``--ignore-suffix`` (default: Error, Exception, Warning) or that derive
+  directly from an ``--ignore-base``.
+- One counted class must correspond to the module name. With ``--match exact``
+  (default) its snake_case name equals the module stem; with ``--match affix``
   either name may extend the other by whole underscore-separated words, so
-  'SqliteInvoiceRepository' in 'invoice_repository.py' also passes.
-- More than '--max-public-classes' counted classes (default 1, 0 = unlimited)
+  ``SqliteInvoiceRepository`` in ``invoice_repository.py`` also passes.
+- More than ``--max-public-classes`` counted classes (default 1, 0 = unlimited)
   reports each surplus class as a candidate for its own module or for privacy.
 
-Exempt modules by fnmatch pattern with '--exempt'; defaults cover package
+Exempt modules by fnmatch pattern with ``--exempt``; defaults cover package
 markers, test modules and conventional grouping modules. Output lines are
-'path:line: message'; the exit status is 1 when anything is reported.
+``path:line: message``; the exit status is 1 when anything is reported.
 
 Example:
     python check_class_file_naming.py src --match affix --exempt "*/models.py"
@@ -23,11 +23,11 @@ Example:
 
 import argparse
 import ast
+from collections.abc import Iterable, Sequence
 import fnmatch
+from pathlib import Path, PurePosixPath
 import re
 import sys
-from collections.abc import Iterable, Sequence
-from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 _BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -46,6 +46,7 @@ _DEFAULT_EXEMPT = (
     "constants.py",
 )
 _DEFAULT_SUFFIXES = ("Error", "Exception", "Warning")
+_EXIT_USAGE = 2
 
 
 class Options(NamedTuple):
@@ -55,7 +56,7 @@ class Options(NamedTuple):
         exempt: fnmatch patterns for module paths or names to skip.
         ignore_suffixes: Class name suffixes that are not counted.
         ignore_bases: Direct base names whose subclasses are not counted.
-        match: 'exact' or 'affix'.
+        match: ``exact`` or ``affix``.
         max_public_classes: Counted classes allowed per module; 0 means unlimited.
     """
 
@@ -80,7 +81,7 @@ class Finding(NamedTuple):
     message: str
 
     def render(self) -> str:
-        """Return the finding as 'path:line: message'."""
+        """Return the finding as ``path:line: message``."""
         return f"{self.path}:{self.line}: {self.message}"
 
 
@@ -88,10 +89,10 @@ def snake_case(name: str) -> str:
     """Convert a CapWords class name to the expected snake_case module stem.
 
     Args:
-        name: Class name such as 'HTTPClient' or 'InvoiceRepository'.
+        name: Class name such as ``HTTPClient`` or ``InvoiceRepository``.
 
     Returns:
-        'http_client' or 'invoice_repository'.
+        ``http_client`` or ``invoice_repository``.
     """
     return _BOUNDARY.sub("_", name).lower()
 
@@ -101,8 +102,8 @@ def names_correspond(class_stem: str, module_stem: str, *, match: str) -> bool:
 
     Args:
         class_stem: snake_case form of the class name.
-        module_stem: Module file name without '.py'.
-        match: 'exact', or 'affix' to allow whole-word prefixes and suffixes.
+        module_stem: Module file name without ``.py``.
+        match: ``exact``, or ``affix`` to allow whole-word prefixes and suffixes.
 
     Returns:
         True when the names correspond under the chosen rule.
@@ -155,6 +156,35 @@ def is_exempt(path: str, options: Options) -> bool:
     )
 
 
+def _primary_class(
+    classes: list[ast.ClassDef], stem: str, *, options: Options
+) -> ast.ClassDef | None:
+    """Return the class named after ``stem``, preferring exact over affix matches."""
+    exact = [node for node in classes if snake_case(node.name) == stem]
+    affix = [
+        node
+        for node in classes
+        if names_correspond(snake_case(node.name), stem, match=options.match)
+    ]
+    return (exact or affix or [None])[0]
+
+
+def _mismatch_message(
+    classes: list[ast.ClassDef], anchor: ast.ClassDef, stem: str
+) -> str:
+    """Describe a module whose public classes are not named after it."""
+    if len(classes) == 1:
+        return (
+            f"public class '{anchor.name}' does not match module '{stem}.py' "
+            f"(expected '{snake_case(anchor.name)}.py')"
+        )
+    listed = ", ".join(node.name for node in classes)
+    return (
+        f"module '{stem}.py' defines public classes {listed} "
+        "but none is named after the module"
+    )
+
+
 def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
     """Check one module's classes against its file name.
 
@@ -176,28 +206,13 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
     if not classes:
         return []
     stem = PurePosixPath(path).stem
-    exact = [node for node in classes if snake_case(node.name) == stem]
-    affix = [
-        node
-        for node in classes
-        if names_correspond(snake_case(node.name), stem, match=options.match)
-    ]
-    primary = (exact or affix or [None])[0]
+    primary = _primary_class(classes, stem, options=options)
     findings: list[Finding] = []
     anchor = primary or classes[0]
     if primary is None:
-        if len(classes) == 1:
-            message = (
-                f"public class '{anchor.name}' does not match module '{stem}.py' "
-                f"(expected '{snake_case(anchor.name)}.py')"
-            )
-        else:
-            listed = ", ".join(node.name for node in classes)
-            message = (
-                f"module '{stem}.py' defines public classes {listed} "
-                "but none is named after the module"
-            )
-        findings.append(Finding(path, anchor.lineno, message))
+        findings.append(
+            Finding(path, anchor.lineno, _mismatch_message(classes, anchor, stem))
+        )
     others = [node for node in classes if node is not anchor]
     if options.max_public_classes and len(classes) > options.max_public_classes:
         findings.extend(
@@ -218,7 +233,7 @@ def check_files(
     """Check several modules.
 
     Args:
-        sources: '(path, text)' pairs.
+        sources: ``(path, text)`` pairs.
         options: Policy switches.
 
     Returns:
@@ -363,11 +378,54 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_self_test() -> int:
+    """Run the self-test, print its outcome and return the exit status."""
+    failures = self_test()
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    if failures:
+        return 1
+    print("check_class_file_naming self-test passed.")
+    return 0
+
+
+def _report_missing(paths: Sequence[Path]) -> bool:
+    """Print every nonexistent path and return whether any was found."""
+    missing = [path for path in paths if not path.exists()]
+    for path in missing:
+        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+    return bool(missing)
+
+
+def _options(args: argparse.Namespace) -> Options:
+    """Build the policy from parsed command-line arguments."""
+    exempt = () if args.no_default_exempt else _DEFAULT_EXEMPT
+    suffixes = (
+        _DEFAULT_SUFFIXES if args.ignore_suffix is None else tuple(args.ignore_suffix)
+    )
+    return Options(
+        exempt=(*exempt, *args.exempt),
+        ignore_suffixes=suffixes,
+        ignore_bases=frozenset(args.ignore_base),
+        match=args.match,
+        max_public_classes=args.max_public_classes,
+    )
+
+
+def _report(findings: list[Finding], *, module_count: int) -> int:
+    """Print findings or a success summary and return the exit status."""
+    for finding in findings:
+        print(finding.render())
+    if not findings:
+        print(f"Class and module names agree in {module_count} module(s).")
+    return 1 if findings else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Check modules and print findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv[1:]' when None.
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
 
     Returns:
         0 when clean, 1 when findings exist, 2 on usage or read errors.
@@ -375,30 +433,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        failures = self_test()
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        if failures:
-            return 1
-        print("check_class_file_naming self-test passed.")
-        return 0
+        return _run_self_test()
     if args.max_public_classes < 0:
         parser.error("--max-public-classes must be 0 or more")
-    missing = [path for path in args.paths if not path.exists()]
-    if missing:
-        for path in missing:
-            print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
-        return 2
-    exempt = () if args.no_default_exempt else _DEFAULT_EXEMPT
-    options = Options(
-        exempt=(*exempt, *args.exempt),
-        ignore_suffixes=tuple(args.ignore_suffix)
-        if args.ignore_suffix is not None
-        else _DEFAULT_SUFFIXES,
-        ignore_bases=frozenset(args.ignore_base),
-        match=args.match,
-        max_public_classes=args.max_public_classes,
-    )
+    if _report_missing(args.paths):
+        return _EXIT_USAGE
+    options = _options(args)
     try:
         sources = [
             (path.as_posix(), path.read_text(encoding="utf-8"))
@@ -406,13 +446,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read sources: {error}", file=sys.stderr)
-        return 2
-    findings = check_files(sources, options=options)
-    for finding in findings:
-        print(finding.render())
-    if not findings:
-        print(f"Class and module names agree in {len(sources)} module(s).")
-    return 1 if findings else 0
+        return _EXIT_USAGE
+    return _report(check_files(sources, options=options), module_count=len(sources))
 
 
 if __name__ == "__main__":

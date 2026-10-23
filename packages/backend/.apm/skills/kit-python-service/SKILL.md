@@ -63,12 +63,15 @@ All are standard-library scripts that parse source without importing it, print
 
 | Script | Purpose |
 | --- | --- |
-| [check_python.py](assets/check_python.py) | Docstring backticks, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap`. |
+| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap` and `--magic-numbers`. |
 | [check_method_ordering.py](assets/check_method_ordering.py) | Private helper placed after its sole caller (`--order`, `--scope`, `--ignore`). |
 | [check_backend_wiring.py](assets/check_backend_wiring.py) | Layer import rules (`--package`, `--forbid`, `--forbid-module`). |
 
 ```text
-python check_python.py src tests --bool-trap
+python check_python.py src --bool-trap --magic-numbers
+python check_python.py tests --bool-trap
+python check_python.py --only docstring-backtick packages
+python check_python.py --templates --only magic-number packages
 python check_method_ordering.py src
 python check_backend_wiring.py src --package shop --forbid presentation:infrastructure
 ```
@@ -91,16 +94,16 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
 
 - Use `"""..."""` for every docstring, including one-liners; use raw strings for
   literal backslashes.
-- Write plain text. Mark inline code with single quotes (`'name'`,
-  `'from_config'`); already-quoted values keep their quotes. Never use backticks
-  in a docstring; `assets/check_python.py` rejects them.
+- Mark inline code with paired double-backtick reStructuredText literals in
+  Python docstrings. Do not mark code with single quotes or single backticks.
+  Markdown prose keeps normal CommonMark single-backtick syntax.
 - Keep summaries useful and concise. Expand Google-style sections only for
   caller-relevant semantics, constraints, side effects, and expected failures.
 - Google permits descriptive or imperative summaries, consistently within a file,
   and does not require repeating types already annotated in the signature.
-- Google and PEP 257 leave inline markup open; single quotes are this toolkit's
-  default. A consumer that publishes docstrings through Sphinx or a Markdown
-  renderer may override it in its own policy and checker configuration.
+- Sphinx/reStructuredText renders double-backtick literals as code. The local
+  conventions gate enforces paired double backticks in docstrings; it does not
+  change Markdown file syntax.
 
 ## References
 

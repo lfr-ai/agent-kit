@@ -14,8 +14,7 @@ person's private information without consent.
 
 Report privately through `conduct_contact` in
 [maintainers.json](.github/maintainers.json); never post sensitive evidence
-in a public issue. The configured contact is
-[lfr@tik-ai.dk](mailto:lfr@tik-ai.dk), matching the owner's existing conduct policy.
+in a public issue. The configured contact is [lfr@tik-ai.dk](mailto:lfr@tik-ai.dk).
 Reporters may request confidentiality; maintainers share evidence only as needed
 to investigate fairly or meet legal obligations.
 

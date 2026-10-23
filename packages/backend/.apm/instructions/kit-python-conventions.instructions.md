@@ -11,8 +11,10 @@ applyTo: "**/*.py"
 - Use `pathlib.Path` for paths, open text files with an explicit encoding, and keep I/O out of import time.
 - Keep imports absolute and local to the layer that owns them; no wildcard imports or import-time side effects.
 - Raise specific exception types with actionable messages and chain the cause with `raise ... from error`.
-- Make optional parameters keyword-only when a function takes more than one.
-- Use triple-double-quoted Google-style docstrings for public modules, classes, and functions, including the arguments of parameterized initializers; mark inline code with 'single quotes', never backticks.
+- Make optional parameters keyword-only when a function takes more than one; name numeric literals other than `0` and `1`/`-1` as `UPPER_CASE` constants that state intent and unit (tests may keep literal expectations).
+- Use paired double-backtick literals for inline code in Python docstrings;
+  Markdown prose keeps CommonMark single-backtick syntax.
+- Use triple-double-quoted Google-style docstrings for public modules, classes, and functions, including the arguments of parameterized initializers.
 - Use stdlib `logging` through `logging.getLogger(__name__)`; log once at the boundary that handles the error, with lazy `%` arguments, and redact sensitive values before emission.
 - Do not use `print` for diagnostics, mutable default arguments, bare `except`, or `assert` for runtime validation.
 - Use the `kit-python-service` skill for the full docstring and module conventions.

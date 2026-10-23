@@ -68,6 +68,45 @@ jobs:
           path: build/release/*
           if-no-files-found: error
           retention-days: 7
+      - name: Export the coverage report measured by the gate
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        run: uv run --locked python -m coverage xml -o build/coverage/coverage.xml
+      - name: Keep the coverage report for the upload job
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          path: build/coverage/coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only this job can mint an OIDC token, and it runs no project code.
+  coverage:
+    name: Upload coverage to Codecov
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-report
+          path: build/coverage
+      - name: Upload with OIDC; fork pull requests use tokenless upload
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          version: v11.3.1
+          files: build/coverage/coverage.xml
+          disable_search: true
+          flags: python
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          # A Codecov outage must not block merges; the local 90% gate is authoritative.
+          fail_ci_if_error: false
 
   precommit:
     name: Pre-commit hooks
@@ -97,6 +136,8 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
       - run: uv sync --locked
+      - name: Install locked JavaScript tooling without lifecycle scripts
+        run: bun install --frozen-lockfile
       - name: Linters, secrets, spelling, links, duplication, and lockfile checks
         env:
           SKIP: no-commit-to-branch
@@ -136,10 +177,13 @@ jobs:
           --session-skill kit-pydantic-v2
           --session-skill kit-polars-v2
 
+  audit:
+    uses: $/.github/workflows/dependency-audit.yml
+
   checks:
     name: Required toolkit checks
     if: always()
-    needs: [verify, precommit, smoke]
+    needs: [verify, precommit, smoke, audit, coverage]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

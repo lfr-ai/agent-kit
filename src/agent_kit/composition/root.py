@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_kit.application.services.catalog_service import CatalogService
 from agent_kit.application.services.provenance_service import ProvenanceService
-from agent_kit.core.models import CheckReport
 from agent_kit.infrastructure.apm_adapter import ApmCliAdapter
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 from agent_kit.infrastructure.output_adapter import OutputAdapter
 from agent_kit.infrastructure.session_context import session_context
 from agent_kit.presentation.cli import CliActions
+
+if TYPE_CHECKING:
+    from agent_kit.core.models import CheckReport
 
 
 def _source_root_from_working_directory() -> Path:

@@ -30,6 +30,8 @@ from app.application.ports.payment_errors import (
 from app.application.ports.payments import PaymentGateway, PaymentReceipt
 from app.domain.invoice import Invoice, InvoiceStatus
 
+_DEFAULT_OPEN_INVOICE_LIMIT = 100
+
 
 class InMemoryInvoiceRepository(InvoiceRepository):
     """Dictionary-backed repository bound to a unit of work's staging area."""
@@ -61,7 +63,9 @@ class InMemoryInvoiceRepository(InvoiceRepository):
             raise InvoiceNotFoundError(invoice.invoice_id)
         self._rows[invoice.invoice_id] = invoice
 
-    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+    def list_open(
+        self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
+    ) -> list[Invoice]:
         """Return up to 'limit' open invoices for a customer, oldest id first."""
         matches = sorted(
             (

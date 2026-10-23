@@ -1,3 +1,9 @@
+bunfig
+coderabbitai
+languagetool
+prebuild
+schemafile
+tokenless
 ábçd
 ACKED
 acks
@@ -30,6 +36,7 @@ AZQB
 azuread
 azuredevops
 backpressure
+backslashreplace
 basenames
 beforeunload
 bfcache
@@ -59,6 +66,7 @@ Cockburn
 codemod
 CODESIGN
 codespell
+CodeRabbit
 commandtoexecute
 conftest
 Containerfile
@@ -93,8 +101,6 @@ dtypes
 dunder
 dunders
 dups
-ekko
-Ekko
 elts
 Embedder
 enco
@@ -102,6 +108,7 @@ encod
 encodedc
 endfor
 enduser
+errmsg
 environb
 envrc
 executemany
@@ -113,6 +120,7 @@ fieldset
 fieldsets
 finalbody
 focusable
+flynt
 followlinks
 frontends
 frontmatter
@@ -148,7 +156,6 @@ jsdom
 kdbx
 keepalive
 keepends
-Koda
 kwonlyargs
 labelledby
 langgraph
@@ -159,6 +166,7 @@ litellm
 llamaindex
 llms
 lnbm
+lockdown
 lockfiles
 loggable
 loglevel
@@ -206,6 +214,7 @@ onedir
 onefile
 oneline
 opencontainers
+openssf
 opsx
 ördér
 Ørdérs
@@ -288,6 +297,7 @@ SIGIR
 signtool
 Sigstore
 skipcertificatecheck
+slopsquatting
 SPECPATH
 SQBFA
 sslverify
@@ -306,6 +316,7 @@ tabindex
 tablist
 tamasfe
 tanstack
+Tarjan
 taskfile
 terraformrc
 testclient
@@ -359,6 +370,7 @@ westeurope
 whatif
 winerror
 wipefs
+withitem
 worktree
 worktrees
 XACK
@@ -370,4 +382,5 @@ xdist
 XPENDING
 XREADGROUP
 yarnrc
+zizmor
 zope

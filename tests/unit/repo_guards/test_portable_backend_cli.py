@@ -1,9 +1,9 @@
 """Explicit-input backend checkers reject their actual negative contracts."""
 
 import json
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 _SKILLS = Path(__file__).resolve().parents[3] / "packages/backend/.apm/skills"
 

@@ -1,25 +1,25 @@
 """Assemble a reviewer-ready Markdown package from a diff and verification evidence.
 
-Inputs are a unified diff file (for example the output of 'git diff --no-color' or
-'git diff --cached --no-color') and a JSON file describing the task, acceptance
+Inputs are a unified diff file (for example the output of ``git diff --no-color`` or
+``git diff --cached --no-color``) and a JSON file describing the task, acceptance
 criteria, executed verification commands, and known limitations. The script never
 runs git or the verification commands itself: it packages evidence that the worker
 already produced so the reviewer can check it.
 
-Gate findings are printed to stderr as 'path:line: message' and make the exit code
+Gate findings are printed to stderr as ``path:line: message`` and make the exit code
 1: a failed or missing verification command, an unmet acceptance criterion, an
-empty diff, or a changed file outside the '--allow' path prefixes. Exit code 2 means
+empty diff, or a changed file outside the ``--allow`` path prefixes. Exit code 2 means
 the inputs could not be read.
 """
 
 import argparse
-import hashlib
-import json
-import re
-import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
+import hashlib
+import json
 from pathlib import Path, PurePosixPath
+import re
+import sys
 from typing import TextIO
 
 _CONFIG_EXIT = 2
@@ -30,7 +30,8 @@ _EVIDENCE_FIELDS = frozenset(
 _ACCEPTANCE_FIELDS = frozenset({"criterion", "status", "evidence"})
 _COMMAND_FIELDS = frozenset({"command", "exit_code", "summary"})
 _STATUSES = ("met", "partial", "unmet", "not-applicable")
-_HUNK = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_HUNK = re.compile(r"@@ -\d+(?:,(?P<old>\d+))? \+\d+(?:,(?P<new>\d+))? @@")
+_GIT_DESTINATION_MARKER = " b/"
 
 
 @dataclass(kw_only=True, slots=True)
@@ -91,21 +92,21 @@ class _DiffState:
 def _strip_prefix(raw: str) -> str | None:
     """Return a repository path from a diff header path, or None for /dev/null."""
     text = raw.strip().split("\t", 1)[0]
-    if len(text) >= 2 and text[0] == text[-1] == '"':  # noqa: PLR2004
+    if len(text) > 1 and text[0] == text[-1] == '"':
         text = text[1:-1]
     if text == "/dev/null":
         return None
     if text.startswith(("a/", "b/")):
-        return text[2:]
+        return text[len("a/") :]
     return text
 
 
 def _git_header_path(line: str) -> str:
-    """Read the destination path from a 'diff --git a/x b/y' header."""
+    """Read the destination path from a ``diff --git a/x b/y`` header."""
     rest = line[len("diff --git ") :]
-    marker = rest.rfind(" b/")
+    marker = rest.rfind(_GIT_DESTINATION_MARKER)
     if marker >= 0:
-        return rest[marker + 3 :].strip().strip('"')
+        return rest[marker + len(_GIT_DESTINATION_MARKER) :].strip().strip('"')
     return rest.split(" ")[-1].strip('"')
 
 
@@ -146,39 +147,72 @@ def _hunk_line(state: _DiffState, change: FileChange, line: str) -> None:
         state.new_left -= 1
 
 
+def _in_hunk(state: _DiffState, line: str) -> bool:
+    """Return whether ``line`` continues the open hunk, closing it otherwise."""
+    in_hunk = state.old_left > 0 or state.new_left > 0
+    if in_hunk and line and line[0] not in " +-\\":
+        state.old_left = state.new_left = 0
+        return False
+    return in_hunk
+
+
+def _old_header(state: _DiffState, line: str, number: int) -> None:
+    """Apply a ``---`` source header, starting a file for plain diffs."""
+    source = _strip_prefix(line[len("--- ") :])
+    change = state.current
+    if change is None or not state.header_open:
+        change = _start(state, source or "/dev/null", number)
+    if source is None:
+        change.status = "added"
+
+
+def _new_header(state: _DiffState, change: FileChange, line: str) -> None:
+    """Apply a ``+++`` destination header and close the file header."""
+    target = _strip_prefix(line[len("+++ ") :])
+    if target is None:
+        change.status = "deleted"
+    else:
+        change.path = target
+    state.header_open = False
+
+
+def _hunk_header(state: _DiffState, line: str) -> None:
+    """Open a hunk with the old and new line counts from its ``@@`` header."""
+    match = _HUNK.match(line)
+    state.old_left = int(match.group("old") or 1) if match else 0
+    state.new_left = int(match.group("new") or 1) if match else 0
+    state.header_open = False
+
+
+def _file_line(state: _DiffState, change: FileChange, line: str) -> None:
+    """Apply a header or hunk-start line that belongs to the current file."""
+    if line.startswith("+++ "):
+        _new_header(state, change, line)
+    elif line.startswith("@@"):
+        _hunk_header(state, line)
+    elif state.header_open:
+        _extended_header(change, line)
+
+
+def _header_line(state: _DiffState, line: str, number: int) -> None:
+    """Apply one line that is outside any open hunk."""
+    if line.startswith("diff --git "):
+        _start(state, _git_header_path(line), number)
+    elif line.startswith("--- "):
+        _old_header(state, line, number)
+    elif state.current is not None:
+        _file_line(state, state.current, line)
+
+
 def parse_diff(text: str) -> list[FileChange]:
     """Parse git or plain unified diff text into per-file changes."""
     state = _DiffState()
     for number, line in enumerate(text.splitlines(), start=1):
         change = state.current
-        in_hunk = state.old_left > 0 or state.new_left > 0
-        if in_hunk and line and line[0] not in " +-\\":
-            state.old_left = state.new_left = 0
-            in_hunk = False
-        if in_hunk and change is not None:
+        if _in_hunk(state, line) and change is not None:
             _hunk_line(state, change, line)
-        elif line.startswith("diff --git "):
-            _start(state, _git_header_path(line), number)
-        elif line.startswith("--- "):
-            source = _strip_prefix(line[4:])
-            if change is None or not state.header_open:
-                change = _start(state, source or "/dev/null", number)
-            if source is None:
-                change.status = "added"
-        elif line.startswith("+++ ") and change is not None:
-            target = _strip_prefix(line[4:])
-            if target is None:
-                change.status = "deleted"
-            else:
-                change.path = target
-            state.header_open = False
-        elif line.startswith("@@") and change is not None:
-            match = _HUNK.match(line)
-            state.old_left = int(match.group(1) or 1) if match else 0
-            state.new_left = int(match.group(2) or 1) if match else 0
-            state.header_open = False
-        elif change is not None and state.header_open:
-            _extended_header(change, line)
+        else:
+            _header_line(state, line, number)
     return state.files
 
 
@@ -283,6 +317,36 @@ def _closed(value: object, fields: frozenset[str], label: str) -> dict[str, obje
     return value
 
 
+def _command(raw: object, index: int) -> Command:
+    """Validate one verification command entry."""
+    item = _closed(raw, _COMMAND_FIELDS, f"commands[{index}]")
+    code = item.get("exit_code")
+    if "exit_code" not in item:
+        raise EvidenceInputError(EvidenceInputIssue.EXIT_CODE, index=index)
+    if type(code) is not int:
+        raise EvidenceInputTypeError(EvidenceInputIssue.EXIT_CODE, index=index)
+    return Command(
+        command=_required_text(item, "command", f"commands[{index}].command"),
+        exit_code=code,
+        summary=_text(item.get("summary"), "summary", required=False),
+    )
+
+
+def _criterion(raw: object, index: int) -> Criterion:
+    """Validate one acceptance criterion entry."""
+    item = _closed(raw, _ACCEPTANCE_FIELDS, f"acceptance[{index}]")
+    status = item.get("status")
+    if "status" in item and not isinstance(status, str):
+        raise EvidenceInputTypeError(EvidenceInputIssue.ACCEPTANCE_STATUS, index=index)
+    if status not in _STATUSES:
+        raise EvidenceInputError(EvidenceInputIssue.ACCEPTANCE_STATUS, index=index)
+    return Criterion(
+        criterion=_required_text(item, "criterion", f"acceptance[{index}].criterion"),
+        status=str(status),
+        evidence=_text(item.get("evidence"), "evidence", required=False),
+    )
+
+
 def parse_evidence(text: str) -> Evidence:
     """Validate the verification JSON against its closed schema.
 
@@ -291,40 +355,14 @@ def parse_evidence(text: str) -> Evidence:
         TypeError: A present field has the wrong Python type.
     """
     data = _closed(json.loads(text), _EVIDENCE_FIELDS, "evidence")
-    commands: list[Command] = []
-    for index, raw in enumerate(_items(data.get("commands"), "commands")):
-        item = _closed(raw, _COMMAND_FIELDS, f"commands[{index}]")
-        code = item.get("exit_code")
-        if "exit_code" not in item:
-            raise EvidenceInputError(EvidenceInputIssue.EXIT_CODE, index=index)
-        if type(code) is not int:
-            raise EvidenceInputTypeError(EvidenceInputIssue.EXIT_CODE, index=index)
-        commands.append(
-            Command(
-                command=_required_text(item, "command", f"commands[{index}].command"),
-                exit_code=code,
-                summary=_text(item.get("summary"), "summary", required=False),
-            )
-        )
-    acceptance: list[Criterion] = []
-    for index, raw in enumerate(_items(data.get("acceptance"), "acceptance")):
-        item = _closed(raw, _ACCEPTANCE_FIELDS, f"acceptance[{index}]")
-        status = item.get("status")
-        if "status" in item and not isinstance(status, str):
-            raise EvidenceInputTypeError(
-                EvidenceInputIssue.ACCEPTANCE_STATUS, index=index
-            )
-        if status not in _STATUSES:
-            raise EvidenceInputError(EvidenceInputIssue.ACCEPTANCE_STATUS, index=index)
-        acceptance.append(
-            Criterion(
-                criterion=_required_text(
-                    item, "criterion", f"acceptance[{index}].criterion"
-                ),
-                status=str(status),
-                evidence=_text(item.get("evidence"), "evidence", required=False),
-            )
-        )
+    commands = [
+        _command(raw, index)
+        for index, raw in enumerate(_items(data.get("commands"), "commands"))
+    ]
+    acceptance = [
+        _criterion(raw, index)
+        for index, raw in enumerate(_items(data.get("acceptance"), "acceptance"))
+    ]
     lists = {
         name: tuple(
             _text(entry, f"{name}[{index}]")
@@ -532,18 +570,19 @@ new file mode 100644
 @@ -0,0 +1 @@
 +def test_total() -> None: ...
 """
+_SELF_TEST_EXPECTED_CHANGES = {
+    "src/orders.py": ("modified", 2, 1),
+    "docs/new.md": ("renamed", 0, 0),
+    "tests/test_orders.py": ("added", 1, 0),
+}
+_SELF_TEST_GATE_FINDINGS = 3
 
 
 def _self_test() -> int:
     """Run embedded regressions without reading or writing files."""
     changes = {item.path: item for item in parse_diff(_SELF_TEST_DIFF)}
     failures: list[str] = []
-    expected = {
-        "src/orders.py": ("modified", 2, 1),
-        "docs/new.md": ("renamed", 0, 0),
-        "tests/test_orders.py": ("added", 1, 0),
-    }
-    for path, (status, added, removed) in expected.items():
+    for path, (status, added, removed) in _SELF_TEST_EXPECTED_CHANGES.items():
         item = changes.get(path)
         if item is None or (item.status, item.added, item.removed) != (
             status,
@@ -569,14 +608,22 @@ def _self_test() -> int:
         diff_name="d",
         evidence_name="e",
     )
-    if len(findings) != 3:  # noqa: PLR2004
+    if len(findings) != _SELF_TEST_GATE_FINDINGS:
         failures.append(f"gate findings {findings}")
     for failure in failures:
         print(f"self-test: {failure}")
     if failures:
         return 1
-    print(f"self-test passed: {len(expected) + 1} cases")
+    print(f"self-test passed: {len(_SELF_TEST_EXPECTED_CHANGES) + 1} cases")
     return 0
+
+
+def _write(document: str, output: Path | None) -> None:
+    """Write the package to ``output``, or to stdout when it is None."""
+    if output is None:
+        sys.stdout.write(document)
+    else:
+        output.write_text(document, encoding="utf-8", newline="\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,12 +658,8 @@ def main(argv: list[str] | None = None) -> int:
         max_bytes=args.max_bytes,
         stderr=sys.stderr,
     )
-    if document is None:
-        return status
-    if args.output is None:
-        sys.stdout.write(document)
-    else:
-        args.output.write_text(document, encoding="utf-8", newline="\n")
+    if document is not None:
+        _write(document, args.output)
     return status
 
 

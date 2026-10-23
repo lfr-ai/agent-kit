@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import ctypes
+from enum import StrEnum, unique
 import os
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import sys
 import tempfile
 import time
-from enum import StrEnum, unique
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import TYPE_CHECKING
 
-from agent_kit.core.models import CompositionPlan, PlannedFile
+if TYPE_CHECKING:
+    from agent_kit.core.models import CompositionPlan, PlannedFile
 
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
@@ -69,21 +71,40 @@ class OutputCollisionError(ValueError):
         )
 
 
+@unique
+class PublicationSupportIssue(StrEnum):
+    """Platform capabilities required for no-replace directory publication."""
+
+    PLATFORM = "atomic composition supports Windows and Linux"
+    RENAMEAT2 = "atomic composition requires Linux renameat2"
+
+
+class UnsupportedPublicationError(NotImplementedError):
+    """The host cannot publish a directory without replacement."""
+
+    def __init__(self, issue: PublicationSupportIssue) -> None:
+        """Identify the missing platform capability.
+
+        Args:
+            issue (PublicationSupportIssue): Missing publication capability.
+        """
+        self.issue = issue
+        super().__init__(issue.value)
+
+
 def _publish_directory(stage: Path, output: Path) -> None:
     """Publish without replacing an existing directory on supported platforms."""
     if sys.platform == "win32":
         _publish_windows_directory(stage, output)
         return
     if sys.platform != "linux":
-        raise NotImplementedError("atomic composition supports Windows and Linux")
+        raise UnsupportedPublicationError(PublicationSupportIssue.PLATFORM)
     # POSIX rename may replace an empty directory; Linux's no-replace flag does not.
     library = ctypes.CDLL(None, use_errno=True)
     try:
         operation = library.renameat2
     except AttributeError as error:
-        raise NotImplementedError(
-            "atomic composition requires Linux renameat2"
-        ) from error
+        raise UnsupportedPublicationError(PublicationSupportIssue.RENAMEAT2) from error
     operation.argtypes = [
         ctypes.c_int,
         ctypes.c_char_p,
@@ -100,25 +121,31 @@ def _publish_directory(stage: Path, output: Path) -> None:
         raise OSError(error, os.strerror(error), str(output))
 
 
+def _rename_once(stage: Path, output: Path, *, final_attempt: bool) -> bool:
+    """Attempt one no-replace rename; ``False`` reports a transient sharing denial."""
+    _require_unlinked_path(stage)
+    _require_unlinked_path(output)
+    if output.exists():
+        raise OutputExistsError(output)
+    try:
+        stage.rename(output)
+    except PermissionError as error:
+        if output.exists():
+            raise OutputExistsError(output) from error
+        sharing_denial = getattr(error, "winerror", None) in _WINDOWS_SHARING_CODES
+        if final_attempt or not sharing_denial:
+            raise
+        return False
+    return True
+
+
 def _publish_windows_directory(stage: Path, output: Path) -> None:
     """Retry short-lived sharing denials without replacement or path redirection."""
-    for attempt in range(len(_WINDOWS_RETRY_DELAYS) + 1):
-        _require_unlinked_path(stage)
-        _require_unlinked_path(output)
-        if output.exists():
-            raise OutputExistsError(output)
-        try:
-            stage.rename(output)
-        except PermissionError as error:
-            if output.exists():
-                raise OutputExistsError(output) from error
-            if getattr(
-                error, "winerror", None
-            ) not in _WINDOWS_SHARING_CODES or attempt == len(_WINDOWS_RETRY_DELAYS):
-                raise
-            time.sleep(_WINDOWS_RETRY_DELAYS[attempt])
-        else:
+    for delay in _WINDOWS_RETRY_DELAYS:
+        if _rename_once(stage, output, final_attempt=False):
             return
+        time.sleep(delay)
+    _rename_once(stage, output, final_attempt=True)
 
 
 def _require_unlinked_path(path: Path) -> None:

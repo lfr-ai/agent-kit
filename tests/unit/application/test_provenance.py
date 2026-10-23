@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from agent_kit.application.services.catalog_service import CatalogService
 from agent_kit.application.services.provenance_service import ProvenanceService
-from agent_kit.core.models import CheckReport
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 from agent_kit.infrastructure.output_adapter import OutputAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from agent_kit.core.models import CheckReport
 
 
 def _compose(source_root: Path, output: Path) -> Path:

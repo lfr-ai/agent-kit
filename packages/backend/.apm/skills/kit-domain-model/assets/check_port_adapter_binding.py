@@ -1,14 +1,14 @@
 """Report Protocol ports in core packages that no adapter class implements.
 
-A port is a class in a '--core' path that lists 'Protocol' (or
-'typing.Protocol', optionally subscripted) among its bases. Its required
+A port is a class in a ``--core`` path that lists ``Protocol`` (or
+``typing.Protocol``, optionally subscripted) among its bases. Its required
 members are its methods and properties, including those inherited from other
 ports in the core paths. An adapter is any non-Protocol class in an
-'--adapters' path; its members include those of base classes defined in the
+``--adapters`` path; its members include those of base classes defined in the
 scanned adapter files. A port is bound when at least one adapter provides every
 required member, with matching sync or async kind for methods. Properties may
 be satisfied by a method, a property, a class attribute, or an assignment to
-'self.<name>' in any method. Matching is structural, so adapters need not
+``self.<name>`` in any method. Matching is structural, so adapters need not
 inherit from the port. The script parses source and never imports it.
 
 Example:
@@ -17,17 +17,18 @@ Example:
 
 import argparse
 import ast
-import re
-import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
+import sys
 
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SPECIAL_MEMBERS = frozenset(
     {"__call__", "__enter__", "__exit__", "__aenter__", "__aexit__"}
 )
+_EXIT_USAGE = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -39,10 +40,10 @@ class ClassInfo:
         path: Display path of the defining file.
         line: Line of the class statement.
         bases: Simple names of the base classes.
-        is_protocol: Whether 'Protocol' is a direct base.
+        is_protocol: Whether ``Protocol`` is a direct base.
         methods: Method names mapped to whether they are async.
-        properties: Names declared with '@property'.
-        attributes: Names assigned at class level or on 'self'.
+        properties: Names declared with ``@property``.
+        attributes: Names assigned at class level or on ``self``.
     """
 
     name: str
@@ -87,7 +88,7 @@ def unbound_ports(
         ignore: Port-name patterns that are never reported.
 
     Returns:
-        Findings formatted as 'path:line: message', sorted by path and line.
+        Findings formatted as ``path:line: message``, sorted by path and line.
     """
     core_index = {info.name: info for info in core}
     adapter_index = {info.name: info for info in adapters if not info.is_protocol}
@@ -131,16 +132,8 @@ def _describe(node: ast.ClassDef, path: str) -> ClassInfo:
             elif _is_member(statement.name):
                 methods[statement.name] = isinstance(statement, ast.AsyncFunctionDef)
             attributes.update(_self_assignments(statement))
-        elif isinstance(statement, ast.AnnAssign) and isinstance(
-            statement.target, ast.Name
-        ):
-            attributes.add(statement.target.id)
-        elif isinstance(statement, ast.Assign):
-            attributes.update(
-                target.id
-                for target in statement.targets
-                if isinstance(target, ast.Name)
-            )
+        else:
+            attributes.update(_assigned_names(statement))
     return ClassInfo(
         name=node.name,
         path=path,
@@ -151,6 +144,16 @@ def _describe(node: ast.ClassDef, path: str) -> ClassInfo:
         properties=frozenset(properties),
         attributes=frozenset(attributes),
     )
+
+
+def _assigned_names(statement: ast.stmt) -> set[str]:
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return {statement.target.id}
+    if isinstance(statement, ast.Assign):
+        return {
+            target.id for target in statement.targets if isinstance(target, ast.Name)
+        }
+    return set()
 
 
 def _base_name(base: ast.expr) -> str | None:
@@ -241,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     """Check that every core port has a complete adapter.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         Zero when every port is bound, one on findings, two on usage errors.
@@ -260,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         ignore = tuple(re.compile(pattern) for pattern in args.ignore)
     except re.error as error:
         print(f"invalid --ignore pattern: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     excluded = _EXCLUDED | set(args.exclude)
     core, core_problems = _scan(args.core, excluded)
     adapters, adapter_problems = _scan(args.adapters, excluded)

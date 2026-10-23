@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN_ESTIMATE = 4
 
+_DEFAULT_MAX_ATTEMPTS = 3
+_DEFAULT_BASE_DELAY_SECONDS = 0.5
+_DEFAULT_MAX_DELAY_SECONDS = 8.0
+_DEFAULT_TOTAL_DEADLINE_SECONDS = 60.0
+_DEFAULT_MAX_RETRY_AFTER_SECONDS = 20.0
+_MAX_RETRY_ATTEMPTS = 10
+_RETRY_BACKOFF_FACTOR = 2
+_TOKENS_PER_PRICE_UNIT = 1_000_000
+_DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5
+_DEFAULT_CIRCUIT_RESET_SECONDS = 30.0
+_DEFAULT_MAX_CONCURRENT_CALLS = 8
+_MILLISECONDS_PER_SECOND = 1000
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class RetrySettings:
@@ -46,15 +59,15 @@ class RetrySettings:
         max_retry_after_s: Longest provider-requested wait we accept.
     """
 
-    max_attempts: int = 3
-    base_delay_s: float = 0.5
-    max_delay_s: float = 8.0
-    total_deadline_s: float = 60.0
-    max_retry_after_s: float = 20.0
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS
+    base_delay_s: float = _DEFAULT_BASE_DELAY_SECONDS
+    max_delay_s: float = _DEFAULT_MAX_DELAY_SECONDS
+    total_deadline_s: float = _DEFAULT_TOTAL_DEADLINE_SECONDS
+    max_retry_after_s: float = _DEFAULT_MAX_RETRY_AFTER_SECONDS
 
     def __post_init__(self) -> None:
         """Reject unbounded or zero-attempt policies."""
-        if not 1 <= self.max_attempts <= 10:  # noqa: PLR2004 - sanity cap
+        if not 1 <= self.max_attempts <= _MAX_RETRY_ATTEMPTS:
             raise ValueError("max_attempts must be between 1 and 10")
         if self.base_delay_s < 0 or self.max_delay_s < self.base_delay_s:
             raise ValueError("delays must satisfy 0 <= base <= max")
@@ -75,7 +88,10 @@ def backoff_delay(
     Returns:
         Seconds to wait before the next attempt.
     """
-    cap = min(settings.max_delay_s, settings.base_delay_s * 2 ** (attempt - 1))
+    cap = min(
+        settings.max_delay_s,
+        settings.base_delay_s * _RETRY_BACKOFF_FACTOR ** (attempt - 1),
+    )
     return rng() * cap
 
 
@@ -96,7 +112,7 @@ class Price:
         return (
             usage.input_tokens * self.input_per_million_usd
             + usage.output_tokens * self.output_per_million_usd
-        ) / 1_000_000
+        ) / _TOKENS_PER_PRICE_UNIT
 
 
 class SpendBudget:
@@ -170,8 +186,8 @@ class CircuitBreaker:
     def __init__(
         self,
         *,
-        failure_threshold: int = 5,
-        reset_after_s: float = 30.0,
+        failure_threshold: int = _DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
+        reset_after_s: float = _DEFAULT_CIRCUIT_RESET_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Configure thresholds.
@@ -227,7 +243,7 @@ class ResilientLlmClient:
         retry: RetrySettings | None = None,
         budget: SpendBudget | None = None,
         breaker: CircuitBreaker | None = None,
-        max_concurrency: int = 8,
+        max_concurrency: int = _DEFAULT_MAX_CONCURRENT_CALLS,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         rng: Callable[[], float] = random.random,
@@ -308,7 +324,7 @@ class ResilientLlmClient:
                     completion,
                     attempts=attempt,
                     cost_usd=cost,
-                    latency_ms=int((self._clock() - started) * 1000),
+                    latency_ms=int((self._clock() - started) * _MILLISECONDS_PER_SECOND),
                 )
                 self._log(request, attempt=attempt, outcome="ok", completion=result)
                 return result

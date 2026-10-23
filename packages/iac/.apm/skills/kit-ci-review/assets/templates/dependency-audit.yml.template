@@ -1,0 +1,49 @@
+# Dependency audit template for uv projects.
+# Copy to .github/workflows/dependency-audit.yml, then:
+#   1. Replace every PIN_FULL_COMMIT_SHA with the reviewed 40-character commit
+#      SHA of the named release and keep the version comment.
+#   2. Add an "audit" dependency group that contains pip-audit and commit the lock.
+#   3. Call it from the required CI job with
+#      `uses: $/.github/workflows/dependency-audit.yml` so pull requests are gated,
+#      while the schedule catches advisories published after merge.
+#   4. Point the license step at the reviewed allowlist and guard copy.
+name: dependency-audit
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@PIN_FULL_COMMIT_SHA # v10
+        with:
+          version: "0.13.3"
+          enable-cache: false
+      - name: Install only the hash-locked audit tools
+        run: uv sync --locked --only-group audit
+      - name: Audit the lock before installing it
+        run: |
+          uv export --locked --all-groups --no-emit-project \
+            --format requirements.txt --output-file "$RUNNER_TEMP/requirements.txt"
+          uv run --locked --no-sync pip-audit \
+            --requirement "$RUNNER_TEMP/requirements.txt" \
+            --require-hashes --disable-pip --strict
+      - name: Install dependencies from wheels only
+        run: uv sync --locked --no-install-project --no-build
+      - name: Install the project
+        run: uv sync --locked
+      - name: Check installed licenses
+        run: >-
+          uv run --locked --no-sync python .agents/hooks/license_guard.py
+          --allowlist license-allowlist.json

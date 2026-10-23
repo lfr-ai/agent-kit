@@ -29,6 +29,10 @@ from retrieval.settings import RetrievalSettings
 
 logger = logging.getLogger(__name__)
 
+_POOL_MAX_CONNECTIONS = 10
+_POOL_TIMEOUT_SECONDS = 5.0
+_DEFAULT_EMBEDDING_BATCH_SIZE = 64
+
 _COLUMNS = (
     "chunk_id, tenant, source_id, source_version, body, start_char, end_char, "
     "section, acl, metadata, updated_at"
@@ -88,8 +92,8 @@ async def open_pool(settings: RetrievalSettings) -> AsyncConnectionPool:
         configure=register_vector_async,
         open=False,
         min_size=1,
-        max_size=10,
-        timeout=5.0,
+        max_size=_POOL_MAX_CONNECTIONS,
+        timeout=_POOL_TIMEOUT_SECONDS,
     )
     await pool.open(wait=True)
     return pool
@@ -279,7 +283,7 @@ class PgIndexWriter(_PgBase):
         settings: RetrievalSettings,
         embedder: Embedder,
         *,
-        batch_size: int = 64,
+        batch_size: int = _DEFAULT_EMBEDDING_BATCH_SIZE,
     ) -> None:
         """Bind to a pool and an embedder.
 

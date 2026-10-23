@@ -2,11 +2,11 @@
 
 import asyncio
 import json
+from pathlib import Path
 import re
 import runpy
 import shutil
 import sys
-from pathlib import Path
 from typing import NoReturn
 
 import pytest

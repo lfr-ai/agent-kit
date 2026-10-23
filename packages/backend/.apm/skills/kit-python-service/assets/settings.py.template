@@ -14,6 +14,7 @@ from typing import Self
 _PREFIX = "SHOP_"
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
+_DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 class Environment(StrEnum):
@@ -42,7 +43,7 @@ class Settings:
 
     environment: Environment
     database_dsn: str = field(repr=False)
-    request_timeout_seconds: float = 10.0
+    request_timeout_seconds: float = _DEFAULT_REQUEST_TIMEOUT_SECONDS
     log_level: str = "INFO"
     json_logs: bool = True
 
@@ -68,7 +69,13 @@ class Settings:
         dsn = source.get(f"{_PREFIX}DATABASE_DSN", "").strip()
         if not dsn:
             problems.append(f"{_PREFIX}DATABASE_DSN is required")
-        timeout = _parse(source, "REQUEST_TIMEOUT_SECONDS", float, problems, default=10.0)
+        timeout = _parse(
+            source,
+            "REQUEST_TIMEOUT_SECONDS",
+            float,
+            problems,
+            default=_DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        )
         if timeout <= 0:
             problems.append(f"{_PREFIX}REQUEST_TIMEOUT_SECONDS must be greater than zero")
         log_level = source.get(f"{_PREFIX}LOG_LEVEL", "INFO").strip().upper()

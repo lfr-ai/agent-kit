@@ -12,6 +12,7 @@ _FILES = (
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
     ".github/workflows/codeql.yml",
+    ".github/workflows/dependency-audit.yml",
     ".github/workflows/dependency-review.yml",
     ".github/workflows/scorecard.yml",
     ".github/rulesets/main.json",
@@ -263,6 +264,85 @@ def test_dependency_review_runs_only_on_pull_requests(
 
 
 @pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("fail-on-severity: low", "fail-on-severity: high"),
+        ("license-check: true", "license-check: false"),
+        ("vulnerability-check: true", "vulnerability-check: false"),
+        (
+            "fail-on-scopes: runtime, development, unknown",
+            "fail-on-scopes: runtime",
+        ),
+    ],
+)
+def test_dependency_review_cannot_be_weakened(
+    governed_root: Path, old: str, new: str
+) -> None:
+    """New PR dependencies are checked for vulnerabilities and licenses in every scope."""
+    path = governed_root / ".github/workflows/dependency-review.yml"
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+    assert any("every dependency scope" in item for item in check(governed_root))
+
+
+def test_dependency_audit_precedes_installing_the_lock(governed_root: Path) -> None:
+    """Swapping the audit after sync would install unaudited packages first."""
+    path = governed_root / ".github/workflows/dependency-audit.yml"
+    text = path.read_text()
+    audit = "uv run --locked --no-sync python scripts/audit_dependencies.py"
+    sync = "uv sync --locked\n"
+    assert audit in text
+    assert sync in text
+    swapped = text.replace(audit, "AUDIT").replace(sync, audit + "\n")
+    path.write_text(swapped.replace("AUDIT", sync.strip()), encoding="utf-8")
+
+    assert any("audited before" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize(
+    ("relative", "old", "new", "expected"),
+    [
+        (
+            ".github/workflows/ci.yml",
+            "uses: $/.github/workflows/dependency-audit.yml",
+            "uses: ./.github/workflows/dependency-audit.yml",
+            "reusable",
+        ),
+        (
+            ".github/workflows/release.yml",
+            "uses: $/.github/workflows/ci.yml",
+            "uses: ./.github/workflows/ci.yml",
+            "reusable",
+        ),
+        (
+            ".github/workflows/dependency-audit.yml",
+            "  workflow_call:\n",
+            "",
+            "reusable triggers",
+        ),
+        (
+            ".github/dependabot.yml",
+            "package-ecosystem: devcontainers",
+            "package-ecosystem: docker",
+            "devcontainers updates are required",
+        ),
+    ],
+)
+def test_dependency_audit_wiring_cannot_drift(
+    governed_root: Path, relative: str, old: str, new: str, expected: str
+) -> None:
+    """Self-repository calls, scheduled audits, and update coverage stay required."""
+    path = governed_root / relative
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+    assert any(expected in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize(
     ("relative", "old", "new", "expected"),
     [
         (
@@ -327,6 +407,23 @@ def test_issue_intake_and_release_labels_stay_consistent(
     assert any(expected in item for item in check(governed_root))
 
 
+def test_security_instructions_are_valid_reporting_fallback(
+    governed_root: Path,
+) -> None:
+    """SECURITY.md is a valid fallback while GitHub private reporting is unavailable."""
+    path = governed_root / ".github/ISSUE_TEMPLATE/config.yml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            "/security/advisories/new",
+            "/blob/main/SECURITY.md",
+        ),
+        encoding="utf-8",
+    )
+
+    assert check(governed_root) == []
+
+
 def test_security_contact_link_must_match_the_approved_repository(
     governed_root: Path,
 ) -> None:
@@ -340,10 +437,64 @@ def test_security_contact_link_must_match_the_approved_repository(
 
 
 @pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        ("          version: v11.3.1\n", "", "Codecov"),
+        (
+            "fail_ci_if_error: false",
+            "fail_ci_if_error: false\n          skip_validation: true",
+            "Codecov",
+        ),
+        (
+            "fail_ci_if_error: false",
+            "fail_ci_if_error: false\n          token: ${{ secrets.CODECOV_TOKEN }}",
+            "Codecov",
+        ),
+        (
+            "name: coverage-report\n          path: build/coverage/coverage.xml",
+            "name: coverage-report\n          path: build/**",
+            "artifact upload",
+        ),
+    ],
+)
+def test_codecov_upload_stays_pinned_validated_and_tokenless(
+    governed_root: Path, old: str, new: str, expected: str
+) -> None:
+    """The coverage upload cannot download a floating CLI or store a token."""
+    path = governed_root / ".github/workflows/ci.yml"
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    assert any(expected in item for item in check(governed_root))
+
+
+def test_oidc_permission_is_limited_to_the_upload_job(governed_root: Path) -> None:
+    """Project code in the verification matrix never receives an OIDC token."""
+    path = governed_root / ".github/workflows/ci.yml"
+    text = path.read_text()
+    marker = "    runs-on: ${{ matrix.os }}\n    timeout-minutes: 45\n"
+    assert marker in text
+    path.write_text(
+        text.replace(
+            marker,
+            marker + "    permissions:\n      contents: read\n      id-token: write\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert any("unapproved permissions" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize(
     ("old", "new"),
     [
-        ("needs: [verify, precommit, smoke]", "needs: [verify, precommit]"),
-        ("needs: [verify, precommit, smoke]", "needs: verify"),
+        (
+            "needs: [verify, precommit, smoke, audit, coverage]",
+            "needs: [verify, precommit, smoke]",
+        ),
+        ("needs: [verify, precommit, smoke, audit, coverage]", "needs: verify"),
         ("    if: always()\n    needs:", "    needs:"),
     ],
 )

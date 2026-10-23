@@ -59,7 +59,10 @@ fetch_failure: block
 dependencies:
   allow: []
 mcp:
-  allow: []
+  allow:
+    - context7
+    - github
+    - microsoft-learn
   self_defined: deny
   trust_transitive: false
 manifest:

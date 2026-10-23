@@ -4,6 +4,43 @@
 
 ### Added
 
+- Updated transitive GitPython to 3.2.1 in `uv.lock` to resolve CVE-2026-114145.
+- Dependency supply-chain controls: an audit-first `task bootstrap`, a hashed
+  lockfile vulnerability and wheel-only audit, a reviewed license policy, a
+  required and scheduled dependency-audit workflow, strict dependency review,
+  frozen pre-commit hooks, a digest-pinned link-check image, zizmor workflow
+  linting, and Dependabot coverage for dev container features.
+- Native agent limits on ad-hoc package installs (Claude Code deny rules and
+  VS Code approval rules) plus a portable `dependency-install` tool-guard rule.
+- Enforced version pinning: exact development, audit, tox and build-backend
+  pins; a Bun-locked jscpd instead of a runtime `bunx`; a digest-pinned dev
+  container image with exact feature versions; pinned workflow tool installers;
+  and the portable `check_pins.py` gate in `task verify`, pre-commit and APM.
+- Named-constant enforcement: an opt-in `magic-number` rule in the portable
+  `check_python.py` gate, applied to source, scripts, and APM assets.
+- Ruff aligned with the shared strict profile: complexity 6, branch, return, and
+  statement limits, `TC` imports, import conventions, and `ASYNC`, `BLE`, `EM`,
+  `EXE`, `FLY`, `PYI`, `T10` and `YTT` rules.
+- pytest `strict = true`, an actionlint hook with a pinned Go toolchain, and both
+  workflow linters in the portable pre-commit template.
+- Minimal zizmor configuration for this repository and APM consumers;
+  scanner-config edits rerun workflow analysis. Enabled hosted grammar checks,
+  extended required ty checks to portable Python assets, and documented
+  native/hosted discovery.
+- A 14-day Dependabot version-update cooldown across repository ecosystems and
+  portable templates, enforced by zizmor with no shorter semantic-version
+  overrides. Security updates remain exempt.
+- Locale-independent APM subprocess output handling prevents Windows CP1252
+  decoding failures. A bounded five-minute per-command audit window accommodates
+  cold full-profile replay without skipping policy or integrity checks.
+- Kept actionlint's narrow self-repository compatibility exception in hook
+  arguments instead of a separate configuration file.
+- Source composition omits interpreter bytecode while preserving strict
+  provenance checks for injected output and links, keeping APM delivery stable
+  after local checker imports. Source inventory no longer traverses Git
+  internals, installed Node dependencies, or test/type caches.
+- Codecov uploads through GitHub OIDC from a dedicated job, CodeRabbit hardening
+  for its open-source tier, and schema validation for both configurations.
 - Standalone tool configuration: `ruff.toml`, `ty.toml`, `pytest.ini`,
   `.coveragerc`, `tox.ini`, `.cz.toml`, `.yamllint.yaml`,
   `.markdownlint-cli2.yaml`, `cspell.json`, `.lychee.toml`, `jscpd.json`, and a
@@ -31,8 +68,8 @@
 - Importable branch/tag rulesets, dependency review, OpenSSF Scorecard, and release
   note categories, all checked by the governance gate.
 - `kit-capability-authoring` skill for agent-driven toolkit changes.
-- Docstring convention: `"""` delimiters; inline code in single quotes, never
-  backticks, enforced by the bundled Python convention checker.
+- Python docstrings use paired double-backtick inline literals, enforced by
+  the shared convention checker in `task verify` and pre-commit.
 
 ### Changed
 

@@ -1,22 +1,23 @@
 """Scan built frontend output for secret-like values and forbidden public content.
 
 Everything a browser downloads is public. This checker reads files below a build
-directory (for example 'dist') as text and reports likely credentials, private
+directory (for example ``dist``) as text and reports likely credentials, private
 keys, tokens, optional deny patterns such as internal host names, and, when asked,
 published source maps. It never executes or uploads anything; a clean result is
 evidence about the scanned patterns only, not proof that no secret exists.
 """
 
 import argparse
-import re
-import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+import re
+import sys
 from tempfile import TemporaryDirectory
 
 _DEFAULT_SUFFIXES = (".js", ".mjs", ".cjs", ".css", ".html", ".json", ".map", ".txt")
 _MAX_BYTES = 5_000_000
+_PREVIEW_CHARS = 6
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -78,7 +79,7 @@ _RULES: tuple[Rule, ...] = (
 
 def _redact(value: str) -> str:
     """Show only a short prefix of a match so reports never repeat the secret."""
-    return f"{value[:6]}... ({len(value)} chars)"
+    return f"{value[:_PREVIEW_CHARS]}... ({len(value)} chars)"
 
 
 def _candidates(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -91,7 +92,7 @@ def _candidates(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
 
 
 class BundleInputError(ValueError):
-    """An input violates the bundleinput contract."""
+    """An input violates the bundle input contract."""
 
     def __init__(self, *, root: Path) -> None:
         """Describe the violated invariant.
@@ -111,14 +112,14 @@ def scan(
     suffixes: tuple[str, ...] = _DEFAULT_SUFFIXES,
     max_bytes: int = _MAX_BYTES,
 ) -> list[str]:
-    """Return sorted 'path:line: [rule] message' findings for a build directory.
+    """Return sorted ``path:line: [rule] message`` findings for a build directory.
 
     Args:
         root: Build output directory to scan.
         deny: Extra regular expressions that must not appear (for example
             internal host names).
         allow: Regular expressions; a match fully covered by one is ignored.
-        forbid_source_maps: Report every '.map' file as a finding.
+        forbid_source_maps: Report every ``.map`` file as a finding.
         suffixes: File suffixes to read.
         max_bytes: Files larger than this are reported instead of read.
 
@@ -146,16 +147,22 @@ def scan(
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for number, line in enumerate(text.splitlines(), start=1):
-            for rule in rules:
-                for match in rule.pattern.finditer(line):
-                    value = match.group(0)
-                    if any(item.fullmatch(value) for item in allowed):
-                        continue
-                    findings.append(
-                        f"{relative}:{number}: [{rule.name}] {_redact(value)}; "
-                        f"{rule.hint}"
-                    )
+            findings.extend(
+                _line_findings(f"{relative}:{number}", line, rules, allowed)
+            )
     return sorted(findings)
+
+
+def _line_findings(
+    where: str, line: str, rules: list[Rule], allowed: list[re.Pattern[str]]
+) -> list[str]:
+    """Return rule matches on one line that no allow pattern fully covers."""
+    return [
+        f"{where}: [{rule.name}] {_redact(match.group(0))}; {rule.hint}"
+        for rule in rules
+        for match in rule.pattern.finditer(line)
+        if not any(item.fullmatch(match.group(0)) for item in allowed)
+    ]
 
 
 class SelfTestIssue(StrEnum):
@@ -227,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     """Scan a build directory or run the self-test; return a process exit code.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when no findings exist, 1 when findings or input errors exist.

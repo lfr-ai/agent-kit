@@ -100,6 +100,12 @@
   "chat.useClaudeMdFile": false,
   "chat.useClaudeHooks": false,
   "chat.mcp.autostart": "never",
+  "chat.tools.terminal.autoApprove": {
+    "/^(pip|pip3|pipx|uvx|npx|bunx)(\\s|$)/": false,
+    "/^python[0-9.]*(\\.exe)?\\s+-m\\s+pip\\s+install\\b/": false,
+    "/^uv\\s+(add|pip\\s+install|tool\\s+(install|run))\\b/": false,
+    "/^(npm|pnpm|yarn|bun)\\s+(add|i|install|exec|dlx|x)\\b/": false
+  },
 
   "files.watcherExclude": {
     "**/.venv/**": true,

@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TypeGuard, override
+from typing import TYPE_CHECKING, TypeGuard, override
 
 import yaml
 import yaml.constructor
-from yaml.error import Mark
-from yaml.nodes import MappingNode
 
 from agent_kit.core.errors import DuplicateJsonFieldError
 from agent_kit.core.models import (
@@ -20,6 +18,32 @@ from agent_kit.core.models import (
     SourceDocument,
 )
 from agent_kit.core.ports.catalog import CatalogPort
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from yaml.error import Mark
+    from yaml.nodes import MappingNode
+
+
+_EXCLUDED_ROOT_DIRECTORIES = frozenset(
+    {
+        ".git",
+        ".venv",
+        "build",
+        "dist",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".importlinter_cache",
+        ".hypothesis",
+        ".ty",
+        "apm_modules",
+        "node_modules",
+    }
+)
+_BYTECODE_DIRECTORIES = frozenset({"__pycache__"})
+_BYTECODE_SUFFIXES = frozenset({".pyc", ".pyo"})
 
 
 class _UnhashableYamlKeyError(yaml.constructor.ConstructorError):
@@ -125,58 +149,56 @@ def _decode_mapping(text: str) -> tuple[object | None, bool]:
         loader.dispose()
 
 
-def _decode_document(path: Path, relative_path: str) -> SourceDocument:
-    """Capture one file while refusing to read a symlink target."""
-    try:
-        is_symlink = _is_link(path)
-        is_directory = path.is_dir() and not is_symlink
-        if is_symlink or is_directory:
-            return SourceDocument(
-                content=b"",
-                frontmatter=None,
-                frontmatter_error=False,
-                is_directory=is_directory,
-                is_symlink=is_symlink,
-                parse_error=False,
-                relative_path=relative_path,
-                text=None,
-                yaml_value=None,
-            )
-        content = path.read_bytes()
-    except OSError:
-        return SourceDocument(
-            content=b"",
-            frontmatter=None,
-            frontmatter_error=False,
-            is_directory=False,
-            is_symlink=False,
-            parse_error=True,
-            relative_path=relative_path,
-            text=None,
-            yaml_value=None,
-        )
+def _unread_document(
+    relative_path: str,
+    *,
+    is_directory: bool = False,
+    is_symlink: bool = False,
+    parse_error: bool = False,
+) -> SourceDocument:
+    """Describe a path whose bytes are deliberately or necessarily not read."""
+    return SourceDocument(
+        content=b"",
+        frontmatter=None,
+        frontmatter_error=False,
+        is_directory=is_directory,
+        is_symlink=is_symlink,
+        parse_error=parse_error,
+        relative_path=relative_path,
+        text=None,
+        yaml_value=None,
+    )
 
+
+def _decode_utf8(content: bytes) -> str | None:
+    """Decode UTF-8 text, returning ``None`` for binary content."""
     try:
-        text = content.decode("utf-8")
+        return content.decode("utf-8")
     except UnicodeDecodeError:
-        text = None
+        return None
 
+
+def _decode_frontmatter(text: str) -> tuple[object | None, bool]:
+    """Parse leading ``---`` frontmatter, flagging an unterminated block."""
+    if text.splitlines()[:1] != ["---"]:
+        return None, False
+    start = len(text.splitlines(keepends=True)[0])
+    closing = text.find("\n---", start)
+    if closing < 0:
+        return None, True
+    return _decode_mapping(text[start:closing])
+
+
+def _decoded_document(path: Path, relative_path: str, content: bytes) -> SourceDocument:
+    """Decode captured bytes as text, YAML, and Markdown frontmatter."""
+    text = _decode_utf8(content)
     yaml_value: object | None = None
     parse_error = False
     if text is not None and path.suffix.lower() in {".yml", ".yaml"}:
         yaml_value, parse_error = _decode_mapping(text)
-
-    frontmatter: object | None = None
-    frontmatter_error = False
-    if text is not None and text.splitlines()[:1] == ["---"]:
-        first_line = text.splitlines(keepends=True)[0]
-        start = len(first_line)
-        closing = text.find("\n---", start)
-        if closing < 0:
-            frontmatter_error = True
-        else:
-            frontmatter, frontmatter_error = _decode_mapping(text[start:closing])
-
+    frontmatter, frontmatter_error = (
+        _decode_frontmatter(text) if text is not None else (None, False)
+    )
     return SourceDocument(
         content=content,
         frontmatter=frontmatter,
@@ -188,6 +210,90 @@ def _decode_document(path: Path, relative_path: str) -> SourceDocument:
         text=text,
         yaml_value=yaml_value,
     )
+
+
+def _decode_document(path: Path, relative_path: str) -> SourceDocument:
+    """Capture one file while refusing to read a symlink target."""
+    try:
+        is_symlink = _is_link(path)
+        is_directory = path.is_dir() and not is_symlink
+        if is_symlink or is_directory:
+            return _unread_document(
+                relative_path, is_directory=is_directory, is_symlink=is_symlink
+            )
+        content = path.read_bytes()
+    except OSError:
+        return _unread_document(relative_path, parse_error=True)
+    return _decoded_document(path, relative_path, content)
+
+
+def _walk_documents(
+    base: Path,
+    *,
+    exclude: Path | None = None,
+    excluded_directories: frozenset[str] = frozenset(),
+    excluded_suffixes: frozenset[str] = frozenset(),
+) -> Iterator[SourceDocument]:
+    """Decode files in sorted order, capturing linked directories unfollowed."""
+    for current, directories, filenames in os.walk(
+        base, topdown=True, followlinks=False
+    ):
+        current_path = Path(current)
+        retained: list[str] = []
+        for directory in sorted(directories):
+            path = current_path / directory
+            if _is_link(path):
+                yield _decode_document(path, path.relative_to(base).as_posix())
+            else:
+                retained.append(directory)
+        directories[:] = sorted(set(retained) - excluded_directories)
+        for filename in sorted(filenames):
+            path = current_path / filename
+            if _include_file(
+                path, exclude=exclude, excluded_suffixes=excluded_suffixes
+            ):
+                yield _decode_document(path, path.relative_to(base).as_posix())
+
+
+def _include_file(
+    path: Path, *, exclude: Path | None, excluded_suffixes: frozenset[str]
+) -> bool:
+    """Skip source bytecode without hiding linked files from validation."""
+    return path != exclude and (path.suffix not in excluded_suffixes or _is_link(path))
+
+
+def _read_provenance(path: Path) -> tuple[object | None, bool]:
+    """Read and decode provenance JSON, flagging any read or decode failure."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None, True
+    return _decode_json(text)
+
+
+def _bundle_declaration(definition: object) -> tuple[str, str] | None:
+    """Return a declared bundle's safe relative path and kind, if usable."""
+    if not _string_mapping(definition):
+        return None
+    relative = _safe_relative_bundle_path(definition.get("path"))
+    if relative is None:
+        return None
+    kind = definition.get("kind")
+    return relative, kind if isinstance(kind, str) else ""
+
+
+def _retained_directories(
+    current: Path, directories: list[str], root: Path, symlinks: list[str]
+) -> list[str]:
+    """Record linked directories and return the non-generated ones to descend."""
+    retained: list[str] = []
+    for name in sorted(directories):
+        path = current / name
+        if _is_link(path):
+            symlinks.append(path.relative_to(root).as_posix())
+        elif name not in _EXCLUDED_ROOT_DIRECTORIES:
+            retained.append(name)
+    return retained
 
 
 def _has_symlink_component(root: Path, relative: str) -> bool:
@@ -270,26 +376,11 @@ class FileCatalogAdapter(CatalogPort):
         policy = policy_document.yaml_value
         policy_error = policy_document.parse_error or policy_document.text is None
 
-        bundles: list[BundleSource] = []
-        if _string_mapping(catalog):
-            raw_bundles = catalog.get("bundles")
-            if _string_mapping(raw_bundles):
-                for name, definition in raw_bundles.items():
-                    if not _string_mapping(definition):
-                        continue
-                    relative = _safe_relative_bundle_path(definition.get("path"))
-                    if relative is None:
-                        continue
-                    kind_value = definition.get("kind")
-                    kind = kind_value if isinstance(kind_value, str) else ""
-                    bundles.append(
-                        self._load_bundle(resolved_root, name, relative, kind)
-                    )
-
+        bundles = self._load_bundles(resolved_root, catalog)
         root_documents = self._load_root_documents(resolved_root)
         root_paths, root_symlinks = self._list_root_paths(resolved_root)
         return CatalogSnapshot(
-            bundles=tuple(bundles),
+            bundles=bundles,
             catalog=catalog,
             catalog_document=catalog_document,
             catalog_error=catalog_error,
@@ -307,48 +398,41 @@ class FileCatalogAdapter(CatalogPort):
         """Capture composed files and provenance without following symlinks."""
         root_is_symlink = _is_link(root)
         resolved_root = root.resolve(strict=False)
-        files: list[SourceDocument] = []
         provenance_path = resolved_root / "provenance.json"
-        provenance: object | None = None
-        provenance_error = True
         provenance_is_symlink = _is_link(provenance_path)
-        if not root_is_symlink and not provenance_is_symlink:
-            try:
-                provenance_text = provenance_path.read_text(encoding="utf-8")
-                provenance, provenance_error = _decode_json(provenance_text)
-            except (OSError, UnicodeError):
-                pass
-
-        if resolved_root.is_dir() and not root_is_symlink:
-            for current, directories, filenames in os.walk(
-                resolved_root, topdown=True, followlinks=False
-            ):
-                current_path = Path(current)
-                directories.sort()
-                filenames.sort()
-                retained: list[str] = []
-                for directory in directories:
-                    path = current_path / directory
-                    if _is_link(path):
-                        relative = path.relative_to(resolved_root).as_posix()
-                        files.append(_decode_document(path, relative))
-                    else:
-                        retained.append(directory)
-                directories[:] = retained
-                for filename in filenames:
-                    path = current_path / filename
-                    if path == provenance_path:
-                        continue
-                    relative = path.relative_to(resolved_root).as_posix()
-                    files.append(_decode_document(path, relative))
+        provenance, provenance_error = (
+            (None, True)
+            if root_is_symlink or provenance_is_symlink
+            else _read_provenance(provenance_path)
+        )
+        files = (
+            tuple(_walk_documents(resolved_root, exclude=provenance_path))
+            if resolved_root.is_dir() and not root_is_symlink
+            else ()
+        )
         return ComposedSnapshot(
-            files=tuple(files),
+            files=files,
             provenance=provenance,
             provenance_error=provenance_error,
             provenance_is_symlink=provenance_is_symlink,
             root=resolved_root,
             root_is_symlink=root_is_symlink,
         )
+
+    def _load_bundles(
+        self, root: Path, catalog: object | None
+    ) -> tuple[BundleSource, ...]:
+        """Capture every bundle the decoded catalog declares at a safe path."""
+        raw_bundles = catalog.get("bundles") if _string_mapping(catalog) else None
+        if not _string_mapping(raw_bundles):
+            return ()
+        bundles: list[BundleSource] = []
+        for name, definition in raw_bundles.items():
+            declaration = _bundle_declaration(definition)
+            if declaration is not None:
+                relative, kind = declaration
+                bundles.append(self._load_bundle(root, name, relative, kind))
+        return tuple(bundles)
 
     def _load_bundle(
         self, root: Path, name: str, relative: str, kind: str
@@ -362,52 +446,32 @@ class FileCatalogAdapter(CatalogPort):
         apm_is_symlink = _is_link(apm_root)
         apm_exists = apm_root.is_dir() and not apm_is_symlink and not root_is_symlink
 
-        manifest_path = bundle_root / "apm.yml"
-        if root_is_symlink:
-            manifest_document = SourceDocument(
-                content=b"",
-                frontmatter=None,
-                frontmatter_error=False,
-                is_directory=False,
-                is_symlink=True,
-                parse_error=True,
-                relative_path=f"{relative}/apm.yml",
-                text=None,
-                yaml_value=None,
-            )
-        else:
-            manifest_document = _decode_document(manifest_path, f"{relative}/apm.yml")
+        manifest_relative = f"{relative}/apm.yml"
+        manifest_document = (
+            _unread_document(manifest_relative, is_symlink=True, parse_error=True)
+            if root_is_symlink
+            else _decode_document(bundle_root / "apm.yml", manifest_relative)
+        )
         manifest_error = (
             manifest_document.parse_error
             or manifest_document.text is None
             or manifest_document.is_symlink
         )
-
-        files: list[SourceDocument] = []
-        if apm_exists:
-            for current, directories, filenames in os.walk(
-                apm_root, topdown=True, followlinks=False
-            ):
-                current_path = Path(current)
-                directories.sort()
-                filenames.sort()
-                retained: list[str] = []
-                for directory in directories:
-                    path = current_path / directory
-                    relative_path = path.relative_to(apm_root).as_posix()
-                    if _is_link(path):
-                        files.append(_decode_document(path, relative_path))
-                    else:
-                        retained.append(directory)
-                directories[:] = retained
-                for filename in filenames:
-                    path = current_path / filename
-                    relative_path = path.relative_to(apm_root).as_posix()
-                    files.append(_decode_document(path, relative_path))
+        files = (
+            tuple(
+                _walk_documents(
+                    apm_root,
+                    excluded_directories=_BYTECODE_DIRECTORIES,
+                    excluded_suffixes=_BYTECODE_SUFFIXES,
+                )
+            )
+            if apm_exists
+            else ()
+        )
 
         return BundleSource(
             apm_exists=apm_exists,
-            files=tuple(files),
+            files=files,
             kind=kind,
             manifest=manifest_document.yaml_value,
             manifest_document=manifest_document,
@@ -443,37 +507,19 @@ class FileCatalogAdapter(CatalogPort):
 
     def _list_root_paths(self, root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """List source paths and symlinks without traversing linked directories."""
-        paths: list[str] = []
-        symlinks: list[str] = []
         if not root.is_dir():
             return (), ()
+        paths: list[str] = []
+        symlinks: list[str] = []
         for current, directories, filenames in os.walk(
             root, topdown=True, followlinks=False
         ):
             current_path = Path(current)
-            retained: list[str] = []
-            for name in sorted(directories):
-                path = current_path / name
-                relative = path.relative_to(root).as_posix()
-                if _is_link(path):
-                    symlinks.append(relative)
-                elif name not in {
-                    ".venv",
-                    "build",
-                    "dist",
-                    "__pycache__",
-                    ".pytest_cache",
-                    ".ruff_cache",
-                    ".importlinter_cache",
-                    "apm_modules",
-                }:
-                    retained.append(name)
-            directories[:] = retained
+            directories[:] = _retained_directories(
+                current_path, directories, root, symlinks
+            )
             for filename in sorted(filenames):
                 path = current_path / filename
                 relative = path.relative_to(root).as_posix()
-                if _is_link(path):
-                    symlinks.append(relative)
-                else:
-                    paths.append(relative)
+                (symlinks if _is_link(path) else paths).append(relative)
         return tuple(paths), tuple(symlinks)

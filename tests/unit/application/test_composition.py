@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
-from pathlib import Path
+import json
+from typing import TYPE_CHECKING
 
 import pytest
 
-import agent_kit.infrastructure.output_adapter as output_module
 from agent_kit.application.services.catalog_service import CatalogService
 from agent_kit.core.models import CompositionPlan, PlannedFile
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+import agent_kit.infrastructure.output_adapter as output_module
 from agent_kit.infrastructure.output_adapter import OutputAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _plan(

@@ -36,6 +36,17 @@ from tasks.contracts import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_HANDLER_TIMEOUT_SECONDS = 60.0
+_DEFAULT_MAX_ATTEMPTS = 5
+_DEFAULT_BATCH_SIZE_MESSAGES = 10
+_DEFAULT_CONCURRENT_HANDLERS = 4
+_DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 120.0
+_DEFAULT_LEASE_RENEWAL_INTERVAL_SECONDS = 40.0
+_DEFAULT_BASE_DELAY_SECONDS = 2.0
+_DEFAULT_MAX_DELAY_SECONDS = 300.0
+_DEFAULT_IDEMPOTENCY_LEASE_SECONDS = 600.0
+_RETRY_BACKOFF_FACTOR = 2
+
 
 class Outcome(StrEnum):
     """What the worker did with one delivery."""
@@ -61,8 +72,8 @@ class HandlerSpec:
 
     handler: Handler
     versions: frozenset[int]
-    timeout_s: float = 60.0
-    max_attempts: int = 5
+    timeout_s: float = _DEFAULT_HANDLER_TIMEOUT_SECONDS
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -80,13 +91,13 @@ class WorkerSettings:
         idle_wait_s: Pause after an empty receive.
     """
 
-    batch_size: int = 10
-    concurrency: int = 4
-    visibility_timeout_s: float = 120.0
-    renew_every_s: float = 40.0
-    base_delay_s: float = 2.0
-    max_delay_s: float = 300.0
-    idempotency_lease_s: float = 600.0
+    batch_size: int = _DEFAULT_BATCH_SIZE_MESSAGES
+    concurrency: int = _DEFAULT_CONCURRENT_HANDLERS
+    visibility_timeout_s: float = _DEFAULT_VISIBILITY_TIMEOUT_SECONDS
+    renew_every_s: float = _DEFAULT_LEASE_RENEWAL_INTERVAL_SECONDS
+    base_delay_s: float = _DEFAULT_BASE_DELAY_SECONDS
+    max_delay_s: float = _DEFAULT_MAX_DELAY_SECONDS
+    idempotency_lease_s: float = _DEFAULT_IDEMPOTENCY_LEASE_SECONDS
     idle_wait_s: float = 1.0
 
     def __post_init__(self) -> None:
@@ -110,7 +121,10 @@ def retry_delay(
     Returns:
         Seconds before the message becomes visible again.
     """
-    cap = min(settings.max_delay_s, settings.base_delay_s * 2 ** (attempt - 1))
+    cap = min(
+        settings.max_delay_s,
+        settings.base_delay_s * _RETRY_BACKOFF_FACTOR ** (attempt - 1),
+    )
     return rng() * cap
 
 

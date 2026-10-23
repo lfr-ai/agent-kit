@@ -1,23 +1,23 @@
 """Check that VS Code tasks which call the Task runner name existing Taskfile targets.
 
-The checker reads a workspace 'tasks.json' (JSON with comments and trailing commas,
-as VS Code accepts) and a 'Taskfile.yml'. Every task whose 'type' is 'process' or
-'shell' and whose command is the 'task' executable must name targets that are
-declared under the top-level 'tasks:' mapping of the Taskfile. The Taskfile is
+The checker reads a workspace ``tasks.json`` (JSON with comments and trailing commas,
+as VS Code accepts) and a ``Taskfile.yml``. Every task whose ``type`` is ``process`` or
+``shell`` and whose command is the ``task`` executable must name targets that are
+declared under the top-level ``tasks:`` mapping of the Taskfile. The Taskfile is
 parsed minimally without a YAML library: only top-level task keys are read.
 
-Findings are printed as 'path:line: message' and the exit status is 1 when any
+Findings are printed as ``path:line: message`` and the exit status is 1 when any
 finding exists, 2 when inputs cannot be read, and 0 otherwise.
 """
 
 import argparse
+from dataclasses import dataclass
+from enum import StrEnum
 import json
+from pathlib import Path
 import re
 import shlex
 import sys
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
 
 _TASK_EXECUTABLES = frozenset({"task", "task.exe", "go-task", "go-task.exe"})
 _RUNNABLE_TYPES = frozenset({"process", "shell"})
@@ -47,6 +47,10 @@ _NESTED_KEY = re.compile(
 )
 _VARIABLE = re.compile(r"\$\{[^}]+\}")
 _CLOSING = re.compile(r"\s*[}\]]")
+_EXIT_USAGE = 2
+_BLOCK_COMMENT_OPEN = "/*"
+_BLOCK_COMMENT_CLOSE = "*/"
+_SELF_TEST_BAD_FINDINGS = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -54,8 +58,8 @@ class Taskfile:
     """Top-level names declared by a Taskfile.
 
     Attributes:
-        tasks: Names declared directly under the top-level 'tasks:' key.
-        includes: Namespaces declared under the top-level 'includes:' key.
+        tasks: Names declared directly under the top-level ``tasks:`` key.
+        includes: Namespaces declared under the top-level ``includes:`` key.
     """
 
     tasks: frozenset[str]
@@ -68,10 +72,10 @@ class Invocation:
 
     Attributes:
         label: The editor task label, or a positional placeholder.
-        line: The 1-based line in 'tasks.json' where the task label appears.
+        line: The 1-based line in ``tasks.json`` where the task label appears.
         targets: Task names passed to the runner, in order.
         dynamic: Arguments containing unresolved editor variables.
-        listing: Whether a flag such as '--list' makes a target unnecessary.
+        listing: Whether a flag such as ``--list`` makes a target unnecessary.
     """
 
     label: str
@@ -93,58 +97,60 @@ def strip_jsonc(text: str) -> str:
     """
     output: list[str] = []
     index = 0
-    in_string = False
-    length = len(text)
-    while index < length:
-        char = text[index]
-        if in_string:
-            output.append(char)
-            if char == "\\" and index + 1 < length:
-                output.append(text[index + 1])
-                index += 2
-                continue
-            if char == '"':
-                in_string = False
-            index += 1
-            continue
-        if char == '"':
-            in_string = True
-            output.append(char)
-            index += 1
-            continue
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            index = length if end == -1 else end
-            continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            stop = length if end == -1 else end + 2
+    while index < len(text):
+        if text[index] == '"':
+            stop = _string_end(text, index)
+            output.append(text[index:stop])
+        elif (stop := _comment_end(text, index)) is not None:
             output.append("\n" * text.count("\n", index, stop))
-            index = stop
-            continue
-        output.append(char)
-        index += 1
+        else:
+            stop = index + 1
+            output.append(text[index])
+        index = stop
     return _drop_trailing_commas("".join(output))
+
+
+def _string_end(text: str, start: int) -> int:
+    """Return the index just past the JSON string opening at ``start``."""
+    index = start + 1
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 1
+        index += 1
+        if char == '"':
+            break
+    return min(index, len(text))
+
+
+def _comment_end(text: str, index: int) -> int | None:
+    """Return where a comment starting at ``index`` ends, or ``None``.
+
+    A line comment ends before its newline so the newline is preserved.
+    """
+    if text.startswith("//", index):
+        end = text.find("\n", index)
+        return len(text) if end == -1 else end
+    if text.startswith(_BLOCK_COMMENT_OPEN, index):
+        end = text.find(_BLOCK_COMMENT_CLOSE, index + len(_BLOCK_COMMENT_OPEN))
+        return len(text) if end == -1 else end + len(_BLOCK_COMMENT_CLOSE)
+    return None
 
 
 def _drop_trailing_commas(text: str) -> str:
     """Remove commas that directly precede a closing bracket outside strings."""
     output: list[str] = []
-    in_string = False
-    escaped = False
-    for index, char in enumerate(text):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-        elif char == "," and _CLOSING.match(text, index + 1):
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            stop = _string_end(text, index)
+            output.append(text[index:stop])
+            index = stop
             continue
-        output.append(char)
+        if char != "," or not _CLOSING.match(text, index + 1):
+            output.append(char)
+        index += 1
     return "".join(output)
 
 
@@ -152,7 +158,7 @@ def parse_taskfile(text: str) -> Taskfile:
     """Read top-level task and include names from Taskfile YAML text.
 
     Only block mappings are understood. Keys may be bare, single-quoted or
-    double-quoted, and may contain colons such as 'docs:build'.
+    double-quoted, and may contain colons such as ``docs:build``.
 
     Args:
         text: The Taskfile content.
@@ -163,12 +169,7 @@ def parse_taskfile(text: str) -> Taskfile:
     sections: dict[str, set[str]] = {"tasks": set(), "includes": set()}
     current: str | None = None
     child_indent: int | None = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        indent = len(line) - len(stripped)
+    for indent, line in _yaml_content_lines(text):
         if indent == 0:
             match = _TOP_LEVEL_KEY.match(line)
             current = match.group(1) if match and match.group(1) in sections else None
@@ -178,15 +179,32 @@ def parse_taskfile(text: str) -> Taskfile:
             continue
         if child_indent is None:
             child_indent = indent
-        if indent != child_indent:
-            continue
-        nested = _NESTED_KEY.match(line)
-        if nested:
-            name = nested.group("dq") or nested.group("sq") or nested.group("bare")
-            sections[current].add(name.strip())
+        name = _nested_key_name(line) if indent == child_indent else None
+        if name is not None:
+            sections[current].add(name)
     return Taskfile(
         tasks=frozenset(sections["tasks"]), includes=frozenset(sections["includes"])
     )
+
+
+def _yaml_content_lines(text: str) -> list[tuple[int, str]]:
+    """Return ``(indent, line)`` pairs for lines that are not blank or comments."""
+    content: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.lstrip()
+        if stripped and not stripped.startswith("#"):
+            content.append((len(line) - len(stripped), line))
+    return content
+
+
+def _nested_key_name(line: str) -> str | None:
+    """Return the mapping key declared by an indented line, if any."""
+    nested = _NESTED_KEY.match(line)
+    if nested is None:
+        return None
+    name = nested.group("dq") or nested.group("sq") or nested.group("bare")
+    return name.strip()
 
 
 def _command_words(definition: dict[str, object]) -> list[str] | None:
@@ -225,18 +243,12 @@ def targets_from_words(words: list[str]) -> tuple[tuple[str, ...], tuple[str, ..
     for word in words[1:]:
         if skip_value:
             skip_value = False
-            continue
-        if word == "--":
+        elif word == "--":
             break
-        if word.startswith("-"):
+        elif word.startswith("-"):
             skip_value = word in _VALUE_FLAGS
-            continue
-        if "=" in word:
-            continue
-        if _VARIABLE.search(word):
-            dynamic.append(word)
-            continue
-        targets.append(word)
+        elif "=" not in word:
+            (dynamic if _VARIABLE.search(word) else targets).append(word)
     return tuple(targets), tuple(dynamic)
 
 
@@ -283,51 +295,74 @@ def invocations(text: str) -> list[Invocation]:
     """Find editor tasks, including platform overrides, that call the Task runner.
 
     Args:
-        text: The 'tasks.json' content, with or without comments.
+        text: The ``tasks.json`` content, with or without comments.
 
     Returns:
         Each Task runner invocation with its targets and source line.
 
     Raises:
-        ValueError: The content is not a JSON object with a 'tasks' list.
+        ValueError: The content is not a JSON object with a ``tasks`` list.
         TypeError: A present JSON container has the wrong Python type.
+    """
+    found: list[Invocation] = []
+    for position, task in enumerate(_task_entries(text), start=1):
+        if not isinstance(task, dict):
+            continue
+        label = task.get("label")
+        label = label if isinstance(label, str) else f"task #{position}"
+        line = _label_line(text, label)
+        for variant in _platform_variants(task):
+            invocation = _invocation(variant, label=label, line=line)
+            if invocation is not None:
+                found.append(invocation)
+    return found
+
+
+def _task_entries(text: str) -> list[object]:
+    """Return the ``tasks`` list of a ``tasks.json`` document.
+
+    Raises:
+        ValueError: The document has no ``tasks`` key.
+        TypeError: The document or its ``tasks`` value has the wrong type.
     """
     document = json.loads(strip_jsonc(text))
     if not isinstance(document, dict):
         raise TaskInputTypeError(TaskInputIssue.DOCUMENT_SHAPE)
     if "tasks" not in document:
         raise TaskInputError(TaskInputIssue.DOCUMENT_SHAPE)
-    if not isinstance(document["tasks"], list):
+    tasks = document["tasks"]
+    if not isinstance(tasks, list):
         raise TaskInputTypeError(TaskInputIssue.DOCUMENT_SHAPE)
-    found: list[Invocation] = []
-    for position, task in enumerate(document["tasks"], start=1):
-        if not isinstance(task, dict):
-            continue
-        label = task.get("label")
-        label = label if isinstance(label, str) else f"task #{position}"
-        line = _label_line(text, label)
-        variants = [task]
-        for key in _PLATFORM_KEYS:
-            override = task.get(key)
-            if isinstance(override, dict):
-                variants.append({**task, **override})
-        for variant in variants:
-            if variant.get("type", "process") not in _RUNNABLE_TYPES:
-                continue
-            words = _command_words(variant)
-            if not words or Path(words[0]).name.casefold() not in _TASK_EXECUTABLES:
-                continue
-            targets, dynamic = targets_from_words(words)
-            found.append(
-                Invocation(
-                    label=label,
-                    line=line,
-                    targets=targets,
-                    dynamic=dynamic,
-                    listing=any(word in _LISTING_FLAGS for word in words[1:]),
-                )
-            )
-    return found
+    return tasks
+
+
+def _platform_variants(task: dict[str, object]) -> list[dict[str, object]]:
+    """Return the task followed by each platform override merged into it."""
+    variants = [task]
+    for key in _PLATFORM_KEYS:
+        override = task.get(key)
+        if isinstance(override, dict):
+            variants.append({**task, **override})
+    return variants
+
+
+def _invocation(
+    variant: dict[str, object], *, label: str, line: int
+) -> Invocation | None:
+    """Describe one task variant when it runs the Task executable."""
+    if variant.get("type", "process") not in _RUNNABLE_TYPES:
+        return None
+    words = _command_words(variant)
+    if not words or Path(words[0]).name.casefold() not in _TASK_EXECUTABLES:
+        return None
+    targets, dynamic = targets_from_words(words)
+    return Invocation(
+        label=label,
+        line=line,
+        targets=targets,
+        dynamic=dynamic,
+        listing=any(word in _LISTING_FLAGS for word in words[1:]),
+    )
 
 
 def check(
@@ -341,7 +376,7 @@ def check(
     """Report editor tasks whose Task runner targets are not declared.
 
     Args:
-        tasks_text: The 'tasks.json' content.
+        tasks_text: The ``tasks.json`` content.
         taskfile: Names parsed from the Taskfile.
         tasks_path: Display path used in findings.
         allow_dynamic: Accept arguments built from editor variables.
@@ -349,7 +384,7 @@ def check(
             be verified without reading the included Taskfile files.
 
     Returns:
-        Sorted 'path:line: message' findings.
+        Sorted ``path:line: message`` findings.
     """
     findings: set[str] = set()
     for item in invocations(tasks_text):
@@ -446,7 +481,9 @@ def self_test() -> None:
         ' "args": ["${input:name}"]}\n]}\n'
     )
     findings = check(bad, taskfile, tasks_path="tasks.json")
-    if len(findings) != 2 or not findings[0].startswith("tasks.json:2:"):  # noqa: PLR2004
+    if len(findings) != _SELF_TEST_BAD_FINDINGS or not findings[0].startswith(
+        "tasks.json:2:"
+    ):
         raise SelfTestError(SelfTestIssue.UNEXPECTED_FINDINGS, findings=findings)
     if check(
         bad.replace("deploy", "verify"), taskfile, tasks_path="t", allow_dynamic=True
@@ -458,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     """Check task wiring for one workspace.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when every target is declared, 1 on findings, 2 on unreadable input.
@@ -494,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (OSError, UnicodeError, ValueError, TaskInputTypeError) as error:
         print(f"Cannot check task wiring: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     for finding in findings:
         print(finding)
     if not findings:

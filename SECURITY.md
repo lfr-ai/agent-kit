@@ -3,15 +3,12 @@
 ## Reporting
 
 Do not publish credentials or exploit details in public issues or pull requests.
-After hosting administrators enable private vulnerability reporting, use
-**Security -> Report a vulnerability** on the hosting repository.
+Use **Security -> Report a vulnerability** on the hosting repository.
 If that control is unavailable, use `security_contact` in
 [maintainers.json](.github/maintainers.json).
 
-The documented private contact is [lfr@tik-ai.dk](mailto:lfr@tik-ai.dk), matching
-the personal owner's published Ekko security policy.
-Private GitHub reporting is not claimed enabled until the repository is hosted.
-Publication checks reject missing or mismatched ownership and reporting metadata.
+The private contact is [lfr@tik-ai.dk](mailto:lfr@tik-ai.dk). Prefer GitHub
+private vulnerability reporting and use email only when it is unavailable.
 
 Include a synthetic reproduction, affected version, impact, and proposed fix
 where available. Maintainers coordinate a private patch and advisory before
@@ -31,6 +28,9 @@ Use pinned versions; a newer unsupported line or a moving branch is not implicit
 - Native permissions, credentials, and managed policy remain host-specific.
 - Never expose CI secrets to fork-triggered workflows.
 - Keep releases pinned and auditable; review script and integration changes as code.
+- Dependencies change only through the reviewed, audited lockfile; see
+  [dependency security](docs/dependency-security.md) for vulnerability, license,
+  and agent-install controls and their limits.
 
 ## Maintainer handling
 

@@ -28,6 +28,11 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+_DURATION_DECIMAL_PLACES = 2
+_REPORT_INDENT_SPACES = 2
+_DEFAULT_TIMEOUT_SECONDS = 1800.0
+_USAGE_EXIT = 2
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Step:
@@ -233,7 +238,7 @@ def run_gate(
             fix_status, _ = _run(step.fix, timeout=timeout)
             print(f"    fixer {fix_status}", flush=True)
         status, code = _run(step.check, timeout=timeout)
-        seconds = round(time.perf_counter() - started, 2)
+        seconds = round(time.perf_counter() - started, _DURATION_DECIMAL_PLACES)
         print(f"    {status} ({seconds}s)", flush=True)
         results.append(
             Result(
@@ -279,7 +284,9 @@ def write_report(path: Path, results: Sequence[Result], *, mode: str) -> None:
         and all(result.status == "passed" for result in results),
         "steps": [asdict(result) for result in results],
     }
-    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(report, indent=_REPORT_INDENT_SPACES) + "\n", encoding="utf-8"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -299,7 +306,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip", action="append", default=[], metavar="STEP")
     parser.add_argument("--include-slow", action="store_true")
     parser.add_argument("--keep-going", action="store_true")
-    parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
+    parser.add_argument(
+        "--timeout", type=float, default=_DEFAULT_TIMEOUT_SECONDS, metavar="SECONDS"
+    )
     parser.add_argument("--report", type=Path, metavar="JSON")
     parser.add_argument("--list", action="store_true", help="list steps and exit")
     args = parser.parse_args(argv)
@@ -314,10 +323,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as error:
         print(error, file=sys.stderr)
-        return 2
+        return _USAGE_EXIT
     if not steps:
         print("no steps selected", file=sys.stderr)
-        return 2
+        return _USAGE_EXIT
     results = run_gate(
         steps, fix=args.fix, keep_going=args.keep_going, timeout=args.timeout
     )

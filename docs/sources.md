@@ -1,6 +1,7 @@
 # Research and provenance
 
-APM/source baseline reviewed 2026-10-08; GitHub governance reviewed 2026-10-09.
+APM/source baseline reviewed 2026-10-08; repository governance reviewed 2026-10-09;
+live GitHub settings rechecked 2026-10-21.
 Source content was written for this toolkit; no company
 application files, proprietary prompts, or third-party skill bodies were copied.
 
@@ -46,13 +47,8 @@ placeholders until consumer approval. No MCP was started or authenticated.
 Registry resolution is not security vetting; upstream licensing, actual tool
 behavior and data disclosure need separate review.
 
-The available reference checkout differed from the previously recorded complete
-baseline, and the expected template/backend reference was unavailable. This
-refresh preserves the recorded identities but does not claim a successful
-live-source parity check. See the [acceptance walkthrough](setup-completeness.md).
-
 The setup-completeness review (2026-10-09, refreshed 2026-10-10 for the Pydantic v2 and
-Polars additions) enumerated Koda's 74 canonical skills,
+Polars additions) enumerated 74 canonical skills,
 31 instructions, 24 agent roles, 24 prompt facades, 22 skill scripts,
 11 integration names, five asset categories, and three hooks.
 The machine-readable mapping records
@@ -83,6 +79,7 @@ subagent enforcement mechanism.
 ## GitHub governance grounding
 
 - [CODEOWNERS matching and write-access requirements](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+- [Dependency graph and dependency review prerequisites](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependency-graph)
 - [Private vulnerability reporting requires hosted enablement](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository)
 - [Secure Actions use and immutable pins](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions)
 - [Codecov YAML configuration](https://docs.codecov.com/docs/codecov-yaml)
@@ -99,16 +96,11 @@ subagent enforcement mechanism.
 - [OpenSSF Scorecard action 2.4.4](https://github.com/ossf/scorecard-action/releases/tag/v2.4.4)
 - [Generated release notes](https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes)
 
-Upload/download/attestation action commits were resolved from public release/tag
-metadata, not guessed from version names. Local workflow syntax was checked with
-the official checksum-verified Actionlint binary; hosted execution is a separate gate.
+## Pin resolution
 
-The personal owner was confirmed through [public account metadata](https://api.github.com/users/lfr-ai),
-[Ekko's public owner metadata](https://api.github.com/repos/lfr-ai/ekko), and its
-existing CODEOWNERS. The private route was confirmed by
-[Ekko's published security policy](https://api.github.com/repos/lfr-ai/ekko/contents/SECURITY.md);
-the local conduct policy documents the same contact. This is not an authenticated
-profile selection or proof that the new repository exists.
+Action, hook, and image pins were resolved from public release and tag metadata,
+not guessed from version names. Pre-commit runs `actionlint` and `zizmor` on
+workflows; hosted execution is a separate gate.
 
 [The pinned artifact uploader](https://github.com/actions/upload-artifact/blob/v7.0.2/README.md)
 preserves hierarchy for multiple paths. Release staging deliberately flattens the
@@ -116,6 +108,9 @@ verified inventory before upload rather than assuming a flattened download.
 
 ## Python data-library guidance
 
+- [Sphinx reStructuredText inline markup](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html#inline-markup)
+- [Docutils inline literal reference](https://docutils.sourceforge.io/docs/user/rst/quickref.html#inline-markup)
+- [CommonMark code spans](https://spec.commonmark.org/0.31.2/#code-spans)
 - [Pydantic models](https://pydantic.dev/docs/validation/latest/concepts/models/)
 - [Pydantic fields](https://pydantic.dev/docs/validation/latest/concepts/fields/)
 - [Pydantic validators](https://pydantic.dev/docs/validation/latest/concepts/validators/)
@@ -137,25 +132,6 @@ Polars 2.0.0 was confirmed as the current major at authoring time from its
 [PyPI metadata](https://pypi.org/project/polars/). The toolkit environment
 currently resolves Pydantic 2.13.5 transitively; the consumer lockfile remains
 authoritative for both libraries.
-
-## Reference-project review
-
-| Reference | Retained pattern | Avoided pattern |
-| --- | --- | --- |
-| Koda setup | Project facts separate from procedures; inward boundaries | Three hand-maintained trees; globally broad profile |
-| Ekko setup | Opt-in capabilities; bounded reviewers; synthetic fixtures | Parity-only MCP checks; license checks tied to a wrong cwd; policy not visibly CI-gated |
-
-Ekko was inspected read-only. Its product code and dependencies are not toolkit
-dependencies. Its license does not imply ownership of every bundled third-party
-artifact. Future reuse requires a source/license/attribution review.
-
-## Application baseline
-
-The read-only Koda checks on 2026-10-08 found two existing Ruff diagnostics:
-the logging helper's argument docstring and a prompt-version list construction.
-Its agent-config guard passed. Neither application nor reference-project files
-were changed. Earlier application architecture/testing evidence informed the
-separation of reusable checks from consumer-owned behavior.
 
 ## Revalidation
 

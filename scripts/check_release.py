@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import argparse
+from email.parser import BytesParser
+from enum import Enum
 import hashlib
 import json
 import os
+from pathlib import Path, PurePosixPath
 import re
 import sys
 import tarfile
 import tomllib
-import zipfile
-from email.parser import BytesParser
-from enum import Enum
-from pathlib import Path, PurePosixPath
 from typing import TypeGuard
+import zipfile
 
 import yaml
 
@@ -130,18 +130,42 @@ def _sdist(path: Path, version: str, license_bytes: bytes) -> None:
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SDIST_LICENSE)
 
 
+def _verify_source_bytes(
+    archive: zipfile.ZipFile, names: list[str], trusted: dict[str, bytes]
+) -> None:
+    """Require unique entries whose bytes equal the independently composed source."""
+    if len(names) != len(set(names)):
+        raise _ReleaseContractError(_ReleaseIssue.DUPLICATE_SOURCE_ENTRIES)
+    if set(names) != set(trusted) or any(
+        archive.read(name) != expected for name, expected in trusted.items()
+    ):
+        raise _ReleaseContractError(_ReleaseIssue.UNTRUSTED_SOURCE)
+
+
+def _unsafe_source_entry(
+    archive: zipfile.ZipFile, name: str, digest: object, required: set[str]
+) -> bool:
+    """Return whether one provenance entry escapes, is unexpected, or mismatches."""
+    relative = PurePosixPath(name)
+    return (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or "\\" in name
+        or (
+            name not in required
+            and not name.startswith((".apm/", ".github/agents/", ".claude/agents/"))
+        )
+        or hashlib.sha256(archive.read(name)).hexdigest() != digest
+    )
+
+
 def _source(
     path: Path, version: str, license_bytes: bytes, trusted: dict[str, bytes]
 ) -> None:
     """Require source bytes, exact inventory, and provenance in the selected ZIP."""
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
-        if len(names) != len(set(names)):
-            raise _ReleaseContractError(_ReleaseIssue.DUPLICATE_SOURCE_ENTRIES)
-        if set(names) != set(trusted) or any(
-            archive.read(name) != expected for name, expected in trusted.items()
-        ):
-            raise _ReleaseContractError(_ReleaseIssue.UNTRUSTED_SOURCE)
+        _verify_source_bytes(archive, names, trusted)
         provenance: object = json.loads(archive.read("provenance.json"))
         if not _mapping(provenance):
             raise _ReleaseContractError(_ReleaseIssue.INVALID_PROVENANCE)
@@ -159,21 +183,11 @@ def _source(
             name.endswith("/SKILL.md") for name in names
         ):
             raise _ReleaseContractError(_ReleaseIssue.MISSING_CAPABILITIES)
-        for name, digest in hashes.items():
-            relative = PurePosixPath(name)
-            if (
-                relative.is_absolute()
-                or ".." in relative.parts
-                or "\\" in name
-                or (
-                    name not in required
-                    and not name.startswith(
-                        (".apm/", ".github/agents/", ".claude/agents/")
-                    )
-                )
-                or hashlib.sha256(archive.read(name)).hexdigest() != digest
-            ):
-                raise _ReleaseContractError(_ReleaseIssue.INVALID_SOURCE_PATH)
+        if any(
+            _unsafe_source_entry(archive, name, digest, required)
+            for name, digest in hashes.items()
+        ):
+            raise _ReleaseContractError(_ReleaseIssue.INVALID_SOURCE_PATH)
         manifest: object = yaml.safe_load(archive.read("apm.yml"))
         if (
             not _mapping(manifest)
@@ -184,83 +198,112 @@ def _source(
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SOURCE_MANIFEST)
 
 
-def check(root: Path, *, tag: str) -> list[str]:  # noqa: C901, PLR0912
+def _metadata_findings(root: Path, version: str, findings: list[str]) -> None:
+    """Append catalog, manifest, and changelog drift from the package version."""
+    catalog: object = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+    if not _mapping(catalog) or catalog.get("version") != version:
+        findings.append("catalog version does not match the package")
+    for relative in ("apm.yml", *(f"packages/{name}/apm.yml" for name in _BUNDLES)):
+        manifest: object = yaml.safe_load((root / relative).read_text(encoding="utf-8"))
+        if (
+            not _mapping(manifest)
+            or manifest.get("version") != version
+            or manifest.get("license") != "MIT"
+        ):
+            findings.append(f"{relative}: version or license drift")
+    if f"## {version} - " not in (root / "CHANGELOG.md").read_text(encoding="utf-8"):
+        findings.append("changelog has no dated entry for the release version")
+
+
+def _ignore_marker(folder: str, path: Path) -> bool:
+    """Return whether a path is the owned distributions ignore marker."""
+    return (
+        folder == "distributions"
+        and path.name == ".gitignore"
+        and not path.is_symlink()
+        and path.is_file()
+        and path.read_bytes() == b"*"
+    )
+
+
+def _artifact_inventory(root: Path) -> set[Path]:
+    """List built artifacts, or nothing when either build folder is absent."""
+    folders = ("distributions", "capabilities")
+    if not all((root / "build" / folder).is_dir() for folder in folders):
+        return set()
+    return {
+        path
+        for folder in folders
+        for path in (root / "build" / folder).iterdir()
+        if not _ignore_marker(folder, path)
+    }
+
+
+def _validate_artifact(
+    root: Path, path: Path, kind: str, *, version: str, license_bytes: bytes
+) -> None:
+    """Dispatch one artifact to the validator for its kind."""
+    if kind == "wheel":
+        _wheel(path, version, license_bytes)
+    elif kind == "sdist":
+        _sdist(path, version, license_bytes)
+    else:
+        _source(path, version, license_bytes, _expected_source(root))
+
+
+def _artifact_findings(
+    root: Path, path: Path, kind: str, *, version: str, license_bytes: bytes
+) -> list[str]:
+    """Report a linked, irregular, or invalid artifact; absent ones are inventory."""
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        return [f"{kind}: artifact is not a regular owned file"]
+    if not path.is_file():
+        return []
+    try:
+        _validate_artifact(
+            root, path, kind, version=version, license_bytes=license_bytes
+        )
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        tarfile.TarError,
+        zipfile.BadZipFile,
+        yaml.YAMLError,
+    ):
+        return [
+            f"{kind if kind != 'source' else 'source archive'}: invalid content or license"
+        ]
+    return []
+
+
+def _collect_findings(root: Path, *, tag: str, findings: list[str]) -> None:
+    """Append every release finding; partial findings survive a later failure."""
+    version = _version(root)
+    license_bytes = (root / "LICENSE").read_bytes()
+    if tag and tag != f"v{version}":
+        findings.append("release tag does not match the package version")
+    if tag:
+        findings.extend(publication_blockers(root))
+    _metadata_findings(root, version, findings)
+    expected = _artifacts(root, version)
+    if _artifact_inventory(root) != set(expected):
+        findings.append(
+            "release artifact inventory is incomplete or contains stale files"
+        )
+    for path, kind in expected.items():
+        findings.extend(
+            _artifact_findings(
+                root, path, kind, version=version, license_bytes=license_bytes
+            )
+        )
+
+
+def check(root: Path, *, tag: str) -> list[str]:
     """Check local artifacts; tagged publication additionally requires approved owners."""
     findings: list[str] = []
     try:
-        version = _version(root)
-        license_bytes = (root / "LICENSE").read_bytes()
-        if tag and tag != f"v{version}":
-            findings.append("release tag does not match the package version")
-        if tag:
-            findings.extend(publication_blockers(root))
-        catalog: object = json.loads(
-            (root / "catalog.json").read_text(encoding="utf-8")
-        )
-        if not _mapping(catalog) or catalog.get("version") != version:
-            findings.append("catalog version does not match the package")
-        for relative in ("apm.yml", *(f"packages/{name}/apm.yml" for name in _BUNDLES)):
-            manifest: object = yaml.safe_load(
-                (root / relative).read_text(encoding="utf-8")
-            )
-            if (
-                not _mapping(manifest)
-                or manifest.get("version") != version
-                or manifest.get("license") != "MIT"
-            ):
-                findings.append(f"{relative}: version or license drift")
-        if f"## {version} - " not in (root / "CHANGELOG.md").read_text(
-            encoding="utf-8"
-        ):
-            findings.append("changelog has no dated entry for the release version")
-        expected = _artifacts(root, version)
-        actual = (
-            {
-                path
-                for folder in ("distributions", "capabilities")
-                for path in (root / "build" / folder).iterdir()
-                if not (
-                    folder == "distributions"
-                    and path.name == ".gitignore"
-                    and not path.is_symlink()
-                    and path.is_file()
-                    and path.read_bytes() == b"*"
-                )
-            }
-            if all(
-                (root / "build" / folder).is_dir()
-                for folder in ("distributions", "capabilities")
-            )
-            else set()
-        )
-        if actual != set(expected):
-            findings.append(
-                "release artifact inventory is incomplete or contains stale files"
-            )
-        for path, kind in expected.items():
-            if path.is_symlink() or (path.exists() and not path.is_file()):
-                findings.append(f"{kind}: artifact is not a regular owned file")
-                continue
-            if not path.is_file():
-                continue
-            try:
-                if kind == "wheel":
-                    _wheel(path, version, license_bytes)
-                elif kind == "sdist":
-                    _sdist(path, version, license_bytes)
-                else:
-                    _source(path, version, license_bytes, _expected_source(root))
-            except (
-                OSError,
-                ValueError,
-                KeyError,
-                tarfile.TarError,
-                zipfile.BadZipFile,
-                yaml.YAMLError,
-            ):
-                findings.append(
-                    f"{kind if kind != 'source' else 'source archive'}: invalid content or license"
-                )
+        _collect_findings(root, tag=tag, findings=findings)
     except (OSError, ValueError, KeyError, yaml.YAMLError):
         findings.append("release source metadata cannot be validated")
     return findings
@@ -281,10 +324,8 @@ def write_checksums(root: Path) -> Path:
     return output
 
 
-def stage_release(root: Path) -> Path:
-    """Create the exact flat upload layout and verify its copied checksum witness."""
-    artifacts = _artifacts(root, _version(root))
-    stage = root / "build/release"
+def _verify_stage_target(root: Path, stage: Path, names: set[str]) -> None:
+    """Refuse linked, irregular, or foreign staging locations before writing."""
     if (root / "build").is_symlink() or (root / "build").is_junction():
         raise _ReleaseContractError(_ReleaseIssue.LINKED_BUILD_DIRECTORY)
     if (
@@ -293,26 +334,43 @@ def stage_release(root: Path) -> Path:
         or (stage.exists() and not stage.is_dir())
     ):
         raise _ReleaseContractError(_ReleaseIssue.INVALID_STAGING_DIRECTORY)
-    names = {path.name for path in artifacts} | {"SHA256SUMS"}
     if stage.is_dir() and any(
         path.name not in names or not path.is_file() or path.is_symlink()
         for path in stage.iterdir()
     ):
         raise _ReleaseContractError(_ReleaseIssue.UNKNOWN_STAGING_ENTRIES)
-    checksums = write_checksums(root)
-    content = {path.name: path.read_bytes() for path in artifacts}
-    content["SHA256SUMS"] = checksums.read_bytes()
-    # Never publish a copy whose bytes moved between validation and staging.
+
+
+def _verify_staged_checksums(content: dict[str, bytes]) -> None:
+    """Refuse content whose bytes moved after the checksums were written."""
     for line in content["SHA256SUMS"].decode("ascii").splitlines():
         digest, name = line.split("  ", 1)
         if hashlib.sha256(content[name]).hexdigest() != digest:
             raise _ReleaseContractError(_ReleaseIssue.CHANGED_STAGING_SOURCE)
+
+
+def _write_stage(stage: Path, content: dict[str, bytes]) -> None:
+    """Write the flat upload layout and read every copy back."""
     stage.mkdir(exist_ok=True)
     for name, data in content.items():
         (stage / name).write_bytes(data)
-    for name, data in content.items():
-        if (stage / name).read_bytes() != data:
-            raise _ReleaseContractError(_ReleaseIssue.INVALID_STAGING_COPY)
+    if any((stage / name).read_bytes() != data for name, data in content.items()):
+        raise _ReleaseContractError(_ReleaseIssue.INVALID_STAGING_COPY)
+
+
+def stage_release(root: Path) -> Path:
+    """Create the exact flat upload layout and verify its copied checksum witness."""
+    artifacts = _artifacts(root, _version(root))
+    stage = root / "build/release"
+    _verify_stage_target(
+        root, stage, {path.name for path in artifacts} | {"SHA256SUMS"}
+    )
+    checksums = write_checksums(root)
+    content = {path.name: path.read_bytes() for path in artifacts}
+    content["SHA256SUMS"] = checksums.read_bytes()
+    # Never publish a copy whose bytes moved between validation and staging.
+    _verify_staged_checksums(content)
+    _write_stage(stage, content)
     return stage
 
 

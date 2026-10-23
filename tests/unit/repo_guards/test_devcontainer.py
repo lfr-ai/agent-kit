@@ -55,11 +55,28 @@ def test_bun_version_matches_the_ci_pin() -> None:
 
 
 def test_python_image_matches_the_project_baseline() -> None:
-    """The container image uses the interpreter recorded in '.python-version'."""
+    """The container image uses the interpreter recorded in ``.python-version``."""
     baseline = (_ROOT / ".python-version").read_text(encoding="utf-8").strip()
-    image = _devcontainer()["image"]
-    assert isinstance(image, str)
+    assert _devcontainer()["build"] == {"dockerfile": "Dockerfile"}
+    assert "image" not in _devcontainer()
+    lines = (_ROOT / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
+    sources = [line for line in lines.splitlines() if line.startswith("FROM ")]
+    assert len(sources) == 1
+    image, digest = sources[0].removeprefix("FROM ").split("@sha256:")
     assert image.endswith((f":3-{baseline}-trixie", f":{baseline}-trixie"))
+    assert len(digest) == 64
+    assert int(digest, 16) >= 0
+
+
+def test_every_feature_is_locked_by_digest() -> None:
+    """Feature tags can move; the lockfile pins each one by content digest."""
+    features = _devcontainer()["features"]
+    lock = json.loads((_ROOT / ".devcontainer/devcontainer-lock.json").read_text())
+    assert isinstance(features, dict)
+    assert set(lock["features"]) == set(features)
+    for entry in lock["features"].values():
+        assert "@sha256:" in entry["resolved"]
+        assert entry["integrity"].startswith("sha256:")
 
 
 def test_container_extensions_match_workspace_recommendations() -> None:
@@ -77,4 +94,6 @@ def test_container_environment_keeps_apm_non_interactive() -> None:
     assert isinstance(environment, dict)
     assert environment["APM_NO_SCRIPTS"] == "1"
     assert environment["APM_NON_INTERACTIVE"] == "1"
-    assert _devcontainer()["postCreateCommand"] == "uv sync --locked"
+    # Installs dependencies in a prebuild-cacheable step; it needs no user secrets.
+    assert _devcontainer()["updateContentCommand"] == "task bootstrap"
+    assert "postCreateCommand" not in _devcontainer()

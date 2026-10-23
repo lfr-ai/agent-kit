@@ -21,6 +21,9 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - For defects, reproduce the behavior, fix the cause, and retain regression tests.
 - Explicitly report errors, unsupported runtime behavior, and unavailable checks.
 - Do not weaken assertions, provenance, policy, or permission gates to pass.
+- Change dependencies only through `pyproject.toml` and `uv.lock`: run
+  `uv add --no-sync`, then `task verify -- dependencies` before syncing. Never run
+  ad-hoc installers or package runners such as `pip install`, `npx`, or `uvx`.
 - Version-control operations, remote publication, user-global setup changes,
   resource deployment, and production data belong to approved operator workflows.
 - The session hook is advisory context, not authorization or a sandbox.
@@ -31,6 +34,7 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - Application owns selection and validation; Infrastructure owns files and
   processes; Presentation owns CLI input/output; Composition wires collaborators.
 - No production `Any`, casts, or quoted forward-reference annotations.
+- No magic numbers outside tests: name literals other than 0 and +/-1 as constants.
 - Immutable dataclasses use `frozen=True`, `kw_only=True`, and `slots=True`.
 - Use stdlib `import logging`; do not duplicate logging at multiple boundaries.
 - Keep types concrete, errors explicit, paths contained, and changes local.

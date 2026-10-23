@@ -1,12 +1,13 @@
 """Completeness and configuration-facade regressions for the expanded toolkit."""
 
 import json
-import shutil
 from pathlib import Path
+import shutil
 
 import pytest
 import scripts.check_coverage as coverage_module
 from scripts.check_coverage import check
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -100,14 +101,44 @@ def test_editor_wrapper_cannot_call_an_unknown_task(covered_root: Path) -> None:
     assert any("Taskfile" in item for item in check(covered_root))
 
 
-def test_active_mcp_cannot_silently_override_deny_defaults(covered_root: Path) -> None:
-    """Opt-in configuration resources never authorize automatic server startup."""
+def test_unreviewed_active_mcp_server_is_rejected(covered_root: Path) -> None:
+    """An unreviewed server cannot be added to the active host manifests."""
     path = covered_root / ".mcp.json"
-    path.write_text(
-        '{"mcpServers":{"unapproved":{"url":"https://example.org"}}}', encoding="utf-8"
-    )
+    config = json.loads(path.read_text())
+    config["mcpServers"]["unapproved"] = {"type": "http", "url": "https://example.org"}
+    path.write_text(json.dumps(config), encoding="utf-8")
 
-    assert any("MCP" in item for item in check(covered_root))
+    assert any("reviewed read-only set" in item for item in check(covered_root))
+
+
+def test_active_github_server_cannot_be_widened(covered_root: Path) -> None:
+    """The GitHub server stays limited to the reviewed read-only tools."""
+    path = covered_root / ".vscode/mcp.json"
+    config = json.loads(path.read_text())
+    config["servers"]["github"]["headers"]["X-MCP-Readonly"] = "false"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    assert any("reviewed read-only set" in item for item in check(covered_root))
+
+
+def test_active_mcp_host_manifests_must_match(covered_root: Path) -> None:
+    """Claude and VS Code expose the same reviewed server definitions."""
+    path = covered_root / ".vscode/mcp.json"
+    config = json.loads(path.read_text())
+    config["servers"]["context7"]["url"] = "https://unreviewed.example/mcp"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    assert any("reviewed read-only set" in item for item in check(covered_root))
+
+
+def test_consumer_apm_policy_remains_deny_by_default(covered_root: Path) -> None:
+    """Portable APM examples never authorize MCP without consumer review."""
+    path = covered_root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
+    policy = yaml.safe_load(path.read_text())
+    policy["mcp"]["allow"] = ["github"]
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+
+    assert any("deny MCP by default" in item for item in check(covered_root))
 
 
 def test_broken_template_is_detected_without_rendering_it(covered_root: Path) -> None:
@@ -175,6 +206,20 @@ def test_native_mcp_templates_cannot_silently_disagree(covered_root: Path) -> No
     content["mcpServers"]["github"]["url"] = "https://unreviewed.example/mcp"
     path.write_text(json.dumps(content), encoding="utf-8")
     assert any("MCP template" in item for item in check(covered_root))
+
+
+def test_optional_mcp_template_matches_reviewed_public_endpoints(
+    covered_root: Path,
+) -> None:
+    path = (
+        covered_root
+        / "packages/shared/.apm/skills/kit-editor/assets/mcp-optional.json.template"
+    )
+    config = json.loads(path.read_text())
+    config["mcpServers"]["context7"]["url"] = "https://unreviewed.example/mcp"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    assert any("optional MCP template" in item for item in check(covered_root))
 
 
 def test_mcp_catalog_entry_cannot_lose_native_setup(covered_root: Path) -> None:

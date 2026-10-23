@@ -4,17 +4,17 @@ A debt marker is a comment such as '# DEBT(owner=@orders-team,
 revisit=2026-09-30): cache is per-process; replace when we scale out'. The
 collector scans explicit paths, never executes or imports them, writes a
 deterministic ledger table, and reports malformed or expired markers as
-'path:line: message' findings with exit status 1.
+``path:line: message`` findings with exit status 1.
 """
 
 import argparse
+from dataclasses import dataclass
 import datetime as dt
+from enum import StrEnum
 import fnmatch
+from pathlib import Path
 import re
 import sys
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
 from tempfile import TemporaryDirectory
 
 _DEFAULT_MARKERS = ("DEBT", "SHORTCUT")
@@ -56,6 +56,9 @@ _DEFAULT_EXCLUDES = (
 )
 _COMMENT_LEADER = r"(?:#|//|/\*|\*|--|<!--|;|%|\bREM\b)"
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_EXIT_USAGE = 2
+_SELF_TEST_AS_OF = dt.date(2026, 6, 1)
+_SELF_TEST_MARKER_LINES = (2, 3, 4)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -110,7 +113,7 @@ def _pattern(markers: tuple[str, ...]) -> re.Pattern[str]:
 
 
 def _metadata(raw: str) -> dict[str, str]:
-    """Parse 'key=value' pairs separated by commas or semicolons."""
+    """Parse ``key=value`` pairs separated by commas or semicolons."""
     pairs: dict[str, str] = {}
     for item in re.split(r"[,;]", raw):
         key, separator, value = item.partition("=")
@@ -203,7 +206,7 @@ def problems(entries: list[Entry], options: Options) -> list[str]:
         options: Expiry date and ownership requirement.
 
     Returns:
-        Deterministic 'path:line: message' findings.
+        Deterministic ``path:line: message`` findings.
     """
     findings: list[str] = []
     for entry in entries:
@@ -212,18 +215,26 @@ def problems(entries: list[Entry], options: Options) -> list[str]:
             findings.append(f"{where}: {entry.marker} marker has no ': reason'")
         if options.require_owner and not entry.owner:
             findings.append(f"{where}: {entry.marker} marker has no owner")
-        if _ISO_DATE.match(entry.revisit):
-            try:
-                revisit = dt.date.fromisoformat(entry.revisit)
-            except ValueError:
-                findings.append(f"{where}: invalid revisit date '{entry.revisit}'")
-                continue
-            if options.as_of is not None and revisit < options.as_of:
-                findings.append(
-                    f"{where}: {entry.marker} expired on {entry.revisit}"
-                    f" (as of {options.as_of.isoformat()})"
-                )
+        date_problem = _revisit_problem(entry, where, options.as_of)
+        if date_problem is not None:
+            findings.append(date_problem)
     return findings
+
+
+def _revisit_problem(entry: Entry, where: str, as_of: dt.date | None) -> str | None:
+    """Report an invalid or expired ISO revisit date, if any."""
+    if not _ISO_DATE.match(entry.revisit):
+        return None
+    try:
+        revisit = dt.date.fromisoformat(entry.revisit)
+    except ValueError:
+        return f"{where}: invalid revisit date '{entry.revisit}'"
+    if as_of is not None and revisit < as_of:
+        return (
+            f"{where}: {entry.marker} expired on {entry.revisit}"
+            f" (as of {as_of.isoformat()})"
+        )
+    return None
 
 
 def _cell(value: str) -> str:
@@ -326,9 +337,9 @@ def self_test() -> None:
         (root / "node_modules" / "skip.js").write_text(
             "// DEBT: ignored\n", encoding="utf-8"
         )
-        options = Options(as_of=dt.date(2026, 6, 1), require_owner=True)
+        options = Options(as_of=_SELF_TEST_AS_OF, require_owner=True)
         entries = collect([root], options)
-        if [entry.line for entry in entries] != [2, 3, 4]:
+        if tuple(entry.line for entry in entries) != _SELF_TEST_MARKER_LINES:
             raise AssertionError(entries)
         ledger = render_ledger(entries, title="Debt ledger")
         if r"retry once \| then give up" not in ledger or "@orders-team" not in ledger:
@@ -362,11 +373,31 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _options(args: argparse.Namespace) -> Options:
+    """Build scan options from parsed arguments and defaults."""
+    extensions = tuple(item.casefold() for item in args.ext) or _DEFAULT_EXTENSIONS
+    return Options(
+        markers=tuple(args.marker) or _DEFAULT_MARKERS,
+        extensions=() if args.all_files else extensions,
+        excludes=tuple(args.exclude) or _DEFAULT_EXCLUDES,
+        as_of=args.as_of,
+        require_owner=args.require_owner,
+    )
+
+
+def _write_ledger(ledger: str, output: Path | None) -> None:
+    """Write the ledger to ``output`` or standard output."""
+    if output is None:
+        sys.stdout.write(ledger)
+        return
+    output.write_text(ledger, encoding="utf-8", newline="\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Write the ledger and report findings.
 
     Args:
-        argv: Command-line arguments; 'sys.argv' when omitted.
+        argv: Command-line arguments; ``sys.argv`` when omitted.
 
     Returns:
         0 when every marker is well formed, 1 on findings, 2 on unusable input.
@@ -379,29 +410,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.paths:
         parser.print_usage(sys.stderr)
-        return 2
+        return _EXIT_USAGE
     missing = [path for path in args.paths if not path.exists()]
     if missing:
         print(f"path not found: {missing[0]}", file=sys.stderr)
-        return 2
-    extensions = tuple(item.casefold() for item in args.ext) or _DEFAULT_EXTENSIONS
-    options = Options(
-        markers=tuple(args.marker) or _DEFAULT_MARKERS,
-        extensions=() if args.all_files else extensions,
-        excludes=tuple(args.exclude) or _DEFAULT_EXCLUDES,
-        as_of=args.as_of,
-        require_owner=args.require_owner,
-    )
+        return _EXIT_USAGE
+    options = _options(args)
     try:
         entries = collect(args.paths, options)
     except OSError as error:
         print(f"cannot read target: {error}", file=sys.stderr)
-        return 2
-    ledger = render_ledger(entries, title=args.title)
-    if args.output is None:
-        sys.stdout.write(ledger)
-    else:
-        args.output.write_text(ledger, encoding="utf-8", newline="\n")
+        return _EXIT_USAGE
+    _write_ledger(render_ledger(entries, title=args.title), args.output)
     findings = problems(entries, options)
     for finding in findings:
         print(finding, file=sys.stderr)

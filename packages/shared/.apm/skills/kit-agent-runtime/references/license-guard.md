@@ -44,6 +44,21 @@ replacing runs of `-`, `_`, and `.` with `-`. Each exception needs `license`,
 The template's lists are examples. The consumer's license policy owner decides
 which licenses are acceptable for the product and distribution model.
 
+Real metadata is often incomplete. Generic BSD classifiers become
+`LicenseRef-BSD-unspecified`, and free-text `License` fields such as
+`Apache License 2.0` are not SPDX expressions. Inspect the bundled license file,
+then add a per-distribution exception whose `license` is the exact observed text
+(`UNKNOWN` when there is none) and whose `expires` forces a later review. Do not
+broaden `allowed` to accept unknown metadata.
+
+## Wiring
+
+Run the guard against the locked environment in CI and whenever the manifest,
+lock, or allowlist changes. Mirror the allowed SPDX identifiers in the pull-request
+dependency review's `allow-licenses`, and list reviewed metadata gaps as package
+URLs in `allow-dependencies-licenses`. Installed-metadata checks run after
+installation; pull-request dependency review evaluates new packages first.
+
 ## Running
 
 ```text

@@ -1,9 +1,9 @@
 """Resource depth is a delivery contract, not a skill-name coverage claim."""
 
 import json
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from scripts import apm_smoke
@@ -151,7 +151,7 @@ def test_apm_command_timeout_remains_an_actionable_system_exit(
 
 
 @pytest.mark.parametrize(
-    "script", _SELF_CHECKS, ids=lambda path: path.parent.parent.name
+    "script", _SELF_CHECKS, ids=lambda path: f"{path.parent.parent.name}/{path.name}"
 )
 def test_portable_checkers_retain_runnable_self_checks(script: Path) -> None:
     """Run trusted source regressions, never consumer code or external services."""

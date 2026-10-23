@@ -21,9 +21,16 @@ from pydantic import (
     field_serializer,
 )
 
+_MONEY_MAX_DIGITS = 12
+_MONEY_DECIMAL_PLACES = 2
+
 Money = Annotated[
     Decimal,
-    Field(ge=Decimal("0"), max_digits=12, decimal_places=2),
+    Field(
+        ge=Decimal("0"),
+        max_digits=_MONEY_MAX_DIGITS,
+        decimal_places=_MONEY_DECIMAL_PLACES,
+    ),
     PlainSerializer(lambda value: f"{value:.2f}", return_type=str, when_used="json"),
 ]
 CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]

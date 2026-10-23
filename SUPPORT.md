@@ -15,5 +15,5 @@ Native IDE/cloud sessions remain uncertified unless explicit versioned evidence 
 
 Do not report vulnerabilities or conduct incidents in public issues.
 Follow [SECURITY.md](SECURITY.md) or [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-Private reporting contacts are configured in the maintainer metadata; hosted
-GitHub reporting still requires an administrator to enable it after publication.
+Use GitHub's private reporting form or the private maintainer contact in
+[SECURITY.md](SECURITY.md).

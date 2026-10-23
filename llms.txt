@@ -15,6 +15,7 @@
 - [Decisions](memories/decisions.md): Verified design choices.
 - [Compatibility](docs/compatibility.md): Runtime and APM limitations.
 - [Policy](docs/policy.md): Explicit governance and trust boundaries.
+- [Dependency security](docs/dependency-security.md): Audits, licenses, and agent install limits.
 - [Migration](docs/migration.md): Adoption, audit ordering, and rollback.
 - [Sources](docs/sources.md): Research and provenance.
 - [Governance](GOVERNANCE.md): Approved ownership and contribution authority.

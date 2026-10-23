@@ -3,9 +3,9 @@
 import argparse
 import ast
 import json
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 from urllib.parse import unquote
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -71,16 +71,22 @@ def _reachable(skill: Path) -> set[Path]:
         if path in visited:
             continue
         visited.add(path)
-        if path.suffix != ".md":
-            continue
-        for match in _LINK.findall(path.read_text(encoding="utf-8")):
-            target = match.strip().strip("<>").split(" ", 1)[0]
-            if target.startswith(("https://", "http://", "mailto:", "#")):
-                continue
-            resolved = (path.parent / unquote(target.partition("#")[0])).resolve()
-            if resolved.is_relative_to(home) and resolved.is_file():
-                pending.append(resolved)
+        if path.suffix == ".md":
+            pending.extend(_linked_files(path, home))
     return visited
+
+
+def _linked_files(path: Path, home: Path) -> list[Path]:
+    """Return local files linked from one document that stay inside ``home``."""
+    linked: list[Path] = []
+    for match in _LINK.findall(path.read_text(encoding="utf-8")):
+        target = match.strip().strip("<>").split(" ", 1)[0]
+        if target.startswith(("https://", "http://", "mailto:", "#")):
+            continue
+        resolved = (path.parent / unquote(target.partition("#")[0])).resolve()
+        if resolved.is_relative_to(home) and resolved.is_file():
+            linked.append(resolved)
+    return linked
 
 
 def _python_failures(resources: list[Path], root: Path) -> list[str]:
@@ -103,32 +109,42 @@ def check(root: Path) -> list[str]:
         return ["no canonical skills found"]
     for skill in skills:
         home = skill.parent
-        if not home.resolve().is_relative_to(root.resolve()):
+        if not _contained(root, home):
             failures.append(f"{home.name}: unsafe resource path")
             continue
         resources = _files(home)
-        if any(
-            path.is_symlink()
-            or path.is_junction()
-            or not path.resolve().is_relative_to(home.resolve())
-            for path in [home, *home.rglob("*")]
-        ):
-            failures.append(f"{home.name}: unsafe resource path")
-            continue
-        reached = _reachable(skill)
-        for category, label in (("references", "reference"), ("assets", "asset")):
-            candidates = [
-                path
-                for path in resources
-                if path.is_relative_to(home / category)
-                and path.stat().st_size
-                and (category != "references" or path.suffix == ".md")
-            ]
-            if not candidates:
-                failures.append(f"{home.name}: missing nonempty {label}")
-            elif not any(path.resolve() in reached for path in candidates):
-                failures.append(f"{home.name}: no reachable {label} from SKILL.md")
+        failures.extend(_discoverability_failures(home, resources, _reachable(skill)))
         failures.extend(_python_failures(resources, root))
+    return failures
+
+
+def _contained(root: Path, home: Path) -> bool:
+    """Return whether a skill and every entry stay real and inside their roots."""
+    return home.resolve().is_relative_to(root.resolve()) and not any(
+        path.is_symlink()
+        or path.is_junction()
+        or not path.resolve().is_relative_to(home.resolve())
+        for path in [home, *home.rglob("*")]
+    )
+
+
+def _discoverability_failures(
+    home: Path, resources: list[Path], reached: set[Path]
+) -> list[str]:
+    """Require a nonempty, linked reference and asset for one skill."""
+    failures: list[str] = []
+    for category, label in (("references", "reference"), ("assets", "asset")):
+        candidates = [
+            path
+            for path in resources
+            if path.is_relative_to(home / category)
+            and path.stat().st_size
+            and (category != "references" or path.suffix == ".md")
+        ]
+        if not candidates:
+            failures.append(f"{home.name}: missing nonempty {label}")
+        elif not any(path.resolve() in reached for path in candidates):
+            failures.append(f"{home.name}: no reachable {label} from SKILL.md")
     return failures
 
 

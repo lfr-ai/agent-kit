@@ -8,7 +8,10 @@
 #   so pre-commit, CI and the editor use one version.
 # - Slow or network-bound hooks use the 'manual' stage and run in CI or with
 #   'pre-commit run --hook-stage manual --all-files'.
-# - Update pinned 'rev' values with 'pre-commit autoupdate' and review the diff.
+# - Hook repositories are frozen to full commit SHAs. Update them with
+#   'pre-commit autoupdate --freeze' or Dependabot and review the diff.
+# - check_pins.py (from the kit-verify-change assets) rejects mutable revs,
+#   undigested images, package runners and unlocked installs.
 
 minimum_pre_commit_version: "4.4"
 default_install_hook_types: [pre-commit, commit-msg]
@@ -22,7 +25,7 @@ exclude: |
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: check-merge-conflict
       - id: check-case-conflict
@@ -39,7 +42,7 @@ repos:
         args: [--fix=lf]
 
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
+    rev: 01886c8a910c64595c47f186ca1ffc0b77fa5458  # frozen: v1.5.0
     hooks:
       - id: detect-secrets
         # Create the baseline once with 'detect-secrets scan > .secrets.baseline'
@@ -47,15 +50,35 @@ repos:
         args: [--baseline, .secrets.baseline]
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
-    rev: v10.3.0
+    rev: f5c5d72342f35643988a9ffa0705c05bd3ff8383  # frozen: v10.3.0
     hooks:
       - id: cspell
         args: [--no-must-find-files, --no-progress, --no-summary]
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.23.3
+    rev: 916ad0aaa108c64d294101002066f530ea170b10  # frozen: v0.23.3
     hooks:
       - id: markdownlint-cli2
+
+  # Workflow correctness and security; drop both if the project has no workflows.
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      - id: actionlint
+        language_version: 1.27.3
+        pass_filenames: false
+        files: ^(\.github/(workflows/[^/]+|actionlint)\.ya?ml|\.pre-commit-config\.yaml)$
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    hooks:
+      - id: zizmor
+        pass_filenames: false
+        args: [--no-progress, .]
+        files: |
+          (?x)(^|/)(
+            \.github/(workflows/[^/]+|dependabot|zizmor)\.ya?ml|
+            action\.ya?ml|\.pre-commit-(config|hooks)\.ya?ml|zizmor\.ya?ml
+          )$
 
   - repo: local
     hooks:
@@ -93,6 +116,12 @@ repos:
         language: unsupported
         pass_filenames: false
         types: [python]
+      - id: version-pins
+        name: exact versions, frozen hooks and digest-pinned images
+        entry: uv run --locked python scripts/check_pins.py --root .
+        language: unsupported
+        pass_filenames: false
+        always_run: true
       - id: full-gate
         name: full gate including slow steps (manual)
         entry: uv run --locked python scripts/run_gate.py --include-slow --keep-going

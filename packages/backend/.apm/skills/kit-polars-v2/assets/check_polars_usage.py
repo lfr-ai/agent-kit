@@ -1,13 +1,13 @@
 """Flag Polars patterns that defeat the query optimizer or use removed APIs.
 
 Python sources are parsed without importing them. Only files that import
-'polars' are inspected. Findings cover 'map_elements' (Python UDFs) without
-'return_dtype', row iteration ('iter_rows', 'rows'), eager reads followed by
-'.lazy()', '.collect().lazy()' round trips, the deprecated 'collect(streaming=)'
-flag, argument-less 'pl.count()', and renamed APIs ('groupby', 'with_row_count',
-'map_dict', 'cumsum' family). A line carrying '# polars: reviewed' is waived.
+``polars`` are inspected. Findings cover ``map_elements`` (Python UDFs) without
+``return_dtype``, row iteration (``iter_rows``, ``rows``), eager reads followed by
+``.lazy()``, ``.collect().lazy()`` round trips, the deprecated ``collect(streaming=)``
+flag, argument-less ``pl.count()``, and renamed APIs (``groupby``, ``with_row_count``,
+``map_dict``, ``cumsum`` family). A line carrying ``# polars: reviewed`` is waived.
 Exit 0 means no findings, 1 means findings or unreadable sources.
-Run '--self-test' for built-in regressions.
+Run ``--self-test`` for built-in regressions.
 """
 
 import argparse
@@ -61,7 +61,7 @@ def _classify(call: ast.Call, modules: set[str]) -> str | None:
 
     Args:
         call: Call node.
-        modules: Local names bound to the 'polars' module.
+        modules: Local names bound to the ``polars`` module.
 
     Returns:
         Message, or None.
@@ -120,36 +120,66 @@ def check_source(text: str, path: str) -> list[str]:
         path: Display path.
 
     Returns:
-        Findings formatted as 'path:line: message'.
+        Findings formatted as ``path:line: message``.
 
     Raises:
         SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
-    modules: set[str] = set()
-    imports_polars = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "polars" or alias.name.startswith("polars."):
-                    imports_polars = True
-                    if alias.name == "polars":
-                        modules.add(alias.asname or "polars")
-        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
-            "polars"
-        ):
-            imports_polars = True
+    imports_polars, modules = _polars_bindings(tree)
     if not imports_polars:
         return []
     lines = text.splitlines()
     findings: set[tuple[int, str]] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            message = _classify(node, modules)
-            line = node.func.end_lineno or node.lineno
-            if message and _WAIVER not in lines[line - 1]:
-                findings.add((line, f"{path}:{line}: {message}"))
+        if not isinstance(node, ast.Call):
+            continue
+        message = _classify(node, modules)
+        line = node.func.end_lineno or node.lineno
+        if message and _WAIVER not in lines[line - 1]:
+            findings.add((line, f"{path}:{line}: {message}"))
     return [message for _, message in sorted(findings)]
+
+
+def _polars_bindings(tree: ast.Module) -> tuple[bool, set[str]]:
+    """Return whether a module imports Polars and its local module aliases.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        Whether any Polars import exists, and names bound to ``polars``.
+    """
+    modules: set[str] = set()
+    imports_polars = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases = _polars_aliases(node)
+            imports_polars = imports_polars or bool(aliases)
+            modules.update(
+                alias.asname or "polars" for alias in aliases if alias.name == "polars"
+            )
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            "polars"
+        ):
+            imports_polars = True
+    return imports_polars, modules
+
+
+def _polars_aliases(node: ast.Import) -> list[ast.alias]:
+    """Return the aliases of an ``import`` statement that name Polars modules.
+
+    Args:
+        node: Import statement.
+
+    Returns:
+        Aliases for ``polars`` or one of its submodules.
+    """
+    return [
+        alias
+        for alias in node.names
+        if alias.name == "polars" or alias.name.startswith("polars.")
+    ]
 
 
 def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
@@ -246,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         0 when clean, 1 when findings were reported.

@@ -1,12 +1,12 @@
 """Runnable kit-agent-runtime assets: tool guard, license guard, review package."""
 
+from datetime import date
 import io
 import json
+from pathlib import Path
 import runpy
 import subprocess
 import sys
-from datetime import date
-from pathlib import Path
 
 import pytest
 
@@ -106,6 +106,13 @@ def _policy(tmp_path: Path, **overrides: object) -> Path:
         ("Bash", ("sudo apt-get install jq",), (), "ask"),
         ("Bash", ("env",), (), "ask"),
         ("Bash", ("uv run --locked pytest -q",), (), "allow"),
+        ("Bash", ("pip install requests",), (), "ask"),
+        ("Bash", ("uv add httpx",), (), "ask"),
+        ("PowerShell", ("python -m pip install --upgrade pip",), (), "ask"),
+        ("Bash", ("git status && npx some-cli",), (), "ask"),
+        ("Bash", ("uvx ruff check",), (), "ask"),
+        ("Bash", ("npm ci",), (), "allow"),
+        ("Bash", ("uv sync --locked",), (), "allow"),
     ],
 )
 def test_template_policy_decisions(
@@ -119,7 +126,7 @@ def test_template_policy_decisions(
 def test_template_policy_is_valid() -> None:
     stdout = io.StringIO()
     assert _GUARD["run_check"](_POLICY, stdout) == 0
-    assert "policy valid with 14 rules" in stdout.getvalue()
+    assert "policy valid with 15 rules" in stdout.getvalue()
 
 
 def test_claude_deny_uses_hook_specific_output() -> None:
@@ -304,6 +311,14 @@ def test_invalid_json_policy_reports_its_line(tmp_path: Path) -> None:
     stdout = io.StringIO()
     assert _GUARD["run_check"](path, stdout) == 1
     assert stdout.getvalue().startswith(f"{path}:3: invalid JSON")
+
+
+def test_rule_schema_reports_mixed_unknown_keys_without_sorting_failure() -> None:
+    findings = _GUARD["_rule_schema_findings"]({42: None, "extra": None}, "rule", 1)
+    assert findings[:2] == [
+        (1, "rule has unknown field '42'"),
+        (1, "rule has unknown field 'extra'"),
+    ]
 
 
 def test_audit_mode_reports_without_deciding(tmp_path: Path) -> None:

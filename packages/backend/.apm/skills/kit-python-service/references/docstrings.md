@@ -8,8 +8,10 @@ effects, and failures. They do not restate annotated types.
 - Triple double quotes for every docstring, including one-liners.
 - Google style sections (`Args:`, `Returns:`, `Yields:`, `Raises:`,
   `Attributes:`, `Example:`) only when they add caller-relevant information.
-- Inline code is wrapped in single quotes: `'order_id'`, `'from_config'`.
-  Never backticks; the bundled [checker](../assets/check_python.py) rejects them.
+- Inline code in Python docstrings uses paired double-backtick literals, the
+  reStructuredText convention. Do not use single-quoted code names or single
+  backticks. Markdown documents still use standard CommonMark single backticks.
+  The bundled [checker](../assets/check_python.py) enforces this rule.
 - Summary line: one sentence, ends with a period, fits on one line, written in a
   consistent mood within the file (imperative "Return the..." or descriptive
   "Returns the...").
@@ -23,7 +25,7 @@ State what the module owns and what it deliberately does not own.
 """Invoice issuing use cases.
 
 Owns numbering and issue-date rules. Persistence and PDF rendering are adapters
-injected through the ports in 'invoicing.ports'.
+injected through the ports in ``invoicing.ports``.
 """
 ```
 
@@ -43,7 +45,7 @@ def allocate(order: Order, *, warehouse: Warehouse) -> Allocation:
         Allocation describing the reserved quantity per line.
 
     Raises:
-        OrderNotConfirmedError: If 'order' is still a draft.
+        OrderNotConfirmedError: If ``order`` is still a draft.
         OutOfStockError: If any line cannot be fully reserved.
     """
 ```
@@ -68,7 +70,7 @@ class DateRange:
 
     Attributes:
         start: First day included in the range.
-        end: Last day included in the range; never before 'start'.
+        end: Last day included in the range; never before ``start``.
     """
 
     start: date
@@ -100,14 +102,14 @@ together form the specification.
 | Types repeated in `Args:` | Rely on annotations. |
 | `Raises: Exception` | Name the specific, handled exceptions. |
 | Implementation narration | Describe the contract; comment tricky lines instead. |
-| Backtick inline code | Use single quotes. |
+| Single-backtick or single-quoted code | Use paired double-backtick literals. |
 | Docstring that disagrees with code | Fix whichever is wrong in the same change. |
 
 ## Consumer overrides
 
-Google and PEP 257 leave inline markup open. A project that renders docstrings
-with Sphinx or a Markdown renderer can choose a different convention in its own
-policy and checker configuration; the toolkit default is single quotes.
+Google and PEP 257 leave inline markup open. Sphinx and reStructuredText define
+double backticks as inline literals; the toolkit adopts that syntax for
+docstrings while keeping Markdown file syntax unchanged.
 
 ## Sources
 
@@ -115,3 +117,5 @@ policy and checker configuration; the toolkit default is single quotes.
 - [PEP 257 - Docstring conventions](https://peps.python.org/pep-0257/)
 - [Ruff pydocstyle rules](https://docs.astral.sh/ruff/rules/#pydocstyle-d)
 - [Sphinx Napoleon: Google style example](https://www.sphinx-doc.org/en/master/usage/extensions/example_google.html)
+- [Sphinx reStructuredText Primer: inline markup](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html#inline-markup)
+- [Docutils Quick reStructuredText reference](https://docutils.sourceforge.io/docs/user/rst/quickref.html#inline-markup)

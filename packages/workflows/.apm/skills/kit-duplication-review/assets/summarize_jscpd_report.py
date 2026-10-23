@@ -1,21 +1,23 @@
 """Summarize a jscpd JSON report into reviewable clone findings.
 
-Reads the file written by the jscpd 'json' reporter (by default
-'report/jscpd-report.json'), filters clones by size and path globs, and prints
-one 'path:line: message' finding per remaining clone pair, largest first. It
+Reads the file written by the jscpd ``json`` reporter (by default
+``report/jscpd-report.json``), filters clones by size and path globs, and prints
+one ``path:line: message`` finding per remaining clone pair, largest first. It
 exits 1 when any clone remains or the overall duplication percentage exceeds
-'--max-percentage', and 2 when the report is missing or malformed. The tool
+``--max-percentage``, and 2 when the report is missing or malformed. The tool
 never runs jscpd itself.
 """
 
 import argparse
-import fnmatch
-import json
-import sys
 from dataclasses import dataclass
 from enum import StrEnum
+import fnmatch
+import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+
+_EXIT_USAGE = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -38,7 +40,7 @@ class Clone:
     """A duplicated fragment pair.
 
     Args:
-        fmt: Source format reported by jscpd, such as 'python'.
+        fmt: Source format reported by jscpd, such as ``python``.
         lines: Duplicated line count.
         tokens: Duplicated token count, 0 when absent.
         first: First fragment.
@@ -130,7 +132,7 @@ def _line(item: dict[str, object], key: str, where: str) -> int:
 
 
 def _fragment(value: object, where: str) -> Fragment:
-    """Parse 'firstFile' or 'secondFile' including the 'startLoc' fallback."""
+    """Parse ``firstFile`` or ``secondFile`` including the ``startLoc`` fallback."""
     if not isinstance(value, dict):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.OBJECT_REQUIRED, where=where
@@ -177,30 +179,40 @@ def parse_report(payload: object) -> tuple[list[Clone], float | None]:
         raise DuplicationInputError(DuplicationInputIssue.REPORT_SHAPE)
     if not isinstance(payload["duplicates"], list):
         raise DuplicationInputTypeError(DuplicationInputIssue.REPORT_SHAPE)
-    clones: list[Clone] = []
-    for index, item in enumerate(payload["duplicates"]):
-        where = f"duplicates[{index}]"
-        if not isinstance(item, dict):
-            raise DuplicationInputTypeError(
-                DuplicationInputIssue.OBJECT_REQUIRED, where=where
-            )
-        fmt = item.get("format", "unknown")
-        clones.append(
-            Clone(
-                fmt=fmt if isinstance(fmt, str) else "unknown",
-                lines=_required_int(item, "lines", f"{where}.lines"),
-                tokens=_int(item.get("tokens", 0), f"{where}.tokens"),
-                first=_required_fragment(item, "firstFile", f"{where}.firstFile"),
-                second=_required_fragment(item, "secondFile", f"{where}.secondFile"),
-            )
+    clones = [
+        _clone(item, f"duplicates[{index}]")
+        for index, item in enumerate(payload["duplicates"])
+    ]
+    return clones, _percentage(payload)
+
+
+def _clone(item: object, where: str) -> Clone:
+    """Parse one ``duplicates`` entry into a clone pair."""
+    if not isinstance(item, dict):
+        raise DuplicationInputTypeError(
+            DuplicationInputIssue.OBJECT_REQUIRED, where=where
         )
-    percentage: float | None = None
+    fmt = item.get("format", "unknown")
+    return Clone(
+        fmt=fmt if isinstance(fmt, str) else "unknown",
+        lines=_required_int(item, "lines", f"{where}.lines"),
+        tokens=_int(item.get("tokens", 0), f"{where}.tokens"),
+        first=_required_fragment(item, "firstFile", f"{where}.firstFile"),
+        second=_required_fragment(item, "secondFile", f"{where}.secondFile"),
+    )
+
+
+def _percentage(payload: dict[object, object]) -> float | None:
+    """Return the reported overall duplication percentage, if numeric."""
     statistics = payload.get("statistics")
-    if isinstance(statistics, dict) and isinstance(statistics.get("total"), dict):
-        value = statistics["total"].get("percentage")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            percentage = float(value)
-    return clones, percentage
+    if not isinstance(statistics, dict) or not isinstance(
+        statistics.get("total"), dict
+    ):
+        return None
+    value = statistics["total"].get("percentage")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
 
 
 def select(
@@ -261,6 +273,7 @@ def to_markdown(clones: list[Clone]) -> str:
 
 
 _SAMPLE_PERCENTAGE = 4.5
+_SELF_TEST_BROKEN_REPORTS = ({}, {"duplicates": [{"lines": 3}]})
 _SAMPLE = {
     "duplicates": [
         {
@@ -311,12 +324,8 @@ class SelfTestError(AssertionError):
         super().__init__(issue.value.format(broken=broken))
 
 
-def self_test() -> None:
-    """Exercise parsing, filtering, rendering and malformed input.
-
-    Raises:
-        AssertionError: Behavior differs from the documented contract.
-    """
+def _check_sample() -> None:
+    """Exercise parsing, filtering and rendering of the bundled sample."""
     clones, percentage = parse_report(_SAMPLE)
     if percentage != _SAMPLE_PERCENTAGE or len(clones) != len(_SAMPLE["duplicates"]):
         raise AssertionError((clones, percentage))
@@ -327,7 +336,16 @@ def self_test() -> None:
         raise AssertionError(kept[0].render())
     if "`src/invoices/export.py:30-41`" not in to_markdown(kept):
         raise SelfTestError(SelfTestIssue.MISSING_MARKDOWN_CLONE)
-    for broken in ({}, {"duplicates": [{"lines": 3}]}):
+
+
+def self_test() -> None:
+    """Exercise parsing, filtering, rendering and malformed input.
+
+    Raises:
+        AssertionError: Behavior differs from the documented contract.
+    """
+    _check_sample()
+    for broken in _SELF_TEST_BROKEN_REPORTS:
         try:
             parse_report(broken)
         except ValueError:
@@ -352,11 +370,30 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_clones(kept: list[Clone], *, markdown: bool) -> None:
+    """Write selected clones as a Markdown table or finding lines."""
+    if markdown:
+        sys.stdout.write(to_markdown(kept))
+        return
+    for clone in kept:
+        print(clone.render())
+
+
+def _report_over(report: Path, percentage: float | None, maximum: float | None) -> bool:
+    """Print and return whether the duplication percentage exceeds the gate."""
+    if maximum is None or percentage is None or not percentage > maximum:
+        return False
+    print(
+        f"{report.as_posix()}:1: duplication {percentage:.2f}% exceeds {maximum:.2f}%"
+    )
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     """Summarize the report and apply the gates.
 
     Args:
-        argv: Command-line arguments; 'sys.argv' when omitted.
+        argv: Command-line arguments; ``sys.argv`` when omitted.
 
     Returns:
         0 when no clone remains and the percentage gate holds, 1 on findings,
@@ -370,30 +407,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.report is None:
         parser.print_usage(sys.stderr)
-        return 2
+        return _EXIT_USAGE
     try:
         clones, percentage = parse_report(
             json.loads(args.report.read_text(encoding="utf-8"))
         )
     except (OSError, UnicodeError, ValueError, DuplicationInputTypeError) as error:
         print(f"cannot summarize report: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     kept = select(clones, min_lines=args.min_lines, ignore=tuple(args.ignore))
-    if args.markdown:
-        sys.stdout.write(to_markdown(kept))
-    else:
-        for clone in kept:
-            print(clone.render())
-    over = (
-        args.max_percentage is not None
-        and percentage is not None
-        and percentage > args.max_percentage
-    )
-    if over:
-        print(
-            f"{args.report.as_posix()}:1: duplication {percentage:.2f}% exceeds "
-            f"{args.max_percentage:.2f}%"
-        )
+    _print_clones(kept, markdown=args.markdown)
+    over = _report_over(args.report, percentage, args.max_percentage)
     print(
         f"{len(kept)} of {len(clones)} clone(s) reported; "
         f"total duplication {'unknown' if percentage is None else f'{percentage:.2f}%'}.",

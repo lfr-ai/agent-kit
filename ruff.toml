@@ -1,5 +1,8 @@
+target-version = "py313"
+line-length = 88
 src = ["src", "tests", "scripts", ".agents/guard"]
 extend-exclude = [
+  ".tox",
   "build",
   "dist",
   "apm_modules",
@@ -10,88 +13,132 @@ extend-exclude = [
 ]
 
 [format]
+quote-style = "double"
+indent-style = "space"
 line-ending = "lf"
 docstring-code-format = true
 
 [lint]
-# Ruff's default rule set (E4, E7, E9, F) plus: docs.astral.sh/ruff/rules
+# Ruff's default rule set: docs.astral.sh/ruff/default-rules
 extend-select = [
-  "W",     # pycodestyle warnings
-  "I",     # isort
-  "N",     # pep8-naming
-  "D",     # pydocstyle
-  "UP",    # pyupgrade
-  "ANN",   # flake8-annotations
-  "B",     # flake8-bugbear
-  "S",     # flake8-bandit
-  "FBT",   # flake8-boolean-trap
-  "A",     # flake8-builtins
-  "C4",    # flake8-comprehensions
-  "C90",   # mccabe
-  "DTZ",   # flake8-datetimez
-  "ISC",   # flake8-implicit-str-concat
-  "INP",   # flake8-no-pep420
-  "LOG",   # flake8-logging
-  "G",     # flake8-logging-format
-  "PIE",   # flake8-pie
-  "PT",    # flake8-pytest-style
-  "PTH",   # flake8-use-pathlib
-  "PGH",   # pygrep-hooks
-  "PL",    # Pylint
-  "PERF",  # Perflint
-  "RSE",   # flake8-raise
-  "RET",   # flake8-return
-  "SLF",   # flake8-self
-  "SIM",   # flake8-simplify
-  "SLOT",  # flake8-slots
-  "T20",   # flake8-print
-  "TD",    # flake8-todos
-  "FIX",   # flake8-fixme
-  "TID",   # flake8-tidy-imports
-  "TRY",   # tryceratops
-  "ARG",   # flake8-unused-arguments
-  "ERA",   # eradicate
-  "FURB",  # refurb
-  "RUF",   # Ruff-specific
+  "W",     # pycodestyle warnings — style warnings and formatting issues
+  "I",     # isort — one deterministic, alphabetized import order and grouping
+  "N",     # pep8-naming — requires PEP 8 naming conventions
+  "D",     # pydocstyle — requires public docstrings
+  "UP",    # pyupgrade — modern syntax for the target Python version
+  "YTT",   # flake8-2020 — bans fragile sys.version comparisons
+  "ANN",   # flake8-annotations — requires type annotations
+  "ASYNC", # flake8-async — flags blocking calls inside async functions
+  "B",     # flake8-bugbear — bug-prone code patterns
+  "BLE",   # flake8-blind-except — bans hidden failures behind broad except clauses
+  "S",     # flake8-bandit — security checks
+  "FBT",   # flake8-boolean-trap — bans positional bool args
+  "A",     # flake8-builtins — bans shadowing builtins (e.g. 'list', 'type')
+  "C4",    # flake8-comprehensions — flags non-idiomatic comprehensions
+  "C90",   # mccabe — per-function cyclomatic-complexity
+  "DTZ",   # flake8-datetimez — bans naive dates and times
+  "T10",   # flake8-debugger — bans committed breakpoints
+  "EM",    # flake8-errmsg — exception messages are not raw literals
+  "EXE",   # flake8-executable — shebangs match executable bits
+  "FAST",  # FastAPI-specific rules — e.g. redundant response_model, unused path params
+  "ISC",   # flake8-implicit-str-concat — bans accidental string concatenation
+  "ICN",   # flake8-import-conventions — enforces aliases
+  "INP",   # flake8-no-pep420 — flags packages missing '__init__.py'
+  "LOG",   # flake8-logging — e.g. deprecated .warn(), root logger calls
+  "G",     # flake8-logging-format — logging message formatting and argument usage
+  "PIE",   # flake8-pie — unnecessary statements and duplicate class fields
+  "PYI",   # flake8-pyi — typing idioms
+  "PT",    # flake8-pytest-style — enforces consistent fixture/assert style
+  "PTH",   # flake8-use-pathlib — bans 'os.path' in favor of 'pathlib.Path'
+  "PGH",   # pygrep-hooks — bans broad suppressions (e.g. '# type: ignore'/'# noqa')
+  "PL",    # Pylint derived rules — convention/error/refactor/warning checks
+  "PERF",  # Perflint — performance issues, e.g. unnecessary copies, inefficient loops
+  "RSE",   # flake8-raise — bans redundant parentheses on 'raise'
+  "RET",   # flake8-return — enforces consistent return statements
+  "SLF",   # flake8-self — bans accessing another class's private members
+  "SIM",   # flake8-simplify — e.g. collapsible ifs, dict.keys() iteration
+  "SLOT",  # flake8-slots — requires '__slots__' where it would help
+  "T20",   # flake8-print — bans stray 'print()' calls
+  "TC",    # flake8-type-checking — moves type-only imports to TYPE_CHECKING
+  "TD",    # flake8-todos — requires TODOs to cite an author/issue
+  "FIX",   # flake8-fixme — flags leftover markers, e.g. FIXME/XXX/HACK
+  "TID",   # flake8-tidy-imports — e.g. bans relative imports, banned APIs
+  "TRY",   # tryceratops — exception-handling best practices
+  "ARG",   # flake8-unused-arguments — flags unused function/method parameters
+  "FLY",   # flynt — f-strings instead of static joins
+  "ERA",   # eradicate — detects commented-out code
+  "FURB",  # refurb — suggests modern, idiomatic Python replacements
+  "RUF",   # Ruff-specific — e.g. unused noqa, mutable dataclass defaults
 ]
-# Not selected: TC (flake8-type-checking). Moving imports under TYPE_CHECKING needs
-# quoted annotations on Python 3.13, which the project forbids.
+
 [lint.pylint]
 max-args = 8
+max-branches = 8
+max-returns = 6
+max-statements = 40
 
-[lint.pydocstyle]
-convention = "google"
+[lint.mccabe]
+max-complexity = 6
+
+[lint.isort]
+known-first-party = ["agent_kit"]
+force-sort-within-sections = true
+
+[lint.flake8-import-conventions]
+# modules for which to use 'import x', never 'from x import name'
+banned-from = [
+  "logging",
+  "logging.handlers",
+  "os",
+  "sys",
+  "json",
+  "re",
+  "asyncio",
+  "hashlib",
+  "html",
+  "shutil",
+  "inspect",
+  "argparse",
+]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
 [lint.flake8-tidy-imports.banned-api]
+# project-wide banned symbols with custom messages
 "typing.Any".msg = "Use concrete types or object at parsing boundaries."
-"typing.cast".msg = "Narrow types rather than casting."
+"typing.cast".msg = "Do not use cast(); refactor the type boundary instead."
 
 [lint.flake8-unused-arguments]
-ignore-variadic-names = true
+ignore-variadic-names = true # skip unused *args/**kwargs
+
+[lint.pydocstyle]
+convention = "google"
+property-decorators = ["functools.cached_property"]
 
 [lint.per-file-ignores]
 "tests/**" = [
-  "S101",    # assert is the pytest assertion idiom
+  "S101",    # assert is the standard pytest assertion idiom
   "D",       # test names and one-line docstrings document behavior
-  "ANN401",
-  "SLF001",  # tests may reach private helpers to pin internals
-  "PLR2004", # literal expectations are not magic numbers
-  "PLC0415", # deferred imports inside tests are deliberate
-  "S105",    # fake credentials in fixtures
-  "S106",
-  "ARG001",  # stubs match the replaced signature
-  "ARG002",
-  "ARG005",
-  "INP001",  # --import-mode=importlib needs no __init__.py
-  "FBT001",  # parametrized/Hypothesis booleans are idiomatic in tests
+  "ANN401",  # pytest hooks and fakes accept arbitrary objects
+  "SLF001",  # tests legitimately reach into private members to verify internals
+  "PLR2004", # literal expected values in assertions are not "magic"
+  "PLC0415", # deferred imports inside fixtures/parametrized helpers are deliberate
+  "S105",    # fake credentials in test fixtures are not real secrets
+  "S106",    # fake credentials passed as call/fixture arguments, not real secrets
+  "ARG001",  # stub/mock functions commonly match an interface signature unused here
+  "ARG002",  # same, for unused arguments on stub/mock methods
+  "ARG005",  # same, for unused arguments on stub/mock lambdas
+  "INP001",  # no __init__.py needed under --import-mode=importlib
+  # Boolean positional args/values are idiomatic in tests: parametrized bool
+  # cases and Hypothesis-injected bool strategies.
+  "FBT001",
   "FBT002",
   "FBT003",
 ]
-# Command-line presentation and repository check scripts report to stdout by design.
+# CLI entry points intentionally write human-facing output to stdout.
 "src/agent_kit/presentation/cli.py" = ["T201"]
 "scripts/**" = ["T201"]
 ".agents/guard/**" = ["T201", "INP001"]
-"packages/**/assets/**" = ["T201", "INP001", "C901", "PLR0912"]
+# Portable skill assets are standalone CLIs executed by path, never imported.
+"packages/**/assets/**" = ["T201", "INP001"]

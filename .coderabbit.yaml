@@ -1,6 +1,6 @@
-# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
 early_access: false
+enable_free_tier: true
 
 reviews:
   profile: "assertive"
@@ -12,14 +12,65 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+  path_filters:
+    - "!uv.lock"
+    - "!bun.lock"
+    - "!apm.lock.yaml"
+    - "!.agents/skills/**"
+    - "!.agents/agentic-setup/native-lock.json"
+    - "!.claude/skills/**"
+    - "!.claude/rules/**"
+    - "!.claude/agents/**"
+    - "!.github/agents/**"
+    - "!.github/instructions/**"
   path_instructions:
     - path: "**/*.py"
       instructions: |
         Treat violations of AGENTS.md and Python instructions as blocking:
-        Any or casts, hidden failures, boundary violations, and behavior
-        changes without focused tests.
+        Any or casts, magic numbers, hidden failures, boundary violations,
+        suppressed complexity limits, and behavior changes without focused tests.
     - path: ".vscode/**"
       instructions: |
         Treat machine-specific paths, automatic installs, unsafe approvals,
         and MCP autostart as blocking. Require alignment with Taskfile.yml,
         root tool configuration, and docs/editor.md.
+    - path: "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,package.json,.devcontainer/**,.mcp.json}"
+      instructions: |
+        Treat floating versions as blocking: actions must use full commit SHAs,
+        hooks frozen commits, images digests, and tools exact versions. Flag new
+        permissions, secrets, package runners (npx, uvx, bunx), or unlocked installs.
+  tools:
+    ruff:
+      enabled: true
+    github-checks:
+      enabled: true
+    flake8:
+      enabled: false
+    pylint:
+      enabled: false
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    hadolint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    osvScanner:
+      enabled: true
+    languagetool:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: "local"

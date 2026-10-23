@@ -21,6 +21,8 @@ from app.domain.invoice import Invoice, InvoiceStatus
 
 type ConnectionFactory = Callable[[], sqlite3.Connection]
 
+_DEFAULT_OPEN_INVOICE_LIMIT = 100
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoices (
     invoice_id        TEXT PRIMARY KEY,
@@ -115,7 +117,9 @@ class SqliteInvoiceRepository(InvoiceRepository):
         if cursor.rowcount == 0:
             raise InvoiceNotFoundError(invoice.invoice_id)
 
-    def list_open(self, *, customer_id: str, limit: int = 100) -> list[Invoice]:
+    def list_open(
+        self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
+    ) -> list[Invoice]:
         """Return up to 'limit' open invoices for a customer, oldest id first."""
         rows = self._connection.execute(
             f"SELECT {_COLUMNS} FROM invoices WHERE customer_id = ? AND status = ? "  # noqa: S608 - constant column list

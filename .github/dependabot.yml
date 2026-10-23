@@ -16,10 +16,7 @@ updates:
     open-pull-requests-limit: 5
     # Let new releases settle before proposing them; security updates are exempt.
     cooldown:
-      default-days: 7
-      semver-major-days: 14
-      semver-minor-days: 7
-      semver-patch-days: 3
+      default-days: 14
     commit-message:
       prefix: build
       prefix-development: build
@@ -53,13 +50,69 @@ updates:
       timezone: Europe/Copenhagen
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 7
+      default-days: 14
     commit-message:
       prefix: ci
       include: scope
     labels: [dependencies, ci]
     groups:
       github-actions:
+        patterns: ["*"]
+
+  # Locked JavaScript tooling in package.json and bun.lock.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [dependencies]
+    groups:
+      javascript-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      javascript-tooling:
+        patterns: ["*"]
+
+  # Digest-pinned dev container base image in .devcontainer/Dockerfile.
+  - package-ecosystem: docker
+    directory: /.devcontainer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [dependencies]
+
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [dependencies]
+    groups:
+      devcontainer-features:
         patterns: ["*"]
 
   # pre-commit hook revisions in .pre-commit-config.yaml.
@@ -72,7 +125,7 @@ updates:
       timezone: Europe/Copenhagen
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 7
+      default-days: 14
     commit-message:
       prefix: build
       include: scope

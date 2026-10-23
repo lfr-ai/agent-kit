@@ -1,10 +1,10 @@
 """Unrecognized or incomplete infrastructure previews must never look approved."""
 
 import json
+from pathlib import Path
 import runpy
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 

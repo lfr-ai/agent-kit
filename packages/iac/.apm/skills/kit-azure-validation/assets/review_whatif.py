@@ -6,10 +6,11 @@ authentication, network access or resource mutations are supported.
 """
 
 import argparse
-import json
-import sys
+from collections.abc import Callable
 from enum import StrEnum
+import json
 from pathlib import Path
+import sys
 
 _INVALID = 2
 _DELETE = 3
@@ -79,9 +80,7 @@ def _invalid_constant(value: str) -> object:
     raise WhatIfInputError(WhatIfInputIssue.NON_JSON_CONSTANT, value=value)
 
 
-def _changes(value: object) -> list[object]:
-    if not isinstance(value, dict):
-        raise WhatIfInputTypeError(WhatIfInputIssue.OBJECT_REQUIRED)
+def _check_status(value: dict[object, object]) -> None:
     if "status" in value and not isinstance(value["status"], str):
         raise WhatIfInputTypeError(WhatIfInputIssue.UNFINISHED_RESULT)
     if (
@@ -89,19 +88,51 @@ def _changes(value: object) -> list[object]:
         or value.get("status", "Succeeded") != "Succeeded"
     ):
         raise WhatIfInputError(WhatIfInputIssue.UNFINISHED_RESULT)
+
+
+def _select_changes(value: dict[object, object]) -> object:
     properties = value.get("properties")
     nested = isinstance(properties, dict) and "changes" in properties
     if "changes" in value and nested:
         raise WhatIfInputError(WhatIfInputIssue.AMBIGUOUS_ENVELOPE)
     if "changes" in value:
-        changes = value["changes"]
-    elif isinstance(properties, dict) and nested:
-        changes = properties["changes"]
-    else:
-        raise WhatIfInputError(WhatIfInputIssue.MISSING_CHANGES)
+        return value["changes"]
+    if isinstance(properties, dict) and nested:
+        return properties["changes"]
+    raise WhatIfInputError(WhatIfInputIssue.MISSING_CHANGES)
+
+
+def _changes(value: object) -> list[object]:
+    if not isinstance(value, dict):
+        raise WhatIfInputTypeError(WhatIfInputIssue.OBJECT_REQUIRED)
+    _check_status(value)
+    changes = _select_changes(value)
     if not isinstance(changes, list):
         raise WhatIfInputTypeError(WhatIfInputIssue.CHANGES_ARRAY)
     return changes
+
+
+def _resource_id(change: dict[object, object], seen: set[str]) -> str:
+    resource = change.get("resourceId")
+    if "resourceId" not in change:
+        raise WhatIfInputError(WhatIfInputIssue.RESOURCE_ID)
+    if not isinstance(resource, str):
+        raise WhatIfInputTypeError(WhatIfInputIssue.RESOURCE_ID)
+    if not resource.strip() or resource.casefold() in seen:
+        raise WhatIfInputError(WhatIfInputIssue.RESOURCE_ID)
+    seen.add(resource.casefold())
+    return resource
+
+
+def _change_kind(change: dict[object, object]) -> str:
+    action = change.get("changeType")
+    if "changeType" not in change:
+        raise WhatIfInputError(WhatIfInputIssue.CHANGE_TYPE)
+    if not isinstance(action, str):
+        raise WhatIfInputTypeError(WhatIfInputIssue.CHANGE_TYPE)
+    if action not in _KINDS:
+        raise WhatIfInputError(WhatIfInputIssue.CHANGE_TYPE)
+    return _KINDS[action]
 
 
 def analyze_whatif(value: object) -> dict[str, list[str]]:
@@ -116,22 +147,8 @@ def analyze_whatif(value: object) -> dict[str, list[str]]:
     for change in _changes(value):
         if not isinstance(change, dict):
             raise WhatIfInputTypeError(WhatIfInputIssue.CHANGE_OBJECT)
-        resource = change.get("resourceId")
-        if "resourceId" not in change:
-            raise WhatIfInputError(WhatIfInputIssue.RESOURCE_ID)
-        if not isinstance(resource, str):
-            raise WhatIfInputTypeError(WhatIfInputIssue.RESOURCE_ID)
-        if not resource.strip() or resource.casefold() in seen:
-            raise WhatIfInputError(WhatIfInputIssue.RESOURCE_ID)
-        seen.add(resource.casefold())
-        action = change.get("changeType")
-        if "changeType" not in change:
-            raise WhatIfInputError(WhatIfInputIssue.CHANGE_TYPE)
-        if not isinstance(action, str):
-            raise WhatIfInputTypeError(WhatIfInputIssue.CHANGE_TYPE)
-        if action not in _KINDS:
-            raise WhatIfInputError(WhatIfInputIssue.CHANGE_TYPE)
-        groups[_KINDS[action]].append(resource)
+        resource = _resource_id(change, seen)
+        groups[_change_kind(change)].append(resource)
     return groups
 
 
@@ -164,6 +181,26 @@ class SelfTestError(AssertionError):
         super().__init__(issue.value)
 
 
+def _expect_rejected(
+    values: tuple[object, ...],
+    check: Callable[[object], object],
+    errors: type[Exception] | tuple[type[Exception], ...],
+    issue: SelfTestIssue,
+) -> None:
+    for value in values:
+        try:
+            check(value)
+        except errors:
+            continue
+        raise SelfTestError(issue)
+
+
+def _read_object(value: object) -> object:
+    if not isinstance(value, str):
+        raise TypeError
+    return _read(value)
+
+
 def self_test() -> None:
     """Exercise supported, risky, malformed and incomplete preview inputs."""
     for action, kind in _KINDS.items():
@@ -180,24 +217,21 @@ def self_test() -> None:
         {"changes": [{"resourceId": "/example", "changeType": "Unknown"}]},
         {"changes": [], "properties": {"changes": []}},
     )
-    for value in invalid:
-        try:
-            analyze_whatif(value)
-        except ValueError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_RESULT_ACCEPTED)
-    for value in ([], {"changes": None}):
-        try:
-            analyze_whatif(value)
-        except WhatIfInputTypeError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_RESULT_ACCEPTED)
-    for text in ("{", '{"changes":[],"changes":[]}', "NaN"):
-        try:
-            _read(text)
-        except ValueError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_JSON_ACCEPTED)
+    _expect_rejected(
+        invalid, analyze_whatif, ValueError, SelfTestIssue.INVALID_RESULT_ACCEPTED
+    )
+    _expect_rejected(
+        ([], {"changes": None}),
+        analyze_whatif,
+        WhatIfInputTypeError,
+        SelfTestIssue.INVALID_RESULT_ACCEPTED,
+    )
+    _expect_rejected(
+        ("{", '{"changes":[],"changes":[]}', "NaN"),
+        _read_object,
+        ValueError,
+        SelfTestIssue.INVALID_JSON_ACCEPTED,
+    )
     if any(analyze_whatif({"properties": {"changes": []}}).values()):
         raise SelfTestError(SelfTestIssue.EMPTY_PREVIEW)
 

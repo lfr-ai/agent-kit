@@ -5,6 +5,7 @@
     "davidanson.vscode-markdownlint",
     "editorconfig.editorconfig",
     "github.vscode-github-actions",
+    "ms-azuretools.vscode-containers",
     "ms-python.debugpy",
     "ms-python.python",
     "ms-python.vscode-python-envs",

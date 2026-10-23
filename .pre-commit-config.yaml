@@ -6,7 +6,7 @@ default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
@@ -17,6 +17,7 @@ repos:
             \.claude/(skills|rules|agents)/.*|
             \.github/(agents|instructions)/.*|
             apm\.lock\.yaml|
+            bun\.lock|
             uv\.lock
           )$
       - id: end-of-file-fixer
@@ -48,46 +49,82 @@ repos:
         exclude: ^tests/(conftest\.py|README\.md)$
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.38.2
+    rev: 0494aa7fa1314e98913a41227d8f0a515b2c1049  # frozen: 0.38.2
     hooks:
       - id: check-github-workflows
       - id: check-dependabot
       - id: check-taskfile
+      - id: check-jsonschema
+        alias: check-coderabbit
+        name: Validate CodeRabbit configuration
+        files: ^\.coderabbit\.yaml$
+        args: [--schemafile, "https://coderabbit.ai/integrations/schema.v2.json"]
+      - id: check-jsonschema
+        alias: check-codecov
+        name: Validate Codecov configuration
+        files: ^\.codecov\.yml$
+        args: [--schemafile, "https://json.schemastore.org/codecov.json"]
 
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
+    rev: 01886c8a910c64595c47f186ca1ffc0b77fa5458  # frozen: v1.5.0
     hooks:
       - id: detect-secrets
         args: [--baseline, .secrets.baseline]
         exclude: ^\.agents/agentic-setup/native-lock\.json$
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.38.0
+    rev: cba56bcde1fdd01c1deb3f945e69764c291a6530  # frozen: v1.38.0
     hooks:
       - id: yamllint
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
     hooks:
       - id: shellcheck
         args: [--severity=warning]
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.23.3
+    rev: 916ad0aaa108c64d294101002066f530ea170b10  # frozen: v0.23.3
     hooks:
       - id: markdownlint-cli2
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
-    rev: v10.3.0
+    rev: f5c5d72342f35643988a9ffa0705c05bd3ff8383  # frozen: v10.3.0
     hooks:
       - id: cspell
 
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.24.2
+    rev: 2bba271688c1abb1503097a064e6c3bc1d1b6a9b  # frozen: lychee-v0.24.2
     hooks:
       - id: lychee-docker
-        entry: lycheeverse/lychee:0.24.2
+        # Tag for readability; the digest makes the executed image immutable.
+        entry: lycheeverse/lychee:0.24.2@sha256:e2d19e57cf6ab037026f20b8e449a1f30d9d7f81eef4194763aab2eab20bd28d
         types_or: [markdown]
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    hooks:
+      - id: zizmor
+        pass_filenames: false
+        args: [--no-progress, .]
+        files: |
+          (?x)(^|/)(
+            \.github/(workflows/[^/]+|dependabot|zizmor)\.ya?ml|
+            action\.ya?ml|\.pre-commit-(config|hooks)\.ya?ml|zizmor\.ya?ml
+          )$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      - id: actionlint
+        # Exact Go toolchain; pre-commit bootstraps it when Go is not installed.
+        language_version: 1.27.3
+        pass_filenames: false
+        files: ^(\.github/workflows/[^/]+\.ya?ml|\.pre-commit-config\.yaml)$
+        # Remove this narrow exception when actionlint supports "$/" workflow calls.
+        args:
+          - -ignore
+          - 'reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yml" at "uses" is not following the format'
 
   - repo: local
     hooks:
@@ -97,6 +134,25 @@ repos:
         language: unsupported
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock)$
+      # Runs before any hook that syncs, so a changed lock is audited first.
+      - id: dependency-audit
+        name: Locked dependency vulnerabilities and wheel-only installs
+        entry: uv run --locked --no-sync python scripts/audit_dependencies.py
+        language: unsupported
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock|package\.json|bun\.lock)$
+      - id: dependency-licenses
+        name: Installed dependency licenses
+        entry: uv run --locked python packages/shared/.apm/skills/kit-agent-runtime/assets/license_guard.py --allowlist license-allowlist.json
+        language: unsupported
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock|license-allowlist\.json)$
+      - id: version-pins
+        name: Exact versions, frozen hooks, and digest-pinned images
+        entry: uv run --locked python packages/shared/.apm/skills/kit-verify-change/assets/check_pins.py --root .
+        language: unsupported
+        pass_filenames: false
+        always_run: true
       - id: ruff-check
         name: Ruff check (read-only; `task format` fixes)
         entry: uv run --locked ruff check
@@ -111,7 +167,8 @@ repos:
         name: ty type check
         entry: uv run --locked ty check
         language: unsupported
-        types: [python]
+        types: [file]
+        files: (\.pyi?$|^(ty\.toml|pyproject\.toml|uv\.lock)$)
         pass_filenames: false
       - id: commitizen
         name: Conventional Commit message
@@ -125,11 +182,11 @@ repos:
         pass_filenames: false
         types: [python]
       - id: toolkit-python-conventions
-        name: Portable Python convention invariants
+        name: Python conventions and double-backtick docstrings
         entry: uv run --locked python scripts/check_conventions.py
         language: unsupported
         pass_filenames: false
-        types: [python]
+        always_run: true
       - id: toolkit-contract
         name: Canonical capability and policy contract
         entry: uv run --locked agent-kit check --root .
@@ -174,7 +231,8 @@ repos:
         always_run: true
       - id: jscpd
         name: jscpd copy-paste detection
-        entry: bunx --bun jscpd@5.4.1
+        # Runs the bun.lock-pinned binary; it never downloads at hook time.
+        entry: bun run --bun jscpd
         language: unsupported
         pass_filenames: false
         always_run: true

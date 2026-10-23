@@ -19,5 +19,17 @@ jobs:
           persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
-          fail-on-severity: high
+          fail-on-severity: low
+          fail-on-scopes: runtime, development, unknown
+          vulnerability-check: true
+          license-check: true
+          # Mirrors license-allowlist.json; purls cover reviewed metadata gaps.
+          allow-licenses: >-
+            0BSD, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, MIT,
+            MIT-0, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, Zlib
+          allow-dependencies-licenses: >-
+            pkg:pypi/click-default-group, pkg:pypi/multidict,
+            pkg:pypi/rich-click, pkg:pypi/sqlite-fts4
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: 3
           comment-summary-in-pr: never

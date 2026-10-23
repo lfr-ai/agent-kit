@@ -2,8 +2,8 @@
 
 import ast
 import json
-import runpy
 from pathlib import Path
+import runpy
 
 import pytest
 import yaml
@@ -66,10 +66,63 @@ def test_python_checker_bool_trap_is_opt_in_and_exempts_tests() -> None:
     ]
 
 
+def test_python_checker_magic_numbers_are_opt_in_and_allow_named_constants() -> None:
+    source = (
+        "from typing import Final, Literal\n"
+        "_RETRIES = 3\n"
+        "LIMITS: Final = {'size': 64 * 1024}\n"
+        "WIDTH, HEIGHT = 80, 24\n"
+        "class Policy:\n"
+        "    TIMEOUT = 2.5\n"
+        "def mode() -> Literal[2]: ...\n"
+        "def run(items: list[int], timeout: float = 30.0) -> int:\n"
+        "    if len(items) > 10 or items[-1] or items[0] == 1:\n"
+        "        return -2\n"
+        "    width = 7\n"
+        "    return _RETRIES + width\n"
+    )
+    assert _PYTHON["violations"](source, "m.py") == []
+    findings = _PYTHON["violations"](source, "m.py", rules=frozenset({"magic-number"}))
+    assert findings == [
+        "m.py:8: magic number 30.0; name it as an UPPER_CASE constant",
+        "m.py:9: magic number 10; name it as an UPPER_CASE constant",
+        "m.py:10: magic number -2; name it as an UPPER_CASE constant",
+        "m.py:11: magic number 7; name it as an UPPER_CASE constant",
+    ]
+
+
+def test_python_checker_main_enables_magic_numbers_by_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path, "m.py", "def f() -> int:\n    return 42\n")
+    assert _PYTHON["main"]([str(path)]) == 0
+    assert _PYTHON["main"]([str(path), "--magic-numbers"]) == 1
+    assert "m.py:2: magic number 42" in capsys.readouterr().err
+
+
+def test_python_checker_checks_production_templates_but_not_fixture_literals(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = _write(tmp_path, "settings.py.template", "timeout = 30\n")
+    _write(tmp_path, "test_settings.py.template", "expected = 30\n")
+    _write(tmp_path, "conftest.py.template", "fixture = 30\n")
+    _write(tmp_path, ".venv/ignored.py.template", "value = 30\n")
+    assert _PYTHON["main"]([str(tmp_path), "--only", "magic-number"]) == 0
+    options = [str(tmp_path), "--templates", "--only", "magic-number"]
+    assert _PYTHON["main"](options) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        f"{bad}:1: magic number 30; name it as an UPPER_CASE constant"
+    ]
+    bad.write_text(
+        "_TIMEOUT_SECONDS = 30\ntimeout = _TIMEOUT_SECONDS\n", encoding="utf-8"
+    )
+    assert _PYTHON["main"](options) == 0
+
+
 def test_python_checker_main_reports_and_respects_disable(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    good = _write(tmp_path, "pkg/good.py", '"""Module \'name\'."""\n')
+    good = _write(tmp_path, "pkg/good.py", '"""Module ``name``."""\n')
     bad = _write(tmp_path, "pkg/bad.py", "try:\n    pass\nexcept:\n    pass\n")
     assert _PYTHON["main"]([str(good)]) == 0
     assert _PYTHON["main"]([str(tmp_path / "pkg")]) == 1

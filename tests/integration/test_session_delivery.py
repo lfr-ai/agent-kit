@@ -8,6 +8,7 @@ import pytest
 from agent_kit.application.services.catalog_service import CatalogService
 from agent_kit.application.services.provenance_service import ProvenanceService
 from agent_kit.composition.root import build_actions
+import agent_kit.infrastructure.catalog_adapter as catalog_module
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 from agent_kit.presentation.cli import main
 
@@ -40,6 +41,83 @@ def test_cli_session_delivery_has_verifiable_integrity(
     assert not (output / ".claude").exists()
     report = ProvenanceService().verify(FileCatalogAdapter().load_composed(output))
     assert report.valid
+
+
+@pytest.mark.parametrize(
+    "generated",
+    ["__pycache__/helper.cpython-313.pyc", "helper.pyc", "helper.pyo"],
+)
+def test_delivery_omits_source_bytecode_but_rejects_injected_output(
+    source_root: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    generated: str,
+) -> None:
+    assets = source_root / "packages/shared/.apm/skills/kit-shared/assets"
+    assets.mkdir()
+    cache = assets / generated
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(b"interpreter-specific cache")
+    (assets / "helper.py").write_text("value = 1\n", encoding="utf-8")
+    (assets / "image.bin").write_bytes(b"\xff\x00")
+    output = tmp_path / "session"
+
+    result = main(
+        build_actions(),
+        ["compose", "shared", "--root", str(source_root), "--output", str(output)],
+    )
+    assert result == 0, capsys.readouterr().err
+    delivered = output / ".apm/skills/kit-shared/assets"
+    assert not (delivered / generated).exists()
+    assert (delivered / "helper.py").read_text(encoding="utf-8") == "value = 1\n"
+    assert (delivered / "image.bin").read_bytes() == b"\xff\x00"
+    adapter = FileCatalogAdapter()
+    assert ProvenanceService().verify(adapter.load_composed(output)).valid
+
+    injected = delivered / generated
+    injected.parent.mkdir(parents=True, exist_ok=True)
+    injected.write_bytes(b"unattested output")
+    assert not ProvenanceService().verify(adapter.load_composed(output)).valid
+
+
+@pytest.mark.parametrize("relative", ["__pycache__", "helper.pyc", "helper.pyo"])
+def test_bytecode_exclusion_does_not_hide_linked_paths(
+    source_root: Path, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    cache = source_root / "packages/shared/.apm/skills/kit-shared" / relative
+    if relative == "__pycache__":
+        cache.mkdir()
+    else:
+        cache.write_bytes(b"linked bytecode")
+    original = catalog_module._is_link
+
+    def linked(path: Path) -> bool:
+        return path == cache or original(path)
+
+    monkeypatch.setattr(catalog_module, "_is_link", linked)
+    snapshot = FileCatalogAdapter().load(source_root)
+    bundle = next(bundle for bundle in snapshot.bundles if bundle.name == "shared")
+    assert any(
+        item.is_symlink and item.relative_path.endswith(f"/{relative}")
+        for item in bundle.files
+    )
+    assert not CatalogService().validate(snapshot).valid
+
+
+@pytest.mark.parametrize("generated", [".git", "node_modules", ".hypothesis", ".ty"])
+def test_source_inventory_does_not_descend_into_generated_directories(
+    source_root: Path, generated: str
+) -> None:
+    cache = source_root / generated / "nested"
+    cache.mkdir(parents=True)
+    (cache / "generated.txt").write_text("not source", encoding="utf-8")
+    documentation = source_root / "docs"
+    documentation.mkdir()
+    (documentation / "guide.md").write_text("# Authored guide\n", encoding="utf-8")
+
+    snapshot = FileCatalogAdapter().load(source_root)
+    assert not any(path.startswith(f"{generated}/") for path in snapshot.root_paths)
+    assert "docs/guide.md" in snapshot.root_paths
 
 
 def test_hexagonal_architecture_skill_session_keeps_instructions_and_resources(

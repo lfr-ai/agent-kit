@@ -1,7 +1,7 @@
 """Validate a spec-driven change folder before review, verification or archive.
 
 The checker reads Markdown only and never executes or imports consumer files.
-It enforces the folder contract described in 'references/lifecycle.md':
+It enforces the folder contract described in ``references/lifecycle.md``:
 required files exist and are nonempty, every active requirement has at least
 one Given/When/Then scenario, tasks are checkbox items, the declared status is
 consistent with task completion and the verification report, and no unresolved
@@ -9,10 +9,10 @@ placeholder markers remain outside fenced code blocks.
 """
 
 import argparse
-import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
+import sys
 from tempfile import TemporaryDirectory
 
 _DEFAULT_REQUIRED = ("proposal.md", "requirements.md", "tasks.md")
@@ -39,6 +39,7 @@ _SCENARIO = re.compile(r"^###\s+Scenario:\s*(\S.*)$")
 _STEP = re.compile(r"^(?:[-*+]\s+)?\**(Given|When|Then|And|But)\b\**\s+\S")
 _CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s+\S")
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+_EXIT_USAGE = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -56,7 +57,7 @@ class Finding:
     message: str
 
     def render(self) -> str:
-        """Return the deterministic 'path:line: message' form."""
+        """Return the deterministic ``path:line: message`` form."""
         return f"{self.path.as_posix()}:{self.line}: {self.message}"
 
 
@@ -90,11 +91,11 @@ class Requirement:
     """A parsed requirement section.
 
     Args:
-        identifier: Requirement identifier such as 'REQ-001'.
+        identifier: Requirement identifier such as ``REQ-001``.
         line: One-based line of the requirement heading.
-        kind: Declared change kind: 'add', 'modify' or 'remove'.
+        kind: Declared change kind: ``add``, ``modify`` or ``remove``.
         normative: Whether the statement uses a normative keyword.
-        has_reason: Whether a 'Reason:' line is present.
+        has_reason: Whether a ``Reason:`` line is present.
         scenarios: Parsed scenarios as (name, line, step keywords) tuples.
     """
 
@@ -123,7 +124,8 @@ class _Draft:
             self.scenarios.append((scenario.group(1).strip(), number, []))
         elif self.scenarios:
             if step := _STEP.match(line):
-                self.scenarios[-1][2].append(step.group(1))
+                _, _, steps = self.scenarios[-1]
+                steps.append(step.group(1))
         else:
             if kind := _CHANGE.match(line):
                 self.kind = kind.group(1).casefold()
@@ -165,7 +167,7 @@ def _prose_lines(text: str) -> list[tuple[int, str]]:
 
 
 def parse_requirements(text: str, id_pattern: str) -> list[Requirement]:
-    """Parse '## <id> title' sections and their '### Scenario:' blocks.
+    """Parse ``## <id> title`` sections and their ``### Scenario:`` blocks.
 
     Args:
         text: Requirements document text.
@@ -189,38 +191,64 @@ def parse_requirements(text: str, id_pattern: str) -> list[Requirement]:
     return [draft.freeze() for draft in drafts]
 
 
-def _requirement_findings(path: Path, requirement: Requirement) -> list[Finding]:
-    """Check one requirement's change kind, wording and scenarios."""
-    findings: list[Finding] = []
+def _step_messages(
+    label: str, name: str, line: int, steps: tuple[str, ...]
+) -> list[tuple[int, str]]:
+    """Check that one scenario has When/Then steps and a valid first step."""
+    messages = [
+        (line, f"{label}: scenario '{name}' has no {keyword} step")
+        for keyword in ("When", "Then")
+        if keyword not in steps
+    ]
+    if steps and steps[0] in {"And", "But"}:
+        messages.append((line, f"{label}: scenario '{name}' starts with {steps[0]}"))
+    return messages
 
-    def add(line: int, message: str) -> None:
-        findings.append(Finding(path=path, line=line, message=message))
 
+def _scenario_messages(
+    label: str, scenarios: tuple[tuple[str, int, tuple[str, ...]], ...]
+) -> list[tuple[int, str]]:
+    """Check scenario names for duplicates and each scenario's steps."""
+    messages: list[tuple[int, str]] = []
+    names: set[str] = set()
+    for name, line, steps in scenarios:
+        if name.casefold() in names:
+            messages.append((line, f"{label}: duplicate scenario name '{name}'"))
+        names.add(name.casefold())
+        messages.extend(_step_messages(label, name, line, steps))
+    return messages
+
+
+def _requirement_messages(requirement: Requirement) -> list[tuple[int, str]]:
+    """Return located messages for one requirement's kind, wording and scenarios."""
     label = requirement.identifier
+    line = requirement.line
+    messages: list[tuple[int, str]] = []
     if requirement.kind not in _CHANGE_KINDS:
-        add(requirement.line, f"{label}: unknown change kind '{requirement.kind}'")
+        messages.append((line, f"{label}: unknown change kind '{requirement.kind}'"))
     if requirement.kind == "remove":
         if not requirement.has_reason:
-            add(requirement.line, f"{label}: removed requirement needs a Reason line")
-        return findings
+            messages.append((line, f"{label}: removed requirement needs a Reason line"))
+        return messages
     if not requirement.normative:
-        add(
-            requirement.line,
-            f"{label}: statement lacks a normative keyword (MUST/SHALL/SHOULD/MAY)",
+        messages.append(
+            (
+                line,
+                f"{label}: statement lacks a normative keyword (MUST/SHALL/SHOULD/MAY)",
+            )
         )
     if not requirement.scenarios:
-        add(requirement.line, f"{label}: requirement has no scenario")
-    names: set[str] = set()
-    for name, line, steps in requirement.scenarios:
-        if name.casefold() in names:
-            add(line, f"{label}: duplicate scenario name '{name}'")
-        names.add(name.casefold())
-        for keyword in ("When", "Then"):
-            if keyword not in steps:
-                add(line, f"{label}: scenario '{name}' has no {keyword} step")
-        if steps and steps[0] in {"And", "But"}:
-            add(line, f"{label}: scenario '{name}' starts with {steps[0]}")
-    return findings
+        messages.append((line, f"{label}: requirement has no scenario"))
+    messages.extend(_scenario_messages(label, requirement.scenarios))
+    return messages
+
+
+def _requirement_findings(path: Path, requirement: Requirement) -> list[Finding]:
+    """Check one requirement's change kind, wording and scenarios."""
+    return [
+        Finding(path=path, line=line, message=message)
+        for line, message in _requirement_messages(requirement)
+    ]
 
 
 def check_requirements(path: Path, text: str, id_pattern: str) -> list[Finding]:
@@ -334,6 +362,16 @@ def _status_findings(
         ]
     if value not in _CLOSED_STATUSES:
         return []
+    return _closed_status_findings(
+        directory / settings.verification_name, proposal, status, open_tasks
+    )
+
+
+def _closed_status_findings(
+    report: Path, proposal: Path, status: tuple[str, int], open_tasks: int | None
+) -> list[Finding]:
+    """Require closed changes to have no open tasks and a passing report."""
+    value, line = status
     findings: list[Finding] = []
     if open_tasks:
         findings.append(
@@ -343,7 +381,6 @@ def _status_findings(
                 message=f"status '{value}' with {open_tasks} unchecked task(s)",
             )
         )
-    report = directory / settings.verification_name
     result = (
         _first_value(report.read_text(encoding="utf-8"), _RESULT)
         if report.is_file()
@@ -396,13 +433,7 @@ def check_change(directory: Path, settings: Settings | None = None) -> list[Find
     options = settings or Settings()
     if not directory.is_dir():
         return [Finding(path=directory, line=1, message="change folder not found")]
-    findings: list[Finding] = []
-    for name in options.required:
-        path = directory / name
-        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
-            findings.append(
-                Finding(path=path, line=1, message="missing or empty required file")
-            )
+    findings = _required_findings(directory, options.required)
     spec = directory / options.spec_name
     if spec.is_file():
         findings.extend(
@@ -410,24 +441,49 @@ def check_change(directory: Path, settings: Settings | None = None) -> list[Find
                 spec, spec.read_text(encoding="utf-8"), options.id_pattern
             )
         )
-    tasks = directory / options.tasks_name
-    open_tasks: int | None = None
-    if tasks.is_file():
-        tasks_text = tasks.read_text(encoding="utf-8")
-        task_findings, open_tasks = check_tasks(tasks, tasks_text)
-        findings.extend(task_findings)
-        if options.trace and spec.is_file():
-            findings.extend(_trace_findings(spec, tasks_text, tasks, options))
-    for document in sorted(directory.rglob("*.md")):
-        findings.extend(
-            check_markers(
-                document, document.read_text(encoding="utf-8"), options.markers
-            )
-        )
+    task_findings, open_tasks = _task_findings(directory, spec, options)
+    findings.extend(task_findings)
+    findings.extend(_marker_findings(directory, options.markers))
     findings.extend(_status_findings(directory, options, open_tasks))
     return sorted(
         set(findings), key=lambda item: (item.path.as_posix(), item.line, item.message)
     )
+
+
+def _required_findings(directory: Path, required: tuple[str, ...]) -> list[Finding]:
+    """Report required files that are missing or empty."""
+    findings: list[Finding] = []
+    for name in required:
+        path = directory / name
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            findings.append(
+                Finding(path=path, line=1, message="missing or empty required file")
+            )
+    return findings
+
+
+def _task_findings(
+    directory: Path, spec: Path, options: Settings
+) -> tuple[list[Finding], int | None]:
+    """Check the task list and optional traceability; count open tasks."""
+    tasks = directory / options.tasks_name
+    if not tasks.is_file():
+        return [], None
+    tasks_text = tasks.read_text(encoding="utf-8")
+    findings, open_tasks = check_tasks(tasks, tasks_text)
+    if options.trace and spec.is_file():
+        findings.extend(_trace_findings(spec, tasks_text, tasks, options))
+    return findings, open_tasks
+
+
+def _marker_findings(directory: Path, markers: tuple[str, ...]) -> list[Finding]:
+    """Report unresolved markers in every Markdown file of the change."""
+    findings: list[Finding] = []
+    for document in sorted(directory.rglob("*.md")):
+        findings.extend(
+            check_markers(document, document.read_text(encoding="utf-8"), markers)
+        )
+    return findings
 
 
 _VALID_FILES = {
@@ -524,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:
     """Validate change folders and print one finding per line.
 
     Args:
-        argv: Command-line arguments; 'sys.argv' when omitted.
+        argv: Command-line arguments; ``sys.argv`` when omitted.
 
     Returns:
         0 when every folder passes, 1 on findings, 2 on unusable input.
@@ -537,13 +593,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.changes:
         parser.print_usage(sys.stderr)
-        return 2
+        return _EXIT_USAGE
     try:
         re.compile(args.id_pattern)
     except re.error as error:
         print(f"invalid --id-pattern: {error}", file=sys.stderr)
-        return 2
-    settings = Settings(
+        return _EXIT_USAGE
+    settings = _settings(args)
+    findings: list[Finding] = []
+    try:
+        for change in args.changes:
+            findings.extend(check_change(change, settings))
+    except (OSError, UnicodeError) as error:
+        print(f"cannot read change: {error}", file=sys.stderr)
+        return _EXIT_USAGE
+    return _print_findings(findings, len(args.changes))
+
+
+def _settings(args: argparse.Namespace) -> Settings:
+    """Build validation settings from parsed arguments and defaults."""
+    return Settings(
         required=tuple(args.required) or _DEFAULT_REQUIRED,
         spec_name=args.spec_name,
         tasks_name=args.tasks_name,
@@ -553,17 +622,14 @@ def main(argv: list[str] | None = None) -> int:
         id_pattern=args.id_pattern,
         trace=args.trace,
     )
-    findings: list[Finding] = []
-    try:
-        for change in args.changes:
-            findings.extend(check_change(change, settings))
-    except (OSError, UnicodeError) as error:
-        print(f"cannot read change: {error}", file=sys.stderr)
-        return 2
+
+
+def _print_findings(findings: list[Finding], count: int) -> int:
+    """Print findings or a pass summary and return the exit code."""
     for finding in findings:
         print(finding.render())
     if not findings:
-        print(f"{len(args.changes)} change folder(s) passed.")
+        print(f"{count} change folder(s) passed.")
     return int(bool(findings))
 
 

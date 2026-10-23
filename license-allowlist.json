@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "description": "Reviewed third-party license policy for the locked Python environment. Any distribution that is not allowed, excepted, or listed by SPDX identifier fails the license gate. Exceptions match the exact observed metadata and expire so metadata fixes and license changes are rechecked.",
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "LicenseRef-BSD-unspecified",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "PSF-2.0",
+    "Python-2.0",
+    "Unlicense",
+    "Zlib"
+  ],
+  "denied": [
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "BUSL-1.1",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LicenseRef-Proprietary",
+    "SSPL-1.0"
+  ],
+  "exceptions": {
+    "click-default-group": {
+      "license": "LicenseRef-Public-Domain",
+      "reason": "The distribution's bundled LICENSE contains BSD redistribution terms; its trove classifier is inaccurate. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    },
+    "multidict": {
+      "license": "Apache License 2.0",
+      "reason": "The free-text License field and bundled LICENSE are Apache-2.0. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    },
+    "rich-click": {
+      "license": "UNKNOWN",
+      "reason": "The distribution has no machine-readable license metadata; its bundled LICENSE is MIT. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    },
+    "sqlite-fts4": {
+      "license": "Apache License, Version 2.0",
+      "reason": "The free-text License field and bundled LICENSE are Apache-2.0. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    }
+  }
+}

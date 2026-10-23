@@ -38,7 +38,9 @@ pytest --run-slow                   # opt in to tests marked slow
 ```
 
 `--strict-markers` turns a misspelled marker into an error instead of a test
-that silently never runs in its intended tier.
+that silently never runs in its intended tier. With an exactly pinned pytest 9 or
+later, `strict = true` also enables strict config, xfail, and unique
+parametrization ids.
 
 ## Entry rules worth enforcing
 

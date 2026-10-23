@@ -10,6 +10,8 @@ from shop.core.orders import Order
 from shop.core.ports import ConcurrencyError, OrderNotFoundError
 from shop.core.values import OrderId
 
+_STORED_VERSION_INDEX = 2
+
 
 class InMemoryOrderRepository:
     """Dictionary-backed 'OrderRepository' for unit tests."""
@@ -22,7 +24,7 @@ class InMemoryOrderRepository:
     def get(self, order_id: OrderId, /) -> Order | None:
         """Return a detached copy of the stored order."""
         row = self._rows.get(order_id)
-        return None if row is None else _copy(row[1], version=row[2])
+        return None if row is None else _copy(row[1], version=row[_STORED_VERSION_INDEX])
 
     def add(self, order: Order, /) -> None:
         """Store a new order at version 1."""

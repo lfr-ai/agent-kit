@@ -2,13 +2,51 @@
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
+from scripts import apm_smoke
+
+import agent_kit.infrastructure.apm_adapter as apm_module
+from agent_kit.infrastructure.apm_adapter import ApmCliAdapter, ApmExitError
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("returncode", [0, 9])
+def test_apm_output_is_independent_of_the_windows_console_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int
+) -> None:
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252")
+    program = (
+        "import sys; payload='\\u2510'.encode('utf-8')*65536; "
+        "sys.stdout.buffer.write(payload); sys.stdout.buffer.flush(); "
+        "sys.stderr.buffer.write(payload); sys.stderr.buffer.flush(); "
+        f"sys.exit({returncode})"
+    )
+    monkeypatch.setattr(apm_module, "_pinned_executable", lambda: sys.executable)
+    monkeypatch.setattr(
+        apm_module,
+        "_commands",
+        lambda executable: (("audit", [executable, "-c", program]),),
+    )
+    if returncode:
+        with pytest.raises(ApmExitError, match="exit code 9"):
+            ApmCliAdapter(timeout_seconds=10).check(tmp_path)
+        with pytest.raises(SystemExit) as error:
+            apm_smoke.run(
+                [sys.executable, "-c", program],
+                cwd=tmp_path,
+                env=os.environ.copy(),
+            )
+        assert error.value.code == returncode
+    else:
+        ApmCliAdapter(timeout_seconds=10).check(tmp_path)
+        apm_smoke.run(
+            [sys.executable, "-c", program], cwd=tmp_path, env=os.environ.copy()
+        )
 
 
 def _run(*arguments: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]:

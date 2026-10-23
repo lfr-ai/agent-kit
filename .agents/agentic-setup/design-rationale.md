@@ -164,19 +164,20 @@ than shipped as apparent safety ([decision 2026-10-08](../../memories/decisions.
 Native approval modes, least-privilege identities and managed controls remain
 the authorization boundary ([compatibility](../../docs/compatibility.md)).
 
-## Opt-in MCP
+## MCP integrations
 
-The active MCP manifest is empty and the policy allow-list is empty. The editor
-capability (`kit-editor`) carries an integration catalog plus inactive VS Code
-(`servers`) and Claude (`mcpServers`) example wrappers with reviewed-version
-placeholders. Composition, resource checks and smoke never start a server.
+The native root manifests select three remote services with public-documentation
+or read-only repository tools. The root APM policy allows only those server
+identities. The shared editor capability still carries inactive examples for
+all 11 integrations; the generic consumer policy template remains deny-by-default.
+Composition, resource checks and APM smoke never start a server.
 
-Why: MCP servers execute code with the user's permissions, need credentials and
-add tool context. Enabling one is a reviewed consumer decision.
+Why: MCP tools can disclose queries to a remote service and may inherit a user's
+account permissions. Keep credentials in host-managed OAuth, narrow toolsets,
+and require consumer-specific review before activating additional servers.
 
-Rejected alternative: **enabling every example to match server names.** A
-matching name does not establish command, endpoint, transport or tool
-equivalence ([decision 2026-10-19](../../memories/decisions.md)).
+Rejected alternative: **enabling every example.** A matching server name does
+not establish command, endpoint, transport or tool equivalence.
 
 ## Native role rendering
 

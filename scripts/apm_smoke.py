@@ -1,14 +1,14 @@
 """Exercise pinned APM against selected packages in disposable workspaces."""
 
 import argparse
+from enum import Enum
 import importlib.metadata
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-from enum import Enum
-from pathlib import Path
 from tempfile import TemporaryDirectory
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -105,17 +105,81 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
             cwd=cwd,
             env=env,
             capture_output=True,
-            text=True,
             check=False,
             timeout=_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as error:
         raise _SmokeCommandTimeout(_TIMEOUT_SECONDS, command) from error
     if result.returncode:
-        print(result.stdout, file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
+        print(result.stdout.decode("utf-8", errors="backslashreplace"), file=sys.stderr)
+        print(result.stderr.decode("utf-8", errors="backslashreplace"), file=sys.stderr)
         raise SystemExit(result.returncode)
     print(f"Passed: {' '.join(command[1:])}", flush=True)
+
+
+def _compose_command(
+    toolkit: str,
+    profile: str,
+    *,
+    package: Path,
+    features: tuple[str, ...],
+    session_skills: tuple[str, ...],
+) -> list[str]:
+    """Build the bounded ``compose`` command for one disposable selection."""
+    return [
+        toolkit,
+        "compose",
+        profile,
+        "--root",
+        str(_ROOT),
+        "--output",
+        str(package),
+        *[argument for feature in features for argument in ("--feature", feature)],
+        *[argument for skill in session_skills for argument in ("--skill", skill)],
+    ]
+
+
+def _selected_source(
+    package: Path, *, session_skills: tuple[str, ...]
+) -> tuple[set[str], set[str], dict[str, bytes]]:
+    """Return the composed skill roster, native roles and skill resources."""
+    expected_skills = {
+        path.parent.name for path in (package / ".apm/skills").rglob("SKILL.md")
+    }
+    if session_skills and expected_skills != set(session_skills):
+        raise _SmokeContractError(_SmokeIssue.UNSELECTED_SESSION_SKILLS)
+    authored = json.loads((package / "provenance.json").read_text(encoding="utf-8"))[
+        "files"
+    ]
+    resources = {
+        name.removeprefix(".apm/skills/"): (package / name).read_bytes()
+        for name in authored
+        if name.startswith(".apm/skills/") and not name.endswith("/SKILL.md")
+    }
+    expected_roles = {
+        name
+        for name in authored
+        if name.startswith((".github/agents/", ".claude/agents/"))
+    }
+    if session_skills and expected_roles:
+        raise _SmokeContractError(_SmokeIssue.UNEXPECTED_NATIVE_ROLES)
+    return expected_skills, expected_roles, resources
+
+
+def _delivered(
+    package: Path,
+    *,
+    skills: set[str],
+    roles: set[str],
+    resources: dict[str, bytes],
+) -> bool:
+    """Report delivery failures on stderr and return whether delivery held."""
+    failures = delivery_failures(
+        package, skills=skills, roles=roles, resources=resources
+    )
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+    return not failures
 
 
 def smoke_profile(
@@ -134,53 +198,20 @@ def smoke_profile(
         env = fixture_environment(env, home=home)
         package = Path(temporary) / profile
         run(
-            [
+            _compose_command(
                 toolkit,
-                "compose",
                 profile,
-                "--root",
-                str(_ROOT),
-                "--output",
-                str(package),
-                *[
-                    argument
-                    for feature in features
-                    for argument in ("--feature", feature)
-                ],
-                *(
-                    [
-                        argument
-                        for skill in session_skills
-                        for argument in ("--skill", skill)
-                    ]
-                    if session_skills
-                    else []
-                ),
-            ],
+                package=package,
+                features=features,
+                session_skills=session_skills,
+            ),
             cwd=_ROOT,
             env=env,
         )
         run([toolkit, "provenance", "--root", str(package)], cwd=package, env=env)
-        expected_skills = {
-            path.parent.name for path in (package / ".apm/skills").rglob("SKILL.md")
-        }
-        if session_skills and expected_skills != set(session_skills):
-            raise _SmokeContractError(_SmokeIssue.UNSELECTED_SESSION_SKILLS)
-        authored = json.loads(
-            (package / "provenance.json").read_text(encoding="utf-8")
-        )["files"]
-        resources = {
-            name.removeprefix(".apm/skills/"): (package / name).read_bytes()
-            for name in authored
-            if name.startswith(".apm/skills/") and not name.endswith("/SKILL.md")
-        }
-        expected_roles = {
-            name
-            for name in authored
-            if name.startswith((".github/agents/", ".claude/agents/"))
-        }
-        if session_skills and expected_roles:
-            raise _SmokeContractError(_SmokeIssue.UNEXPECTED_NATIVE_ROLES)
+        expected_skills, expected_roles, resources = _selected_source(
+            package, session_skills=session_skills
+        )
         run(
             [
                 apm,
@@ -208,11 +239,9 @@ def smoke_profile(
         )
         for runtime in _RUNTIMES.split(","):
             run([apm, "compile", "--target", runtime], cwd=package, env=env)
-        failures = delivery_failures(
+        if not _delivered(
             package, skills=expected_skills, roles=expected_roles, resources=resources
-        )
-        if failures:
-            print("\n".join(failures), file=sys.stderr)
+        ):
             return 1
         run([toolkit, "apm-check", "--root", str(package)], cwd=package, env=env)
         if not session_skills and not expected_roles:
@@ -235,11 +264,9 @@ def smoke_profile(
             env=env,
         )
         run([toolkit, "provenance", "--root", str(package)], cwd=package, env=env)
-        failures = delivery_failures(
+        if not _delivered(
             package, skills=expected_skills, roles=expected_roles, resources=resources
-        )
-        if failures:
-            print("\n".join(failures), file=sys.stderr)
+        ):
             return 1
     return 0
 

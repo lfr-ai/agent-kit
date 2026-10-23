@@ -2,18 +2,18 @@
 
 Browser network exports often contain cookies, bearer tokens, one-time codes, and
 full response bodies. This checker reads a HAR file with the standard library,
-reports every sensitive location as 'path:entry: message', and exits 1 when any
+reports every sensitive location as ``path:entry: message``, and exits 1 when any
 exist. It never prints the sensitive values themselves and never modifies the
 file; redact with the browser's sanitized export or a dedicated tool, then rerun.
 """
 
 import argparse
-import json
-import re
-import sys
 from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
+import json
 from pathlib import Path
+import re
+import sys
 from tempfile import TemporaryDirectory
 
 _SENSITIVE_HEADERS = frozenset(
@@ -36,6 +36,8 @@ _SENSITIVE_BODY = re.compile(
     r"id_token|ssn|card_?number|cvv)\"\s*:"
 )
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_SELF_TEST_RESPONSE_BYTES = 10
+_SELF_TEST_LEAKY_FINDINGS = 5
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -64,36 +66,70 @@ def _entry_findings(
     index: int, entry: Mapping[str, object], *, allow_bodies: bool
 ) -> list[str]:
     """Collect findings for one HAR entry without echoing sensitive values."""
-    findings: list[str] = []
     request = _mapping(entry.get("request"))
     response = _mapping(entry.get("response"))
+    findings: list[str] = []
     for side, message in (("request", request), ("response", response)):
-        for name, value in _named_values(message.get("headers")):
-            if name.lower() in _SENSITIVE_HEADERS and value:
-                findings.append(f"{index}: {side} header '{name}' has a value")
-        for name, value in _named_values(message.get("cookies")):
-            if value:
-                findings.append(f"{index}: {side} cookie '{name}' has a value")
+        findings.extend(_message_findings(index, side, message))
+    findings.extend(_query_findings(index, request))
+    findings.extend(_request_body_findings(index, request))
+    findings.extend(_response_body_findings(index, response, allow_bodies=allow_bodies))
+    return findings
+
+
+def _message_findings(
+    index: int, side: str, message: Mapping[str, object]
+) -> list[str]:
+    """Report sensitive header values and any cookie values of one message."""
+    findings = [
+        f"{index}: {side} header '{name}' has a value"
+        for name, value in _named_values(message.get("headers"))
+        if name.lower() in _SENSITIVE_HEADERS and value
+    ]
+    findings.extend(
+        f"{index}: {side} cookie '{name}' has a value"
+        for name, value in _named_values(message.get("cookies"))
+        if value
+    )
+    return findings
+
+
+def _query_findings(index: int, request: Mapping[str, object]) -> list[str]:
+    """Report sensitive query parameter values and embedded email addresses."""
+    findings: list[str] = []
     for name, value in _named_values(request.get("queryString")):
         if _SENSITIVE_PARAMS.match(name) and value:
             findings.append(f"{index}: query parameter '{name}' has a value")
         if _EMAIL.search(value):
             findings.append(f"{index}: query parameter '{name}' contains an email")
-    post = _mapping(request.get("postData"))
-    post_text = post.get("text")
-    if isinstance(post_text, str) and post_text:
-        if _SENSITIVE_BODY.search(post_text):
-            findings.append(f"{index}: request body contains a sensitive field")
-        if _EMAIL.search(post_text):
-            findings.append(f"{index}: request body contains an email")
-    content = _mapping(response.get("content"))
-    text = content.get("text")
-    if isinstance(text, str) and text:
-        if _SENSITIVE_BODY.search(text):
-            findings.append(f"{index}: response body contains a sensitive field")
-        elif not allow_bodies:
-            findings.append(f"{index}: response body retained (export without content)")
     return findings
+
+
+def _request_body_findings(index: int, request: Mapping[str, object]) -> list[str]:
+    """Report sensitive fields and email addresses in the request body."""
+    post_text = _mapping(request.get("postData")).get("text")
+    if not isinstance(post_text, str) or not post_text:
+        return []
+    findings: list[str] = []
+    if _SENSITIVE_BODY.search(post_text):
+        findings.append(f"{index}: request body contains a sensitive field")
+    if _EMAIL.search(post_text):
+        findings.append(f"{index}: request body contains an email")
+    return findings
+
+
+def _response_body_findings(
+    index: int, response: Mapping[str, object], *, allow_bodies: bool
+) -> list[str]:
+    """Report sensitive or, unless allowed, any retained response body."""
+    text = _mapping(response.get("content")).get("text")
+    if not isinstance(text, str) or not text:
+        return []
+    if _SENSITIVE_BODY.search(text):
+        return [f"{index}: response body contains a sensitive field"]
+    if not allow_bodies:
+        return [f"{index}: response body retained (export without content)"]
+    return []
 
 
 class HarInputIssue(StrEnum):
@@ -129,7 +165,7 @@ class HarInputTypeError(TypeError):
 
 
 def check(path: Path, *, allow_bodies: bool = False) -> list[str]:
-    """Return findings for a HAR file as 'file:entry: message' strings.
+    """Return findings for a HAR file as ``file:entry: message`` strings.
 
     Args:
         path: HAR file to inspect.
@@ -205,7 +241,7 @@ def self_test() -> None:
             "headers": [{"name": "Accept", "value": "application/json"}],
             "queryString": [{"name": "page", "value": "2"}],
         },
-        "response": {"headers": [], "content": {"size": 10}},
+        "response": {"headers": [], "content": {"size": _SELF_TEST_RESPONSE_BYTES}},
     }
     leaky: dict[str, object] = {
         "request": {
@@ -225,7 +261,7 @@ def self_test() -> None:
             raise SelfTestError(SelfTestIssue.CLEAN_ARCHIVE_REJECTED)
         path.write_text(_har([clean, leaky]), encoding="utf-8")
         findings = check(path)
-        expected = 5
+        expected = _SELF_TEST_LEAKY_FINDINGS
         if len(findings) != expected or not all(":1: " in item for item in findings):
             raise SelfTestError(SelfTestIssue.UNEXPECTED_FINDINGS, findings=findings)
         if any("abc" in item or "xyz" in item for item in findings):
@@ -233,19 +269,32 @@ def self_test() -> None:
         if len(check(path, allow_bodies=True)) != expected - 1:
             raise SelfTestError(SelfTestIssue.NEUTRAL_BODY_REJECTED)
         path.write_text("{}", encoding="utf-8")
-        try:
-            check(path)
-        except ValueError:
-            pass
-        else:
+        if not _rejects(path):
             raise SelfTestError(SelfTestIssue.INVALID_ARCHIVE_ACCEPTED)
+
+
+def _rejects(path: Path) -> bool:
+    """Return whether ``check`` rejects the file as a non-HAR document."""
+    try:
+        check(path)
+    except ValueError:
+        return True
+    return False
+
+
+def _check_all(files: list[Path], *, allow_bodies: bool) -> list[str]:
+    """Return findings for every file in order."""
+    findings: list[str] = []
+    for path in files:
+        findings.extend(check(path, allow_bodies=allow_bodies))
+    return findings
 
 
 def main(argv: list[str] | None = None) -> int:
     """Check HAR files or run the self-test; return a process exit code.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when every file is clean, 1 on findings or unreadable input.
@@ -261,10 +310,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.files:
         parser.error("provide at least one HAR file or --self-test")
-    findings: list[str] = []
     try:
-        for path in args.files:
-            findings.extend(check(path, allow_bodies=args.allow_bodies))
+        findings = _check_all(args.files, allow_bodies=args.allow_bodies)
     except (OSError, UnicodeError, ValueError, HarInputTypeError) as error:
         print(f"Cannot check HAR input: {error}", file=sys.stderr)
         return 1

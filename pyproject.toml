@@ -25,25 +25,37 @@ classifiers = [
 agent-kit = "agent_kit.main:main"
 
 [dependency-groups]
+# Development tooling never ships to consumers, so every tool is pinned exactly.
+# Dependabot updates these pins together with uv.lock.
 dev = [
   "apm-cli==0.33.0",
-  "commitizen>=4.19,<5",
-  "hypothesis>=6.150,<7",
-  "import-linter>=2.4,<3",
-  "pre-commit>=4.5,<5",
-  "pytest>=9,<10",
-  "pytest-cov>=7,<8",
-  "pytest-xdist>=3.8,<4",
-  "ruff>=0.17.1,<0.18",
-  "tox>=4.28,<5",
-  "tox-uv-bare>=1.37,<2",
-  "ty>=0.0.85,<0.1",
+  "commitizen==4.19.2",
+  "hypothesis==6.168.5",
+  "import-linter==2.15",
+  "pre-commit==4.6.2",
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
+  "pytest-xdist==3.8.0",
+  "ruff==0.17.1",
+  "tox==4.67.1",
+  "tox-uv-bare==1.37.0",
+  "ty==0.0.85",
 ]
+# Installed alone by bootstrap so the full lock is audited before it is synced.
+audit = ["pip-audit==2.10.1"]
 
 [tool.uv]
-# One uv for the CLI, tox and pre-commit: tox-uv-bare uses the uv on PATH instead
-# of installing a second, possibly newer copy into the project environment.
-required-version = ">=0.10.0"
+required-version = ">=0.10.0,<0.14"
+default-groups = ["dev", "audit"]
+# Pin the isolated build backend closure; uv.lock covers only runtime and
+# development dependencies. Add hashes when the minimum uv supports them.
+build-constraint-dependencies = [
+  "hatchling==1.27.0",
+  "packaging==26.3",
+  "pathspec==1.1.1",
+  "pluggy==1.6.0",
+  "trove-classifiers==2026.9.21.13",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_kit"]

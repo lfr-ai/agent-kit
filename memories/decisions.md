@@ -89,12 +89,10 @@
 - Native approval modes and managed controls remain the authorization boundary.
 - Evidence: [native compatibility](../docs/compatibility.md) and session-context tests.
 
-## 2026-10-09: Verified personal publishing identity
+## 2026-10-09: Explicit publication metadata
 
-- Authenticated accounts do not authorize toolkit ownership or publication.
-- Selected `@lfr-ai` and the intended `lfr-ai/agent-kit` coordinate from Ekko's
-  existing ownership and public owner metadata; reporting uses its documented
-  private contact. No authenticated work profile or remote mutation was used.
+- The repository coordinate, code owners, and private reporting contacts are
+  declared in `.github/maintainers.json` and checked for consistency.
 - Release artifacts require exact inventory, licenses, provenance, and checksums.
 - Evidence: [governance](../GOVERNANCE.md), [release process](../docs/releasing.md),
   and their negative contract tests.

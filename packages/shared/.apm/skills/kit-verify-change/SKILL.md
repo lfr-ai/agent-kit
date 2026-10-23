@@ -30,7 +30,9 @@ license: MIT
 9. Keep pre-commit and CI on the same definition and tool versions
    ([parity guidance](references/precommit-ci-parity.md),
    [pre-commit template](assets/pre-commit-config.yaml.template),
-   [CI gate workflow template](assets/ci-gate.yml.template)).
+   [CI gate workflow template](assets/ci-gate.yml.template)). Pin every tool,
+   hook, action, image and feature exactly and enforce it with the
+   [pin checker](assets/check_pins.py) ([version pinning](references/version-pinning.md)).
 10. Classify every failure as caused, coupled, or pre-existing (prove pre-existing on the
     base revision) and handle each accordingly.
 11. Distinguish executed checks from inspection and unavailable prerequisites.

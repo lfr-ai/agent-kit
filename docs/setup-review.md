@@ -1,10 +1,11 @@
 # Existing setup review and capability disposition
 
-Reviewed 2026-10-09 against Koda's canonical agent configuration.
+Reviewed 2026-10-09 against the committed capability inventory and repository
+checks.
 The original baseline contained 74 skills, 31 instructions, 24 agent roles,
 24 prompt facades, 22 skill scripts, 11 MCP integrations, five asset bundles,
-and three hooks. The live comparison caught three script identities omitted by
-the initial read-only report; they are now explicitly tracked.
+and three hooks. The initial read-only inventory missed three script identities;
+they are now explicitly tracked.
 
 ## Resource-depth refresh, 2026-10-19
 
@@ -16,10 +17,10 @@ entry checking and actual native-certification worksheets are delivered as
 resources rather than fabricated application facts.
 
 All 11 MCP integrations have both native example shapes and explicit adoption,
-tool-selection, source/license, identity and removal review. The active root
-manifest remains empty. This is extensive available setup, not automatic startup.
-See the [systematic walkthrough](setup-completeness.md) for acceptance and
-operator work, including the unavailable exact golden-reference comparison.
+tool-selection, source/license, identity and removal review. The repository
+workspace configures only three reviewed remote servers; portable APM defaults
+remain inactive. See the [systematic walkthrough](setup-completeness.md) for
+acceptance and operator work.
 
 ## Why the first toolkit was incomplete
 
@@ -38,7 +39,7 @@ Calling that a replacement for the original capabilities was inaccurate.
 | agents/subagents | Selected skill role assets | Shared bodies, separately rendered native permissions |
 | static guard | Installed validation plus `.agents/guard/` facade | No duplicate giant guard implementation |
 | editor commands | Thin Task wrappers and reusable editor assets | No application-specific commands or personal shortcuts |
-| MCP | Empty active manifest, both native example shapes for all 11 integrations | No company identities, implicit auth, or dormant process startup |
+| MCP | Three reviewed remote services in native root manifests; inactive templates for all 11 integrations | No committed credentials, project identities, or default APM activation |
 | hooks | Advisory session health and native authorization contract | No claimed universal shell sandbox |
 | project facts/knowledge | Consumer remains owner | Toolkit has its own facts; consumer context is not copied |
 

@@ -1,9 +1,9 @@
 """Report likely breaking changes between two OpenAPI descriptions in JSON.
 
-Compares a released description ('old') with a candidate ('new') using only the
+Compares a released description (``old``) with a candidate (``new``) using only the
 standard library. Convert YAML to JSON first with the project's tooling (for
-example by exporting 'app.openapi()' from FastAPI). Local '$ref' pointers
-('#/...') are resolved; remote references are reported and not followed.
+example by exporting ``app.openapi()`` from FastAPI). Local ``$ref`` pointers
+(``#/...``) are resolved; remote references are reported and not followed.
 
 Checked:
 - removed paths, operations, response status codes, and media types;
@@ -16,24 +16,26 @@ Checked:
 - security added to an operation that had none.
 
 The result is evidence for a compatibility review, not a certification: it does
-not understand composition keywords ('allOf', 'oneOf', 'anyOf') beyond flagging
+not understand composition keywords (``allOf``, ``oneOf``, ``anyOf``) beyond flagging
 that they changed, and it cannot know how real clients behave.
 
-Output lines look like 'new.json: GET /orders: breaking: message'. The exit code
-is 1 when any breaking change is found (or any warning with '--strict').
+Output lines look like ``new.json: GET /orders: breaking: message``. The exit code
+is 1 when any breaking change is found (or any warning with ``--strict``).
 """
 
 import argparse
-import json
-import re
-import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+import json
 from pathlib import Path
+import re
+import sys
 
 _METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 _MAX_DEPTH = 64
+_LOCAL_REF_PREFIX = "#/"
+_EXIT_USAGE = 2
 _TIGHTER_WHEN_LARGER = (
     "minLength",
     "minimum",
@@ -59,8 +61,8 @@ class Change:
     """One difference relevant to clients.
 
     Attributes:
-        severity: 'breaking' or 'warning'.
-        location: Operation and position, such as 'GET /orders response 200'.
+        severity: ``breaking`` or ``warning``.
+        location: Operation and position, such as ``GET /orders response 200``.
         message: What changed.
     """
 
@@ -70,7 +72,7 @@ class Change:
 
 
 def compare(old: Document, new: Document) -> list[Change]:
-    """Return client-relevant changes from 'old' to 'new', sorted for stable output.
+    """Return client-relevant changes from ``old`` to ``new``, sorted for stable output.
 
     Args:
         old: Released OpenAPI description.
@@ -253,13 +255,10 @@ class _Schema:
         """Yield changes between two schemas at a JSON pointer below the root."""
         if depth > _MAX_DEPTH:
             return
-        for raw in (old_raw, new_raw):
-            reference = _mapping(raw).get("$ref")
-            if isinstance(reference, str) and not reference.startswith("#/"):
-                yield self._change(
-                    "warning", pointer, f"remote reference '{reference}' not followed"
-                )
-                return
+        remote = self._remote_reference(old_raw, new_raw, pointer)
+        if remote is not None:
+            yield remote
+            return
         old_schema = _resolve(self.old, old_raw)
         new_schema = _resolve(self.new, new_raw)
         if not old_schema or not new_schema:
@@ -269,6 +268,23 @@ class _Schema:
         if self.request:
             yield from self._constraints(old_schema, new_schema, pointer)
         yield from self._properties(old_schema, new_schema, pointer, depth)
+        yield from self._children(old_schema, new_schema, pointer, depth)
+        yield from self._compositions(old_schema, new_schema, pointer)
+
+    def _remote_reference(
+        self, old_raw: Json, new_raw: Json, pointer: str
+    ) -> Change | None:
+        for raw in (old_raw, new_raw):
+            reference = _mapping(raw).get("$ref")
+            if isinstance(reference, str) and not reference.startswith("#/"):
+                return self._change(
+                    "warning", pointer, f"remote reference '{reference}' not followed"
+                )
+        return None
+
+    def _children(
+        self, old_schema: Document, new_schema: Document, pointer: str, depth: int
+    ) -> Iterator[Change]:
         for keyword in ("items", "additionalProperties"):
             if isinstance(old_schema.get(keyword), dict) and isinstance(
                 new_schema.get(keyword), dict
@@ -279,6 +295,10 @@ class _Schema:
                     f"{pointer}/{keyword}",
                     depth + 1,
                 )
+
+    def _compositions(
+        self, old_schema: Document, new_schema: Document, pointer: str
+    ) -> Iterator[Change]:
         for keyword in _COMPOSITION:
             if json.dumps(old_schema.get(keyword), sort_keys=True) != json.dumps(
                 new_schema.get(keyword), sort_keys=True
@@ -359,26 +379,27 @@ class _Schema:
         new_properties = _mapping(new_schema.get("properties"))
         old_required = set(_strings(old_schema.get("required")))
         new_required = set(_strings(new_schema.get("required")))
+        removed = old_properties.keys() - new_properties.keys()
         if self.request:
-            for name in sorted(new_required - old_required):
-                yield self._change(
-                    "breaking", f"{pointer}/{name}", "property became required"
-                )
-            for name in sorted(old_properties.keys() - new_properties.keys()):
-                yield self._change(
-                    "warning", f"{pointer}/{name}", "request property removed"
-                )
+            yield from self._named(
+                new_required - old_required,
+                pointer,
+                "breaking",
+                "property became required",
+            )
+            yield from self._named(
+                removed, pointer, "warning", "request property removed"
+            )
         else:
-            for name in sorted(old_properties.keys() - new_properties.keys()):
-                yield self._change(
-                    "breaking", f"{pointer}/{name}", "response property removed"
-                )
-            for name in sorted(old_required - new_required):
-                yield self._change(
-                    "breaking",
-                    f"{pointer}/{name}",
-                    "response property no longer required",
-                )
+            yield from self._named(
+                removed, pointer, "breaking", "response property removed"
+            )
+            yield from self._named(
+                old_required - new_required,
+                pointer,
+                "breaking",
+                "response property no longer required",
+            )
         for name in sorted(old_properties.keys() & new_properties.keys()):
             yield from self.compare(
                 old_properties[name],
@@ -386,6 +407,12 @@ class _Schema:
                 f"{pointer}/{name}",
                 depth + 1,
             )
+
+    def _named(
+        self, names: Iterable[str], pointer: str, severity: str, message: str
+    ) -> Iterator[Change]:
+        for name in sorted(names):
+            yield self._change(severity, f"{pointer}/{name}", message)
 
     def _change(self, severity: str, pointer: str, message: str) -> Change:
         where = f"{self.location} {pointer}" if pointer else self.location
@@ -419,16 +446,16 @@ def _types(schema: Document) -> frozenset[str]:
 
 
 def _resolve(document: Document, value: Json) -> Document:
-    """Follow local '$ref' chains; return an empty mapping when unresolvable."""
+    """Follow local ``$ref`` chains; return an empty mapping when unresolvable."""
     current = _mapping(value)
     seen: set[str] = set()
     while isinstance(current.get("$ref"), str):
         reference = str(current["$ref"])
-        if not reference.startswith("#/") or reference in seen:
+        if not reference.startswith(_LOCAL_REF_PREFIX) or reference in seen:
             return {}
         seen.add(reference)
         target: Json = document
-        for part in reference[2:].split("/"):
+        for part in reference.removeprefix(_LOCAL_REF_PREFIX).split("/"):
             key = part.replace("~1", "/").replace("~0", "~")
             target = _mapping(target).get(key)
         current = _mapping(target)
@@ -453,10 +480,10 @@ def main(argv: list[str] | None = None) -> int:
     """Compare two JSON OpenAPI files and print changes.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
-        One when breaking changes exist (or warnings with '--strict'), two on
+        One when breaking changes exist (or warnings with ``--strict``), two on
         unreadable input, otherwise zero.
     """
     parser = argparse.ArgumentParser(
@@ -484,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         re.error,
     ) as error:
         print(f"cannot compare: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     changes = [
         change
         for change in compare(old, new)

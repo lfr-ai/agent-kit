@@ -1,35 +1,38 @@
 """Check installed Python distribution licenses against a local allowlist.
 
-The checker reads only installed metadata through 'importlib.metadata'. It never
+The checker reads only installed metadata through ``importlib.metadata``. It never
 downloads anything and does not read license files. License evidence is taken in
-this order: the PEP 639 'License-Expression' field, then 'License ::' trove
-classifiers, then a short 'License' field that parses as an SPDX expression.
+this order: the PEP 639 ``License-Expression`` field, then ``License ::`` trove
+classifiers, then a short ``License`` field that parses as an SPDX expression.
 
-SPDX expressions are evaluated conservatively: 'A OR B' passes when either side is
-allowed; 'A AND B' passes only when both are. 'A WITH E' must be allowed as the
-full 'A WITH E' string. Several classifiers on one distribution are combined with
+SPDX expressions are evaluated conservatively: ``A OR B`` passes when either side is
+allowed; ``A AND B`` passes only when both are. ``A WITH E`` must be allowed as the
+full ``A WITH E`` string. Several classifiers on one distribution are combined with
 AND because a classifier list does not say whether it offers a choice.
 
-Findings are written as 'path:line: message', where the path is the distribution's
+Findings are written as ``path:line: message``, where the path is the distribution's
 metadata location. Exit codes: 0 clean, 1 findings, 2 unusable configuration.
 """
 
 import argparse
-import json
-import re
-import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from importlib import metadata
+import json
 from pathlib import Path
+import re
+import sys
 from typing import TextIO
 
 _SCHEMA_VERSION = 1
 _CONFIG_EXIT = 2
 _MAX_CONFIG_BYTES = 1024 * 1024
 _MAX_LICENSE_FIELD = 120
+_JSON_INDENT = 2
+_SELF_TEST_TODAY = date(2026, 1, 1)
+_SELF_TEST_EXTRA_CASES = 2  # exception and classifier checks
 _CONFIG_FIELDS = frozenset(
     {"schema_version", "description", "allowed", "denied", "exceptions"}
 )
@@ -207,34 +210,60 @@ def _identifiers(value: object, label: str) -> frozenset[str]:
     return frozenset(_key(item.strip()) for item in value)
 
 
+def _waiver_text(
+    value: dict[object, object], key: str, issue: LicenseInputIssue, *, name: str
+) -> str:
+    """Return a required, non-blank, stripped text field of one exception entry."""
+    if key not in value:
+        raise LicenseInputError(issue, name=name)
+    text = value[key]
+    if not isinstance(text, str):
+        raise LicenseInputTypeError(issue, name=name)
+    if not text.strip():
+        raise LicenseInputError(issue, name=name)
+    return text.strip()
+
+
 def _exception(name: str, value: object) -> Waiver:
     """Validate one exception entry."""
     if not isinstance(value, dict):
         raise LicenseInputTypeError(LicenseInputIssue.EXCEPTION_FIELDS, name=name)
     if value.keys() - _EXCEPTION_FIELDS:
         raise LicenseInputError(LicenseInputIssue.EXCEPTION_FIELDS, name=name)
-    license_value = value.get("license")
-    reason = value.get("reason")
-    if "license" not in value:
-        raise LicenseInputError(LicenseInputIssue.EXCEPTION_LICENSE, name=name)
-    if not isinstance(license_value, str):
-        raise LicenseInputTypeError(LicenseInputIssue.EXCEPTION_LICENSE, name=name)
-    if not license_value.strip():
-        raise LicenseInputError(LicenseInputIssue.EXCEPTION_LICENSE, name=name)
-    if "reason" not in value:
-        raise LicenseInputError(LicenseInputIssue.EXCEPTION_REASON, name=name)
-    if not isinstance(reason, str):
-        raise LicenseInputTypeError(LicenseInputIssue.EXCEPTION_REASON, name=name)
-    if not reason.strip():
-        raise LicenseInputError(LicenseInputIssue.EXCEPTION_REASON, name=name)
+    license_value = _waiver_text(
+        value, "license", LicenseInputIssue.EXCEPTION_LICENSE, name=name
+    )
+    reason = _waiver_text(
+        value, "reason", LicenseInputIssue.EXCEPTION_REASON, name=name
+    )
     expires = value.get("expires")
     if expires is not None and not isinstance(expires, str):
         raise LicenseInputTypeError(LicenseInputIssue.EXCEPTION_EXPIRY, name=name)
     return Waiver(
-        license=license_value.strip(),
-        reason=reason.strip(),
+        license=license_value,
+        reason=reason,
         expires=date.fromisoformat(expires) if expires else None,
     )
+
+
+def _check_schema_version(data: dict[object, object]) -> None:
+    """Require the supported integer ``schema_version``."""
+    if "schema_version" not in data:
+        raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
+    version = data["schema_version"]
+    if type(version) is not int:
+        raise LicenseInputTypeError(LicenseInputIssue.SCHEMA_VERSION)
+    if version != _SCHEMA_VERSION:
+        raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
+
+
+def _exceptions(raw: object) -> dict[str, Waiver]:
+    """Validate exception entries keyed by canonical distribution name."""
+    if not isinstance(raw, dict):
+        raise LicenseInputTypeError(LicenseInputIssue.EXCEPTIONS_OBJECT)
+    return {
+        canonical_name(name): _exception(name, value) for name, value in raw.items()
+    }
 
 
 def parse_allowlist(text: str) -> Allowlist:
@@ -250,13 +279,7 @@ def parse_allowlist(text: str) -> Allowlist:
     unknown = sorted(data.keys() - _CONFIG_FIELDS)
     if unknown:
         raise LicenseInputError(LicenseInputIssue.UNKNOWN_FIELD, field=unknown[0])
-    version = data.get("schema_version")
-    if "schema_version" not in data:
-        raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
-    if type(version) is not int:
-        raise LicenseInputTypeError(LicenseInputIssue.SCHEMA_VERSION)
-    if version != _SCHEMA_VERSION:
-        raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
+    _check_schema_version(data)
     if "allowed" not in data:
         raise LicenseInputError(LicenseInputIssue.IDENTIFIER_LIST, label="allowed")
     allowed = _identifiers(data.get("allowed"), "allowed")
@@ -266,14 +289,11 @@ def parse_allowlist(text: str) -> Allowlist:
         raise LicenseInputError(
             LicenseInputIssue.CONFLICTING_IDENTIFIER, identifier=overlap[0]
         )
-    raw_exceptions = data.get("exceptions", {})
-    if not isinstance(raw_exceptions, dict):
-        raise LicenseInputTypeError(LicenseInputIssue.EXCEPTIONS_OBJECT)
-    exceptions = {
-        canonical_name(name): _exception(name, value)
-        for name, value in raw_exceptions.items()
-    }
-    return Allowlist(allowed=allowed, denied=denied, exceptions=exceptions)
+    return Allowlist(
+        allowed=allowed,
+        denied=denied,
+        exceptions=_exceptions(data.get("exceptions", {})),
+    )
 
 
 def load_allowlist(path: Path) -> Allowlist:
@@ -306,7 +326,7 @@ class _ExpressionParser:
         return self._tokens[self.position].casefold()
 
     def expression(self) -> str:
-        """Parse 'conjunction (OR conjunction)*'; OR passes if any side passes."""
+        """Parse ``conjunction (OR conjunction)*``; OR passes if any side passes."""
         statuses = [self._conjunction()]
         while self._peek() == "or":
             self.position += 1
@@ -316,7 +336,7 @@ class _ExpressionParser:
         return "unknown" if "unknown" in statuses else "denied"
 
     def _conjunction(self) -> str:
-        """Parse 'factor (AND factor)*'; AND passes only if every side passes."""
+        """Parse ``factor (AND factor)*``; AND passes only if every side passes."""
         statuses = [self._factor()]
         while self._peek() == "and":
             self.position += 1
@@ -331,14 +351,22 @@ class _ExpressionParser:
         if current is None:
             raise LicenseInputError(LicenseInputIssue.EXPRESSION_END)
         if current == "(":
-            self.position += 1
-            status = self.expression()
-            if self._peek() != ")":
-                raise LicenseInputError(LicenseInputIssue.UNCLOSED_PARENTHESIS)
-            self.position += 1
-            return status
+            return self._parenthesized()
         if current == ")" or current in _OPERATORS:
             raise LicenseInputError(LicenseInputIssue.UNEXPECTED_TERM, token=current)
+        return self._license()
+
+    def _parenthesized(self) -> str:
+        """Parse ``( expression )`` starting at the opening parenthesis."""
+        self.position += 1
+        status = self.expression()
+        if self._peek() != ")":
+            raise LicenseInputError(LicenseInputIssue.UNCLOSED_PARENTHESIS)
+        self.position += 1
+        return status
+
+    def _license(self) -> str:
+        """Parse one license identifier with an optional ``WITH`` addition."""
         base = self._tokens[self.position]
         self.position += 1
         leaf = base
@@ -357,7 +385,7 @@ class _ExpressionParser:
 
 
 def classify(expression: str, allowlist: Allowlist) -> str:
-    """Return 'allowed', 'denied', or 'unknown' for an SPDX expression."""
+    """Return ``allowed``, ``denied``, or ``unknown`` for an SPDX expression."""
     tokens = _TOKEN.findall(expression)
     if not tokens:
         raise LicenseInputError(LicenseInputIssue.EMPTY_EXPRESSION)
@@ -370,24 +398,36 @@ def classify(expression: str, allowlist: Allowlist) -> str:
     return status
 
 
+def _mapped_classifiers(classifiers: Iterable[str]) -> list[str]:
+    """Map ``License ::`` trove classifiers to SPDX or unmapped references."""
+    mapped: list[str] = []
+    for classifier in classifiers:
+        text = " ".join(classifier.split()).casefold()
+        if text.startswith("license ::"):
+            mapped.append(
+                _CLASSIFIERS.get(text, f"LicenseRef-Unmapped-Classifier({text})")
+            )
+    return mapped
+
+
+def _classifier_evidence(mapped: list[str]) -> tuple[str | None, str]:
+    """Combine mapped classifiers with AND, or report unmapped classifiers."""
+    unique = list(dict.fromkeys(mapped))
+    if any(item.startswith("LicenseRef-Unmapped") for item in unique):
+        return None, "Classifier (unmapped: " + "; ".join(unique) + ")"
+    joined = " AND ".join(unique)
+    return (joined if len(unique) == 1 else f"({joined})"), "Classifier"
+
+
 def license_evidence(
     expression: str | None, classifiers: Iterable[str], license_field: str | None
 ) -> tuple[str | None, str]:
     """Choose the strongest available license statement and name its source."""
     if expression and expression.strip():
         return expression.strip(), "License-Expression"
-    mapped: list[str] = []
-    for classifier in classifiers:
-        text = " ".join(classifier.split()).casefold()
-        if not text.startswith("license ::"):
-            continue
-        mapped.append(_CLASSIFIERS.get(text, f"LicenseRef-Unmapped-Classifier({text})"))
+    mapped = _mapped_classifiers(classifiers)
     if mapped:
-        unique = list(dict.fromkeys(mapped))
-        if any(item.startswith("LicenseRef-Unmapped") for item in unique):
-            return None, "Classifier (unmapped: " + "; ".join(unique) + ")"
-        joined = " AND ".join(unique)
-        return (joined if len(unique) == 1 else f"({joined})"), "Classifier"
+        return _classifier_evidence(mapped)
     if license_field:
         text = license_field.strip()
         if text and len(text) <= _MAX_LICENSE_FIELD and "\n" not in text:
@@ -467,7 +507,7 @@ def report(results: list[Result], stream: TextIO, output_format: str) -> int:
             }
             for item in results
         ]
-        stream.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        stream.write(json.dumps(payload, indent=_JSON_INDENT, sort_keys=True) + "\n")
     else:
         stream.writelines(
             f"{item.record.location}:1: {item.record.name} {item.record.version}: "
@@ -520,7 +560,7 @@ def _self_test() -> int:
         source="License",
         location="x",
     )
-    if evaluate(record, allowlist, date(2026, 1, 1)).status != "excepted":
+    if evaluate(record, allowlist, _SELF_TEST_TODAY).status != "excepted":
         failures.append("exception not applied")
     evidence = license_evidence(None, ["License :: OSI Approved :: MIT License"], None)
     if evidence != ("MIT", "Classifier"):
@@ -529,7 +569,7 @@ def _self_test() -> int:
         print(f"self-test: {failure}")
     if failures:
         return 1
-    print(f"self-test passed: {len(cases) + 2} cases")
+    print(f"self-test passed: {len(cases) + _SELF_TEST_EXTRA_CASES} cases")
     return 0
 
 

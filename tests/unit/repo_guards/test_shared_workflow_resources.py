@@ -1,12 +1,12 @@
 """Shared workflow skill checkers and templates behave on synthetic inputs."""
 
 import ast
+from collections.abc import Callable, Sequence
 import json
+from pathlib import Path
 import re
 import runpy
 import tomllib
-from collections.abc import Callable, Sequence
-from pathlib import Path
 
 import pytest
 import yaml

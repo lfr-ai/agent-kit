@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline": "Koda canonical setup inventory, 2026-10-10",
+  "baseline": "Recorded capability inventory, 2026-10-10",
   "skills": {
     "agent-config": "kit-config-review",
     "hexagonal-architecture": "kit-hexagonal-architecture",
@@ -144,11 +144,11 @@
   "mcp": {
     "azure-devops": "consumer-owned",
     "azure": "adoption-guide",
-    "context7": "opt-in-template",
+    "context7": "read-only-native-plus-opt-in-template",
     "gitnexus": "adoption-guide",
-    "microsoft-learn": "opt-in-template",
+    "microsoft-learn": "read-only-native-plus-opt-in-template",
     "chrome-devtools": "adoption-guide",
-    "github": "adoption-guide",
+    "github": "read-only-native-plus-opt-in-template",
     "playwright": "adoption-guide",
     "shadcn": "adoption-guide",
     "postman": "adoption-guide",

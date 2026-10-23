@@ -3,17 +3,17 @@
 The checker reads TypeScript and JavaScript sources as text; it never runs a
 compiler, bundler, or package manager. It reports two rule violations:
 
-1. A file in feature 'a' imports a non-entry module of feature 'b'.
+1. A file in feature ``a`` imports a non-entry module of feature ``b``.
 2. A file in a shared directory imports any feature module.
 """
 
 import argparse
-import os
-import re
-import sys
 from collections.abc import Sequence
 from enum import StrEnum
+import os
 from pathlib import Path, PurePosixPath
+import re
+import sys
 from tempfile import TemporaryDirectory
 
 _SPECIFIER = re.compile(
@@ -21,10 +21,11 @@ _SPECIFIER = re.compile(
 )
 _DEFAULT_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs")
 _SKIPPED_DIRECTORIES = frozenset({"node_modules", "dist", "build", "coverage", ".git"})
+_SELF_TEST_EXPECTED_FINDINGS = 3
 
 
 class FeatureAliasError(ValueError):
-    """An input violates the featurealias contract."""
+    """An input violates the feature alias contract."""
 
     def __init__(self, *, value: str) -> None:
         """Describe the violated invariant.
@@ -36,16 +37,16 @@ class FeatureAliasError(ValueError):
 
 
 def _parse_aliases(values: Sequence[str]) -> list[tuple[str, PurePosixPath]]:
-    """Parse 'PREFIX=DIRECTORY' alias declarations into ordered pairs.
+    """Parse ``PREFIX=DIRECTORY`` alias declarations into ordered pairs.
 
     Args:
-        values: Alias declarations such as '@/=src/'.
+        values: Alias declarations such as ``@/=src/``.
 
     Returns:
         Pairs of import prefix and root-relative directory, longest prefix first.
 
     Raises:
-        ValueError: If a declaration has no '=' or an empty prefix.
+        ValueError: If a declaration has no ``=`` or an empty prefix.
     """
     aliases: list[tuple[str, PurePosixPath]] = []
     for value in values:
@@ -130,13 +131,13 @@ def check(
     aliases: Sequence[str] = (),
     extensions: tuple[str, ...] = _DEFAULT_EXTENSIONS,
 ) -> list[str]:
-    """Collect boundary findings as sorted 'path:line: message' strings.
+    """Collect boundary findings as sorted ``path:line: message`` strings.
 
     Args:
         root: Project directory that contains the source tree.
         features_dir: Root-relative directory holding one folder per feature.
         shared_dirs: Root-relative directories that must not import features.
-        aliases: Import alias declarations such as '@/=src/'.
+        aliases: Import alias declarations such as ``@/=src/``.
         extensions: Source file suffixes to scan.
 
     Returns:
@@ -153,28 +154,68 @@ def check(
         if owner is None and not in_shared:
             continue
         text = file.read_text(encoding="utf-8")
-        for number, line in enumerate(text.splitlines(), start=1):
-            for _, specifier in _SPECIFIER.findall(line):
-                target = _resolve(specifier, relative, parsed_aliases)
-                if target is None:
-                    continue
-                imported = _feature_of(target, features)
-                if imported is None:
-                    continue
-                name, remainder = imported
-                if in_shared:
-                    findings.append(
-                        f"{relative}:{number}: shared code imports feature "
-                        f"'{name}' ({specifier})"
-                    )
-                elif (
-                    owner is not None and owner[0] != name and not _is_entry(remainder)
-                ):
-                    findings.append(
-                        f"{relative}:{number}: deep import into feature '{name}'"
-                        f" ({specifier}); import its public index instead"
-                    )
+        findings.extend(
+            _file_findings(
+                relative,
+                text,
+                owner=owner,
+                in_shared=in_shared,
+                features=features,
+                aliases=parsed_aliases,
+            )
+        )
     return sorted(findings)
+
+
+def _file_findings(
+    relative: PurePosixPath,
+    text: str,
+    *,
+    owner: tuple[str, tuple[str, ...]] | None,
+    in_shared: bool,
+    features: PurePosixPath,
+    aliases: Sequence[tuple[str, PurePosixPath]],
+) -> list[str]:
+    """Return boundary findings for every import specifier in one file."""
+    findings: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        for _, specifier in _SPECIFIER.findall(line):
+            message = _boundary_violation(
+                specifier,
+                relative,
+                owner=owner,
+                in_shared=in_shared,
+                features=features,
+                aliases=aliases,
+            )
+            if message is not None:
+                findings.append(f"{relative}:{number}: {message}")
+    return findings
+
+
+def _boundary_violation(
+    specifier: str,
+    relative: PurePosixPath,
+    *,
+    owner: tuple[str, tuple[str, ...]] | None,
+    in_shared: bool,
+    features: PurePosixPath,
+    aliases: Sequence[tuple[str, PurePosixPath]],
+) -> str | None:
+    """Describe how one import crosses a feature boundary, if it does."""
+    target = _resolve(specifier, relative, aliases)
+    imported = None if target is None else _feature_of(target, features)
+    if imported is None:
+        return None
+    name, remainder = imported
+    if in_shared:
+        return f"shared code imports feature '{name}' ({specifier})"
+    if owner is not None and owner[0] != name and not _is_entry(remainder):
+        return (
+            f"deep import into feature '{name}'"
+            f" ({specifier}); import its public index instead"
+        )
+    return None
 
 
 class SelfTestIssue(StrEnum):
@@ -234,7 +275,7 @@ def self_test() -> None:
             'export { x } from "@/features/orders";\n', encoding="utf-8"
         )
         findings = check(root, aliases=("@/=src/",))
-        expected = 3
+        expected = _SELF_TEST_EXPECTED_FINDINGS
         if len(findings) != expected:
             raise SelfTestError(
                 SelfTestIssue.FINDING_COUNT, expected=expected, findings=findings
@@ -247,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the boundary check or its self-test and return a process exit code.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when no findings exist, 1 when findings or input errors exist.

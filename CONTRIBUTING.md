@@ -3,7 +3,9 @@
 1. Read [AGENTS.md](AGENTS.md) and [PROJECT.md](PROJECT.md).
 2. Keep changes in the owning source; extend existing guidance before adding a skill.
 3. Add a failing regression for changed behavior and invalid-input handling.
-4. Run `uv sync --locked`, `task verify`, and `task apm:smoke`.
+4. Run `task bootstrap` (audits the lock, then syncs it), `task verify`, and
+   `task apm:smoke`. Change dependencies only as described in
+   [dependency security](docs/dependency-security.md).
 5. Report native runtimes actually tested; do not infer live behavior from metadata.
 
 Review identity, provenance, context footprint, relocation, removal, and rollback.
@@ -17,12 +19,12 @@ Generated projections and lockfiles are changed through their owning tools.
 - Keep source changes and related tests/documentation together.
 - Write [Conventional Commits](https://www.conventionalcommits.org/); `task commit`
   prompts for one and the `commit-msg` hook runs `cz check`.
-- After operator-owned `git init`, run
-  `uv run --locked pre-commit install --install-hooks` once; `task precommit`
-  checks every file. Install Node.js, Bun and Docker before running all hooks.
+- After operator-owned `git init`, run `task bootstrap` to audit and install the
+  locked Python and JavaScript environments and the Git hooks; `task precommit`
+  checks every file. Install uv, Bun, Node.js and Docker before running all hooks.
   Alternatively, open the repository in the [dev container](.devcontainer/devcontainer.json),
-  which pins Python, uv, Task, Bun and Node to the CI versions and runs
-  `uv sync --locked` on creation.
+  which pins its digest-locked base image, uv, Task, Bun and Node to the CI
+  versions and runs `task bootstrap` as its `updateContentCommand`.
   See [developer tooling](docs/devtools.md) for checks and prerequisites.
 - Place tests by tier as described in [tests/README.md](tests/README.md).
 - Dependabot opens grouped weekly updates; review `apm-cli` updates with `task apm:smoke`.

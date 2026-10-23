@@ -1,9 +1,11 @@
 {
   "name": "agent-kit",
-  "image": "mcr.microsoft.com/devcontainers/python:3-3.13-trixie",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
   "features": {
     "ghcr.io/devcontainers/features/node:2": {
-      "version": "22"
+      "version": "22.23.4"
     },
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
       "moby": false
@@ -23,7 +25,7 @@
     "APM_NON_INTERACTIVE": "1",
     "UV_LINK_MODE": "copy"
   },
-  "postCreateCommand": "uv sync --locked",
+  "updateContentCommand": "task bootstrap",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -32,6 +34,7 @@
         "davidanson.vscode-markdownlint",
         "editorconfig.editorconfig",
         "github.vscode-github-actions",
+        "ms-azuretools.vscode-containers",
         "ms-python.debugpy",
         "ms-python.python",
         "ms-python.vscode-python-envs",

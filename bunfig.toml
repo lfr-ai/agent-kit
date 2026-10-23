@@ -1,0 +1,5 @@
+[install]
+# Exact versions only; the committed bun.lock is the reviewed source of truth.
+exact = true
+# Do not run lifecycle scripts from any dependency.
+ignoreScripts = true

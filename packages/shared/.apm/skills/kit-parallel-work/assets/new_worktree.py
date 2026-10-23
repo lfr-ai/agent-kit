@@ -1,7 +1,7 @@
 """Plan, and optionally create, one Git worktree and branch for a parallel agent.
 
 By default the tool only prints the Git commands it would run, so the plan can
-be reviewed or pasted into an approved workflow. Pass '--execute' to run them.
+be reviewed or pasted into an approved workflow. Pass ``--execute`` to run them.
 Every command is a fixed argument vector run without a shell; branch, base and
 path values are validated before any command is built.
 
@@ -10,20 +10,23 @@ usage errors.
 """
 
 import argparse
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
 
 _FORBIDDEN_REF_CHARS = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 _FORBIDDEN_BASE_CHARS = re.compile(r"[\x00-\x20\x7f:?*\[\\]")
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 _MAX_REF_LENGTH = 200
+_C0_CONTROL_END = 0x20  # code points below SPACE are control characters
+_GIT_FATAL_EXIT = 128
+_SELF_TEST_FAILING_CALL = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -50,36 +53,45 @@ class Plan:
 def ref_problems(name: str, *, label: str, ancestry: bool = False) -> list[str]:
     """Describe why a name is not a safe Git reference name.
 
-    The rules follow 'git check-ref-format' and additionally reject names that
-    start with '-', which Git would read as an option.
+    The rules follow ``git check-ref-format`` and additionally reject names that
+    start with ``-``, which Git would read as an option.
 
     Args:
         name: The proposed branch or base reference name.
         label: The argument name used in messages.
-        ancestry: Allow '~' and '^' suffixes such as 'HEAD~2' in a commit-ish.
+        ancestry: Allow ``~`` and ``^`` suffixes such as ``HEAD~2`` in a commit-ish.
 
     Returns:
         Human-readable problems; empty when the name is acceptable.
     """
-    forbidden = _FORBIDDEN_BASE_CHARS if ancestry else _FORBIDDEN_REF_CHARS
-    problems: list[str] = []
     if not name:
         return [f"{label} is empty"]
-    if len(name) > _MAX_REF_LENGTH:
-        problems.append(f"{label} is longer than {_MAX_REF_LENGTH} characters")
-    if name.startswith("-"):
-        problems.append(f"{label} must not start with '-'")
-    if name == "@":
-        problems.append(f"{label} must not be '@'")
-    if forbidden.search(name):
-        problems.append(f"{label} contains a space, control or reserved character")
-    if ".." in name or "@{" in name or "//" in name:
-        problems.append(f"{label} contains '..', '@{{' or '//'")
-    if name.startswith("/") or name.endswith(("/", ".", ".lock")):
-        problems.append(f"{label} has an invalid start or end")
-    if any(part.startswith(".") for part in name.split("/")):
-        problems.append(f"{label} has a component starting with '.'")
-    return problems
+    forbidden = _FORBIDDEN_BASE_CHARS if ancestry else _FORBIDDEN_REF_CHARS
+    checks = (
+        (
+            len(name) > _MAX_REF_LENGTH,
+            f"is longer than {_MAX_REF_LENGTH} characters",
+        ),
+        (name.startswith("-"), "must not start with '-'"),
+        (name == "@", "must not be '@'"),
+        (
+            forbidden.search(name) is not None,
+            "contains a space, control or reserved character",
+        ),
+        (
+            ".." in name or "@{" in name or "//" in name,
+            "contains '..', '@{' or '//'",
+        ),
+        (
+            name.startswith("/") or name.endswith(("/", ".", ".lock")),
+            "has an invalid start or end",
+        ),
+        (
+            any(part.startswith(".") for part in name.split("/")),
+            "has a component starting with '.'",
+        ),
+    )
+    return [f"{label} {message}" for failed, message in checks if failed]
 
 
 def path_problems(path: Path, *, repository: Path) -> list[str]:
@@ -103,7 +115,7 @@ def path_problems(path: Path, *, repository: Path) -> list[str]:
         problems.append("path must be outside the repository working tree")
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         problems.append("path already exists and is not an empty directory")
-    if any(ord(char) < 0x20 for char in text):  # noqa: PLR2004 - control characters
+    if any(ord(char) < _C0_CONTROL_END for char in text):
         problems.append("path contains a control character")
     return problems
 
@@ -116,7 +128,7 @@ def default_path(repository: Path, branch: str) -> Path:
         branch: The validated branch name.
 
     Returns:
-        A sibling directory such as '../project-agent-docs'.
+        A sibling directory such as ``../project-agent-docs``.
     """
     slug = _SLUG.sub("-", branch.replace("/", "-")).strip("-.") or "worktree"
     resolved = repository.resolve()
@@ -243,6 +255,13 @@ def self_test() -> None:
     Raises:
         AssertionError: A synthetic case produced an unexpected result.
     """
+    _self_test_ref_names()
+    plan = _self_test_plan()
+    _self_test_execute(plan)
+
+
+def _self_test_ref_names() -> None:
+    """Check accepted and rejected branch and base names."""
     for good in ("agent/docs-update", "feature/orders-42", "fix_invoice.total"):
         if ref_problems(good, label="branch"):
             raise SelfTestError(SelfTestIssue.VALID_BRANCH_REJECTED, good=good)
@@ -251,28 +270,40 @@ def self_test() -> None:
             raise SelfTestError(SelfTestIssue.INVALID_BRANCH_ACCEPTED, bad=bad)
     if ref_problems("HEAD~2", label="base", ancestry=True):
         raise SelfTestError(SelfTestIssue.ANCESTRY_BASE_REJECTED)
+
+
+def _self_test_plan() -> Plan:
+    """Check default paths, option separation and in-repository rejection."""
     repository = Path.cwd()
     plan = build_plan(
         repository=repository, branch="agent/docs", base="HEAD", path=None
     )
     if plan.path.parent != repository.resolve().parent:
         raise SelfTestError(SelfTestIssue.DEFAULT_PATH)
-    if plan.commands[-1][-3:] != ("--", str(plan.path), "HEAD"):
+    expected_tail = ("--", str(plan.path), "HEAD")
+    if plan.commands[-1][-len(expected_tail) :] != expected_tail:
         raise SelfTestError(SelfTestIssue.OPTION_SEPARATOR)
     try:
         build_plan(repository=repository, branch="ok", base="HEAD", path=repository)
     except ValueError:
-        pass
-    else:
-        raise SelfTestError(SelfTestIssue.INTERNAL_PATH_ACCEPTED)
+        return plan
+    raise SelfTestError(SelfTestIssue.INTERNAL_PATH_ACCEPTED)
+
+
+def _self_test_execute(plan: Plan) -> None:
+    """Check that execution stops at the first failing command."""
     calls: list[Sequence[str]] = []
 
     def failing(command: Sequence[str]) -> int:
         calls.append(command)
-        return 0 if len(calls) == 1 else 128
+        return 0 if len(calls) == 1 else _GIT_FATAL_EXIT
 
     status, failed = execute(plan, runner=failing)
-    if status != 128 or len(calls) != 2 or failed is None:  # noqa: PLR2004
+    if (
+        status != _GIT_FATAL_EXIT
+        or len(calls) != _SELF_TEST_FAILING_CALL
+        or failed is None
+    ):
         raise SelfTestError(SelfTestIssue.EXECUTION_CONTINUED)
 
 
@@ -280,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     """Print or run the worktree plan.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 on success, 1 on validation or Git failure, 2 on usage errors.
@@ -303,15 +334,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.branch:
         parser.error("--branch is required")
-    git = "git"
-    if args.execute:
-        found = shutil.which("git")
-        if found is None:
-            print("git executable not found on PATH", file=sys.stderr)
-            return 1
-        git = found
+    plan = _plan_or_report(args)
+    if plan is None:
+        return 1
+    if not args.execute:
+        _print_dry_run(plan)
+        return 0
+    status, failed = execute(plan)
+    if status != 0:
+        print(f"Command failed with exit status {status}: {failed}", file=sys.stderr)
+        return 1
+    print(f"Created worktree {plan.path} on branch {plan.branch} from {plan.base}.")
+    return 0
+
+
+def _plan_or_report(args: argparse.Namespace) -> Plan | None:
+    """Build the plan from parsed arguments, printing why it cannot be built."""
+    git = shutil.which("git") if args.execute else "git"
+    if git is None:
+        print("git executable not found on PATH", file=sys.stderr)
+        return None
     try:
-        plan = build_plan(
+        return build_plan(
             repository=args.repo,
             branch=args.branch,
             base=args.base,
@@ -320,21 +364,17 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as error:
         print(f"Refusing to plan worktree: {error}", file=sys.stderr)
-        return 1
-    if not args.execute:
-        print("# Dry run. Review, then re-run with --execute to apply:")
-        for line in render(plan.commands):
-            print(line)
-        print("# Cleanup after the branch is merged or abandoned:")
-        for line in render(plan.cleanup):
-            print(f"# {line}")
-        return 0
-    status, failed = execute(plan)
-    if status != 0:
-        print(f"Command failed with exit status {status}: {failed}", file=sys.stderr)
-        return 1
-    print(f"Created worktree {plan.path} on branch {plan.branch} from {plan.base}.")
-    return 0
+        return None
+
+
+def _print_dry_run(plan: Plan) -> None:
+    """Print the commands to review and the commented cleanup commands."""
+    print("# Dry run. Review, then re-run with --execute to apply:")
+    for line in render(plan.commands):
+        print(line)
+    print("# Cleanup after the branch is merged or abandoned:")
+    for line in render(plan.cleanup):
+        print(f"# {line}")
 
 
 if __name__ == "__main__":

@@ -9,14 +9,17 @@ from collections.abc import Sequence
 
 from llm.port import Completion, CompletionRequest, LlmError, Usage
 
+_DEFAULT_INPUT_TOKENS = 10
+_DEFAULT_OUTPUT_TOKENS = 5
+
 
 def completion(
     text: str,
     *,
     model: str = "fake-model",
     finish_reason: str = "stop",
-    input_tokens: int = 10,
-    output_tokens: int = 5,
+    input_tokens: int = _DEFAULT_INPUT_TOKENS,
+    output_tokens: int = _DEFAULT_OUTPUT_TOKENS,
     cost_usd: float | None = None,
 ) -> Completion:
     """Build a completion for scripting.

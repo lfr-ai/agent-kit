@@ -2,8 +2,8 @@
 
 import configparser
 import json
-import runpy
 from pathlib import Path
+import runpy
 
 import pytest
 import yaml
@@ -15,7 +15,7 @@ _SPEC = _WORKFLOWS / "kit-spec-workflow/assets"
 
 
 def _main(path: Path, argv: list[str]) -> object:
-    """Run a checker's 'main' in-process with explicit arguments."""
+    """Run a checker's ``main`` in-process with explicit arguments."""
     namespace = runpy.run_path(str(path))
     main = namespace["main"]
     assert callable(main)

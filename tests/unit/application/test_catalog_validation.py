@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -37,6 +37,9 @@ from agent_kit.core.models import (
     SourceDocument,
 )
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.parametrize(

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 from enum import StrEnum, unique
+import json
+import re
 from typing import Literal, TypeGuard
 
 from agent_kit.core.errors import DuplicateJsonFieldError, InputTypeError
@@ -14,9 +14,12 @@ from agent_kit.core.text import visible_text
 _ASSET_PATH = re.compile(r"(?:[^/]+/)*\.apm/skills/[^/\\]+/assets/agents\.json\Z")
 _ROLE_ID = re.compile(r"kit-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUNTIMES = frozenset({"copilot", "claude"})
+_ROLE_KINDS = frozenset({"primary", "worker"})
+_ROLE_TIERS = frozenset({"readonly", "implementer", "coordinator"})
 _COPILOT_MODELS = frozenset({"GPT-5 mini", "Claude Haiku 4.5"})
 _CLAUDE_MODELS = frozenset({"haiku"})
 _MAX_ROLE_BODY_LINES = 125
+_MAX_ROLE_DESCRIPTION_CHARS = 180
 _SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", re.IGNORECASE),
     re.compile(
@@ -254,7 +257,33 @@ def _check_text(value: object, location: str, *, maximum: int | None) -> str:
     return value
 
 
-def _model_settings(  # noqa: C901
+def _copilot_models(raw: object, location: str) -> tuple[str, ...]:
+    """Validate a non-empty, unique list of supported Copilot models."""
+    field = f"{location}.models.copilot"
+    if not isinstance(raw, list):
+        raise InputTypeError(location=field, expected="a list")
+    if not raw:
+        raise NativeRoleError(location=field, issue=NativeRoleIssue.EMPTY_MODEL_LIST)
+    models = tuple(model for model in raw if isinstance(model, str))
+    if len(models) != len(raw):
+        raise InputTypeError(location=f"{field} entries", expected="strings")
+    if len(set(models)) != len(models):
+        raise NativeRoleError(location=field, issue=NativeRoleIssue.DUPLICATE_MODELS)
+    if any(model not in _COPILOT_MODELS for model in models):
+        raise NativeRoleError(location=location, issue=NativeRoleIssue.COPILOT_MODEL)
+    return models
+
+
+def _claude_model(raw: object, location: str) -> str:
+    """Validate one supported Claude model alias."""
+    if not isinstance(raw, str):
+        raise InputTypeError(location=f"{location}.models.claude", expected="a string")
+    if raw not in _CLAUDE_MODELS:
+        raise NativeRoleError(location=location, issue=NativeRoleIssue.CLAUDE_MODEL)
+    return raw
+
+
+def _model_settings(
     value: object, location: str
 ) -> tuple[tuple[str, ...] | None, str | None]:
     """Validate only the explicitly supported native model declarations."""
@@ -269,98 +298,65 @@ def _model_settings(  # noqa: C901
         raise NativeRoleError(
             location=f"{location}.models", issue=NativeRoleIssue.EMPTY_MODELS
         )
-
-    copilot_models: tuple[str, ...] | None = None
-    if "copilot" in value:
-        raw_copilot = value["copilot"]
-        if not isinstance(raw_copilot, list):
-            raise InputTypeError(
-                location=f"{location}.models.copilot", expected="a list"
-            )
-        if not raw_copilot:
-            raise NativeRoleError(
-                location=f"{location}.models.copilot",
-                issue=NativeRoleIssue.EMPTY_MODEL_LIST,
-            )
-        if any(not isinstance(model, str) for model in raw_copilot):
-            raise InputTypeError(
-                location=f"{location}.models.copilot entries", expected="strings"
-            )
-        models = tuple(raw_copilot)
-        if len(set(models)) != len(models):
-            raise NativeRoleError(
-                location=f"{location}.models.copilot",
-                issue=NativeRoleIssue.DUPLICATE_MODELS,
-            )
-        if any(model not in _COPILOT_MODELS for model in models):
-            raise NativeRoleError(
-                location=location, issue=NativeRoleIssue.COPILOT_MODEL
-            )
-        copilot_models = models
-
-    claude_model: str | None = None
-    if "claude" in value:
-        raw_claude = value["claude"]
-        if not isinstance(raw_claude, str):
-            raise InputTypeError(
-                location=f"{location}.models.claude", expected="a string"
-            )
-        if raw_claude not in _CLAUDE_MODELS:
-            raise NativeRoleError(location=location, issue=NativeRoleIssue.CLAUDE_MODEL)
-        claude_model = raw_claude
+    copilot_models = (
+        _copilot_models(value["copilot"], location) if "copilot" in value else None
+    )
+    claude_model = (
+        _claude_model(value["claude"], location) if "claude" in value else None
+    )
     return copilot_models, claude_model
 
 
-def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:  # noqa: C901, PLR0912
-    """Validate one role against the closed role schema."""
-    location = f"{asset_path}:roles[{index}]"
-    role = _require_fields(
-        value,
-        {"id", "kind", "tier", "description", "body", "workers"},
-        {"models"},
-        location,
-    )
-    identifier = role["id"]
-    if not isinstance(identifier, str):
+def _role_identifier(value: object, location: str) -> str:
+    """Require a ``kit-`` role identifier."""
+    if not isinstance(value, str):
         raise InputTypeError(location=f"{location}.id", expected="a string")
-    if not _ROLE_ID.fullmatch(identifier):
+    if not _ROLE_ID.fullmatch(value):
         raise NativeRoleError(location=location, issue=NativeRoleIssue.IDENTIFIER)
+    return value
 
-    kind_value = role["kind"]
-    if not isinstance(kind_value, str):
-        raise InputTypeError(location=f"{location}.kind", expected="a string")
-    if kind_value not in {"primary", "worker"}:
-        raise NativeRoleError(location=location, issue=NativeRoleIssue.KIND)
-    tier_value = role["tier"]
-    if not isinstance(tier_value, str):
-        raise InputTypeError(location=f"{location}.tier", expected="a string")
-    if tier_value not in {
-        "readonly",
-        "implementer",
-        "coordinator",
-    }:
-        raise NativeRoleError(location=location, issue=NativeRoleIssue.TIER)
-    kind = kind_value
-    tier = tier_value
 
-    description = _check_text(
-        role["description"], f"{location}.description", maximum=180
-    )
+def _closed_choice(
+    value: object,
+    allowed: frozenset[str],
+    field: str,
+    location: str,
+    issue: NativeRoleIssue,
+) -> str:
+    """Require a string drawn from a closed vocabulary."""
+    if not isinstance(value, str):
+        raise InputTypeError(location=f"{location}.{field}", expected="a string")
+    if value not in allowed:
+        raise NativeRoleError(location=location, issue=issue)
+    return value
+
+
+def _role_description(value: object, location: str) -> str:
+    """Require a bounded, single-line role description."""
+    field = f"{location}.description"
+    description = _check_text(value, field, maximum=_MAX_ROLE_DESCRIPTION_CHARS)
     if "\n" in description or "\r" in description:
-        raise NativeRoleError(
-            location=f"{location}.description", issue=NativeRoleIssue.MULTILINE
-        )
-    body = _check_text(role["body"], f"{location}.body", maximum=None)
+        raise NativeRoleError(location=field, issue=NativeRoleIssue.MULTILINE)
+    return description
+
+
+def _role_body(value: object, location: str) -> str:
+    """Require a role body within the shared line budget."""
+    field = f"{location}.body"
+    body = _check_text(value, field, maximum=None)
     if len(body.splitlines()) > _MAX_ROLE_BODY_LINES:
         raise NativeTextLimitError(
-            location=f"{location}.body", maximum=_MAX_ROLE_BODY_LINES, unit="lines"
+            location=field, maximum=_MAX_ROLE_BODY_LINES, unit="lines"
         )
+    return body
 
-    raw_workers = role["workers"]
-    if not isinstance(raw_workers, list):
+
+def _role_workers(value: object, location: str) -> tuple[str, ...]:
+    """Require a unique list of valid worker identifiers."""
+    if not isinstance(value, list):
         raise InputTypeError(location=f"{location}.workers", expected="a list")
     workers: list[str] = []
-    for worker in raw_workers:
+    for worker in value:
         if not isinstance(worker, str):
             raise InputTypeError(
                 location=f"{location}.workers entry", expected="a string"
@@ -374,24 +370,51 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:  # n
         raise NativeRoleError(
             location=f"{location}.workers", issue=NativeRoleIssue.DUPLICATE_WORKERS
         )
-    if tier == "coordinator":
-        if kind != "primary":
-            raise NativeRoleError(
-                location=location, issue=NativeRoleIssue.WORKER_COORDINATION
-            )
-        if not workers:
-            raise NativeRoleError(
-                location=location, issue=NativeRoleIssue.MISSING_WORKERS
-            )
-    elif workers:
-        raise NativeRoleError(
-            location=f"{location}.workers", issue=NativeRoleIssue.UNEXPECTED_WORKERS
-        )
+    return tuple(workers)
 
-    copilot_models: tuple[str, ...] | None = None
-    claude_model: str | None = None
-    if "models" in role:
-        copilot_models, claude_model = _model_settings(role["models"], location)
+
+def _check_coordination(
+    kind: str, tier: str, workers: tuple[str, ...], location: str
+) -> None:
+    """Allow workers only on primary coordinators, which must name some."""
+    if tier != "coordinator":
+        if workers:
+            raise NativeRoleError(
+                location=f"{location}.workers",
+                issue=NativeRoleIssue.UNEXPECTED_WORKERS,
+            )
+        return
+    if kind != "primary":
+        raise NativeRoleError(
+            location=location, issue=NativeRoleIssue.WORKER_COORDINATION
+        )
+    if not workers:
+        raise NativeRoleError(location=location, issue=NativeRoleIssue.MISSING_WORKERS)
+
+
+def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
+    """Validate one role against the closed role schema."""
+    location = f"{asset_path}:roles[{index}]"
+    role = _require_fields(
+        value,
+        {"id", "kind", "tier", "description", "body", "workers"},
+        {"models"},
+        location,
+    )
+    identifier = _role_identifier(role["id"], location)
+    kind = _closed_choice(
+        role["kind"], _ROLE_KINDS, "kind", location, NativeRoleIssue.KIND
+    )
+    tier = _closed_choice(
+        role["tier"], _ROLE_TIERS, "tier", location, NativeRoleIssue.TIER
+    )
+    description = _role_description(role["description"], location)
+    body = _role_body(role["body"], location)
+    workers = _role_workers(role["workers"], location)
+    _check_coordination(kind, tier, workers, location)
+    copilot_models, claude_model = (
+        _model_settings(role["models"], location) if "models" in role else (None, None)
+    )
     return _NativeRole(
         body=body,
         claude_model=claude_model,
@@ -400,45 +423,40 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:  # n
         identifier=identifier,
         kind=kind,
         tier=tier,
-        workers=tuple(workers),
+        workers=workers,
     )
 
 
-def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:  # noqa: C901
-    """Decode every matching authored asset and resolve explicit worker links."""
-    roles: dict[str, _NativeRole] = {}
-    for path in sorted(path for path in files if _ASSET_PATH.fullmatch(path)):
-        try:
-            decoded: object = json.loads(
-                files[path].decode("utf-8"), object_pairs_hook=_object_pairs
-            )
-        except (
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            RecursionError,
-            ValueError,
-        ) as error:
-            raise InvalidNativeJsonError(path=path, cause=error) from error
-        asset = _require_fields(decoded, {"schema_version", "roles"}, set(), path)
-        if type(asset["schema_version"]) is not int:
-            raise InputTypeError(
-                location=f"native asset '{path}'.schema_version", expected="an integer"
-            )
-        if asset["schema_version"] != 1:
-            raise NativeRoleError(
-                location=f"native asset '{path}'", issue=NativeRoleIssue.SCHEMA_VERSION
-            )
-        raw_roles = asset["roles"]
-        if not isinstance(raw_roles, list):
-            raise InputTypeError(
-                location=f"native asset '{path}'.roles", expected="a list"
-            )
-        for index, raw_role in enumerate(raw_roles):
-            role = _parse_role(raw_role, path, index)
-            if role.identifier in roles:
-                raise DuplicateRoleError(role.identifier)
-            roles[role.identifier] = role
+def _asset_roles(path: str, content: bytes) -> list[object]:
+    """Decode one native asset and return its raw role list."""
+    try:
+        decoded: object = json.loads(
+            content.decode("utf-8"), object_pairs_hook=_object_pairs
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
+        raise InvalidNativeJsonError(path=path, cause=error) from error
+    asset = _require_fields(decoded, {"schema_version", "roles"}, set(), path)
+    if type(asset["schema_version"]) is not int:
+        raise InputTypeError(
+            location=f"native asset '{path}'.schema_version", expected="an integer"
+        )
+    if asset["schema_version"] != 1:
+        raise NativeRoleError(
+            location=f"native asset '{path}'", issue=NativeRoleIssue.SCHEMA_VERSION
+        )
+    raw_roles = asset["roles"]
+    if not isinstance(raw_roles, list):
+        raise InputTypeError(location=f"native asset '{path}'.roles", expected="a list")
+    return raw_roles
 
+
+def _check_worker_links(roles: dict[str, _NativeRole]) -> None:
+    """Require every coordinator target to be an available worker role."""
     for role in roles.values():
         for worker_id in role.workers:
             worker = roles.get(worker_id)
@@ -446,6 +464,18 @@ def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:  # noqa: C9
                 raise UnavailableWorkerError(worker_id)
             if worker.kind != "worker":
                 raise InvalidWorkerTargetError(worker_id)
+
+
+def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:
+    """Decode every matching authored asset and resolve explicit worker links."""
+    roles: dict[str, _NativeRole] = {}
+    for path in sorted(path for path in files if _ASSET_PATH.fullmatch(path)):
+        for index, raw_role in enumerate(_asset_roles(path, files[path])):
+            role = _parse_role(raw_role, path, index)
+            if role.identifier in roles:
+                raise DuplicateRoleError(role.identifier)
+            roles[role.identifier] = role
+    _check_worker_links(roles)
     return tuple(roles[key] for key in sorted(roles))
 
 

@@ -3,8 +3,8 @@
 A private helper is a function or method named with one leading underscore
 (not a special method). When exactly one function, method, or class in the same scope
 refers to it from deferred code (a function body), the helper should be placed
-after that caller ('--order after', the default stepdown rule) or before it
-('--order before'). Helpers with several callers, or referenced by code that
+after that caller (``--order after``, the default stepdown rule) or before it
+(``--order before``). Helpers with several callers, or referenced by code that
 runs at definition time (decorators, defaults, class bodies, module
 statements), are never reported because their position is constrained or
 ambiguous.
@@ -12,16 +12,17 @@ ambiguous.
 
 import argparse
 import ast
-import re
-import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+import re
+import sys
 
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = ("module", "class")
+_EXIT_USAGE = 2
 
 type _Matcher = Callable[[ast.AST, str], bool]
 
@@ -77,32 +78,40 @@ def check_source(
     Args:
         text: Python source text.
         path: Display path used as the finding prefix.
-        order: 'after' requires helpers below their caller; 'before' above it.
-        scopes: Which scopes to check: 'module', 'class', or both.
+        order: ``after`` requires helpers below their caller; ``before`` above it.
+        scopes: Which scopes to check: ``module``, ``class``, or both.
         ignore: Helper-name patterns that are never reported.
 
     Returns:
-        Findings formatted as 'path:line: message', sorted by line.
+        Findings formatted as ``path:line: message``, sorted by line.
 
     Raises:
-        ValueError: If 'order' or a scope name is unknown.
+        ValueError: If ``order`` or a scope name is unknown.
     """
-    if order not in {"after", "before"}:
-        raise OrderingOptionError(OrderingOptionIssue.UNKNOWN_ORDER, order=order)
-    unknown = scopes - set(_SCOPES)
-    if unknown:
-        raise OrderingOptionError(OrderingOptionIssue.UNKNOWN_SCOPE, scope=min(unknown))
+    _validate_options(order, scopes)
     tree = ast.parse(text, filename=path)
     findings: list[tuple[int, str]] = []
     if "module" in scopes:
         findings.extend(_scope_findings(tree.body, _name_reference, order, ignore))
     if "class" in scopes:
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                findings.extend(
-                    _scope_findings(node.body, _attribute_reference, order, ignore)
-                )
+        findings.extend(_class_findings(tree, order, ignore))
     return [f"{path}:{line}: {message}" for line, message in sorted(findings)]
+
+
+def _validate_options(order: str, scopes: frozenset[str]) -> None:
+    if order not in {"after", "before"}:
+        raise OrderingOptionError(OrderingOptionIssue.UNKNOWN_ORDER, order=order)
+    unknown = scopes - set(_SCOPES)
+    if unknown:
+        raise OrderingOptionError(OrderingOptionIssue.UNKNOWN_SCOPE, scope=min(unknown))
+
+
+def _class_findings(
+    tree: ast.Module, order: str, ignore: tuple[re.Pattern[str], ...]
+) -> Iterator[tuple[int, str]]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            yield from _scope_findings(node.body, _attribute_reference, order, ignore)
 
 
 def _scope_findings(
@@ -111,17 +120,7 @@ def _scope_findings(
     order: str,
     ignore: tuple[re.Pattern[str], ...],
 ) -> Iterator[tuple[int, str]]:
-    definitions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
-    for statement in body:
-        if isinstance(statement, _FUNCTIONS):
-            definitions.setdefault(statement.name, []).append(statement)
-    helpers = {
-        name: nodes[0]
-        for name, nodes in definitions.items()
-        if len(nodes) == 1
-        and _is_private(name)
-        and not any(pattern.search(name) for pattern in ignore)
-    }
+    helpers = _helpers(body, ignore)
     if not helpers:
         return
     units = [
@@ -130,14 +129,9 @@ def _scope_findings(
     ]
     positions = {unit.name: unit for unit in units if unit.name is not None}
     for name, node in helpers.items():
-        if any(name in unit.immediate for unit in units):
+        caller = _sole_caller(name, units)
+        if caller is None:
             continue
-        callers = [
-            unit for unit in units if name in unit.deferred and unit.name != name
-        ]
-        if len(callers) != 1 or callers[0].name is None:
-            continue
-        caller = callers[0]
         helper_index = positions[name].index
         misplaced = (
             helper_index < caller.index
@@ -153,6 +147,31 @@ def _scope_findings(
                     f"'{caller.name}' (line {caller.line}); move it {order} the caller"
                 ),
             )
+
+
+def _helpers(
+    body: list[ast.stmt], ignore: tuple[re.Pattern[str], ...]
+) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    definitions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for statement in body:
+        if isinstance(statement, _FUNCTIONS):
+            definitions.setdefault(statement.name, []).append(statement)
+    return {
+        name: nodes[0]
+        for name, nodes in definitions.items()
+        if len(nodes) == 1
+        and _is_private(name)
+        and not any(pattern.search(name) for pattern in ignore)
+    }
+
+
+def _sole_caller(name: str, units: list[_Unit]) -> _Unit | None:
+    if any(name in unit.immediate for unit in units):
+        return None
+    callers = [unit for unit in units if name in unit.deferred and unit.name != name]
+    if len(callers) != 1 or callers[0].name is None:
+        return None
+    return callers[0]
 
 
 def _unit(
@@ -226,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     """Check helper placement in the given files and directories.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv[1:]'.
+        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
 
     Returns:
         Zero when every helper is placed correctly, otherwise one.
@@ -253,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         ignore = tuple(re.compile(pattern) for pattern in args.ignore)
     except re.error as error:
         print(f"invalid --ignore pattern: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     files, findings = _python_files(args.paths, _EXCLUDED | set(args.exclude))
     for path in files:
         try:

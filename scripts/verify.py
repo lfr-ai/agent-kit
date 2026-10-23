@@ -2,10 +2,10 @@
 
 import argparse
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 _PYTHON = sys.executable
@@ -20,6 +20,18 @@ _CHECKS = {
     "coverage": (_PYTHON, "-m", "scripts.check_coverage"),
     "conventions": (_PYTHON, "scripts/check_conventions.py"),
     "governance": (_PYTHON, "scripts/check_governance.py"),
+    "licenses": (
+        _PYTHON,
+        "packages/shared/.apm/skills/kit-agent-runtime/assets/license_guard.py",
+        "--allowlist",
+        "license-allowlist.json",
+    ),
+    "pins": (
+        _PYTHON,
+        "packages/shared/.apm/skills/kit-verify-change/assets/check_pins.py",
+        "--root",
+        ".",
+    ),
     "drift": ("apm", "audit", "--ci", "--policy", "./apm-policy.yml", "--no-fail-fast"),
     "docs": (_PYTHON, "scripts/check_docs.py"),
     "tests": (
@@ -31,19 +43,24 @@ _CHECKS = {
         "--cov-report=term-missing:skip-covered",
     ),
 }
+# Network gates are selected explicitly so the default gate stays deterministic.
+_NETWORK_CHECKS = {
+    "dependencies": (_PYTHON, "scripts/audit_dependencies.py"),
+}
 
 
 def main() -> int:
-    """Run one named gate or every gate and surface the first failure."""
+    """Run one named gate or every deterministic gate and surface the first failure."""
+    checks = {**_CHECKS, **_NETWORK_CHECKS}
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("gate", choices=["all", *_CHECKS], nargs="?", default="all")
+    parser.add_argument("gate", choices=["all", *checks], nargs="?", default="all")
     args = parser.parse_args()
     names = list(_CHECKS) if args.gate == "all" else [args.gate]
     env = dict(os.environ)
     env["APM_NO_SCRIPTS"] = "1"
     env["APM_NON_INTERACTIVE"] = "1"
     for name in names:
-        command = _CHECKS[name]
+        command = checks[name]
         executable = shutil.which(command[0])
         if executable is None:
             print(

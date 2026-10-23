@@ -21,6 +21,11 @@ from streaming.events import EndStatus, EventName, ReplayBuffer, StreamEvent
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_REPLAY_SIZE_EVENTS = 512
+_DEFAULT_QUEUE_SIZE_EVENTS = 128
+_DEFAULT_MAX_STREAMS = 1000
+_DEFAULT_MAX_SUBSCRIBERS = 8
+
 Emit = Callable[[EventName, Mapping[str, object]], StreamEvent]
 Producer = Callable[[Emit], Awaitable[None]]
 
@@ -67,10 +72,10 @@ class HubLimits:
         cancel_when_unobserved: Cancel the producer when the last subscriber leaves.
     """
 
-    replay_size: int = 512
-    queue_size: int = 128
-    max_streams: int = 1000
-    max_subscribers: int = 8
+    replay_size: int = _DEFAULT_REPLAY_SIZE_EVENTS
+    queue_size: int = _DEFAULT_QUEUE_SIZE_EVENTS
+    max_streams: int = _DEFAULT_MAX_STREAMS
+    max_subscribers: int = _DEFAULT_MAX_SUBSCRIBERS
     cancel_when_unobserved: bool = False
 
 

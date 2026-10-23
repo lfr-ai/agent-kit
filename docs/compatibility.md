@@ -71,13 +71,12 @@ instead of treating that zero exit status as a successful distribution.
 
 ## Integrations and application checks
 
-The empty active MCP manifest is intentional. Optional public examples and the
-complete integration inventory belong to the editor resource; authentication,
-server toolset, and native approval remain consumer-owned.
-All 11 recorded integrations have both VS Code `servers` and Claude `mcpServers`
-example wrappers. Local commands require reviewed version/digest placeholders;
-none are started by composition, resource checks or APM smoke. Configuration
-location and host discovery remain version-dependent. No Windows process sandbox
-is claimed, and command-hook permissions are not tool approval rules.
+The root workspace manifests select three reviewed remote services. The shared
+editor resource retains inactive examples for the full integration inventory;
+portable APM defaults remain deny-by-default. Authentication and host approval
+remain user-controlled. None are started by composition, resource checks or APM
+smoke. Configuration location and host discovery remain version-dependent. No
+Windows process sandbox is claimed, and command-hook permissions are not tool
+approval rules. See the [MCP adoption record](mcp-adoption.md).
 Application DI/port/migration/license checks are not replaced by passing toolkit
 checks. See the explicit [setup review](setup-review.md).

@@ -18,7 +18,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:4e76aec5513b43865945336772e3b53dd7a3279dfb6dc4547def9b3ecdf7a12f
+  content_hash: sha256:215d2e2d37692d3ee5bdd321b9f55d79de92805fd4d64e4fac822d6b85ed7f32
 - kind: project-relative
   target: claude
   value: .claude/skills/kit-apm-adopt
@@ -153,7 +153,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  content_hash: sha256:05aff328fb1f8a5d635fc90e6055ec473834e4156a38abb79608f94d76fd9847
 - kind: project-relative
   target: claude
   value: .claude/skills/kit-config-review
@@ -207,7 +207,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:cd64b7b667039ab4def991594e9a0cdfc68ed4f3b282dca504212b2c0a52e0db
+  content_hash: sha256:5b39bdba30a857b91b4a0fe4457cfec2f9a257d2f7f22973def724a0e0e5b57c
 - kind: project-relative
   target: legacy
   value: .agents/skills/kit-apm-adopt
@@ -342,7 +342,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  content_hash: sha256:05aff328fb1f8a5d635fc90e6055ec473834e4156a38abb79608f94d76fd9847
 - kind: project-relative
   target: legacy
   value: .agents/skills/kit-config-review
@@ -434,12 +434,12 @@ local_deployed_file_hashes:
   .agents/skills/kit-apm-audit/references/gates.md: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
   .agents/skills/kit-capability-authoring/SKILL.md: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
   .agents/skills/kit-capability-authoring/assets/capability.md.template: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
-  .agents/skills/kit-capability-authoring/references/guide.md: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  .agents/skills/kit-capability-authoring/references/guide.md: sha256:05aff328fb1f8a5d635fc90e6055ec473834e4156a38abb79608f94d76fd9847
   .agents/skills/kit-config-review/SKILL.md: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
   .agents/skills/kit-config-review/assets/review.md.template: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
   .agents/skills/kit-config-review/references/guide.md: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
   .claude/rules/kit-authoring.md: sha256:25f62a6a352db1cf2a6479a2fd15ad86baff0aadef2e7b732662870fe5455db8
-  .claude/rules/kit-python.md: sha256:4e76aec5513b43865945336772e3b53dd7a3279dfb6dc4547def9b3ecdf7a12f
+  .claude/rules/kit-python.md: sha256:215d2e2d37692d3ee5bdd321b9f55d79de92805fd4d64e4fac822d6b85ed7f32
   .claude/skills/kit-apm-adopt/SKILL.md: sha256:88a98746b481d4875b946a99ecc66d0d2cc1e4505e75d0d0f030a4aef5b04740
   .claude/skills/kit-apm-adopt/assets/PROJECT.template.md: sha256:688d956292fe60cfe3c2482527005689b2fb329ee0ac4dfc69491daddb21d24f
   .claude/skills/kit-apm-adopt/assets/adoption.md.template: sha256:a83acb2707dd3546ccb2b37097fb0e2b091a009dee429fe11e411d27c0900176
@@ -451,9 +451,9 @@ local_deployed_file_hashes:
   .claude/skills/kit-apm-audit/references/gates.md: sha256:4ae76979d2d5bcc3c1ab44fb1caf70dd296d6210dc2b8dd22ac13d55ab4bda6e
   .claude/skills/kit-capability-authoring/SKILL.md: sha256:a448379924ea88108948e9456d153e9f91f4940017e4c3bce01dc0925821c01b
   .claude/skills/kit-capability-authoring/assets/capability.md.template: sha256:9e5fce67e805a6bd0fc203f9406b41c2cd66c8c886bcd18eb0d68031d5ed191b
-  .claude/skills/kit-capability-authoring/references/guide.md: sha256:f277c6fde84da34a4f7641deaf0a8311b06d29bc978bd40f0a7288891d0e4512
+  .claude/skills/kit-capability-authoring/references/guide.md: sha256:05aff328fb1f8a5d635fc90e6055ec473834e4156a38abb79608f94d76fd9847
   .claude/skills/kit-config-review/SKILL.md: sha256:6d6348388b1f0e8f7d55f0b4db170af17398e64e7c7af8b373758445be47dcd8
   .claude/skills/kit-config-review/assets/review.md.template: sha256:d9ad87aa96c2cb3e0730e2bca4483d60194cc7590b374fa11980e641ea457d8d
   .claude/skills/kit-config-review/references/guide.md: sha256:d4b838fbc409cf619c0cbdb5f68c2adb4017d483c9b89f8efe2123ef54afb58f
   .github/instructions/kit-authoring.instructions.md: sha256:2a3f6aa845a19b2d40c20bb519f3f53baf15f0a2520728fdb01ab8b336de8fb4
-  .github/instructions/kit-python.instructions.md: sha256:cd64b7b667039ab4def991594e9a0cdfc68ed4f3b282dca504212b2c0a52e0db
+  .github/instructions/kit-python.instructions.md: sha256:5b39bdba30a857b91b4a0fe4457cfec2f9a257d2f7f22973def724a0e0e5b57c

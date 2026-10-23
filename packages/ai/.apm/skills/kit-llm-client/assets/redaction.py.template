@@ -9,6 +9,8 @@ net, not a guarantee; do not rely on them to make content loggable.
 import logging
 import re
 
+_DEFAULT_PREVIEW_LIMIT_CHARS = 80
+
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}"), "Bearer [REDACTED]"),
     (
@@ -39,7 +41,7 @@ def redact(text: str) -> str:
     return text
 
 
-def safe_preview(text: str, *, limit: int = 80) -> str:
+def safe_preview(text: str, *, limit: int = _DEFAULT_PREVIEW_LIMIT_CHARS) -> str:
     """Return a short, redacted preview for opt-in debug logging.
 
     Args:

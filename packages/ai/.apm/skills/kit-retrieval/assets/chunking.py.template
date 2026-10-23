@@ -18,6 +18,11 @@ _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 
+_DEFAULT_CHUNK_MAX_CHARS = 1200
+_DEFAULT_CHUNK_OVERLAP_CHARS = 150
+_CHUNK_ID_HEX_CHARS = 32
+_HEADING_TITLE_GROUP = 2
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class SourceDocument:
@@ -51,8 +56,8 @@ class ChunkingPolicy:
         overlap_chars: Upper bound on text repeated from the previous chunk.
     """
 
-    max_chars: int = 1200
-    overlap_chars: int = 150
+    max_chars: int = _DEFAULT_CHUNK_MAX_CHARS
+    overlap_chars: int = _DEFAULT_CHUNK_OVERLAP_CHARS
 
     def __post_init__(self) -> None:
         """Reject limits that cannot make progress."""
@@ -81,7 +86,7 @@ def chunk_id_for(
         A 32-character hexadecimal identifier.
     """
     key = "\x1f".join((tenant, source_id, source_version, f"{start}:{end}"))
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:_CHUNK_ID_HEX_CHARS]
 
 
 def _hard_split(
@@ -175,7 +180,7 @@ def _sections(text: str) -> list[tuple[int, str]]:
     for match in _HEADING.finditer(text):
         level = len(match.group(1))
         stack = [entry for entry in stack if entry[0] < level]
-        stack.append((level, match.group(2).strip()))
+        stack.append((level, match.group(_HEADING_TITLE_GROUP).strip()))
         result.append((match.start(), " > ".join(title for _, title in stack)))
     return result
 

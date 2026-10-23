@@ -1,11 +1,11 @@
 """Release version, license, source provenance, and artifact inventory contracts."""
 
 import hashlib
+from io import BytesIO
 import json
+from pathlib import Path
 import tarfile
 import zipfile
-from io import BytesIO
-from pathlib import Path
 
 import pytest
 import scripts.check_release as release_module

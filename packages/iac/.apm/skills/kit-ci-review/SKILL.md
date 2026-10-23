@@ -34,7 +34,10 @@ change can. Start with the [review guide](references/guide.md).
 6. Verify supply-chain controls with [supply chain](references/supply-chain.md):
    full-SHA pins with version comments, digest-pinned containers, Dependabot
    coverage, lockfile-keyed caches, `persist-credentials: false`, and
-   provenance attestations for published artifacts.
+   provenance attestations for published artifacts. Use the
+   [zizmor policy template](assets/templates/zizmor.yml.template) as
+   `.github/zizmor.yml` for a 14-day version-update cooldown; SHA pinning uses
+   zizmor's default policy.
 7. Confirm publish and deploy jobs depend on validation through `needs:`, run
    only on protected refs or tags, bind to protected environments, and use OIDC
    with narrow subject claims instead of stored cloud secrets.
@@ -46,6 +49,7 @@ change can. Start with the [review guide](references/guide.md).
 10. When proposing a new or rewritten workflow, start from the
     [hardened CI template](assets/templates/ci.yml.template), the
     [reusable build template](assets/templates/reusable-build.yml.template),
+    the [dependency audit template](assets/templates/dependency-audit.yml.template),
     and the [Dependabot template](assets/templates/dependabot.yml.template).
 11. Record publishing permissions and approvals in the
     [permission record](assets/templates/ci-permissions-template.md) and
@@ -60,6 +64,8 @@ change can. Start with the [review guide](references/guide.md).
       a written, owner-approved exception.
 - [ ] Top-level `permissions:` exists in every workflow; no `write-all`.
 - [ ] Every external `uses:` is a full commit SHA or an `@sha256:` digest.
+- [ ] Pull requests run dependency review; the full lock is audited before
+      installation and on a schedule.
 - [ ] No untrusted context is expanded inside `run:` or script-action source.
 - [ ] Privileged triggers never execute pull request code.
 - [ ] Publish and deploy jobs use protected environments and OIDC.

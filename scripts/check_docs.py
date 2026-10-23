@@ -1,10 +1,10 @@
 """Check source documentation links without fetching external resources."""
 
+from collections.abc import Iterator
 import os
+from pathlib import Path
 import re
 import sys
-from collections.abc import Iterator
-from pathlib import Path
 from urllib.parse import unquote
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -68,18 +68,21 @@ def check(root: Path) -> list[str]:
     for path in _documentation_paths(root):
         if path.is_symlink():
             failures.append(f"{path.relative_to(root)}: symbolic-link document")
-            continue
-        if ".template." in path.name:
-            continue
-        text = path.read_text(encoding="utf-8")
-        for raw in _LINK.findall(text):
-            target = raw.split(" ", 1)[0].strip("<>")
-            if target.startswith(("https://", "http://", "mailto:", "#")):
-                continue
-            target = unquote(target.partition("#")[0])
-            if not (path.parent / target).exists():
-                failures.append(f"{path.relative_to(root)}: missing link {target}")
+        elif ".template." not in path.name:
+            failures.extend(
+                f"{path.relative_to(root)}: missing link {target}"
+                for target in _local_targets(path.read_text(encoding="utf-8"))
+                if not (path.parent / target).exists()
+            )
     return failures
+
+
+def _local_targets(text: str) -> Iterator[str]:
+    """Yield decoded local link targets, skipping web, mail and anchor links."""
+    for raw in _LINK.findall(text):
+        target = raw.split(" ", 1)[0].strip("<>")
+        if not target.startswith(("https://", "http://", "mailto:", "#")):
+            yield unquote(target.partition("#")[0])
 
 
 def main() -> int:

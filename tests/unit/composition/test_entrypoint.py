@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 import agent_kit.composition.root as composition_module
 import agent_kit.main as main_module
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_apm_check_rejects_bad_provenance_before_process(

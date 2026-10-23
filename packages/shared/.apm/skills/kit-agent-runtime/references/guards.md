@@ -28,6 +28,7 @@ clearer reason.
 | Hook or workflow tampering | agent edits a hook file that later runs automatically | Asks before known write tools touch it | Code review, protected branches, workspace trust |
 | Deliberate evasion by a capable agent | variables, aliases, generated scripts, encoded payloads | No | Sandbox, least-privilege tools, review |
 | Malicious MCP server or extension | tool with a new name and arbitrary behavior | Only if the policy names it | Do not install untrusted servers; native tool approval |
+| Hallucinated or malicious package | agent installs a plausible but unreviewed name (slopsquatting) | Yes: `dependency-install` asks before literal installers and package runners | Native deny rules for installers, reviewed lockfile, dependency review and lock audit in CI |
 | License drift in dependencies | new transitive dependency under a denied license | Yes, at check time | Dependency review in CI, legal review |
 
 The pre-tool guard sees only the tool name and the literal tool input that the
@@ -135,6 +136,30 @@ A guard `ask` never weakens a native deny. In Claude Code, permission deny and a
 rules are evaluated regardless of the hook result. In Copilot cloud agent and CLI
 autopilot, `ask` is treated as deny because nobody can answer.
 
+## Package installation
+
+Agents should not install packages ad hoc. Package hallucination is repeatable,
+and attackers register hallucinated names. Route every dependency through a
+reviewed manifest and lockfile change instead:
+
+1. Change the manifest and lock without installing, for example
+   `uv add --no-sync <name>`.
+2. Audit the changed lock before syncing it: known vulnerabilities, wheel-only
+   installs, and lock hashes. Then install with the locked command
+   (`uv sync --locked`, `npm ci`).
+3. Check installed licenses, then let pull-request dependency review and CI repeat
+   both audits server side.
+
+Enforce the first step natively. Claude Code rules such as `Bash(uv add *)`,
+`Bash(pip install *)`, `Bash(npx *)` and `Bash(uvx *)` in `permissions.deny` block
+the literal commands; VS Code `chat.tools.terminal.autoApprove` rules set to
+`false` always require approval for matching subcommands, even when another rule
+would auto-approve them. Both are matched against command text and can be
+bypassed through other spellings, interpreters, or generated scripts, so CI audits
+remain the authoritative boundary. Pair them with a sandbox or network allowlist
+where the host supports one. The template's `dependency-install` rule asks rather
+than denies, because an approved dependency change is a normal operator action.
+
 ## Rollout
 
 1. Copy `tool_guard.py` and the policy template into a consumer-owned directory such
@@ -165,6 +190,8 @@ A passing file test does not certify a native IDE, CLI, or cloud session.
 - [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
 - [Claude Code permissions](https://code.claude.com/docs/en/permissions)
 - [Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing)
+- [VS Code approvals and terminal auto-approval](https://code.visualstudio.com/docs/agents/run/approvals)
+- [Package hallucinations by code-generating LLMs](https://arxiv.org/abs/2406.10279)
 - [GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)
 - [VS Code agent hooks](https://code.visualstudio.com/docs/agent-customization/hooks)
 - [VS Code Local hooks reference](https://code.visualstudio.com/docs/agents/reference/hooks-reference)

@@ -1,12 +1,12 @@
 """Executable checkers and copyable templates for backend data skills stay valid."""
 
 import ast
+from collections.abc import Callable
 import json
+from pathlib import Path
 import re
 import runpy
 import tomllib
-from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 import yaml
@@ -224,22 +224,30 @@ def test_pyproject_checker_reports_missing_file(tmp_path: Path) -> None:
     assert main([str(tmp_path / "absent.toml")]) == 1
 
 
-@pytest.mark.parametrize("path", _templates(".py", ".spec"), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", _templates(".py", ".spec"), ids=lambda p: p.relative_to(_SKILLS).as_posix()
+)
 def test_python_templates_parse(path: Path) -> None:
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-@pytest.mark.parametrize("path", _templates(".json"), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", _templates(".json"), ids=lambda p: p.relative_to(_SKILLS).as_posix()
+)
 def test_json_templates_parse(path: Path) -> None:
     json.loads(path.read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("path", _templates(".yml", ".yaml"), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", _templates(".yml", ".yaml"), ids=lambda p: p.relative_to(_SKILLS).as_posix()
+)
 def test_yaml_templates_parse(path: Path) -> None:
     assert isinstance(yaml.safe_load(path.read_text(encoding="utf-8")), dict)
 
 
-@pytest.mark.parametrize("path", _templates(".toml"), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", _templates(".toml"), ids=lambda p: p.relative_to(_SKILLS).as_posix()
+)
 def test_toml_templates_parse(path: Path) -> None:
     assert tomllib.loads(path.read_text(encoding="utf-8"))
 

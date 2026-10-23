@@ -6,11 +6,12 @@ No credentials, network access, state changes or approval overrides are supporte
 """
 
 import argparse
+from collections.abc import Callable
+from enum import StrEnum
 import json
+from pathlib import Path
 import re
 import sys
-from enum import StrEnum
-from pathlib import Path
 
 _INVALID = 2
 _DELETE = 3
@@ -81,15 +82,7 @@ def _invalid_constant(value: str) -> object:
     raise PlanInputError(PlanInputIssue.NON_JSON_CONSTANT, value=value)
 
 
-def analyze_plan(value: object) -> dict[str, list[str]]:
-    """Reject incomplete/unknown input and classify supported resource actions.
-
-    Raises:
-        ValueError: A required field is missing or a plan value is unsupported.
-        TypeError: The document or a present field has the wrong Python type.
-    """
-    if not isinstance(value, dict):
-        raise PlanInputTypeError(PlanInputIssue.OBJECT_REQUIRED)
+def _check_version(value: dict[object, object]) -> None:
     version = value.get("format_version")
     if "format_version" not in value:
         raise PlanInputError(PlanInputIssue.FORMAT_VERSION)
@@ -97,6 +90,9 @@ def analyze_plan(value: object) -> dict[str, list[str]]:
         raise PlanInputTypeError(PlanInputIssue.FORMAT_VERSION)
     if re.fullmatch(r"1\.\d+", version) is None:
         raise PlanInputError(PlanInputIssue.FORMAT_VERSION)
+
+
+def _check_complete(value: dict[object, object]) -> None:
     if not isinstance(value.get("errored", False), bool) or not isinstance(
         value.get("complete", True), bool
     ):
@@ -111,40 +107,67 @@ def analyze_plan(value: object) -> dict[str, list[str]]:
         raise PlanInputTypeError(PlanInputIssue.DEFERRED_CHANGES)
     if deferred:
         raise PlanInputError(PlanInputIssue.DEFERRED_CHANGES)
+
+
+def _resource_changes(value: dict[object, object]) -> list[object]:
     changes = value.get("resource_changes")
     if "resource_changes" not in value:
         raise PlanInputError(PlanInputIssue.CHANGES_ARRAY)
     if not isinstance(changes, list):
         raise PlanInputTypeError(PlanInputIssue.CHANGES_ARRAY)
+    return changes
+
+
+def _address(change: dict[object, object], seen: set[str]) -> str:
+    address = change.get("address")
+    if "address" not in change:
+        raise PlanInputError(PlanInputIssue.RESOURCE_ADDRESS)
+    if not isinstance(address, str):
+        raise PlanInputTypeError(PlanInputIssue.RESOURCE_ADDRESS)
+    if not address.strip() or address in seen:
+        raise PlanInputError(PlanInputIssue.RESOURCE_ADDRESS)
+    seen.add(address)
+    return address
+
+
+def _action_kind(change: dict[object, object]) -> str:
+    detail = change.get("change")
+    if "change" not in change:
+        raise PlanInputError(PlanInputIssue.CHANGE_DETAIL)
+    if not isinstance(detail, dict):
+        raise PlanInputTypeError(PlanInputIssue.CHANGE_DETAIL)
+    actions = detail.get("actions")
+    if "actions" not in detail:
+        raise PlanInputError(PlanInputIssue.ACTIONS_ARRAY)
+    if not isinstance(actions, list) or not all(
+        isinstance(action, str) for action in actions
+    ):
+        raise PlanInputTypeError(PlanInputIssue.ACTIONS_ARRAY)
+    kind = _ACTIONS.get(tuple(actions))
+    if kind is None:
+        raise PlanInputError(PlanInputIssue.UNSUPPORTED_ACTIONS)
+    return kind
+
+
+def analyze_plan(value: object) -> dict[str, list[str]]:
+    """Reject incomplete/unknown input and classify supported resource actions.
+
+    Raises:
+        ValueError: A required field is missing or a plan value is unsupported.
+        TypeError: The document or a present field has the wrong Python type.
+    """
+    if not isinstance(value, dict):
+        raise PlanInputTypeError(PlanInputIssue.OBJECT_REQUIRED)
+    _check_version(value)
+    _check_complete(value)
+    changes = _resource_changes(value)
     groups: dict[str, list[str]] = {kind: [] for kind in _ACTIONS.values()}
     seen: set[str] = set()
     for change in changes:
         if not isinstance(change, dict):
             raise PlanInputTypeError(PlanInputIssue.CHANGE_OBJECT)
-        address = change.get("address")
-        if "address" not in change:
-            raise PlanInputError(PlanInputIssue.RESOURCE_ADDRESS)
-        if not isinstance(address, str):
-            raise PlanInputTypeError(PlanInputIssue.RESOURCE_ADDRESS)
-        if not address.strip() or address in seen:
-            raise PlanInputError(PlanInputIssue.RESOURCE_ADDRESS)
-        seen.add(address)
-        detail = change.get("change")
-        if "change" not in change:
-            raise PlanInputError(PlanInputIssue.CHANGE_DETAIL)
-        if not isinstance(detail, dict):
-            raise PlanInputTypeError(PlanInputIssue.CHANGE_DETAIL)
-        actions = detail.get("actions")
-        if "actions" not in detail:
-            raise PlanInputError(PlanInputIssue.ACTIONS_ARRAY)
-        if not isinstance(actions, list) or not all(
-            isinstance(action, str) for action in actions
-        ):
-            raise PlanInputTypeError(PlanInputIssue.ACTIONS_ARRAY)
-        kind = _ACTIONS.get(tuple(actions))
-        if kind is None:
-            raise PlanInputError(PlanInputIssue.UNSUPPORTED_ACTIONS)
-        groups[kind].append(address)
+        address = _address(change, seen)
+        groups[_action_kind(change)].append(address)
     return groups
 
 
@@ -177,6 +200,26 @@ class SelfTestError(AssertionError):
         super().__init__(issue.value)
 
 
+def _expect_rejected(
+    values: tuple[object, ...],
+    check: Callable[[object], object],
+    errors: type[Exception] | tuple[type[Exception], ...],
+    issue: SelfTestIssue,
+) -> None:
+    for value in values:
+        try:
+            check(value)
+        except errors:
+            continue
+        raise SelfTestError(issue)
+
+
+def _read_object(value: object) -> object:
+    if not isinstance(value, str):
+        raise TypeError
+    return _read(value)
+
+
 def self_test() -> None:
     """Exercise ordinary, risky, unsupported, incomplete and duplicate inputs."""
     for actions, kind in _ACTIONS.items():
@@ -202,24 +245,21 @@ def self_test() -> None:
             ],
         },
     )
-    for value in invalid:
-        try:
-            analyze_plan(value)
-        except ValueError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_PLAN_ACCEPTED)
-    for value in ([], {"format_version": "1.2", "resource_changes": None}):
-        try:
-            analyze_plan(value)
-        except PlanInputTypeError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_PLAN_ACCEPTED)
-    for text in ("{", '{"format_version":"1.2","format_version":"1.3"}', "NaN"):
-        try:
-            _read(text)
-        except ValueError:
-            continue
-        raise SelfTestError(SelfTestIssue.INVALID_JSON_ACCEPTED)
+    _expect_rejected(
+        invalid, analyze_plan, ValueError, SelfTestIssue.INVALID_PLAN_ACCEPTED
+    )
+    _expect_rejected(
+        ([], {"format_version": "1.2", "resource_changes": None}),
+        analyze_plan,
+        PlanInputTypeError,
+        SelfTestIssue.INVALID_PLAN_ACCEPTED,
+    )
+    _expect_rejected(
+        ("{", '{"format_version":"1.2","format_version":"1.3"}', "NaN"),
+        _read_object,
+        ValueError,
+        SelfTestIssue.INVALID_JSON_ACCEPTED,
+    )
     if any(analyze_plan({"format_version": "1.2", "resource_changes": []}).values()):
         raise SelfTestError(SelfTestIssue.EMPTY_PLAN)
 

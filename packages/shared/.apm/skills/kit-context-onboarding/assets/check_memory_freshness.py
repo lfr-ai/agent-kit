@@ -1,28 +1,28 @@
 """Flag stale dated memory or decision entries and links to missing local files.
 
 An entry is a Markdown heading that contains an ISO date such as
-'## 2026-03-14 Retry policy for invoice exports'. The entry is stale when its
-effective date is older than '--max-age-days' before '--today'. A line inside
-the entry such as 'Last verified: 2026-09-01' refreshes the effective date.
-Entries marked 'Status: superseded' are historical and are not aged, but their
+``## 2026-03-14 Retry policy for invoice exports``. The entry is stale when its
+effective date is older than ``--max-age-days`` before ``--today``. A line inside
+the entry such as ``Last verified: 2026-09-01`` refreshes the effective date.
+Entries marked ``Status: superseded`` are historical and are not aged, but their
 links are still checked. Local links must resolve to an existing file inside
-'--root'; web links and in-page anchors are not fetched.
+``--root``; web links and in-page anchors are not fetched.
 
-Findings are printed as 'path:line: message'. Exit status: 0 when clean, 1 on
+Findings are printed as ``path:line: message``. Exit status: 0 when clean, 1 on
 findings, 2 when inputs cannot be read.
 """
 
 import argparse
-import re
-import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
+import re
+import sys
 from urllib.parse import unquote
 
-_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+_HEADING = re.compile(r"^#{1,6}\s+(?P<title>.*)$")
 _DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _VERIFIED = re.compile(
     r"^\s*(?:[-*]\s*)?\**(?:last\s+verified|verified|reviewed)\**\s*:\**\s*"
@@ -35,6 +35,10 @@ _SUPERSEDED = re.compile(
 _LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _EXTERNAL = ("http://", "https://", "mailto:", "#")
+_EXIT_USAGE = 2
+_DEFAULT_MAX_AGE_DAYS = 180
+_SELF_TEST_TODAY = date(2026, 6, 30)
+_SELF_TEST_MAX_AGE_DAYS = 90
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -85,6 +89,42 @@ def _content_lines(text: str) -> Iterator[tuple[int, str]]:
             yield number, line
 
 
+def _headings(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Return ``(index, title)`` pairs for every heading in ``lines``."""
+    headings: list[tuple[int, str]] = []
+    for index, (_, line) in enumerate(lines):
+        heading = _HEADING.match(line)
+        if heading:
+            headings.append((index, heading.group("title").strip()))
+    return headings
+
+
+def _entry_body(
+    body: list[tuple[int, str]], problems: list[tuple[int, str]]
+) -> tuple[tuple[date, ...], bool]:
+    """Collect verification dates and the superseded flag from an entry body.
+
+    Args:
+        body: Numbered lines between the entry heading and the next heading.
+        problems: Receives ``(line, message)`` pairs for invalid dates.
+
+    Returns:
+        The valid verification dates and whether the entry is superseded.
+    """
+    verified: list[date] = []
+    superseded = False
+    for body_number, line in body:
+        stamp = _VERIFIED.match(line)
+        if stamp:
+            parsed = _parse_date(stamp.group(1))
+            if parsed is None:
+                problems.append((body_number, f"invalid date '{stamp.group(1)}'"))
+            else:
+                verified.append(parsed)
+        superseded = superseded or bool(_SUPERSEDED.match(line))
+    return tuple(verified), superseded
+
+
 def entries(text: str) -> tuple[list[Entry], list[tuple[int, str]]]:
     """Split Markdown into dated entries and report malformed dates.
 
@@ -95,14 +135,10 @@ def entries(text: str) -> tuple[list[Entry], list[tuple[int, str]]]:
         text: The Markdown document.
 
     Returns:
-        The dated entries and '(line, message)' pairs for invalid dates.
+        The dated entries and ``(line, message)`` pairs for invalid dates.
     """
     lines = list(_content_lines(text))
-    headings: list[tuple[int, str]] = []
-    for index, (_, line) in enumerate(lines):
-        heading = _HEADING.match(line)
-        if heading:
-            headings.append((index, heading.group(2).strip()))
+    headings = _headings(lines)
     found: list[Entry] = []
     problems: list[tuple[int, str]] = []
     for position, (index, title) in enumerate(headings):
@@ -115,23 +151,13 @@ def entries(text: str) -> tuple[list[Entry], list[tuple[int, str]]]:
             problems.append((number, f"invalid date '{match.group(0)}'"))
             continue
         end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
-        verified: list[date] = []
-        superseded = False
-        for body_number, body in lines[index + 1 : end]:
-            stamp = _VERIFIED.match(body)
-            if stamp:
-                parsed = _parse_date(stamp.group(1))
-                if parsed is None:
-                    problems.append((body_number, f"invalid date '{stamp.group(1)}'"))
-                else:
-                    verified.append(parsed)
-            superseded = superseded or bool(_SUPERSEDED.match(body))
+        verified, superseded = _entry_body(lines[index + 1 : end], problems)
         found.append(
             Entry(
                 line=number,
                 title=title,
                 dated=dated,
-                verified=tuple(verified),
+                verified=verified,
                 superseded=superseded,
             )
         )
@@ -145,7 +171,7 @@ def links(text: str) -> list[tuple[int, str]]:
         text: The Markdown document.
 
     Returns:
-        '(line, target)' pairs with anchors and percent-encoding removed.
+        ``(line, target)`` pairs with anchors and percent-encoding removed.
     """
     found: list[tuple[int, str]] = []
     for number, line in _content_lines(text):
@@ -177,7 +203,7 @@ def scan(
         link_problem: Returns a message for an unusable link target, or None.
 
     Returns:
-        'path:line: message' findings in line order.
+        ``path:line: message`` findings in line order.
     """
     findings: list[tuple[int, str]] = []
     found, problems = entries(text)
@@ -229,7 +255,7 @@ def file_link_checker(document: Path, root: Path) -> Callable[[str], str | None]
 
 
 class MemoryInputError(FileNotFoundError):
-    """An input violates the memoryinput contract."""
+    """An input violates the memory input contract."""
 
     def __init__(self, *, path: Path) -> None:
         """Describe the violated invariant.
@@ -291,7 +317,7 @@ def self_test() -> None:
     Raises:
         AssertionError: A synthetic case produced an unexpected result.
     """
-    today = date(2026, 6, 30)
+    today = _SELF_TEST_TODAY
     document = (
         "# Memory\n\n"
         "## 2026-06-01 Fresh entry\n\nSee [guide](guide.md).\n\n"
@@ -306,7 +332,11 @@ def self_test() -> None:
         return None if target == "guide.md" else "points to a missing file"
 
     findings = scan(
-        document, source="m.md", today=today, max_age_days=90, link_problem=fake
+        document,
+        source="m.md",
+        today=today,
+        max_age_days=_SELF_TEST_MAX_AGE_DAYS,
+        link_problem=fake,
     )
     expected = [
         (
@@ -329,11 +359,39 @@ def self_test() -> None:
         raise SelfTestError(SelfTestIssue.FRESH_ENTRY_REJECTED)
 
 
+def _scan_paths(
+    paths: list[Path], *, root: Path, today: date, max_age_days: int
+) -> list[str]:
+    """Scan every Markdown file under ``paths`` and return all findings.
+
+    Args:
+        paths: Files or directories to scan.
+        root: The directory that every link must stay inside.
+        today: The reference date for age calculations.
+        max_age_days: The largest accepted age in days.
+
+    Returns:
+        Findings for all scanned files in path order.
+    """
+    findings: list[str] = []
+    for path in markdown_files(paths):
+        findings.extend(
+            scan(
+                path.read_text(encoding="utf-8"),
+                source=path.as_posix(),
+                today=today,
+                max_age_days=max_age_days,
+                link_problem=file_link_checker(path, root),
+            )
+        )
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     """Scan memory and decision files for stale entries and broken links.
 
     Args:
-        argv: Command-line arguments; defaults to 'sys.argv'.
+        argv: Command-line arguments; defaults to ``sys.argv``.
 
     Returns:
         0 when clean, 1 on findings, 2 on unreadable input.
@@ -343,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         "paths", nargs="*", type=Path, help="files or directories (default: memories)"
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
-    parser.add_argument("--max-age-days", type=int, default=180)
+    parser.add_argument("--max-age-days", type=int, default=_DEFAULT_MAX_AGE_DAYS)
     parser.add_argument(
         "--today", type=date.fromisoformat, help="reference date, YYYY-MM-DD"
     )
@@ -356,21 +414,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_age_days < 0:
         parser.error("--max-age-days must not be negative")
     today = args.today or datetime.now(tz=UTC).date()
-    findings: list[str] = []
     try:
-        for path in markdown_files(args.paths or [Path("memories")]):
-            findings.extend(
-                scan(
-                    path.read_text(encoding="utf-8"),
-                    source=path.as_posix(),
-                    today=today,
-                    max_age_days=args.max_age_days,
-                    link_problem=file_link_checker(path, args.root),
-                )
-            )
+        findings = _scan_paths(
+            args.paths or [Path("memories")],
+            root=args.root,
+            today=today,
+            max_age_days=args.max_age_days,
+        )
     except (OSError, UnicodeError) as error:
         print(f"Cannot read memory files: {error}", file=sys.stderr)
-        return 2
+        return _EXIT_USAGE
     for finding in findings:
         print(finding)
     if not findings:
