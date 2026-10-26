@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.27.0"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -30,7 +30,7 @@ agent-kit = "agent_kit.main:main"
 dev = [
   "apm-cli==0.33.0",
   "commitizen==4.19.2",
-  "hypothesis==6.168.5",
+  "hypothesis==6.169.0",
   "import-linter==2.15",
   "pre-commit==4.6.2",
   "pytest==9.1.1",
@@ -39,7 +39,7 @@ dev = [
   "ruff==0.17.1",
   "tox==4.67.1",
   "tox-uv-bare==1.37.0",
-  "ty==0.0.85",
+  "ty==0.0.86",
 ]
 # Installed alone by bootstrap so the full lock is audited before it is synced.
 audit = ["pip-audit==2.10.1"]
@@ -50,7 +50,7 @@ default-groups = ["dev", "audit"]
 # Pin the isolated build backend closure; uv.lock covers only runtime and
 # development dependencies. Add hashes when the minimum uv supports them.
 build-constraint-dependencies = [
-  "hatchling==1.27.0",
+  "hatchling==1.32.4",
   "packaging==26.3",
   "pathspec==1.1.1",
   "pluggy==1.6.0",
