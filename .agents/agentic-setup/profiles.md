@@ -50,6 +50,8 @@ selected bundles. Session compositions (`--skill`) deliver none.
 | backend, `kit-python-service` | Primary: `kit-ddd`, `kit-sdd`, `kit-tdd`, `kit-testing`. Workers: `kit-backend-implementer`, `kit-contract-iac-lint` | backend, fullstack, ai |
 | frontend, `kit-react-feature` | Primary: `kit-frontend`. Worker: `kit-frontend-implementer` | frontend, fullstack |
 | coordination, `kit-fullstack-workflow` | Coordinator: `kit-fullstack` (delegates to backend and frontend implementers, contract lint, code review and test authoring) | fullstack |
+| iac, `kit-infra-review` | Worker: `kit-infra-reviewer` (read-only) | iac |
+| ai, `kit-llm-evaluation` | Primary: `kit-ai-engineer`. Worker: `kit-eval-reviewer` (read-only) | ai |
 
 A coordinator's workers must resolve inside the same selection, which is why
 `kit-fullstack` is only delivered with both stacks present.
@@ -66,9 +68,10 @@ A coordinator's workers must resolve inside the same selection, which is why
 | Narrow backend session | `compose backend --skill kit-python-service` |
 
 `--feature` accepts any profile name and may be repeated. Features add their
-effective bundles to the base profile's; duplicates collapse. The default
-smoke selection is `fullstack` with `iac`, `workflows` and `ai`, which delivers
-every portable bundle at once.
+effective bundles to the base profile's; duplicates collapse. The smoke matrix
+uses three selections, `fullstack`, `ai` with `iac`, and `workflows`, that
+together deliver every portable bundle and every declared role while each stays
+within the profile description budget.
 
 This repository's own native projections use `toolkit` with the `backend`
 feature for both runtimes, declared in [self.json](self.json).

@@ -1,0 +1,49 @@
+# Contributing to PROJECT_NAME
+
+Thank you for helping. This page lists what a change needs before review.
+
+## Set up
+
+1. Install PREREQUISITES (exact versions are in the lockfile and dev container).
+2. Run `BOOTSTRAP_COMMAND`; it installs from the lockfile and the Git hooks.
+3. Run `GATE_COMMAND` once to confirm a clean baseline.
+
+Opening the repository in the dev container gives the same toolchain as CI.
+
+## Propose a change
+
+- For a bug, open an issue with the bug form, or send a pull request with a
+  failing test.
+- For a new feature, a breaking change or a new dependency, open an issue to
+  agree on the approach before writing much code.
+- Security problems are never reported in public; see [SECURITY.md](SECURITY.md).
+
+## Make the change
+
+- Keep each pull request to one purpose; include tests and documentation for
+  changed behavior in the same pull request.
+- Add a regression test that fails without the fix.
+- Change dependencies only through the manifest and lockfile.
+- Follow the existing style; the formatter and linter are authoritative.
+- Write commit messages as [Conventional Commits](https://www.conventionalcommits.org/).
+
+## Before requesting review
+
+- `GATE_COMMAND` passes locally after your last edit.
+- The pull request description lists the commands you ran and their results,
+  and anything you could not verify.
+- User-visible changes have a changelog entry.
+
+## Review
+
+Maintainers aim to respond within RESPONSE_TARGET. Code owners review changes
+to the paths they own. A maintainer merges after required checks pass.
+
+## License of contributions
+
+By contributing you agree that your contribution is licensed under the
+project license (LICENSE_NAME). SIGN_OFF_RULE_IF_ANY
+
+## Conduct
+
+This project follows the [code of conduct](CODE_OF_CONDUCT.md).

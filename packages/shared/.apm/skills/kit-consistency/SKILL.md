@@ -17,6 +17,8 @@ license: MIT
    [contract matrix](assets/contract-matrix.md.template) using the column guide in
    [contract matrices](references/contract-matrices.md).
 4. Distinguish intentional compatibility aliases from accidental duplicate sources of truth.
+   Centralize shared knowledge at its narrowest semantic owner, not merely
+   similar-looking code; use the [layout decisions](references/module-layout.md).
 5. Update the canonical definition first, then regenerate derived artifacts, then its
    owned consumers in one coherent change.
 6. Preserve wire formats and persisted values unless migration behavior is explicit.
@@ -27,7 +29,8 @@ license: MIT
      (`python check_naming.py . --kebab-root docs`);
    - classes vs module files: [`check_class_file_naming.py`](assets/check_class_file_naming.py)
      (`python check_class_file_naming.py src --match affix`), with layout rules in
-     [module layout](references/module-layout.md).
+     [module layout](references/module-layout.md) when the project adopts that
+     convention; do not infer a universal class-per-file requirement.
 8. Keep public names on one canonical import path; make helpers private and
    re-export deliberately.
 9. Add a test that crosses the boundary where drift would become observable.

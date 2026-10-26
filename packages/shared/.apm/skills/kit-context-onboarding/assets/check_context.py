@@ -94,7 +94,11 @@ class SelfTestError(AssertionError):
 
 
 def _expect(issue: SelfTestIssue, *, holds: bool) -> None:
-    """Raise ``SelfTestError`` for ``issue`` unless the expectation ``holds``."""
+    """Raise ``SelfTestError`` for ``issue`` unless the expectation ``holds``.
+
+    Raises:
+        SelfTestError: The expectation does not hold.
+    """
     if not holds:
         raise SelfTestError(issue)
 

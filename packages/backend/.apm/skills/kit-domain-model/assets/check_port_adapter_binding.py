@@ -6,9 +6,15 @@ members are its methods and properties, including those inherited from other
 ports in the core paths. An adapter is any non-Protocol class in an
 ``--adapters`` path; its members include those of base classes defined in the
 scanned adapter files. A port is bound when at least one adapter provides every
-required member, with matching sync or async kind for methods. Properties may
-be satisfied by a method, a property, a class attribute, or an assignment to
-``self.<name>`` in any method. Matching is structural, so adapters need not
+required member, with compatible invocation kinds for methods. Coroutines match
+only coroutines; async generators are distinct. A normal ``def`` port annotated
+with bare or qualified ``AsyncIterator`` (optionally subscripted) also accepts an
+async generator. Ordinary functions and synchronous generators remain compatible.
+This is a syntactic body check: nested function, class and lambda scopes,
+including their headers, are skipped. Annotation aliases, strings, decorators
+that change call behavior and general return-type equivalence are not resolved.
+Properties may be satisfied by a method, a property, a class attribute, or an
+assignment to ``self.<name>`` in any method. Matching is structural, so adapters need not
 inherit from the port. The script parses source and never imports it.
 
 Example:
@@ -19,6 +25,7 @@ import argparse
 import ast
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 import re
 import sys
@@ -31,6 +38,28 @@ _SPECIAL_MEMBERS = frozenset(
 _EXIT_USAGE = 2
 
 
+class _CallableKind(StrEnum):
+    """Syntactic execution kinds, independent of method binding."""
+
+    NORMAL = "normal"
+    GENERATOR = "generator"
+    COROUTINE = "coroutine"
+    ASYNC_GENERATOR = "async generator"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _CallableContract:
+    """Invocation shape and the narrow ``AsyncIterator`` annotation hint.
+
+    Attributes:
+        kind: Execution kind derived from the function's own body.
+        returns_async_iterator: Whether the annotation names ``AsyncIterator``.
+    """
+
+    kind: _CallableKind
+    returns_async_iterator: bool
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ClassInfo:
     """Members declared by one class.
@@ -41,7 +70,7 @@ class ClassInfo:
         line: Line of the class statement.
         bases: Simple names of the base classes.
         is_protocol: Whether ``Protocol`` is a direct base.
-        methods: Method names mapped to whether they are async.
+        methods: Method names mapped to their syntactic invocation contracts.
         properties: Names declared with ``@property``.
         attributes: Names assigned at class level or on ``self``.
     """
@@ -51,7 +80,7 @@ class ClassInfo:
     line: int
     bases: tuple[str, ...]
     is_protocol: bool
-    methods: dict[str, bool] = field(default_factory=dict)
+    methods: dict[str, _CallableContract] = field(default_factory=dict)
     properties: frozenset[str] = frozenset()
     attributes: frozenset[str] = frozenset()
 
@@ -122,7 +151,7 @@ def unbound_ports(
 
 def _describe(node: ast.ClassDef, path: str) -> ClassInfo:
     bases = tuple(name for name in (_base_name(base) for base in node.bases) if name)
-    methods: dict[str, bool] = {}
+    methods: dict[str, _CallableContract] = {}
     properties: set[str] = set()
     attributes: set[str] = set()
     for statement in node.body:
@@ -130,7 +159,7 @@ def _describe(node: ast.ClassDef, path: str) -> ClassInfo:
             if any(_is_property(decorator) for decorator in statement.decorator_list):
                 properties.add(statement.name)
             elif _is_member(statement.name):
-                methods[statement.name] = isinstance(statement, ast.AsyncFunctionDef)
+                methods[statement.name] = _callable_contract(statement)
             attributes.update(_self_assignments(statement))
         else:
             attributes.update(_assigned_names(statement))
@@ -144,6 +173,52 @@ def _describe(node: ast.ClassDef, path: str) -> ClassInfo:
         properties=frozenset(properties),
         attributes=frozenset(attributes),
     )
+
+
+def _has_yield(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Find ``yield`` or ``yield from`` without entering nested scopes."""
+    pending: list[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Yield | ast.YieldFrom):
+            return True
+        if not isinstance(
+            node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _callable_contract(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> _CallableContract:
+    """Classify a body and recognize only a literal ``AsyncIterator`` name."""
+    has_yield = _has_yield(function)
+    if isinstance(function, ast.AsyncFunctionDef):
+        kind = _CallableKind.ASYNC_GENERATOR if has_yield else _CallableKind.COROUTINE
+    else:
+        kind = _CallableKind.GENERATOR if has_yield else _CallableKind.NORMAL
+    return _CallableContract(
+        kind=kind,
+        returns_async_iterator=function.returns is not None
+        and _base_name(function.returns) == "AsyncIterator",
+    )
+
+
+def _callables_compatible(
+    expected: _CallableContract, actual: _CallableContract
+) -> bool:
+    """Compare invocation shapes without inferring general type equivalence."""
+    if (
+        expected.kind is _CallableKind.COROUTINE
+        or actual.kind is _CallableKind.COROUTINE
+    ):
+        return expected.kind is actual.kind
+    if expected.kind is _CallableKind.ASYNC_GENERATOR:
+        return actual.kind is _CallableKind.ASYNC_GENERATOR
+    if actual.kind is _CallableKind.ASYNC_GENERATOR:
+        return expected.kind is _CallableKind.NORMAL and expected.returns_async_iterator
+    return True
 
 
 def _assigned_names(statement: ast.stmt) -> set[str]:
@@ -195,14 +270,14 @@ def _self_assignments(
 
 def _port_members(
     port: ClassInfo, index: dict[str, ClassInfo]
-) -> tuple[dict[str, bool], frozenset[str]]:
-    methods: dict[str, bool] = {}
+) -> tuple[dict[str, _CallableContract], frozenset[str]]:
+    methods: dict[str, _CallableContract] = {}
     properties: set[str] = set()
     for info in _lineage(port, index):
         if not info.is_protocol:
             continue
-        for name, is_async in info.methods.items():
-            methods.setdefault(name, is_async)
+        for name, contract in info.methods.items():
+            methods.setdefault(name, contract)
         properties.update(info.properties)
     return methods, frozenset(properties)
 
@@ -210,19 +285,20 @@ def _port_members(
 def _missing(
     adapter: ClassInfo,
     index: dict[str, ClassInfo],
-    methods: dict[str, bool],
+    methods: dict[str, _CallableContract],
     properties: frozenset[str],
 ) -> list[str]:
-    provided_methods: dict[str, bool] = {}
+    provided_methods: dict[str, _CallableContract] = {}
     provided_names: set[str] = set()
     for info in _lineage(adapter, index):
-        for name, is_async in info.methods.items():
-            provided_methods.setdefault(name, is_async)
+        for name, contract in info.methods.items():
+            provided_methods.setdefault(name, contract)
         provided_names.update(info.properties, info.attributes, info.methods)
     gaps = [
         name if name not in provided_methods else f"{name} (async mismatch)"
-        for name, is_async in methods.items()
-        if provided_methods.get(name) is not is_async
+        for name, contract in methods.items()
+        if name not in provided_methods
+        or not _callables_compatible(contract, provided_methods[name])
     ]
     gaps.extend(name for name in properties if name not in provided_names)
     return sorted(gaps)

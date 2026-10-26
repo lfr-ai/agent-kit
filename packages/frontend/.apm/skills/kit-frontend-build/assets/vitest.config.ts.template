@@ -1,0 +1,58 @@
+// vitest.config.ts
+// Two projects: pure logic in Node (fast, no DOM by accident) and components in
+// a DOM emulator. Both inherit aliases and plugins from vite.config.ts.
+// Test design, providers, and MSW setup are covered by kit-frontend-testing.
+import { defineConfig, mergeConfig } from "vitest/config";
+import viteConfig from "./vite.config";
+
+const TEST_TIMEOUT_MS = 10_000;
+const COVERAGE_LINES = 80;
+const COVERAGE_BRANCHES = 75;
+
+export default mergeConfig(
+  viteConfig,
+  defineConfig({
+    test: {
+      globals: false,
+      restoreMocks: true,
+      unstubGlobals: true,
+      unstubEnvs: true,
+      testTimeout: TEST_TIMEOUT_MS,
+      // Deterministic output across machines.
+      env: { TZ: "UTC" },
+      projects: [
+        {
+          extends: true,
+          test: {
+            name: "unit",
+            environment: "node",
+            include: ["src/**/*.test.ts", "vite.config.test.ts"],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: "dom",
+            // Prefer jsdom for fidelity; happy-dom is faster when its gaps do not matter.
+            environment: "jsdom",
+            include: ["src/**/*.test.tsx"],
+            setupFiles: ["./src/test/setup.ts"],
+            css: false,
+          },
+        },
+      ],
+      coverage: {
+        provider: "v8",
+        include: ["src/**/*.{ts,tsx}"],
+        exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.stories.tsx", "src/test/**", "src/**/*.d.ts"],
+        reporter: ["text-summary", "lcov"],
+        thresholds: {
+          lines: COVERAGE_LINES,
+          statements: COVERAGE_LINES,
+          functions: COVERAGE_LINES,
+          branches: COVERAGE_BRANCHES,
+        },
+      },
+    },
+  }),
+);

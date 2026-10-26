@@ -1,0 +1,56 @@
+"""Order repository port and pagination records implemented by the SQL adapter.
+
+Copy to ``shop/core/ports.py`` (or merge into the project's existing ports
+module). The port speaks domain types only; no session, row, or SQL crosses it.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+import uuid
+
+from shop.core.orders import Order
+
+_DEFAULT_PAGE_SIZE = 50
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderCursor:
+    """Position after the last order of a page, in ``(created_at, id)`` order."""
+
+    created_at: datetime
+    order_id: uuid.UUID
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderPage:
+    """One page of orders and the cursor for the next page, if any."""
+
+    items: tuple[Order, ...]
+    next_cursor: OrderCursor | None
+
+
+class OrderRepository(Protocol):
+    """Collection-like access to orders inside one unit of work."""
+
+    async def get(self, order_id: uuid.UUID) -> Order:
+        """Return the stored order or raise ``OrderNotFoundError``."""
+        ...
+
+    async def add(self, order: Order) -> None:
+        """Stage a new order or raise ``DuplicateOrderError``."""
+        ...
+
+    async def save(self, order: Order) -> None:
+        """Stage changes or raise ``OrderNotFoundError`` or ``ConcurrentUpdateError``."""
+        ...
+
+    async def list_for_customer(
+        self,
+        customer_id: uuid.UUID,
+        *,
+        after: OrderCursor | None = None,
+        limit: int = _DEFAULT_PAGE_SIZE,
+    ) -> OrderPage:
+        """Return one keyset page of a customer's orders, oldest first."""
+        ...

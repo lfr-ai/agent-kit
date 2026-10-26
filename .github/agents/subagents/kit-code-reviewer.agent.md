@@ -5,7 +5,6 @@ tools: ["read", "search"]
 agents: []
 user-invocable: false
 disable-model-invocation: false
-model: ["GPT-5 mini", "Claude Haiku 4.5"]
 ---
 # Review a change for correctness
 

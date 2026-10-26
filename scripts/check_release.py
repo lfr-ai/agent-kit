@@ -80,7 +80,11 @@ def _mapping(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _version(root: Path) -> str:
-    """Read the package version rather than duplicating a release constant."""
+    """Read the package version rather than duplicating a release constant.
+
+    Raises:
+        _ReleaseContractError: The project version is invalid.
+    """
     value = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     version: object = value["project"]["version"]
     if not isinstance(version, str) or not _VERSION.fullmatch(version):
@@ -98,7 +102,11 @@ def _artifacts(root: Path, version: str) -> dict[Path, str]:
 
 
 def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
-    """Inspect metadata and actual bundled license without installing the wheel."""
+    """Inspect metadata and actual bundled license without installing the wheel.
+
+    Raises:
+        _ReleaseContractError: The wheel metadata or license is invalid.
+    """
     with zipfile.ZipFile(path) as archive:
         prefix = f"agent_kit-{version}.dist-info"
         metadata = BytesParser().parsebytes(archive.read(f"{prefix}/METADATA"))
@@ -112,7 +120,11 @@ def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
 
 
 def _sdist(path: Path, version: str, license_bytes: bytes) -> None:
-    """Read the source license while rejecting linked or unsafe members."""
+    """Read the source license while rejecting linked or unsafe members.
+
+    Raises:
+        _ReleaseContractError: A member is unsafe or the license differs.
+    """
     with tarfile.open(path, mode="r:gz") as archive:
         for item in archive.getmembers():
             parts = PurePosixPath(item.name)
@@ -133,7 +145,11 @@ def _sdist(path: Path, version: str, license_bytes: bytes) -> None:
 def _verify_source_bytes(
     archive: zipfile.ZipFile, names: list[str], trusted: dict[str, bytes]
 ) -> None:
-    """Require unique entries whose bytes equal the independently composed source."""
+    """Require unique entries whose bytes equal the independently composed source.
+
+    Raises:
+        _ReleaseContractError: Entries repeat or differ from the source.
+    """
     if len(names) != len(set(names)):
         raise _ReleaseContractError(_ReleaseIssue.DUPLICATE_SOURCE_ENTRIES)
     if set(names) != set(trusted) or any(
@@ -162,7 +178,11 @@ def _unsafe_source_entry(
 def _source(
     path: Path, version: str, license_bytes: bytes, trusted: dict[str, bytes]
 ) -> None:
-    """Require source bytes, exact inventory, and provenance in the selected ZIP."""
+    """Require source bytes, exact inventory, and provenance in the selected ZIP.
+
+    Raises:
+        _ReleaseContractError: Provenance, inventory, or a path is invalid.
+    """
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         _verify_source_bytes(archive, names, trusted)
@@ -310,7 +330,11 @@ def check(root: Path, *, tag: str) -> list[str]:
 
 
 def write_checksums(root: Path) -> Path:
-    """Write deterministic basename-only checksums after strict artifact validation."""
+    """Write deterministic basename-only checksums after strict artifact validation.
+
+    Raises:
+        _ReleaseValidationError: An artifact fails validation.
+    """
     findings = check(root, tag="")
     if findings:
         raise _ReleaseValidationError(findings)
@@ -325,7 +349,11 @@ def write_checksums(root: Path) -> Path:
 
 
 def _verify_stage_target(root: Path, stage: Path, names: set[str]) -> None:
-    """Refuse linked, irregular, or foreign staging locations before writing."""
+    """Refuse linked, irregular, or foreign staging locations before writing.
+
+    Raises:
+        _ReleaseContractError: The staging location is linked or foreign.
+    """
     if (root / "build").is_symlink() or (root / "build").is_junction():
         raise _ReleaseContractError(_ReleaseIssue.LINKED_BUILD_DIRECTORY)
     if (
@@ -342,7 +370,11 @@ def _verify_stage_target(root: Path, stage: Path, names: set[str]) -> None:
 
 
 def _verify_staged_checksums(content: dict[str, bytes]) -> None:
-    """Refuse content whose bytes moved after the checksums were written."""
+    """Refuse content whose bytes moved after the checksums were written.
+
+    Raises:
+        _ReleaseContractError: Staged bytes changed while creating checksums.
+    """
     for line in content["SHA256SUMS"].decode("ascii").splitlines():
         digest, name = line.split("  ", 1)
         if hashlib.sha256(content[name]).hexdigest() != digest:
@@ -350,7 +382,11 @@ def _verify_staged_checksums(content: dict[str, bytes]) -> None:
 
 
 def _write_stage(stage: Path, content: dict[str, bytes]) -> None:
-    """Write the flat upload layout and read every copy back."""
+    """Write the flat upload layout and read every copy back.
+
+    Raises:
+        _ReleaseContractError: A staged copy differs from its source.
+    """
     stage.mkdir(exist_ok=True)
     for name, data in content.items():
         (stage / name).write_bytes(data)

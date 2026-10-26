@@ -1,0 +1,47 @@
+# Modernization ledger: <repository>
+
+Owner: <handle>
+Started: <YYYY-MM-DD>
+Current minimum Python: <3.x> (status: <bugfix, security, end of life>)
+Target minimum Python: <3.y> (status checked on <YYYY-MM-DD>)
+
+## Baseline
+
+| Measure | Command | Value at start | Value now |
+| --- | --- | --- | --- |
+| Tests | `<command>` | `<pass/fail/skip>` | |
+| Deprecation warnings (first-party) | `python -W error::DeprecationWarning -m pytest` | `<count>` | |
+| Legacy syntax | `python check_legacy_syntax.py src tests` | `<count>` | |
+| Ruff UP findings | `ruff check --select UP --statistics src tests` | `<count>` | |
+| Outdated direct dependencies | `uv tree --outdated --depth 1` | `<count>` | |
+| Packaging | `setup.py`, `setup.cfg` or `pyproject.toml`; lockfile | `<state>` | |
+
+## Items
+
+One row per change. Status: planned, in progress, done, reverted, deferred.
+
+| # | Tier | Item | Reason | Batch | Status | Before | After | Regression gate | Owner |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0 | Ruff 0.x to 0.y | new rules for target version | B1 | done | 0 UP findings enforced | UP enforced in CI | `ruff check` in CI | `<handle>` |
+| 2 | 2 | Python 3.12 to 3.13 | 3.12 leaves bugfix | B3 | planned | `requires-python >=3.12` | `>=3.13` | CI matrix 3.13 and 3.14 | `<handle>` |
+| 3 | 3 | `pytz` to `zoneinfo` | `pytz` superseded by stdlib | B4 | planned | 14 call sites | 0 | `deptry` and `check_legacy_syntax.py` | `<handle>` |
+| 4 | 4 | `typing.Optional` to `X \| None` | UP045 | B5 | planned | `<count>` | 0 | `ruff check --select UP045` | `<handle>` |
+| `<n>` | `<0-4>` | `<item>` | `<reason>` | `<batch>` | `<status>` | `<evidence>` | `<evidence>` | `<gate>` | `<owner>` |
+
+## Deferred
+
+| Item | Why deferred | Revisit by | Owner |
+| --- | --- | --- | --- |
+| `<item>` | `<blocking dependency, policy decision pending>` | `<YYYY-MM-DD>` | `<handle>` |
+
+## Reverted batches
+
+| Batch | Failure evidence | Split plan |
+| --- | --- | --- |
+| `<batch>` | `<command and failing output>` | `<smaller batches>` |
+
+## Policy decisions
+
+- `os.path` to `pathlib`: <adopted / not adopted> (checker option `--pathlib`)
+- `from __future__ import annotations`: <keep / remove at minimum 3.14> (checker option `--future-annotations`)
+- `%` formatting in existing code: <rewrite / new code only>

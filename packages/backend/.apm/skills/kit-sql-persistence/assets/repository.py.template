@@ -1,0 +1,200 @@
+"""SQLAlchemy adapter for the ``OrderRepository`` port.
+
+Copy to ``shop/infrastructure/persistence/orders.py``. The adapter maps rows to
+domain objects in both directions, loads lines eagerly, translates driver
+errors into port errors, and never commits: the unit of work owns the
+transaction. Ports, domain types, and errors come from the core package.
+"""
+
+import uuid
+
+from sqlalchemy import select, tuple_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.exc import StaleDataError
+
+from shop.core.orders import (
+    ConcurrentUpdateError,
+    DuplicateOrderError,
+    Money,
+    Order,
+    OrderLine,
+    OrderNotFoundError,
+    OrderStatus,
+)
+from shop.core.ports import OrderCursor, OrderPage
+from shop.infrastructure.persistence.models import OrderLineRow, OrderRow
+
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
+_UNIQUE_VIOLATION = "unique constraint"
+
+
+class SqlAlchemyOrderRepository:
+    """Order collection backed by one ``AsyncSession`` owned by a unit of work."""
+
+    def __init__(self, *, session: AsyncSession) -> None:
+        """Bind the repository to the unit of work's session.
+
+        Args:
+            session: Open session; the repository flushes but never commits it.
+        """
+        self._session = session
+
+    async def get(self, order_id: uuid.UUID) -> Order:
+        """Return a stored order with its lines.
+
+        Args:
+            order_id: Identifier of the order.
+
+        Returns:
+            The stored order as a validated domain object.
+
+        Raises:
+            OrderNotFoundError: If no order has ``order_id``.
+        """
+        return _to_domain(await self._load(order_id))
+
+    async def add(self, order: Order) -> None:
+        """Stage a new order and flush so a key violation surfaces here.
+
+        The database assigns the first version; reload the order before saving
+        changes to it.
+
+        Args:
+            order: New order; its identifier must not exist yet.
+
+        Raises:
+            DuplicateOrderError: If an order with the same identifier exists.
+        """
+        self._session.add(_new_row(order))
+        try:
+            await self._session.flush()
+        except IntegrityError as error:
+            if _UNIQUE_VIOLATION not in str(error.orig).lower():
+                raise
+            raise DuplicateOrderError(order_id=order.id) from error
+
+    async def save(self, order: Order) -> None:
+        """Stage changes to a stored order, guarded by its version.
+
+        Args:
+            order: Changed order carrying the version it was loaded with.
+
+        Raises:
+            OrderNotFoundError: If the order no longer exists.
+            ConcurrentUpdateError: If the order changed since it was loaded.
+        """
+        row = await self._load(order.id)
+        if row.version != order.version:
+            raise ConcurrentUpdateError(order_id=order.id)
+        _apply(order, row)
+        try:
+            await self._session.flush()
+        except StaleDataError as error:
+            raise ConcurrentUpdateError(order_id=order.id) from error
+
+    async def list_for_customer(
+        self,
+        customer_id: uuid.UUID,
+        *,
+        after: OrderCursor | None = None,
+        limit: int = _DEFAULT_PAGE_SIZE,
+    ) -> OrderPage:
+        """Return one keyset page of a customer's orders, oldest first.
+
+        Args:
+            customer_id: Owner of the orders.
+            after: Cursor from the previous page; ``None`` starts at the beginning.
+            limit: Maximum orders per page.
+
+        Returns:
+            Orders ordered by ``(created_at, id)`` and the next-page cursor, which
+            is ``None`` on the last page.
+
+        Raises:
+            ValueError: If ``limit`` is outside the supported range.
+        """
+        if not 1 <= limit <= _MAX_PAGE_SIZE:
+            message = f"limit must be between 1 and {_MAX_PAGE_SIZE}, got {limit}"
+            raise ValueError(message)
+        statement = (
+            select(OrderRow)
+            .where(OrderRow.customer_id == customer_id)
+            .options(selectinload(OrderRow.lines))
+            .order_by(OrderRow.created_at, OrderRow.id)
+            .limit(limit + 1)
+        )
+        if after is not None:
+            position = tuple_(OrderRow.created_at, OrderRow.id)
+            statement = statement.where(
+                position > tuple_(after.created_at, after.order_id)
+            )
+        rows = list(await self._session.scalars(statement))
+        page = rows[:limit]
+        has_more = len(rows) > limit
+        next_cursor = (
+            OrderCursor(created_at=page[-1].created_at, order_id=page[-1].id)
+            if has_more
+            else None
+        )
+        return OrderPage(items=tuple(map(_to_domain, page)), next_cursor=next_cursor)
+
+    async def _load(self, order_id: uuid.UUID) -> OrderRow:
+        """Load one row with its lines or raise the port's not-found error."""
+        statement = (
+            select(OrderRow)
+            .where(OrderRow.id == order_id)
+            .options(selectinload(OrderRow.lines))
+        )
+        row = await self._session.scalar(statement)
+        if row is None:
+            raise OrderNotFoundError(order_id=order_id)
+        return row
+
+
+def _to_domain(row: OrderRow) -> Order:
+    """Map a row to a domain order; the constructor validates stored data."""
+    return Order(
+        id=row.id,
+        customer_id=row.customer_id,
+        status=OrderStatus(row.status),
+        currency=row.currency,
+        lines=tuple(
+            OrderLine(
+                sku=line.sku,
+                quantity=line.quantity,
+                unit_price=Money(amount=line.unit_price, currency=row.currency),
+            )
+            for line in row.lines
+        ),
+        created_at=row.created_at,
+        shipped_at=row.shipped_at,
+        version=row.version,
+    )
+
+
+def _new_row(order: Order) -> OrderRow:
+    """Create a row for a new order; the version column is set on insert."""
+    row = OrderRow(
+        id=order.id, customer_id=order.customer_id, created_at=order.created_at
+    )
+    _apply(order, row)
+    return row
+
+
+def _apply(order: Order, row: OrderRow) -> None:
+    """Copy mutable order state onto a tracked row."""
+    row.status = order.status.value
+    row.currency = order.currency
+    row.shipped_at = order.shipped_at
+    row.lines = [
+        OrderLineRow(
+            position=position,
+            sku=line.sku,
+            quantity=line.quantity,
+            unit_price=line.unit_price.amount,
+        )
+        for position, line in enumerate(order.lines)
+    ]

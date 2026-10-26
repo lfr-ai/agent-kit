@@ -1,0 +1,89 @@
+"""SQLAlchemy unit of work implementing the core ``UnitOfWork`` port.
+
+Copy to ``shop/infrastructure/persistence/unit_of_work.py``. One instance per
+use case: ``async with uow:`` opens a session and a transaction, ``commit()``
+makes the change set durable, and any other exit rolls back and closes the
+session. Repositories share the session and never commit.
+"""
+
+from types import TracebackType
+from typing import Self
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from shop.core.ports import OrderRepository
+from shop.infrastructure.persistence.orders import SqlAlchemyOrderRepository
+
+
+class UnitOfWorkStateError(RuntimeError):
+    """Raised when the unit of work is used outside its ``async with`` block."""
+
+
+class SqlAlchemyUnitOfWork:
+    """Async unit of work over one ``AsyncSession`` per ``async with`` block."""
+
+    orders: OrderRepository
+
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        """Store the factory; the session opens in ``__aenter__``.
+
+        Args:
+            session_factory: Factory built once by the composition root with
+                ``expire_on_commit=False``.
+        """
+        self._session_factory = session_factory
+        self._session: AsyncSession | None = None
+
+    async def __aenter__(self) -> Self:
+        """Open a session and expose repositories bound to it.
+
+        Returns:
+            This unit of work.
+
+        Raises:
+            UnitOfWorkStateError: If the block is entered twice without exiting.
+        """
+        if self._session is not None:
+            message = "unit of work is already active"
+            raise UnitOfWorkStateError(message)
+        self._session = self._session_factory()
+        self.orders = SqlAlchemyOrderRepository(session=self._session)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Discard uncommitted work and release the connection to the pool."""
+        session, self._session = self._session, None
+        if session is None:
+            return
+        try:
+            await session.rollback()
+        finally:
+            await session.close()
+
+    async def commit(self) -> None:
+        """Flush and commit every staged change atomically.
+
+        Raises:
+            UnitOfWorkStateError: If called outside the ``async with`` block.
+        """
+        await self._require_session().commit()
+
+    async def rollback(self) -> None:
+        """Discard every staged change and keep the block usable.
+
+        Raises:
+            UnitOfWorkStateError: If called outside the ``async with`` block.
+        """
+        await self._require_session().rollback()
+
+    def _require_session(self) -> AsyncSession:
+        """Return the open session or fail loudly."""
+        if self._session is None:
+            message = "unit of work used outside its 'async with' block"
+            raise UnitOfWorkStateError(message)
+        return self._session

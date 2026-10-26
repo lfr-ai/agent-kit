@@ -1,0 +1,54 @@
+# sshd hardening drop-in for OpenSSH 9.9 or newer.
+# Install as /etc/ssh/sshd_config.d/10-hardening.conf. The main sshd_config
+# must begin with:
+#   Include /etc/ssh/sshd_config.d/*.conf
+# sshd keeps the first value it reads for most keywords, so an early include
+# overrides later lines in the main file.
+# Before reloading, keep one authenticated session open, then run:
+#   sshd -t
+#   sshd -T | grep -Ei 'passwordauth|kbdinteractive|permitrootlogin|allowgroups|kexalgorithms'
+#   python check_sshd_config.py --require-baseline 10-hardening.conf
+# Reload (not restart) and test a new login before closing the old session.
+# On older OpenSSH, remove algorithm names that ssh -Q kex, ssh -Q cipher, or
+# ssh -Q mac do not list; sshd refuses to start on unknown names.
+
+# Authentication: keys or certificates only.
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+HostbasedAuthentication no
+IgnoreRhosts yes
+PermitRootLogin no
+MaxAuthTries 3
+LoginGraceTime 30
+
+# Only members of this group may log in. Create it and add operators first.
+AllowGroups ssh-users
+
+# Short-lived user certificates signed by an offline or managed CA.
+# Uncomment after distributing the CA public key.
+# TrustedUserCAKeys /etc/ssh/user_ca.pub
+# RevokedKeys /etc/ssh/revoked_keys
+
+# Forwarding. Jump hosts that serve ProxyJump need AllowTcpForwarding local.
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+GatewayPorts no
+PermitTunnel no
+PermitUserEnvironment no
+
+# Session hygiene and audit: VERBOSE logs the key fingerprint of each login.
+StrictModes yes
+ClientAliveInterval 300
+ClientAliveCountMax 2
+LogLevel VERBOSE
+
+# Host key and algorithms (post-quantum hybrid key exchange first).
+HostKey /etc/ssh/ssh_host_ed25519_key
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com

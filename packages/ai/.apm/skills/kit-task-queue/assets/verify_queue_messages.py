@@ -61,7 +61,8 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
         Pairs of one-based line number and decoded element.
 
     Raises:
-        ValueError: If the document is not a JSON array.
+        QueueInputError: The document is not one JSON array.
+        ValueError: An element is not valid JSON.
     """
     decoder = json.JSONDecoder()
     index = len(text) - len(text.lstrip())
@@ -98,7 +99,7 @@ def parse_supported(values: list[str]) -> dict[str, set[int]]:
         Task type to supported versions.
 
     Raises:
-        ValueError: If a value is malformed.
+        QueueInputError: If a value is malformed.
     """
     supported: dict[str, set[int]] = {}
     for value in values:

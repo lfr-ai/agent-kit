@@ -2,7 +2,6 @@
 name: kit-codebase-researcher
 description: "Locate source, contracts, callers, and blast radius for one bounded question."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Answer one discovery question
 

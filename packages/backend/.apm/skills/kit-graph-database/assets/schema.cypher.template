@@ -1,0 +1,39 @@
+// Neo4j schema for the purchase graph: constraints first, then indexes.
+// Copy to graph/schema.cypher and apply before loading data or running MERGE.
+// Every statement is idempotent (IF NOT EXISTS) and named, so the script can
+// run on every deployment. Statements marked Enterprise fail on Community
+// Edition; enforce those rules in the adapter there instead.
+
+// Uniqueness constraints back MERGE lookups with an index (all editions).
+CREATE CONSTRAINT customer_id_unique IF NOT EXISTS
+FOR (c:Customer) REQUIRE c.customerId IS UNIQUE;
+
+CREATE CONSTRAINT product_sku_unique IF NOT EXISTS
+FOR (p:Product) REQUIRE p.sku IS UNIQUE;
+
+CREATE CONSTRAINT category_name_unique IF NOT EXISTS
+FOR (c:Category) REQUIRE c.name IS UNIQUE;
+
+// Enterprise Edition: existence and type constraints.
+// CREATE CONSTRAINT product_name_exists IF NOT EXISTS
+// FOR (p:Product) REQUIRE p.name IS NOT NULL;
+// CREATE CONSTRAINT purchased_at_type IF NOT EXISTS
+// FOR ()-[r:PURCHASED]-() REQUIRE r.purchasedAt IS :: ZONED DATETIME;
+
+// Range index for keyset pagination and range filters on relationships.
+CREATE INDEX purchased_at_range IF NOT EXISTS
+FOR ()-[r:PURCHASED]-() ON (r.purchasedAt);
+
+// Text index for CONTAINS searches on product names.
+CREATE TEXT INDEX product_name_text IF NOT EXISTS
+FOR (p:Product) ON (p.name);
+
+// Vector index for similarity search; dimensions must match the embedding model.
+// Retrieval design (chunking, ranking, evaluation) belongs to the retrieval skill.
+CREATE VECTOR INDEX product_embedding IF NOT EXISTS
+FOR (p:Product) ON (p.embedding)
+OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}};
+
+// Verify after applying:
+// SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties;
+// SHOW INDEXES YIELD name, type, state, populationPercent;

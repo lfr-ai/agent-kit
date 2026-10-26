@@ -1,0 +1,46 @@
+// .storybook/preview.tsx
+// Global providers, theme switching, and accessibility defaults for every story.
+import type { Decorator, Preview } from "@storybook/react-vite";
+import { useEffect } from "react";
+import "../src/styles/theme.css";
+
+type Theme = "light" | "dark";
+
+function isTheme(value: unknown): value is Theme {
+  return value === "light" || value === "dark";
+}
+
+// Mirrors the app: the theme class on <html> switches semantic tokens.
+const withTheme: Decorator = (Story, context) => {
+  const theme: Theme = isTheme(context.globals.theme) ? context.globals.theme : "light";
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
+  return <Story />;
+};
+
+const preview: Preview = {
+  decorators: [withTheme],
+  globalTypes: {
+    theme: {
+      description: "Color theme",
+      toolbar: {
+        title: "Theme",
+        icon: "mirror",
+        items: [
+          { value: "light", title: "Light" },
+          { value: "dark", title: "Dark" },
+        ],
+        dynamicTitle: true,
+      },
+    },
+  },
+  initialGlobals: { theme: "light" },
+  parameters: {
+    a11y: { test: "error" },
+    controls: { expanded: true },
+    layout: "centered",
+  },
+};
+
+export default preview;

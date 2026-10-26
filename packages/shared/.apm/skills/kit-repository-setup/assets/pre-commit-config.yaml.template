@@ -1,0 +1,62 @@
+# Repository hygiene hooks. Copy to '.pre-commit-config.yaml'.
+#
+# - Replace every REVIEWED_COMMIT_SHA with the full commit of the reviewed
+#   release and keep the version comment: 'pre-commit autoupdate --freeze'.
+# - These hooks cover file hygiene, keys, secrets, spelling, Markdown and
+#   workflows. Language formatters, linters, type checks and tests run from
+#   the repository's own gate through the lockfile (kit-verify-change skill),
+#   so hooks and CI never disagree on a tool version.
+# - Remove a block when the repository has no matching files.
+
+minimum_pre_commit_version: "4.0"
+default_install_hook_types: [pre-commit]
+default_stages: [pre-commit, manual]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: editorconfig-checker
+        alias: ec
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: cspell
+        args: [--no-must-find-files, --no-progress]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: REVIEWED_COMMIT_SHA  # frozen: vX.Y.Z
+    hooks:
+      - id: actionlint
+
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes

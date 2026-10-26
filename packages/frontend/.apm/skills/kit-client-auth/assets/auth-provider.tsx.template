@@ -1,0 +1,167 @@
+// src/app/auth/auth-provider.tsx
+// Authentication context for a backend-for-frontend (BFF). Tokens stay on the
+// server; the browser holds only an HTTP-only, SameSite session cookie. UI code
+// depends on AuthContextValue, never on a protocol library. When no BFF exists,
+// implement SessionSource with a maintained OIDC library (see
+// references/library-selection.md) that keeps tokens in memory.
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { z } from "zod";
+
+export const userSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  // Display hints only. The API authorizes every request.
+  roles: z.array(z.string()).readonly(),
+});
+export type User = z.infer<typeof userSchema>;
+
+export type SignedOutReason = "expired" | "logged-out" | "error";
+
+export type AuthState =
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ status: "signed-out"; reason?: SignedOutReason }>
+  | Readonly<{ status: "signed-in"; user: User }>;
+
+export interface SessionSource {
+  /** Current user, or null without a valid session. Rejects on transport failure. */
+  loadUser(signal: AbortSignal): Promise<User | null>;
+  /** Leaves the app to sign in. The caller passes an already validated return path. */
+  signIn(returnTo: string): void;
+  /** Ends the server session and, when configured, the provider session. */
+  signOut(): Promise<void>;
+}
+
+export type BffOptions = Readonly<{
+  basePath?: string;
+  /** Custom header the BFF requires on every call; blocks cross-site form posts. */
+  csrfHeader?: string;
+}>;
+
+const HTTP_UNAUTHORIZED = 401;
+
+export function createBffSessionSource(options: BffOptions = {}): SessionSource {
+  const base = options.basePath ?? "/bff";
+  const headers = { [options.csrfHeader ?? "X-CSRF"]: "1" };
+  return {
+    async loadUser(signal) {
+      const response = await fetch(`${base}/user`, { credentials: "same-origin", headers, signal });
+      if (response.status === HTTP_UNAUTHORIZED) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`Session check failed with status ${response.status}`);
+      }
+      return userSchema.parse(await response.json());
+    },
+    signIn(returnTo) {
+      window.location.assign(`${base}/login?returnTo=${encodeURIComponent(returnTo)}`);
+    },
+    async signOut() {
+      const response = await fetch(`${base}/logout`, { method: "POST", credentials: "same-origin", headers });
+      if (!response.ok) {
+        throw new Error(`Sign-out failed with status ${response.status}`);
+      }
+    },
+  };
+}
+
+export type AuthContextValue = Readonly<{
+  state: AuthState;
+  signIn: (returnTo: string) => void;
+  signOut: () => Promise<void>;
+  /** Called by the API layer when renewal failed; shows the expired-session state. */
+  markExpired: () => void;
+  hasRole: (role: string) => boolean;
+}>;
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+const CHANNEL_NAME = "auth";
+const SIGNED_OUT_MESSAGE = "signed-out";
+
+export type AuthProviderProps = Readonly<{
+  source: SessionSource;
+  /** Clears user-scoped caches (query client, stores) on any sign-out. */
+  onSignedOut: () => void;
+  children: ReactNode;
+}>;
+
+export function AuthProvider({ source, onSignedOut, children }: AuthProviderProps): ReactElement {
+  const [state, setState] = useState<AuthState>({ status: "loading" });
+  const channel = useRef<BroadcastChannel | null>(null);
+
+  const endSession = useCallback(
+    (reason: SignedOutReason) => {
+      onSignedOut();
+      setState({ status: "signed-out", reason });
+    },
+    [onSignedOut],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    source.loadUser(controller.signal).then(
+      (user) => setState(user ? { status: "signed-in", user } : { status: "signed-out" }),
+      (error: unknown) => {
+        if (!controller.signal.aborted) {
+          // Never log tokens or response bodies; the status message is enough.
+          console.warn("Session check failed", error instanceof Error ? error.message : "unknown");
+          setState({ status: "signed-out", reason: "error" });
+        }
+      },
+    );
+    return () => controller.abort();
+  }, [source]);
+
+  useEffect(() => {
+    // Logout in one tab signs out every tab of the same origin.
+    const current = new BroadcastChannel(CHANNEL_NAME);
+    current.onmessage = (event: MessageEvent<unknown>) => {
+      if (event.data === SIGNED_OUT_MESSAGE) {
+        endSession("logged-out");
+      }
+    };
+    channel.current = current;
+    return () => {
+      current.close();
+      channel.current = null;
+    };
+  }, [endSession]);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      state,
+      signIn: (returnTo) => source.signIn(returnTo),
+      signOut: async () => {
+        try {
+          await source.signOut();
+        } finally {
+          channel.current?.postMessage(SIGNED_OUT_MESSAGE);
+          endSession("logged-out");
+        }
+      },
+      markExpired: () => endSession("expired"),
+      hasRole: (role) => state.status === "signed-in" && state.user.roles.includes(role),
+    }),
+    [state, source, endSession],
+  );
+
+  return <AuthContext value={value}>{children}</AuthContext>;
+}
+
+export function useAuth(): AuthContextValue {
+  const value = use(AuthContext);
+  if (value === null) {
+    throw new Error("useAuth must be used inside <AuthProvider>");
+  }
+  return value;
+}

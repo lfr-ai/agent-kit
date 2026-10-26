@@ -23,7 +23,7 @@ _STREAM = _SKILLS / "kit-server-streaming/assets"
 _QUEUE = _SKILLS / "kit-task-queue/assets"
 _STREAM_CHECKER = runpy.run_path(str(_STREAM / "verify_stream_events.py"))
 _QUEUE_CHECKER = runpy.run_path(str(_QUEUE / "verify_queue_messages.py"))
-_COPY_TARGET = re.compile(r"Copy to '([\w/]+)\.py'")
+_COPY_TARGET = re.compile(r"Copy to (?P<quote>'|``)(?P<path>[\w/]+)\.py(?P=quote)")
 _LINK = re.compile(r"\]\(([^)#\s]+)")
 
 
@@ -309,8 +309,19 @@ def _copy_targets(name: str) -> dict[str, ast.Module]:
         text = path.read_text(encoding="utf-8")
         match = _COPY_TARGET.search(text)
         if match and not path.name.startswith("test_"):
-            modules[match.group(1).replace("/", ".")] = ast.parse(text)
+            modules[match.group("path").replace("/", ".")] = ast.parse(text)
     return modules
+
+
+@pytest.mark.parametrize("quote", ["'", "``"])
+def test_copy_target_accepts_matched_docstring_code_delimiters(quote: str) -> None:
+    match = _COPY_TARGET.search(f"Copy to {quote}llm/managed_prompts.py{quote}.")
+    assert match is not None
+    assert match.group("path") == "llm/managed_prompts"
+
+
+def test_copy_target_rejects_mismatched_docstring_delimiters() -> None:
+    assert _COPY_TARGET.search("Copy to 'llm/managed_prompts.py``.") is None
 
 
 def _top_level_names(tree: ast.Module) -> set[str]:

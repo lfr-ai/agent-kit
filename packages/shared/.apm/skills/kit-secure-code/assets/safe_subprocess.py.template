@@ -1,0 +1,166 @@
+"""Run external programs without a shell, with timeouts and bounded output.
+
+Copy into the infrastructure layer of an application and route every
+subprocess call through ``run_command``. Arguments are passed as a list, so no
+shell parses them; the executable is resolved to an absolute path; the child
+gets a minimal environment; and every call has a timeout.
+"""
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+import logging
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+_LOGGER = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT_SECONDS: float = 30.0
+MAX_OUTPUT_BYTES: int = 1_000_000
+INHERITED_VARIABLES: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+)
+
+
+class CommandError(RuntimeError):
+    """Raised when a command cannot start, times out or fails."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CommandResult:
+    """Outcome of a finished command.
+
+    Attributes:
+        returncode: Exit status of the child process.
+        stdout: Decoded standard output, truncated to ``MAX_OUTPUT_BYTES``.
+        stderr: Decoded standard error, truncated to ``MAX_OUTPUT_BYTES``.
+    """
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def resolve_executable(name: str) -> Path:
+    """Resolve a program name or path to an absolute executable path.
+
+    Args:
+        name: Program name looked up on ``PATH``, or a path to an executable.
+
+    Returns:
+        The absolute, resolved executable path.
+
+    Raises:
+        CommandError: If the program cannot be found.
+    """
+    found = shutil.which(name)
+    if found is None:
+        message = f"executable not found: {name}"
+        raise CommandError(message)
+    return Path(found).resolve()
+
+
+def minimal_environment(
+    *, extra: Mapping[str, str] | None = None, inherit: Sequence[str] = INHERITED_VARIABLES
+) -> dict[str, str]:
+    """Build a child environment without the parent's secrets.
+
+    Args:
+        extra: Variables the child needs explicitly.
+        inherit: Names copied from the parent environment when present.
+
+    Returns:
+        A new environment mapping.
+    """
+    environment = {name: os.environ[name] for name in inherit if name in os.environ}
+    environment.update(extra or {})
+    return environment
+
+
+def reject_option_like(value: str) -> str:
+    """Return a positional value, refusing one a program could read as an option.
+
+    Args:
+        value: Untrusted positional argument.
+
+    Returns:
+        The unchanged value.
+
+    Raises:
+        CommandError: If the value starts with ``-`` or contains a NUL byte.
+    """
+    if value.startswith("-") or "\x00" in value:
+        message = "argument looks like an option or contains a NUL byte"
+        raise CommandError(message)
+    return value
+
+
+def run_command(
+    executable: str,
+    arguments: Sequence[str],
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    environment: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+    check: bool = True,
+) -> CommandResult:
+    """Run a program with an argument list, a timeout and bounded output.
+
+    Args:
+        executable: Program name or path; resolved before running.
+        arguments: Arguments passed verbatim, never through a shell.
+        timeout_seconds: Seconds before the child is killed.
+        environment: Child environment; ``minimal_environment()`` when None.
+        cwd: Working directory for the child.
+        check: Raise when the exit status is not zero.
+
+    Returns:
+        The exit status and decoded output.
+
+    Raises:
+        CommandError: If the program is missing, times out, or fails while
+            ``check`` is true.
+    """
+    command = [str(resolve_executable(executable)), *arguments]
+    child_environment = (
+        minimal_environment() if environment is None else dict(environment)
+    )
+    # Log the program and argument count only; arguments may carry secrets.
+    _LOGGER.debug("running %s with %d arguments", Path(command[0]).name, len(arguments))
+    try:
+        completed = subprocess.run(  # noqa: S603 - argument list, no shell
+            command,
+            shell=False,
+            capture_output=True,
+            timeout=timeout_seconds,
+            env=child_environment,
+            cwd=cwd,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        message = f"{Path(command[0]).name} timed out after {timeout_seconds} s"
+        raise CommandError(message) from error
+    except OSError as error:
+        message = f"{Path(command[0]).name} could not start"
+        raise CommandError(message) from error
+    result = CommandResult(
+        returncode=completed.returncode,
+        stdout=_decode(completed.stdout),
+        stderr=_decode(completed.stderr),
+    )
+    if check and result.returncode:
+        message = f"{Path(command[0]).name} exited with status {result.returncode}"
+        raise CommandError(message)
+    return result
+
+
+def _decode(output: bytes) -> str:
+    """Decode child output as UTF-8, replacing invalid bytes, within the size cap."""
+    return output[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")

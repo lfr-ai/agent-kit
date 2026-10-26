@@ -1,0 +1,397 @@
+"""Command-line interface with subcommands, JSON output, and layered configuration.
+
+Copy into ``src/shop/cli.py``. Expose it with
+``[project.scripts] shop = "shop.cli:main"`` and through ``__main__.py`` for
+``python -m shop``. Standard library only.
+
+Conventions: data goes to stdout, diagnostics to stderr; ``--json`` switches
+stdout to one machine-readable JSON document; configuration precedence is
+flags, then environment, then config file, then defaults; secrets are read
+from the environment or a file, never from arguments; logging is configured
+here and nowhere else.
+"""
+
+import argparse
+import json
+import logging
+import os
+import sys
+import tomllib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from enum import IntEnum, StrEnum
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from types import MappingProxyType
+
+logger = logging.getLogger("shop")
+
+ENV_PREFIX = "SHOP_"
+TOKEN_ENV = f"{ENV_PREFIX}API_TOKEN"
+CONFIG_ENV = f"{ENV_PREFIX}CONFIG"
+_HANDLER_NAME = "shop-cli"
+_MAX_PRECISION = 6
+_DEFAULT_PRECISION = 2
+_CURRENCY_CODE_LENGTH = 3
+_DEFAULTS = MappingProxyType({"currency": "EUR", "precision": _DEFAULT_PRECISION})
+
+
+class ExitCode(IntEnum):
+    """Process exit statuses; values above 2 follow BSD ``sysexits``."""
+
+    OK = 0
+    FAILURE = 1
+    USAGE = 2
+    DATA_ERROR = 65
+    NO_INPUT = 66
+    CONFIG_ERROR = 78
+    INTERRUPTED = 130
+
+
+class Source(StrEnum):
+    """Where an effective setting came from."""
+
+    DEFAULT = "default"
+    FILE = "file"
+    ENV = "env"
+    FLAG = "flag"
+
+
+class CliError(Exception):
+    """An expected failure reported as one stderr line and an exit code."""
+
+    def __init__(self, message: str, *, exit_code: ExitCode) -> None:
+        """Create the error.
+
+        Args:
+            message: Actionable, secret-free message for stderr.
+            exit_code: Process exit status.
+        """
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Config:
+    """Effective configuration after precedence is applied.
+
+    Attributes:
+        currency: ISO 4217 code used for output.
+        precision: Decimal places in totals.
+        sources: Origin of each named setting.
+        api_token: Secret read from the environment or a file.
+    """
+
+    currency: str
+    precision: int
+    sources: Mapping[str, Source]
+    api_token: str | None = field(default=None, repr=False)
+
+
+def main(
+    argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = None
+) -> int:
+    """Run the CLI and return its exit status instead of exiting.
+
+    Args:
+        argv: Arguments without the program name; defaults to ``sys.argv[1:]``.
+        env: Environment mapping; defaults to ``os.environ``.
+
+    Returns:
+        The process exit status.
+    """
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exit_request:
+        return int(exit_request.code or 0)
+    environment = os.environ if env is None else env
+    _configure_logging(verbosity=args.verbose - args.quiet)
+    try:
+        config = load_config(args, env=environment)
+        payload, text = args.handler(args, config)
+    except CliError as error:
+        print(f"shop: error: {error}", file=sys.stderr)
+        return error.exit_code
+    except KeyboardInterrupt:
+        return ExitCode.INTERRUPTED
+    try:
+        _emit(payload, text=text, as_json=args.json)
+    except BrokenPipeError:
+        _silence_stdout()
+        return ExitCode.FAILURE
+    return ExitCode.OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser with global options and subcommands.
+
+    Returns:
+        The configured parser.
+    """
+    parser = argparse.ArgumentParser(prog="shop", description="Shop order tools.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
+    parser.add_argument("--json", action="store_true", help="write JSON to stdout")
+    parser.add_argument(
+        "--config", type=Path, help=f"TOML config file (env {CONFIG_ENV})"
+    )
+    parser.add_argument(
+        "--token-file", type=Path, help=f"file holding the API token (env {TOKEN_ENV})"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="count", default=0, help="more diagnostics"
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="count", default=0, help="fewer diagnostics"
+    )
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    total = commands.add_parser("total", help="sum the lines of an order file")
+    total.add_argument("order_file", type=Path, help="JSON file with a 'lines' list")
+    total.add_argument("--currency", help="ISO 4217 code (env SHOP_CURRENCY)")
+    total.add_argument(
+        "--precision", type=int, help="decimal places (env SHOP_PRECISION)"
+    )
+    total.set_defaults(handler=_run_total)
+    show = commands.add_parser(
+        "config", help="show effective configuration and sources"
+    )
+    show.set_defaults(handler=_run_config)
+    return parser
+
+
+def load_config(args: argparse.Namespace, *, env: Mapping[str, str]) -> Config:
+    """Apply flags over environment over config file over defaults.
+
+    Args:
+        args: Parsed arguments.
+        env: Environment mapping.
+
+    Returns:
+        The effective configuration.
+
+    Raises:
+        CliError: A config file is missing or invalid, or a value is malformed.
+    """
+    config_path = args.config or (
+        Path(env[CONFIG_ENV]) if env.get(CONFIG_ENV) else None
+    )
+    layers: tuple[tuple[Mapping[str, object], Source], ...] = (
+        (_read_config_file(config_path), Source.FILE),
+        (_env_values(env), Source.ENV),
+        (_flag_values(args), Source.FLAG),
+    )
+    values: dict[str, object] = dict(_DEFAULTS)
+    sources = dict.fromkeys(_DEFAULTS, Source.DEFAULT)
+    for layer, source in layers:
+        for name, value in layer.items():
+            if name not in _DEFAULTS:
+                raise CliError(
+                    f"unknown setting {name!r}", exit_code=ExitCode.CONFIG_ERROR
+                )
+            values[name] = value
+            sources[name] = source
+    return Config(
+        currency=_currency(values["currency"]),
+        precision=_precision(values["precision"]),
+        sources=sources,
+        api_token=_token(args.token_file, env=env),
+    )
+
+
+def _run_total(
+    args: argparse.Namespace, config: Config
+) -> tuple[dict[str, object], str]:
+    """Sum ``unit_price * quantity`` over the order lines."""
+    lines = _read_lines(args.order_file)
+    total = sum(
+        (_line_amount(line, index) for index, line in enumerate(lines)), Decimal(0)
+    )
+    rounded = total.quantize(
+        Decimal(1).scaleb(-config.precision), rounding=ROUND_HALF_UP
+    )
+    logger.info("summed %d lines", len(lines))
+    payload: dict[str, object] = {
+        "total": str(rounded),
+        "currency": config.currency,
+        "lines": len(lines),
+    }
+    return payload, f"{rounded} {config.currency}"
+
+
+def _run_config(
+    _args: argparse.Namespace, config: Config
+) -> tuple[dict[str, object], str]:
+    """Report effective settings and their sources; the token only as set or unset."""
+    payload: dict[str, object] = {
+        "currency": {"value": config.currency, "source": config.sources["currency"]},
+        "precision": {"value": config.precision, "source": config.sources["precision"]},
+        "api_token": "set" if config.api_token else "unset",
+    }
+    text = "\n".join(
+        [
+            f"currency  = {config.currency} ({config.sources['currency']})",
+            f"precision = {config.precision} ({config.sources['precision']})",
+            f"api_token = {payload['api_token']}",
+        ]
+    )
+    return payload, text
+
+
+def _emit(payload: Mapping[str, object], *, text: str, as_json: bool) -> None:
+    """Write the result to stdout as JSON or as human-readable text."""
+    print(json.dumps(payload, sort_keys=True) if as_json else text)
+    sys.stdout.flush()
+
+
+def _silence_stdout() -> None:
+    """Point stdout at the null device after the reader closed the pipe."""
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+
+
+def _configure_logging(*, verbosity: int) -> None:
+    """Send package diagnostics to stderr once per invocation."""
+    level = logging.WARNING - verbosity * (logging.WARNING - logging.INFO)
+    package_logger = logging.getLogger("shop")
+    for handler in list(package_logger.handlers):
+        if handler.get_name() == _HANDLER_NAME:
+            package_logger.removeHandler(handler)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.set_name(_HANDLER_NAME)
+    handler.setFormatter(logging.Formatter("shop: %(levelname)s: %(message)s"))
+    package_logger.addHandler(handler)
+    package_logger.setLevel(max(logging.DEBUG, min(logging.CRITICAL, level)))
+
+
+def _read_config_file(path: Path | None) -> Mapping[str, object]:
+    """Load a TOML config file, or nothing when no file is configured."""
+    if path is None:
+        return {}
+    try:
+        with path.open("rb") as handle:
+            return tomllib.load(handle)
+    except FileNotFoundError as error:
+        raise CliError(
+            f"config file not found: {path}", exit_code=ExitCode.CONFIG_ERROR
+        ) from error
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise CliError(
+            f"config file unreadable: {path}: {error}", exit_code=ExitCode.CONFIG_ERROR
+        ) from error
+
+
+def _env_values(env: Mapping[str, str]) -> Mapping[str, object]:
+    """Collect ``SHOP_<NAME>`` variables for known settings."""
+    return {
+        name: env[f"{ENV_PREFIX}{name.upper()}"]
+        for name in _DEFAULTS
+        if f"{ENV_PREFIX}{name.upper()}" in env
+    }
+
+
+def _flag_values(args: argparse.Namespace) -> Mapping[str, object]:
+    """Collect settings given as flags on the selected subcommand."""
+    return {
+        name: getattr(args, name)
+        for name in _DEFAULTS
+        if getattr(args, name, None) is not None
+    }
+
+
+def _currency(value: object) -> str:
+    """Validate an ISO 4217 style code."""
+    if (
+        isinstance(value, str)
+        and len(value) == _CURRENCY_CODE_LENGTH
+        and value.isalpha()
+        and value.isupper()
+    ):
+        return value
+    raise CliError(
+        f"currency must be three upper-case letters, got {value!r}",
+        exit_code=ExitCode.CONFIG_ERROR,
+    )
+
+
+def _precision(value: object) -> int:
+    """Validate the number of decimal places."""
+    try:
+        precision = int(str(value))
+    except ValueError as error:
+        raise CliError(
+            f"precision must be an integer, got {value!r}",
+            exit_code=ExitCode.CONFIG_ERROR,
+        ) from error
+    if not 0 <= precision <= _MAX_PRECISION:
+        raise CliError(
+            f"precision must be between 0 and {_MAX_PRECISION}",
+            exit_code=ExitCode.CONFIG_ERROR,
+        )
+    return precision
+
+
+def _token(token_file: Path | None, *, env: Mapping[str, str]) -> str | None:
+    """Read the API token from a file or the environment, never from argv."""
+    if token_file is not None:
+        try:
+            return token_file.read_text(encoding="utf-8").strip() or None
+        except OSError as error:
+            raise CliError(
+                f"token file unreadable: {token_file}", exit_code=ExitCode.NO_INPUT
+            ) from error
+    return env.get(TOKEN_ENV) or None
+
+
+def _read_lines(path: Path) -> list[object]:
+    """Load the ``lines`` list from an order file."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise CliError(
+            f"order file not found: {path}", exit_code=ExitCode.NO_INPUT
+        ) from error
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise CliError(
+            f"order file unreadable: {path}: {error}", exit_code=ExitCode.DATA_ERROR
+        ) from error
+    lines = document.get("lines") if isinstance(document, dict) else None
+    if not isinstance(lines, list):
+        raise CliError(
+            "order file must be an object with a 'lines' list",
+            exit_code=ExitCode.DATA_ERROR,
+        )
+    return lines
+
+
+def _line_amount(line: object, index: int) -> Decimal:
+    """Return ``unit_price * quantity`` for one validated line."""
+    if not isinstance(line, dict):
+        raise CliError(f"line {index} must be an object", exit_code=ExitCode.DATA_ERROR)
+    quantity = line.get("quantity")
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+        raise CliError(
+            f"line {index}: quantity must be a positive integer",
+            exit_code=ExitCode.DATA_ERROR,
+        )
+    try:
+        price = Decimal(str(line.get("unit_price")))
+    except InvalidOperation as error:
+        raise CliError(
+            f"line {index}: unit_price must be a decimal string",
+            exit_code=ExitCode.DATA_ERROR,
+        ) from error
+    if not price.is_finite() or price < 0:
+        raise CliError(
+            f"line {index}: unit_price must be non-negative",
+            exit_code=ExitCode.DATA_ERROR,
+        )
+    return price * quantity
+
+
+def _version() -> str:
+    """Return the installed distribution version, or a marker in a checkout."""
+    try:
+        return version("shop")
+    except PackageNotFoundError:
+        return "0+unknown"

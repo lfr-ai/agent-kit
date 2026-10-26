@@ -14,6 +14,11 @@ rotation is the only real fix for the rest.
 | Hosting platform | GitHub secret scanning and push protection | on push | known provider token formats |
 | Runtime | secret stores, short-lived tokens | always | reduces the value of any leak |
 
+Choose one primary working-tree scanner and reuse it in required CI. Do not
+enable Trivy secret scanning alongside detect-secrets or Gitleaks without a
+documented coverage difference. History scanning and push protection are distinct
+boundaries; zizmor checks unsafe workflows rather than credential values.
+
 ## Baselines (detect-secrets)
 
 detect-secrets compares findings against an audited baseline file so the hook

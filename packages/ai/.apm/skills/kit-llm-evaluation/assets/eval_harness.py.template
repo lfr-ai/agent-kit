@@ -1,0 +1,703 @@
+"""Copy to ``evals/harness.py``: offline scoring, bootstrap intervals and gates.
+
+Stdlib only. The harness never calls a model: pass a fake or recorded
+``Task`` in tests, or score outputs recorded by a separate, budgeted run.
+
+Command line (scores recorded outputs)::
+
+    python harness.py DATASET.jsonl --outputs OUTPUTS.jsonl --dataset-version eval-v1
+        [--baseline BASELINE.json] [--min METRIC=VALUE ...]
+        [--max-regression VALUE] [--report REPORT.json]
+
+Dataset lines: ``{"id", "input", "expected"}`` plus optional ``tags`` (list of
+strings) and ``source`` (provenance label). Output lines hold ``id``,
+``repeat`` and ``output``. Baselines require ``metrics``,
+``dataset_fingerprint`` and per-metric ``scorer_versions``; a complete previous
+report can be used directly. Regenerate legacy metrics-only baselines by an
+explicit decision. Exit codes: 0 no configured gates failed (scoring only if
+none configured), 1 gate failure, 2 unreadable or invalid input. Limitations:
+scores are only as valid as the dataset and scorers; no launch approval is
+implied.
+"""
+
+import argparse
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+import hashlib
+import json
+import math
+from pathlib import Path
+import random
+import re
+import statistics
+import sys
+from typing import Protocol, final
+
+DEFAULT_RESAMPLES: int = 2000
+DEFAULT_CONFIDENCE: float = 0.95
+DEFAULT_SEED: int = 20261023
+DEFAULT_POWER: float = 0.8
+EXIT_PASSED: int = 0
+EXIT_GATE_FAILED: int = 1
+EXIT_INVALID_INPUT: int = 2
+_TWO_SIDED = 2
+_JSON_INDENT = 2
+_DESCRIPTION = "Score recorded outputs against a versioned dataset and gate them."
+_DATASET_KEYS = frozenset({"id", "input", "expected", "tags", "source"})
+_REQUIRED_DATASET_KEYS = frozenset({"id", "input", "expected"})
+_OUTPUT_KEYS = frozenset({"id", "repeat", "output"})
+_WORD = re.compile(r"\w+")
+_BASELINE_RECOVERY = (
+    "; regenerate the baseline with this dataset and scorer versions "
+    "after explicit approval"
+)
+
+
+class EvalInputError(ValueError):
+    """A dataset, output, baseline or threshold violates the documented schema."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EvalCase:
+    """One versioned evaluation case.
+
+    Args:
+        case_id (str): Stable identifier; never reused for different content.
+        input (str): Synthetic or approved input text.
+        expected (str): Reference answer or label.
+        tags (tuple[str, ...]): Slices such as ``refusal`` or ``adversarial``.
+        source (str): Provenance label such as ``synthetic``.
+    """
+
+    case_id: str
+    input: str
+    expected: str
+    tags: tuple[str, ...] = ()
+    source: str = "synthetic"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Interval:
+    """Mean with a percentile bootstrap confidence interval.
+
+    Args:
+        mean (float): Mean of per-case scores.
+        low (float): Lower interval bound.
+        high (float): Upper interval bound.
+    """
+
+    mean: float
+    low: float
+    high: float
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class MetricSummary:
+    """Aggregate for one scorer across cases.
+
+    Args:
+        name (str): Scorer name.
+        cases (int): Number of scored cases.
+        interval (Interval): Mean and bootstrap interval over case means.
+        repeat_spread (float): Mean of per-case max minus min across repeats.
+        minimum_detectable_difference (float | None): Planning estimate, or
+            ``None`` with fewer than two cases.
+    """
+
+    name: str
+    cases: int
+    interval: Interval
+    repeat_spread: float
+    minimum_detectable_difference: float | None
+
+
+class Scorer(Protocol):
+    """Deterministic scorer returning a value in ``[0, 1]``."""
+
+    @property
+    def name(self) -> str:
+        """Return the stable metric name used in reports and gates."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """Return the explicit implementation revision; change on scoring changes."""
+        ...
+
+    def score(self, *, case: EvalCase, output: str) -> float:
+        """Score one output.
+
+        Args:
+            case (EvalCase): Case with its reference.
+            output (str): System output for the case.
+
+        Returns:
+            float: Score in ``[0, 1]``.
+        """
+        ...
+
+
+type Task = Callable[[EvalCase], str]
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+@final
+class ExactMatch:
+    """Case- and whitespace-insensitive exact match."""
+
+    name: str = "exact_match"
+    version: str = "normalized-exact-match-v1"
+
+    def score(self, *, case: EvalCase, output: str) -> float:
+        """Return 1.0 when normalized output equals the reference.
+
+        Args:
+            case (EvalCase): Case with its reference.
+            output (str): System output.
+
+        Returns:
+            float: 1.0 on match, otherwise 0.0.
+        """
+        return float(_normalize(output) == _normalize(case.expected))
+
+
+@final
+class TokenF1:
+    """Token-overlap F1 for short free-text answers."""
+
+    name: str = "token_f1"
+    version: str = "casefold-word-overlap-f1-v1"
+
+    def score(self, *, case: EvalCase, output: str) -> float:
+        """Return the harmonic mean of token precision and recall.
+
+        Args:
+            case (EvalCase): Case with its reference.
+            output (str): System output.
+
+        Returns:
+            float: F1 in ``[0, 1]``; 1.0 when both texts have no tokens.
+        """
+        predicted = _WORD.findall(output.casefold())
+        reference = _WORD.findall(case.expected.casefold())
+        if not predicted or not reference:
+            return float(predicted == reference)
+        remaining = list(reference)
+        overlap = 0
+        for token in predicted:
+            if token in remaining:
+                remaining.remove(token)
+                overlap += 1
+        if not overlap:
+            return 0.0
+        precision = overlap / len(predicted)
+        recall = overlap / len(reference)
+        return _TWO_SIDED * precision * recall / (precision + recall)
+
+
+def _text(record: Mapping[str, object], key: str, *, line: int) -> str:
+    value = record.get(key)
+    if not isinstance(value, str) or not value.strip():
+        message = f"line {line}: {key} must be non-empty text"
+        raise EvalInputError(message)
+    return value
+
+
+def _json_lines(path: Path) -> list[tuple[int, dict[str, object]]]:
+    records: list[tuple[int, dict[str, object]]] = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            value: object = json.loads(line)
+        except json.JSONDecodeError as error:
+            message = f"line {line_number}: invalid JSON"
+            raise EvalInputError(message) from error
+        if not isinstance(value, dict):
+            message = f"line {line_number}: expected an object"
+            raise EvalInputError(message)
+        records.append((line_number, {str(key): item for key, item in value.items()}))
+    return records
+
+
+def _case(record: Mapping[str, object], *, line: int) -> EvalCase:
+    if set(record) - _DATASET_KEYS or _REQUIRED_DATASET_KEYS - set(record):
+        message = f"line {line}: expected keys id, input, expected, tags, source"
+        raise EvalInputError(message)
+    tags = record.get("tags", [])
+    if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        message = f"line {line}: tags must be a list of strings"
+        raise EvalInputError(message)
+    source = record.get("source", "synthetic")
+    if not isinstance(source, str) or not source:
+        message = f"line {line}: source must be non-empty text"
+        raise EvalInputError(message)
+    return EvalCase(
+        case_id=_text(record, "id", line=line),
+        input=_text(record, "input", line=line),
+        expected=_text(record, "expected", line=line),
+        tags=tuple(str(tag) for tag in tags),
+        source=source,
+    )
+
+
+def load_dataset(*, path: Path) -> tuple[EvalCase, ...]:
+    """Load a JSONL dataset and reject duplicates or unknown fields.
+
+    Args:
+        path (Path): JSONL dataset file.
+
+    Returns:
+        tuple[EvalCase, ...]: Cases in file order.
+
+    Raises:
+        EvalInputError: Invalid JSON, schema, or a duplicate identifier.
+    """
+    cases = tuple(_case(record, line=line) for line, record in _json_lines(path))
+    identifiers = [case.case_id for case in cases]
+    if not cases or len(set(identifiers)) != len(identifiers):
+        message = "dataset must be non-empty with unique ids"
+        raise EvalInputError(message)
+    return cases
+
+
+def dataset_fingerprint(*, path: Path) -> str:
+    """Return a content digest that identifies the exact dataset snapshot.
+
+    Args:
+        path (Path): Dataset file.
+
+    Returns:
+        str: ``sha256:`` prefixed hexadecimal digest.
+    """
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_outputs(
+    *, path: Path, cases: Sequence[EvalCase]
+) -> dict[str, tuple[str, ...]]:
+    """Load recorded outputs grouped by case, ordered by repeat index.
+
+    Args:
+        path (Path): JSONL file of ``id``, ``repeat`` and ``output`` records.
+        cases (Sequence[EvalCase]): Dataset that every case id must belong to.
+
+    Returns:
+        dict[str, tuple[str, ...]]: Outputs per case id.
+
+    Raises:
+        EvalInputError: Unknown ids, duplicate repeats, or missing cases.
+    """
+    known = {case.case_id for case in cases}
+    grouped: dict[str, dict[int, str]] = {}
+    for line, record in _json_lines(path):
+        repeat = record.get("repeat")
+        if set(record) != _OUTPUT_KEYS or type(repeat) is not int or repeat < 0:
+            message = f"line {line}: expected id, non-negative repeat, output"
+            raise EvalInputError(message)
+        case_id = _text(record, "id", line=line)
+        output = record["output"]
+        if case_id not in known or not isinstance(output, str):
+            message = f"line {line}: unknown id or non-text output"
+            raise EvalInputError(message)
+        repeats = grouped.setdefault(case_id, {})
+        if repeat in repeats:
+            message = f"line {line}: duplicate repeat"
+            raise EvalInputError(message)
+        repeats[repeat] = output
+    if set(grouped) != known:
+        message = "every dataset case needs at least one output"
+        raise EvalInputError(message)
+    return {
+        case_id: tuple(outputs[index] for index in sorted(outputs))
+        for case_id, outputs in grouped.items()
+    }
+
+
+def run_task(
+    *, cases: Sequence[EvalCase], task: Task, repeats: int
+) -> dict[str, tuple[str, ...]]:
+    """Run an injected task several times per case; use fakes in tests.
+
+    Args:
+        cases (Sequence[EvalCase]): Cases to run.
+        task (Task): System under test; owns its own timeouts and budgets.
+        repeats (int): Runs per case; above one when sampling is enabled.
+
+    Returns:
+        dict[str, tuple[str, ...]]: Outputs per case id.
+
+    Raises:
+        EvalInputError: ``repeats`` is not positive.
+    """
+    if repeats < 1:
+        message = "repeats must be positive"
+        raise EvalInputError(message)
+    return {case.case_id: tuple(task(case) for _ in range(repeats)) for case in cases}
+
+
+def bootstrap_interval(
+    *,
+    values: Sequence[float],
+    resamples: int = DEFAULT_RESAMPLES,
+    confidence: float = DEFAULT_CONFIDENCE,
+    seed: int = DEFAULT_SEED,
+) -> Interval:
+    """Percentile bootstrap of the mean with a fixed seed.
+
+    Args:
+        values (Sequence[float]): One value per independent case.
+        resamples (int): Bootstrap resamples.
+        confidence (float): Two-sided confidence level in ``(0, 1)``.
+        seed (int): Random seed so reports are reproducible.
+
+    Returns:
+        Interval: Mean and percentile bounds.
+
+    Raises:
+        EvalInputError: Empty values or invalid parameters.
+    """
+    if not values or resamples < 1 or not 0 < confidence < 1:
+        message = "bootstrap needs values, resamples and a confidence in (0, 1)"
+        raise EvalInputError(message)
+    generator = random.Random(seed)  # noqa: S311 - statistical resampling only
+    size = len(values)
+    means = sorted(
+        statistics.fmean(generator.choices(values, k=size)) for _ in range(resamples)
+    )
+    tail = (1 - confidence) / _TWO_SIDED
+    low_index = int(tail * (resamples - 1))
+    high_index = int((1 - tail) * (resamples - 1))
+    return Interval(
+        mean=statistics.fmean(values), low=means[low_index], high=means[high_index]
+    )
+
+
+def minimum_detectable_difference(
+    *,
+    values: Sequence[float],
+    confidence: float = DEFAULT_CONFIDENCE,
+    power: float = DEFAULT_POWER,
+) -> float | None:
+    """Approximate the smallest mean difference two runs of this size can detect.
+
+    Uses a two-sample normal approximation with the observed case standard
+    deviation; paired designs on the same cases usually detect smaller ones.
+
+    Args:
+        values (Sequence[float]): Per-case scores of one run.
+        confidence (float): Two-sided confidence level.
+        power (float): Desired probability of detecting a true difference.
+
+    Returns:
+        float | None: Planning estimate in metric units, or ``None`` with
+        fewer than two cases.
+    """
+    if len(values) < _TWO_SIDED:
+        return None
+    normal = statistics.NormalDist()
+    z_total = normal.inv_cdf(1 - (1 - confidence) / _TWO_SIDED) + normal.inv_cdf(power)
+    return z_total * statistics.stdev(values) * math.sqrt(_TWO_SIDED / len(values))
+
+
+def validate_score(*, name: str, value: object) -> float:
+    """Validate a scorer result before aggregation or export.
+
+    Args:
+        name (str): Metric name included in validation errors.
+        value (object): Untrusted scorer result; an integer or float, not a bool.
+
+    Returns:
+        float: Finite score in ``[0, 1]``.
+
+    Raises:
+        EvalInputError: The result is boolean, nonnumeric, non-finite or out of range.
+    """
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        message = f"{name}: score must be numeric, not boolean"
+        raise EvalInputError(message)
+    if not 0 <= value <= 1 or not math.isfinite(value):
+        message = f"{name}: score non-finite or outside [0, 1]"
+        raise EvalInputError(message)
+    return float(value)
+
+
+def summarize(
+    *,
+    cases: Sequence[EvalCase],
+    outputs: Mapping[str, Sequence[str]],
+    scorers: Iterable[Scorer],
+    seed: int = DEFAULT_SEED,
+) -> tuple[MetricSummary, ...]:
+    """Score every repeat, average within a case, then bootstrap across cases.
+
+    Args:
+        cases (Sequence[EvalCase]): Evaluated cases.
+        outputs (Mapping[str, Sequence[str]]): Outputs per case id.
+        scorers (Iterable[Scorer]): Metrics to compute.
+        seed (int): Bootstrap seed.
+
+    Returns:
+        tuple[MetricSummary, ...]: One summary per scorer, sorted by name.
+
+    Raises:
+        EvalInputError: A scorer returned a boolean, nonnumeric, non-finite
+            value or a value outside ``[0, 1]``.
+    """
+    summaries: list[MetricSummary] = []
+    for scorer in scorers:
+        case_means: list[float] = []
+        spreads: list[float] = []
+        for case in cases:
+            scores = [
+                validate_score(
+                    name=scorer.name, value=scorer.score(case=case, output=output)
+                )
+                for output in outputs[case.case_id]
+            ]
+            case_means.append(statistics.fmean(scores))
+            spreads.append(max(scores) - min(scores))
+        summaries.append(
+            MetricSummary(
+                name=scorer.name,
+                cases=len(case_means),
+                interval=bootstrap_interval(values=case_means, seed=seed),
+                repeat_spread=statistics.fmean(spreads),
+                minimum_detectable_difference=minimum_detectable_difference(
+                    values=case_means
+                ),
+            )
+        )
+    return tuple(sorted(summaries, key=lambda summary: summary.name))
+
+
+def gate_failures(
+    *,
+    summaries: Sequence[MetricSummary],
+    minimums: Mapping[str, float],
+    baseline: Mapping[str, float],
+    max_regression: float,
+) -> list[str]:
+    """Compare means with absolute floors and a recorded baseline.
+
+    Args:
+        summaries (Sequence[MetricSummary]): Candidate results.
+        minimums (Mapping[str, float]): Absolute floor per metric.
+        baseline (Mapping[str, float]): Baseline mean per metric.
+        max_regression (float): Finite, non-negative allowed drop below baseline.
+
+    Returns:
+        list[str]: Human-readable failures in metric order; empty when passing.
+
+    Raises:
+        EvalInputError: ``max_regression`` is negative or non-finite.
+    """
+    if not math.isfinite(max_regression) or max_regression < 0:
+        message = "max_regression must be finite and non-negative"
+        raise EvalInputError(message)
+    by_name = {summary.name: summary for summary in summaries}
+    failures = [
+        f"{name}: missing metric" for name in sorted(set(minimums) - set(by_name))
+    ]
+    for name, summary in sorted(by_name.items()):
+        mean = summary.interval.mean
+        if name in minimums and mean < minimums[name]:
+            failures.append(f"{name}: mean {mean:.4f} below floor {minimums[name]}")
+        if name in baseline and mean < baseline[name] - max_regression:
+            failures.append(
+                f"{name}: mean {mean:.4f} regressed from baseline {baseline[name]}"
+            )
+    return failures
+
+
+def build_report(
+    *,
+    dataset_version: str,
+    fingerprint: str,
+    scorer_versions: Mapping[str, str],
+    summaries: Sequence[MetricSummary],
+    failures: Sequence[str],
+) -> dict[str, object]:
+    """Build a deterministic, content-free JSON report.
+
+    Args:
+        dataset_version (str): Public dataset label.
+        fingerprint (str): Dataset content digest.
+        scorer_versions (Mapping[str, str]): Explicit implementation revision
+            per metric, taken from the scorers used to compute the summaries.
+        summaries (Sequence[MetricSummary]): Metric results.
+        failures (Sequence[str]): Gate failures.
+
+    Returns:
+        dict[str, object]: Report without inputs, outputs or references.
+    """
+    return {
+        "dataset_version": dataset_version,
+        "dataset_fingerprint": fingerprint,
+        "scorer_versions": dict(scorer_versions),
+        "passed": not failures,
+        "failures": list(failures),
+        "metrics": {summary.name: summary.interval.mean for summary in summaries},
+        "details": {
+            summary.name: {
+                "cases": summary.cases,
+                "ci_low": summary.interval.low,
+                "ci_high": summary.interval.high,
+                "repeat_spread": summary.repeat_spread,
+                "minimum_detectable_difference": (
+                    summary.minimum_detectable_difference
+                ),
+            }
+            for summary in summaries
+        },
+    }
+
+
+def _threshold(text: str) -> tuple[str, float]:
+    name, separator, value = text.partition("=")
+    try:
+        number = float(value)
+    except ValueError as error:
+        message = "--min expects METRIC=VALUE"
+        raise argparse.ArgumentTypeError(message) from error
+    if not separator or not name or not 0 <= number <= 1:
+        message = "--min expects METRIC=VALUE with VALUE in [0, 1]"
+        raise argparse.ArgumentTypeError(message)
+    return name, number
+
+
+def _baseline_value(value: object) -> float:
+    try:
+        return validate_score(name="baseline metric", value=value)
+    except EvalInputError as error:
+        message = str(error) + _BASELINE_RECOVERY
+        raise EvalInputError(message) from error
+
+
+def _baseline_score(
+    *,
+    name: str,
+    value: object,
+    versions: Mapping[str, object],
+    scorer_versions: Mapping[str, str],
+) -> float:
+    if name not in scorer_versions:
+        message = "baseline contains an unknown metric" + _BASELINE_RECOVERY
+        raise EvalInputError(message)
+    if versions.get(name) != scorer_versions[name]:
+        message = f"baseline scorer_versions mismatch for {name}" + _BASELINE_RECOVERY
+        raise EvalInputError(message)
+    return _baseline_value(value)
+
+
+def _baseline_metrics(
+    *, document: Mapping[str, object], scorer_versions: Mapping[str, str]
+) -> dict[str, float]:
+    metrics = document.get("metrics")
+    versions = document.get("scorer_versions")
+    if not isinstance(metrics, dict) or not metrics:
+        message = "baseline requires a non-empty metrics object" + _BASELINE_RECOVERY
+        raise EvalInputError(message)
+    if not isinstance(versions, dict):
+        message = "baseline requires a scorer_versions object" + _BASELINE_RECOVERY
+        raise EvalInputError(message)
+    return {
+        str(name): _baseline_score(
+            name=str(name),
+            value=value,
+            versions=versions,
+            scorer_versions=scorer_versions,
+        )
+        for name, value in metrics.items()
+    }
+
+
+def _baseline(
+    path: Path | None, *, fingerprint: str, scorer_versions: Mapping[str, str]
+) -> dict[str, float]:
+    if path is None:
+        return {}
+    try:
+        document: object = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        message = "baseline must be valid JSON" + _BASELINE_RECOVERY
+        raise EvalInputError(message) from error
+    if (
+        not isinstance(document, dict)
+        or document.get("dataset_fingerprint") != fingerprint
+    ):
+        message = (
+            "baseline dataset_fingerprint missing or mismatched" + _BASELINE_RECOVERY
+        )
+        raise EvalInputError(message)
+    return _baseline_metrics(document=document, scorer_versions=scorer_versions)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=_DESCRIPTION)
+    parser.add_argument("dataset", type=Path)
+    parser.add_argument("--outputs", type=Path, required=True)
+    parser.add_argument("--dataset-version", required=True)
+    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--min", type=_threshold, action="append", default=[])
+    parser.add_argument("--max-regression", type=float, default=0.0)
+    parser.add_argument("--report", type=Path)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Score recorded outputs, print the report and optionally write it.
+
+    Args:
+        argv (Sequence[str] | None): Arguments; defaults to ``sys.argv``.
+
+    Returns:
+        int: 0 when no configured gates fail (including scoring-only runs),
+        1 on a gate failure, 2 on invalid input.
+    """
+    try:
+        args = _parser().parse_args(argv)
+    except SystemExit as error:
+        return EXIT_PASSED if error.code == EXIT_PASSED else EXIT_INVALID_INPUT
+    scorers: tuple[Scorer, ...] = (ExactMatch(), TokenF1())
+    scorer_versions = {scorer.name: scorer.version for scorer in scorers}
+    try:
+        cases = load_dataset(path=args.dataset)
+        outputs = load_outputs(path=args.outputs, cases=cases)
+        fingerprint = dataset_fingerprint(path=args.dataset)
+        baseline = _baseline(
+            args.baseline, fingerprint=fingerprint, scorer_versions=scorer_versions
+        )
+        summaries = summarize(cases=cases, outputs=outputs, scorers=scorers)
+        failures = gate_failures(
+            summaries=summaries,
+            minimums=dict(args.min),
+            baseline=baseline,
+            max_regression=args.max_regression,
+        )
+    except (OSError, EvalInputError, json.JSONDecodeError) as error:
+        sys.stderr.write(f"invalid input: {error}\n")
+        return EXIT_INVALID_INPUT
+    report = build_report(
+        dataset_version=args.dataset_version,
+        fingerprint=fingerprint,
+        scorer_versions=scorer_versions,
+        summaries=summaries,
+        failures=failures,
+    )
+    text = json.dumps(report, indent=_JSON_INDENT, sort_keys=True, allow_nan=False)
+    if args.report is not None:
+        args.report.write_text(text + "\n", encoding="utf-8", newline="\n")
+    sys.stdout.write(text + "\n")
+    return EXIT_GATE_FAILED if failures else EXIT_PASSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

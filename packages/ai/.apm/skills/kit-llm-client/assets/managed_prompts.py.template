@@ -1,0 +1,138 @@
+"""Provider-neutral prompt selection. Copy to ``llm/managed_prompts.py``.
+
+Use with the existing ``llm.port`` contract. Application code imports this
+module, not an SDK. No fallback or additional cache is installed by this asset.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Literal, Protocol, final
+
+from llm.port import ChatMessage, PromptTemplate
+
+
+class ManagedPromptError(Exception):
+    """Safe, content-free failure; do not attach SDK messages or variable names."""
+
+
+class ManagedPromptUnavailable(ManagedPromptError):
+    """The configured prompt could not be fetched; no fallback was selected."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PromptSelection:
+    """Select exactly one immutable version or mutable label.
+
+    Attributes:
+        name (str): Reviewed configuration identifier, never request input.
+        version (int | None): Positive Langfuse version identifier to pin.
+        label (str | None): Explicit rollout pointer instead of a version.
+    """
+
+    name: str
+    version: int | None = None
+    label: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject ambiguous or empty selection before any fetch."""
+        if not self.name.strip() or (self.version is None) == (self.label is None):
+            raise ManagedPromptError("select a name and exactly one version or label")
+        if self.version is not None and (
+            type(self.version) is not int or self.version <= 0
+        ):
+            raise ManagedPromptError("prompt version must be a positive integer")
+        if self.label is not None and not self.label.strip():
+            raise ManagedPromptError("prompt label must not be empty")
+
+
+class PromptSource(Protocol):
+    """Adapter boundary returning the existing ``PromptTemplate`` representation."""
+
+    def fetch(self, selection: PromptSelection) -> PromptTemplate:
+        """Fetch selected content or raise a content-free ``ManagedPromptError``.
+
+        Args:
+            selection (PromptSelection): Reviewed selector.
+
+        Returns:
+            PromptTemplate: Resolved numeric version and dollar-style variables.
+        """
+        ...
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PreparedPrompt:
+    """Rendered messages and resolved identity for ``CompletionRequest``.
+
+    Attributes:
+        name (str): Reviewed prompt name for the completion request.
+        version (int): Actual resolved version, never a label.
+        selection_kind (Literal["version", "label"]): Selector mode for telemetry.
+        messages (tuple[ChatMessage, ...]): Sensitive messages; excluded from repr.
+    """
+
+    name: str
+    version: int
+    selection_kind: Literal["version", "label"]
+    messages: tuple[ChatMessage, ...] = field(repr=False)
+
+    def trace_metadata(self) -> dict[str, str]:
+        """Return an allowlist without content, labels, names, or variable keys.
+
+        Returns:
+            dict[str, str]: Selector kind and actual numeric version only.
+        """
+        return {
+            "prompt_selection": self.selection_kind,
+            "prompt_version": str(self.version),
+        }
+
+
+def prepare_prompt(
+    *,
+    source: PromptSource,
+    selection: PromptSelection,
+    variables: Mapping[str, str],
+) -> PreparedPrompt:
+    """Fetch and render before making a model request; fail closed on errors.
+
+    Args:
+        source (PromptSource): Adapter that normalizes its SDK failures.
+        selection (PromptSelection): Explicit version or label selection.
+        variables (Mapping[str, str]): Sensitive user-message variable values.
+
+    Returns:
+        PreparedPrompt: Messages and the version that actually served them.
+
+    Raises:
+        ManagedPromptError: Fetch, identity, or variable validation failed.
+    """
+    template = source.fetch(selection)
+    version = _resolved_version(template=template, selection=selection)
+    try:
+        messages = template.render(variables)
+    except ValueError:
+        # The existing renderer includes variable keys in its error message.
+        raise ManagedPromptError("managed prompt variables are invalid") from None
+    return PreparedPrompt(
+        name=selection.name,
+        version=version,
+        selection_kind="version" if selection.version is not None else "label",
+        messages=messages,
+    )
+
+
+def _resolved_version(*, template: PromptTemplate, selection: PromptSelection) -> int:
+    try:
+        version = int(template.version)
+    except ValueError:
+        raise ManagedPromptError("managed prompt identity is invalid") from None
+    if (
+        template.name != selection.name
+        or version <= 0
+        or (selection.version is not None and version != selection.version)
+    ):
+        raise ManagedPromptError("managed prompt identity is invalid")
+    return version

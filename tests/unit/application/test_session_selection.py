@@ -101,6 +101,40 @@ def test_session_order_does_not_change_authored_output(source_root: Path) -> Non
     assert first.files == second.files
 
 
+@pytest.mark.parametrize("skills", [(), ("kit-backend",), ("kit-shared",)])
+def test_manifest_includes_preserve_file_and_directory_semantics(
+    source_root: Path, skills: tuple[str, ...]
+) -> None:
+    bundle = source_root / "packages/backend"
+    path = bundle / "apm.yml"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["includes"] = [
+        ".apm/instructions/kit-backend.instructions.md",
+        ".apm/skills/",
+    ]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    plan = CatalogService().compose(
+        FileCatalogAdapter().load(source_root),
+        "backend",
+        (),
+        (),
+        skills=skills,
+    )
+    files = {item.relative_path: item.content for item in plan.files}
+    includes = json.loads(files["apm.yml"])["includes"]
+
+    assert (".apm/instructions/kit-backend.instructions.md" in includes) is (
+        skills != ("kit-shared",)
+    )
+    assert ".apm/instructions/kit-backend.instructions.md/" not in includes
+    assert ".apm/skills/" in includes
+    for include in includes:
+        if include.endswith("/"):
+            assert any(path.startswith(include) for path in files)
+        else:
+            assert include in files
+
+
 def test_session_does_not_parse_python_subscript_calls_as_markdown_links(
     source_root: Path,
 ) -> None:

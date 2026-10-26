@@ -2,7 +2,6 @@
 name: kit-backend-implementer
 description: "Implement one approved typed backend capability with regression tests."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
-model: "haiku"
 ---
 # Mission
 Implement one approved, typed backend capability inside its assigned scope, with regression tests and clear error contracts.

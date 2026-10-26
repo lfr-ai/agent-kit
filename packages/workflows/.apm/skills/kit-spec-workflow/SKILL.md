@@ -1,6 +1,6 @@
 ---
 name: kit-spec-workflow
-description: Use when carrying a change specification from discovery through implementation and archival using the repository's installed tooling and process.
+description: Use when carrying a change specification from proposal through implementation, verification and archive.
 license: MIT
 ---
 

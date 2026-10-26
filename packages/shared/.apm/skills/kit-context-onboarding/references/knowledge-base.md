@@ -41,8 +41,9 @@ Rules:
 
 ## Writing a memory entry
 
-Use the [memory entry template](../assets/memory-entry.md.template). An entry
-earns its place only if it is:
+Write entries with the `kit-project-memory` skill, which owns the lesson,
+decision record, plan and handoff templates. An entry earns its place only
+if it is:
 
 - **Surprising**: a future reader would likely get it wrong without it.
 - **Evidenced**: it names the command, test, file or document that shows it.
@@ -69,10 +70,12 @@ a `Last verified: YYYY-MM-DD` line, editing the entry, or marking it
 `Status: superseded` with a link to its replacement. Never silently delete a
 decision record; supersede it.
 
-### The freshness checker
+### Checking freshness
 
-The [memory freshness checker](../assets/check_memory_freshness.py) scans
-Markdown files or directories (default `memories`) and reports:
+The `kit-project-memory` skill owns the memory checker. Run it over memory
+and decision folders with `--freshness-only` for plain dated notes, or with
+the full rules once entries carry `Status` and `Evidence` fields. In both
+modes it reports:
 
 - dated headings whose most recent date (heading date or a later
   `Last verified:`, `Verified:` or `Reviewed:` line in that entry) is older than
@@ -84,23 +87,21 @@ Entries marked `Status: superseded` are not aged but their links are still
 checked. Fenced code blocks are ignored. Web links are not fetched.
 
 ```text
-python check_memory_freshness.py memories docs/decisions --root . --max-age-days 120
-memories/lessons.md:7: entry '2025-01-01 Exports retry ...' was last verified 512 days ago (limit 120); re-verify or mark it superseded
+python check_memory_files.py memories docs/decisions --root . --max-age-days 120 --freshness-only
+memories/lessons.md:7: entry '2025-01-01 Exports retry ...' was last verified 512 days ago (limit 120); re-verify it or mark it superseded
 memories/lessons.md:9: link '../src/exports/retry.py' points to a missing file
 ```
 
-Use `--today YYYY-MM-DD` for reproducible runs in CI or tests. Exit status is
-0 when clean, 1 on findings and 2 when a path cannot be read. Run
-`--self-test` after copying it, then add it to the repository's scheduled or
-pre-merge checks with a limit the team agrees on. A finding is a prompt to
-review, not proof the entry is wrong.
+Use `--today YYYY-MM-DD` for reproducible runs in CI or tests. Add the
+checker to the repository's scheduled or pre-merge checks with a limit the
+team agrees on. A finding is a prompt to review, not proof the entry is wrong.
 
 ## Decision records
 
 A decision record captures one decision: context, options considered, the
-decision, consequences, status (`proposed`, `accepted`, `superseded by NNNN`)
-and date. Number records sequentially and never reuse a number. The
-documentation skill, when installed, has a full record template.
+decision, consequences, status (`proposed`, `accepted`, `superseded`) and
+date. Number records sequentially and never reuse a number. The
+`kit-project-memory` skill has the record template and supersession rules.
 
 ## Sources
 

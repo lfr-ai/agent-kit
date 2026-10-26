@@ -16,8 +16,20 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from typing import TypeGuard
 
 _ROOT = Path(__file__).resolve().parents[1]
+
+
+class InvalidLockMetadataError(ValueError):
+    """The dependency inventory cannot be safely inspected."""
+
+    def __init__(self) -> None:
+        """Describe the required lock inventory without echoing input values."""
+        super().__init__(
+            "uv.lock: invalid package metadata; require a nonempty package list "
+            "with valid names, versions, sources and wheel records"
+        )
 
 
 def source_only_packages(lock: Mapping[str, object]) -> list[str]:
@@ -25,15 +37,18 @@ def source_only_packages(lock: Mapping[str, object]) -> list[str]:
 
     Args:
         lock: Parsed ``uv.lock`` document.
+
+    Raises:
+        InvalidLockMetadataError: The package inventory is missing or malformed.
     """
     packages = lock.get("package")
-    if not isinstance(packages, list):
-        return []
+    if not isinstance(packages, list) or not packages:
+        raise InvalidLockMetadataError
     blocked: list[str] = []
     for package in packages:
-        if not isinstance(package, dict):
-            continue
-        source = package.get("source")
+        if not _package_record(package):
+            raise InvalidLockMetadataError
+        source = package["source"]
         if (
             isinstance(source, dict)
             and "registry" in source
@@ -41,6 +56,33 @@ def source_only_packages(lock: Mapping[str, object]) -> list[str]:
         ):
             blocked.append(f"{package.get('name')}=={package.get('version')}")
     return sorted(blocked)
+
+
+def _mapping(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _nonempty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _package_record(value: object) -> TypeGuard[dict[str, object]]:
+    if not _mapping(value) or not all(
+        _nonempty_text(value.get(field)) for field in ("name", "version")
+    ):
+        return False
+    source = value.get("source")
+    if not _mapping(source) or not source:
+        return False
+    if "registry" in source and not _nonempty_text(source["registry"]):
+        return False
+    return _wheel_records(value.get("wheels", []))
+
+
+def _wheel_records(value: object) -> bool:
+    return isinstance(value, list) and all(
+        _mapping(wheel) and _nonempty_text(wheel.get("url")) for wheel in value
+    )
 
 
 def audit_command(requirements: Path, cache: Path) -> list[str]:
@@ -93,10 +135,15 @@ def _audit_uv_lock(root: Path) -> int:
     """
     try:
         lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as error:
+        blocked = source_only_packages(lock)
+    except (
+        OSError,
+        UnicodeError,
+        tomllib.TOMLDecodeError,
+        InvalidLockMetadataError,
+    ) as error:
         print(f"Dependency audit cannot read uv.lock: {error}", file=sys.stderr)
         return 1
-    blocked = source_only_packages(lock)
     for package in blocked:
         print(
             f"uv.lock: {package} has no wheel; installing it would run its build",

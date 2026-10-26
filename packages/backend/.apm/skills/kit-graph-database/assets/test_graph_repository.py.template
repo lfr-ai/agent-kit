@@ -1,0 +1,160 @@
+"""Contract tests for the Neo4j purchase graph adapter against a real server.
+
+Copy to ``tests/integration/graph/test_purchase_graph.py``. Requires
+``pytest-asyncio``, ``neo4j``, ``testcontainers[neo4j]``, and a reachable
+Docker daemon; the module is skipped locally when they are missing, and CI must
+provide them. Pin the image digest and use the production edition and major
+version. The schema script is applied before the tests run.
+"""
+
+from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from neo4j import AsyncDriver, AsyncGraphDatabase
+from neo4j.exceptions import ConstraintError
+
+from shop.core.purchases import ProductAffinity, Purchase
+from shop.infrastructure.graph.purchases import Neo4jPurchaseGraph
+from shop.infrastructure.graph.queries import CUSTOMER_PRODUCTS, NodeKind
+
+pytestmark = pytest.mark.asyncio
+
+NEO4J_IMAGE = "neo4j:5.26-community@sha256:PIN_IMAGE_DIGEST"
+SCHEMA_PATH = Path(__file__).resolve().parents[3] / "graph" / "schema.cypher"
+DATABASE = "neo4j"
+CLEAR_GRAPH = "MATCH (n) DETACH DELETE n"
+CREATE_CUSTOMER = "CREATE (:Customer {customerId: $customer_id})"
+EXPLAIN_CUSTOMER_PRODUCTS = "EXPLAIN " + CUSTOMER_PRODUCTS
+BOUGHT_AT = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(scope="module")
+def neo4j_server() -> Iterator[tuple[str, str, str]]:
+    """Start one disposable server per module and yield its URL and credentials."""
+    neo4j_module = pytest.importorskip("testcontainers.neo4j")
+    docker_errors = pytest.importorskip("docker.errors")
+    container = neo4j_module.Neo4jContainer(NEO4J_IMAGE)
+    try:
+        container.start()
+    except docker_errors.DockerException as error:
+        pytest.skip(f"Docker is unavailable: {error}")
+    try:
+        yield container.get_connection_url(), container.username, container.password
+    finally:
+        container.stop()
+
+
+@pytest_asyncio.fixture
+async def driver(neo4j_server: tuple[str, str, str]) -> AsyncIterator[AsyncDriver]:
+    """Yield a driver on a schema-initialized, empty graph."""
+    url, username, password = neo4j_server
+    async with AsyncGraphDatabase.driver(url, auth=(username, password)) as created:
+        await created.verify_connectivity()
+        for statement in _schema_statements():
+            await created.execute_query(statement, database_=DATABASE)
+        yield created
+        await created.execute_query(CLEAR_GRAPH, database_=DATABASE)
+
+
+def _schema_statements() -> list[str]:
+    """Split the schema script into executable statements without comments."""
+    text = "\n".join(
+        line
+        for line in SCHEMA_PATH.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("//")
+    )
+    return [statement.strip() for statement in text.split(";") if statement.strip()]
+
+
+def purchase(customer_id: str, sku: str, order_id: str) -> Purchase:
+    """Build a purchase at a fixed timestamp."""
+    return Purchase(
+        customer_id=customer_id, sku=sku, order_id=order_id, purchased_at=BOUGHT_AT
+    )
+
+
+async def test_recording_purchases_twice_is_idempotent(driver: AsyncDriver) -> None:
+    graph = Neo4jPurchaseGraph(driver=driver, database=DATABASE)
+    purchases = [purchase("c1", "A", "o1"), purchase("c1", "B", "o1")]
+
+    await graph.record_purchases(purchases)
+    await graph.record_purchases(purchases)
+
+    assert await graph.count(NodeKind.CUSTOMER) == 1
+    assert await graph.count(NodeKind.PRODUCT) == 2
+    assert await graph.customer_products("c1") == ["A", "B"]
+
+
+async def test_products_bought_together_are_ranked_and_limited(
+    driver: AsyncDriver,
+) -> None:
+    graph = Neo4jPurchaseGraph(driver=driver, database=DATABASE)
+    await graph.record_purchases(
+        [
+            purchase("c1", "A", "o1"),
+            purchase("c1", "B", "o1"),
+            purchase("c2", "A", "o2"),
+            purchase("c2", "B", "o2"),
+            purchase("c2", "C", "o2"),
+        ]
+    )
+
+    together = await graph.products_bought_together("A", limit=1)
+
+    assert together == [ProductAffinity(sku="B", together=2)]
+
+
+async def test_customer_products_pages_by_sku(driver: AsyncDriver) -> None:
+    graph = Neo4jPurchaseGraph(driver=driver, database=DATABASE)
+    await graph.record_purchases([purchase("c1", sku, "o1") for sku in ("C", "A", "B")])
+
+    first = await graph.customer_products("c1", limit=2)
+    second = await graph.customer_products("c1", after_sku=first[-1], limit=2)
+
+    assert (first, second) == (["A", "B"], ["C"])
+
+
+async def test_limit_outside_range_is_rejected(driver: AsyncDriver) -> None:
+    graph = Neo4jPurchaseGraph(driver=driver, database=DATABASE)
+
+    with pytest.raises(ValueError, match="limit"):
+        await graph.products_bought_together("A", limit=0)
+
+
+async def test_uniqueness_constraint_rejects_duplicate_customer(
+    driver: AsyncDriver,
+) -> None:
+    await driver.execute_query(CREATE_CUSTOMER, customer_id="c1", database_=DATABASE)
+
+    with pytest.raises(ConstraintError):
+        await driver.execute_query(
+            CREATE_CUSTOMER, customer_id="c1", database_=DATABASE
+        )
+
+
+async def test_customer_lookup_plan_starts_with_an_index_seek(
+    driver: AsyncDriver,
+) -> None:
+    _, summary, _ = await driver.execute_query(
+        EXPLAIN_CUSTOMER_PRODUCTS,
+        customer_id="c1",
+        after_sku=None,
+        limit=1,
+        database_=DATABASE,
+    )
+
+    assert summary.plan is not None
+    assert any("IndexSeek" in operator for operator in _operators(summary.plan))
+
+
+def _operators(plan: dict[str, object]) -> Iterator[str]:
+    """Yield every operator name in a plan tree."""
+    yield str(plan.get("operatorType", ""))
+    children = plan.get("children", [])
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict):
+                yield from _operators(child)

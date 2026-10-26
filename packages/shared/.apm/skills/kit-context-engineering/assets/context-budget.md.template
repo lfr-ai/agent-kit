@@ -1,0 +1,43 @@
+# Context budget worksheet
+
+- Repository: <name>
+- Date measured: YYYY-MM-DD
+- Hosts in scope: <for example Copilot in VS Code version X, Claude Code version Y>
+- Command: `python check_context_budget.py --root . --max-file-chars <N> --max-total-chars <N>`
+- Limits agreed with: <team role>
+
+## Always-on files
+
+| File | Kind | Loaded by hosts | Characters before | Characters after | Limit | Action |
+| --- | --- | --- | --- | --- | --- | --- |
+| `AGENTS.md` | entry | | | | | keep / trim / split |
+| `CLAUDE.md` | entry | Claude | | | | import only |
+| `.github/copilot-instructions.md` | entry | Copilot | | | | pointer only |
+| `<instruction with applyTo "**">` | instruction | Copilot | | | | |
+| Total | | | | | | |
+
+## Discovery metadata
+
+| Item | Description characters | Trigger first | Distinct from neighbors |
+| --- | --- | --- | --- |
+| `<skill or agent>` | | yes / no | yes / no |
+
+## Moves
+
+| Content | From | To | Reason |
+| --- | --- | --- | --- |
+| <procedure> | entry file | skill | steps belong in skills |
+| <file-type rule> | entry file | scoped instruction | applies to some files only |
+| <history> | entry file | decision record | rationale, not a rule |
+
+## Tools and roles
+
+| Role | Tools or servers enabled | Needed by a step | Remove |
+| --- | --- | --- | --- |
+| | | | |
+
+## Result
+
+- Total always-on characters: <before> to <after>
+- Exceptions approved: <none / file, reason, approver role, review date>
+- Not measured: <host views not checked, token counts not claimed>

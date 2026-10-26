@@ -20,7 +20,9 @@ license: MIT
    [composition root](assets/composition_root.py.template).
 4. Design signatures per [signature design](references/signature-design.md):
    full annotations, keyword-only options, no positional `bool`, explicit units,
-   one return shape.
+   one return shape. Choose binding and wrapping with the
+   [partial/decorator guide](references/callables-and-decorators.md), preserving
+   the declared callable contract.
 5. Model records and closed value sets per
    [dataclasses and enums](references/dataclasses-enums.md), starting from the
    [record](assets/dataclass.py.template) and [StrEnum](assets/enum.py.template)
@@ -36,7 +38,10 @@ license: MIT
    [structured logging](references/logging.md). Keep personal data and secrets
    out of logs and `repr`.
 9. Write docstrings per [docstring patterns](references/docstrings.md) and order
-   code top-down per [method ordering](references/method-ordering.md).
+   code top-down per [method ordering](references/method-ordering.md). Apply
+   the language idioms in [Python idioms](references/python-idioms.md):
+   parameter kinds, unrepeated defaults, enums for closed sets, `Final`,
+   `override`, record-type choice, and what to annotate.
 10. Verify negative cases, types, import direction, and the project gate; run
     the bundled checkers below on the touched paths.
 
@@ -63,12 +68,12 @@ All are standard-library scripts that parse source without importing it, print
 
 | Script | Purpose |
 | --- | --- |
-| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap` and `--magic-numbers`. |
+| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap`, `--magic-numbers`, and `--redundant-defaults`. |
 | [check_method_ordering.py](assets/check_method_ordering.py) | Private helper placed after its sole caller (`--order`, `--scope`, `--ignore`). |
 | [check_backend_wiring.py](assets/check_backend_wiring.py) | Layer import rules (`--package`, `--forbid`, `--forbid-module`). |
 
 ```text
-python check_python.py src --bool-trap --magic-numbers
+python check_python.py src --bool-trap --magic-numbers --redundant-defaults
 python check_python.py tests --bool-trap
 python check_python.py --only docstring-backtick packages
 python check_python.py --templates --only magic-number packages
@@ -109,6 +114,8 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
 
 - [Service guide](references/guide.md): review checklist, failure modes, recovery.
 - [Signature design](references/signature-design.md)
+- [Python idioms](references/python-idioms.md)
+- [Functions, partials, decorators and callable contracts](references/callables-and-decorators.md)
 - [Docstring patterns](references/docstrings.md)
 - [Method ordering](references/method-ordering.md)
 - [Polymorphism versus conditionals](references/polymorphism.md)

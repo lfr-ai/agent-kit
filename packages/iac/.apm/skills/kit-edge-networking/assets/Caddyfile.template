@@ -1,0 +1,79 @@
+# Caddy 2 reverse proxy template for one HTTPS application.
+# Caddy obtains and renews certificates automatically (ACME), redirects HTTP to
+# HTTPS, sets X-Forwarded-For/Proto/Host, and proxies WebSocket upgrades.
+# Environment placeholders are read when the file is loaded:
+#   SITE_ADDRESS        public host name, for example app.example.invalid
+#   ACME_EMAIL          operator contact for the certificate authority
+#   UPSTREAM_ADDR       application host:port, for example app:8000
+#   TRUSTED_PROXY_CIDR  load balancer range allowed to set X-Forwarded-For
+# Validate and format before reloading; reload is graceful:
+#   caddy fmt --diff Caddyfile
+#   caddy validate --config Caddyfile --adapter caddyfile
+#   caddy reload --config Caddyfile --adapter caddyfile
+
+{
+	email {$ACME_EMAIL}
+	# The admin API stays on localhost; caddy reload needs it.
+	admin localhost:2019
+	servers {
+		# Trust client-address headers only from the load balancer in front.
+		trusted_proxies static {$TRUSTED_PROXY_CIDR}
+		client_ip_headers X-Forwarded-For
+		timeouts {
+			read_header 10s
+			read_body 30s
+			idle 2m
+		}
+	}
+}
+
+{$SITE_ADDRESS} {
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
+	request_body {
+		max_size 10MB
+	}
+
+	header {
+		# Start with a short max-age; raise it once every path serves HTTPS.
+		Strict-Transport-Security "max-age=63072000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Load balancer probe forwards to application readiness.
+	handle /readyz {
+		reverse_proxy {$UPSTREAM_ADDR}
+	}
+
+	# Server-sent events: flush every write and never compress.
+	handle /events/* {
+		reverse_proxy {$UPSTREAM_ADDR} {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy {$UPSTREAM_ADDR} {
+			# Active readiness checks remove an instance before users see errors.
+			health_uri /readyz
+			health_interval 10s
+			health_timeout 2s
+			lb_try_duration 5s
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+			}
+		}
+	}
+}

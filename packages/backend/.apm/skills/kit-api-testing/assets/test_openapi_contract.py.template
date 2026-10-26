@@ -1,0 +1,48 @@
+"""Property-based contract tests generated from the service's OpenAPI description.
+
+Copy into ``tests/contract/test_openapi_contract.py`` and replace
+``your_service.main.build_app`` with the project's application factory.
+Requires ``schemathesis`` 4.x and ``pytest``. The ASGI loader calls the app
+in-process and runs its lifespan; no server or network is needed. Build the app
+with test settings and fake adapters so generated requests never reach real
+data stores.
+"""
+
+import pytest
+import schemathesis
+from hypothesis import HealthCheck, settings
+
+from your_service.main import build_app
+
+_MAX_EXAMPLES = 50
+
+schema = schemathesis.openapi.from_asgi("/openapi.json", build_app())
+
+
+@pytest.fixture(scope="session")
+def auth_headers() -> dict[str, str]:
+    """Return headers for authenticated operations.
+
+    Mint a short-lived token with locally generated keys (see the
+    ``kit-auth`` test template) and configure the test app to trust them.
+    Never read a production token here.
+    """
+    return {}
+
+
+@schema.parametrize()
+@settings(
+    max_examples=_MAX_EXAMPLES,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+def test_operations_conform_to_the_schema(
+    case: schemathesis.Case, auth_headers: dict[str, str]
+) -> None:
+    """Every generated request gets a documented status, media type, and body.
+
+    ``call_and_validate`` runs the default checks: no server errors, status
+    codes and content types declared in the schema, and response bodies that
+    match their schemas.
+    """
+    case.call_and_validate(headers=auth_headers)

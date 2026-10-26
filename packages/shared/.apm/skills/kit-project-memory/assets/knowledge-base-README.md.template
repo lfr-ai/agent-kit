@@ -1,0 +1,34 @@
+# Knowledge base
+
+What is true about this project beyond what the code says: structure,
+vocabulary, workflows and the reasons behind them. Agents load this index on
+demand from the entry file; keep it to one line per topic.
+
+## Topics
+
+- [Architecture](architecture.md): components, dependency direction, trust boundaries.
+- [Glossary](glossary.md): project terms, one meaning each.
+- [Flows](flows.md): ordered steps of the main workflows.
+- [Decisions](decisions/): numbered decision records with status.
+- [Lessons](../../memories/lessons.md): dated, evidenced lessons.
+- [Plans](../plans/): multi-session work in progress.
+
+## Where new knowledge goes
+
+| You learned | Put it in |
+| --- | --- |
+| A command, version or path | the project facts file |
+| How components fit together now | architecture |
+| What a term means | glossary |
+| The steps of a workflow | flows |
+| Why a costly choice was made | a new decision record |
+| A surprising fact with evidence | the lessons file |
+| State of unfinished work | the session handoff |
+
+## Rules
+
+- Link to owning code, tests and configuration; do not copy values.
+- Supersede records; never delete or silently rewrite them.
+- No secrets, personal data, transcripts or customer content.
+- Re-verify entries whose linked files changed in the same change set.
+- Run the memory checker before merging changes to these folders.

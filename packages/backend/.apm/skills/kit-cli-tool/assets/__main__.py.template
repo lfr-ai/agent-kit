@@ -1,0 +1,10 @@
+"""Entry point for ``python -m shop``.
+
+Copy into ``src/shop/__main__.py``. Keep it to one call so the console script
+in ``[project.scripts]`` and ``python -m`` behave identically.
+"""
+
+from shop.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

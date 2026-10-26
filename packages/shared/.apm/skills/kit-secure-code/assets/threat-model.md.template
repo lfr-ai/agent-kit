@@ -1,0 +1,52 @@
+# Threat model: SYSTEM_OR_ENTRY_POINT
+
+- Date: YYYY-MM-DD
+- Authors and reviewer: ROLE_NAMES
+- Exposure: internal tool | internal service | exposed service
+- ASVS target level: 1 | 2 | 3
+- Next review: YYYY-MM-DD, or when the exposure or data classification changes
+
+## Scope
+
+What is being added or changed, and what is out of scope.
+
+## Data flow
+
+| Id | From | To | Data | Crosses boundary | Authentication |
+| --- | --- | --- | --- | --- | --- |
+| F1 | caller | API entry point | request body | yes (internet to service) | bearer token |
+| F2 | service | database | records | yes (service to data store) | service identity |
+
+Data classification: public | internal | confidential | personal | secret.
+
+## Assumptions
+
+- Assumption that, if false, changes the model (for example "only reachable
+  inside the private network").
+
+## Threats (STRIDE per boundary-crossing flow)
+
+| Id | Flow | STRIDE | Threat | Likelihood | Impact | Decision | Mitigation | Evidence (test or check) | Owner |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T1 | F1 | S | forged or expired token accepted | medium | high | mitigate | verify issuer, audience and expiry | test_rejects_expired_token | ROLE |
+| T2 | F1 | D | oversized body exhausts memory | medium | medium | mitigate | body size limit | test_rejects_oversized_body | ROLE |
+| T3 | F2 | T | SQL injection through filter parameter | low | high | mitigate | parameterized queries | Ruff S608, test_filter_is_parameterized | ROLE |
+
+Decisions: mitigate, eliminate, transfer, accept.
+
+## Accepted risks
+
+| Threat | Reason | Owner | Review date |
+| --- | --- | --- | --- |
+| | | | |
+
+## Open questions
+
+- Question, owner, due date.
+
+## Verification
+
+- [ ] Every boundary-crossing flow has at least one threat row.
+- [ ] Every mitigation has evidence that runs in the gate.
+- [ ] Accepted risks have owners and review dates.
+- [ ] A second person reviewed this model (exposed services).

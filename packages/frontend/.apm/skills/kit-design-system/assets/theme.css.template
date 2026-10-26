@@ -1,0 +1,149 @@
+/* src/styles/theme.css
+ * Single source of design tokens for Tailwind CSS v4 (CSS-first, no JavaScript
+ * config file). Layers: palette (raw values, used only here), semantic
+ * roles in :root and .dark, and @theme inline mappings that generate utilities
+ * such as bg-surface, text-muted-foreground, rounded-md, and shadow-raised.
+ * Contrast targets per pair: text 4.5:1, large text and UI boundaries 3:1.
+ */
+@import "tailwindcss";
+
+/* Class-based dark mode so users can override the system preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Palette: raw values that must not generate utilities. Only the semantic
+ * layer below may reference them. */
+:root {
+  --palette-neutral-0: oklch(1 0 0);
+  --palette-neutral-50: oklch(0.985 0.002 247);
+  --palette-neutral-200: oklch(0.928 0.006 265);
+  --palette-neutral-500: oklch(0.551 0.027 264);
+  --palette-neutral-700: oklch(0.373 0.034 260);
+  --palette-neutral-800: oklch(0.278 0.033 257);
+  --palette-neutral-900: oklch(0.21 0.034 265);
+  --palette-neutral-950: oklch(0.13 0.028 262);
+  --palette-blue-300: oklch(0.809 0.105 252);
+  --palette-blue-600: oklch(0.546 0.245 263);
+  --palette-blue-700: oklch(0.488 0.243 264);
+  --palette-red-300: oklch(0.808 0.114 19);
+  --palette-red-600: oklch(0.577 0.245 27);
+  --palette-green-300: oklch(0.871 0.15 154);
+  --palette-green-700: oklch(0.527 0.154 150);
+}
+
+/* Scales that generate utilities directly. */
+@theme {
+  /* Drop the default palette so only system colors produce utilities. */
+  --color-*: initial;
+
+  /* Typography. */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+
+  /* Spacing: one base unit; utilities multiply it (p-4 = 4 * 0.25rem). */
+  --spacing: 0.25rem;
+
+  /* Breakpoints in rem so they follow user font size. */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+
+  /* Motion. Reduced-motion overrides below set durations to zero. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+}
+
+/* Semantic roles: the only values components may reference. */
+:root {
+  --surface: var(--palette-neutral-0);
+  --surface-raised: var(--palette-neutral-50);
+  --foreground: var(--palette-neutral-900);
+  --muted-foreground: var(--palette-neutral-700);
+  --border: var(--palette-neutral-500);
+  --border-subtle: var(--palette-neutral-200);
+  --primary: var(--palette-blue-600);
+  --primary-hover: var(--palette-blue-700);
+  --primary-foreground: var(--palette-neutral-0);
+  --danger: var(--palette-red-600);
+  --danger-foreground: var(--palette-neutral-0);
+  --success: var(--palette-green-700);
+  --ring: var(--palette-blue-600);
+  --radius: 0.5rem;
+  --shadow-raised-color: oklch(0.13 0.028 262 / 12%);
+
+  color-scheme: light;
+}
+
+.dark {
+  --surface: var(--palette-neutral-950);
+  --surface-raised: var(--palette-neutral-900);
+  --foreground: var(--palette-neutral-50);
+  --muted-foreground: var(--palette-neutral-200);
+  --border: var(--palette-neutral-500);
+  --border-subtle: var(--palette-neutral-800);
+  --primary: var(--palette-blue-300);
+  --primary-hover: var(--palette-neutral-200);
+  --primary-foreground: var(--palette-neutral-950);
+  --danger: var(--palette-red-300);
+  --danger-foreground: var(--palette-neutral-950);
+  --success: var(--palette-green-300);
+  --ring: var(--palette-blue-300);
+  --shadow-raised-color: oklch(0 0 0 / 40%);
+
+  color-scheme: dark;
+}
+
+/* Map semantic roles to utilities; values resolve at runtime per theme. */
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-success: var(--success);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.25rem);
+  --shadow-raised: 0 0.0625rem 0.1875rem var(--shadow-raised-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border-subtle;
+  }
+
+  body {
+    @apply bg-surface text-foreground font-sans;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+/* Forced colors: keep boundaries and focus visible with system colors. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

@@ -51,8 +51,8 @@ explanation are about **cognition**. Tutorials and explanation serve
 - Discuss one topic: architecture, a design decision, a trade-off, history.
 - Connect to alternatives and constraints; it is allowed to have a point of
   view.
-- Decisions with lasting consequences get a decision record from the
-  [ADR template](../assets/adr.md.template); explanation pages link to them.
+- Decisions with lasting consequences get a decision record, written with
+  the `kit-project-memory` skill's record template; explanation pages link to them.
 
 ## Organizing a documentation set
 

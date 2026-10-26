@@ -1,0 +1,53 @@
+"""Version 1 item endpoints: thin handlers over an application port.
+
+Copy into ``src/shop/api/items.py``. ``create_app`` mounts this router under the
+versioned prefix. The return annotation is the response model; error statuses
+come from the service error mapping in ``errors.py``.
+"""
+
+from typing import Annotated, Self
+
+from fastapi import APIRouter, Path, status
+from pydantic import BaseModel, ConfigDict
+
+from shop.api.dependencies import CatalogDep
+from shop.application.ports import Item
+
+_MAX_ITEM_ID_CHARS = 64
+
+router = APIRouter(prefix="/items", tags=["items"])
+
+
+class ItemOut(BaseModel):
+    """Public item representation; internal fields are never exposed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    name: str
+    price_cents: int
+
+    @classmethod
+    def from_domain(cls, item: Item) -> Self:
+        """Map an application record to the wire schema.
+
+        Args:
+            item: Record returned by the catalog port.
+
+        Returns:
+            The response model.
+        """
+        return cls(id=item.item_id, name=item.name, price_cents=item.price_cents)
+
+
+@router.get(
+    "/{item_id}",
+    operation_id="getItem",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Item not found"}},
+)
+async def get_item(
+    item_id: Annotated[str, Path(min_length=1, max_length=_MAX_ITEM_ID_CHARS)],
+    catalog: CatalogDep,
+) -> ItemOut:
+    """Return one item by identifier."""
+    return ItemOut.from_domain(await catalog.get(item_id))

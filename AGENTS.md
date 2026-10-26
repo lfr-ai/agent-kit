@@ -38,6 +38,8 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - Immutable dataclasses use `frozen=True`, `kw_only=True`, and `slots=True`.
 - Use stdlib `import logging`; do not duplicate logging at multiple boundaries.
 - Keep types concrete, errors explicit, paths contained, and changes local.
+- Prefer the simplest behavior-complete design for maintainability, readability
+  and low cognitive load; retrieve task-relevant context on demand.
 - Package code must work when installed away from its source checkout.
 - Parameterized initializers document their arguments.
 

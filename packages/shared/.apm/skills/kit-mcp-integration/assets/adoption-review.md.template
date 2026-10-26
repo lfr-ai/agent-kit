@@ -1,0 +1,57 @@
+# MCP server adoption review: SERVER_NAME
+
+- Date: YYYY-MM-DD
+- Reviewer: ROLE_NAME
+- Decision: adopt | adopt with restrictions | reject
+- Next review: YYYY-MM-DD or on the next major server version
+
+## Need
+
+- Task the agent cannot do today, and why a CLI, task or built-in tool is
+  not enough:
+- Hosts that will load it: VS Code | Claude Code | other
+
+## Source and integrity
+
+| Item | Value |
+| --- | --- |
+| Source repository | https://example.com/OWNER/SERVER |
+| Publisher is the service vendor | yes / no |
+| License (SPDX) | |
+| Pinned version or image digest | |
+| Release integrity (signature, attestation, checksum) | |
+| Last release and maintenance activity | |
+
+## Transport and authorization
+
+| Item | Value |
+| --- | --- |
+| Transport | stdio / Streamable HTTP |
+| Endpoint (HTTP) | https://... |
+| Authorization | OAuth per specification / scoped token / none |
+| Identity | dedicated account or app; not a personal administrator |
+| Token scope and expiry | |
+| Where the secret is supplied | prompted input / user environment |
+
+## Tools and data
+
+| Tool | Reads | Writes | Enabled | Confirmation required |
+| --- | --- | --- | --- | --- |
+| | | | yes / no | yes / no |
+
+- Data classification the server can reach: public | internal | confidential | personal
+- Untrusted content it returns (web pages, issues, e-mail): yes / no
+- Combined in one session with a server that can write or send: yes / no (if yes, justify)
+
+## Evidence (synthetic data only)
+
+| Check | Host and version | Result |
+| --- | --- | --- |
+| Server starts and lists the expected tools | | |
+| One read tool returns the expected result | | |
+| Declined write confirmation changes nothing | | |
+| Removal deletes the tools; identity revoked | | |
+
+## Restrictions and follow-up
+
+- Restriction or open item, owner, due date.

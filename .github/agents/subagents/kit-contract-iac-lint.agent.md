@@ -5,7 +5,6 @@ tools: ["read", "search"]
 agents: []
 user-invocable: false
 disable-model-invocation: false
-model: ["GPT-5 mini", "Claude Haiku 4.5"]
 ---
 # Mission
 Classify static API and infrastructure contract findings precisely, without changing files or deploying anything.

@@ -32,6 +32,7 @@ check its actual health/result when starting a background process.
 ## Deeper references
 
 - [Gate ordering and check-only versus fix modes](gate-ordering.md)
+- [Quality gate catalog](quality-gate-catalog.md)
 - [Toolchain metafiles](toolchain-metafiles.md)
 - [Spell checking and link checking](spell-and-link-checking.md)
 - [Secrets scanning](secrets-scanning.md)

@@ -5,7 +5,7 @@ APM-first, opt-in capabilities with strict source checks and reproducible proven
 ## Start
 
 ```powershell
-uv sync --locked
+task bootstrap
 task verify
 uv run agent-kit compose backend --root . --output build/backend
 uv run agent-kit provenance --root build/backend
@@ -60,6 +60,8 @@ cannot override parent/global skills, plugins or tool exposure.
 - [Setup review](docs/setup-review.md) explains every original capability's disposition.
 - [Complete setup walkthrough](docs/setup-completeness.md) gives acceptance criteria,
   resource-depth checks, knowledge/guard wiring and all 11 optional MCP integrations.
+- [Capability review](docs/capability-review.md) maps topic coverage, scoped
+  extensions and remaining consumer verification.
 - [Agentic setup](.agents/agentic-setup/README.md) indexes the authoritative catalog and guard.
 - [Support](SUPPORT.md), [contributing](CONTRIBUTING.md), and [governance](GOVERNANCE.md)
   explain participation and ownership.
@@ -69,9 +71,9 @@ cannot override parent/global skills, plugins or tool exposure.
 ## Distribution
 
 This is an initial 0.1.0 toolkit, not a globally installed service or a published
-marketplace. The intended personal host is `lfr-ai/agent-kit`, with owner `@lfr-ai`.
-Operators create the remote, configure protected reviews, and publish reviewed
-releases. Existing projects are untouched.
+marketplace. The public repository is `lfr-ai/agent-kit`, owned by `@lfr-ai`.
+Operators configure protected reviews and publish reviewed releases.
+Existing projects are untouched.
 
 `task capabilities:build -- --profile fullstack --feature iac` produces a licensed
 APM source ZIP. Extract it before using APM; it is not a plugin or a locked

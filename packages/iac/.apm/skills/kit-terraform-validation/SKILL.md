@@ -1,6 +1,6 @@
 ---
 name: kit-terraform-validation
-description: Use when reviewing a Terraform plan JSON or rendered plan to detect destructive, replacement, or ownership-impacting changes without applying infrastructure.
+description: Use when reviewing a Terraform plan for destructive, replacement or ownership-impacting changes before apply.
 license: MIT
 ---
 

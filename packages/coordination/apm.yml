@@ -3,6 +3,6 @@ version: "0.1.0"
 license: MIT
 description: Fullstack coordination only when both application stacks are selected.
 targets: [copilot, claude]
-includes: [.apm/prompts/, .apm/skills/]
+includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
 dependencies: {}
 executables: {}

@@ -17,8 +17,8 @@
   secrets use secret mounts; `.dockerignore` excludes secret files.
 - Exec-form entrypoint with `SIGTERM` handling or an init process.
 - Liveness and readiness are defined in the image or the orchestrator.
-- Hadolint passes; the built image has an SBOM, provenance, and a passing
-  vulnerability scan gate.
+- Hadolint passes; shipped images have provenance and pass a built-image
+  vulnerability gate. SBOM generation follows the release inventory requirement.
 - Runtime configuration uses a read-only root filesystem, dropped
   capabilities, `no-new-privileges`, and resource limits.
 

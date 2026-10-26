@@ -1,0 +1,132 @@
+"""FastAPI security dependencies: authenticate a bearer token, then authorize.
+
+Copy into ``src/shop/auth/security.py``. The lifespan stores a ``TokenVerifier``
+as lifespan state under ``token_verifier``. Missing or invalid credentials give
+401 with ``WWW-Authenticate``; a valid caller without permission gets 403 with
+``error="insufficient_scope"`` (RFC 6750 section 3). Tokens are never logged.
+
+Usage::
+
+    ItemsReader = Annotated[Principal, Depends(require(Permission.ITEMS_READ))]
+
+    @router.get("/items")
+    async def list_items(principal: ItemsReader) -> ItemPage: ...
+"""
+
+import logging
+from collections.abc import Awaitable, Callable
+from http import HTTPStatus
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from shop.auth.policy import Permission, Principal, is_allowed, scopes_granting
+from shop.auth.tokens import RejectionReason, TokenRejectedError, TokenVerifier
+
+logger = logging.getLogger(__name__)
+
+REALM = "api"
+_KEYS_RETRY_AFTER_SECONDS = 30
+
+bearer_scheme = HTTPBearer(auto_error=False, description="OAuth 2.0 access token")
+BearerCredentials = Annotated[
+    HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
+]
+
+
+class VerifierMissingError(RuntimeError):
+    """The application started without a token verifier in lifespan state."""
+
+
+async def get_token_verifier(request: Request) -> TokenVerifier:
+    """Return the verifier placed in lifespan state.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        The process-wide verifier.
+
+    Raises:
+        VerifierMissingError: Lifespan did not provide a verifier.
+    """
+    verifier = getattr(request.state, "token_verifier", None)
+    if not isinstance(verifier, TokenVerifier):
+        msg = "no token_verifier in lifespan state"
+        raise VerifierMissingError(msg)
+    return verifier
+
+
+VerifierDep = Annotated[TokenVerifier, Depends(get_token_verifier)]
+
+
+def authenticate(credentials: BearerCredentials, verifier: VerifierDep) -> Principal:
+    """Verify the bearer token; sync because key fetching can block.
+
+    Args:
+        credentials: Parsed ``Authorization`` header, if any.
+        verifier: Token verifier port.
+
+    Returns:
+        The authenticated principal.
+
+    Raises:
+        HTTPException: 401 for missing or invalid tokens, 503 when signing
+            keys cannot be fetched.
+    """
+    if credentials is None:
+        raise HTTPException(
+            HTTPStatus.UNAUTHORIZED,
+            detail="Authentication required.",
+            headers={"WWW-Authenticate": f'Bearer realm="{REALM}"'},
+        )
+    try:
+        return verifier.verify(credentials.credentials)
+    except TokenRejectedError as error:
+        logger.info("bearer token rejected: %s", error.reason)
+        if error.reason is RejectionReason.KEYS_UNAVAILABLE:
+            raise HTTPException(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                detail="Token keys are temporarily unavailable.",
+                headers={"Retry-After": str(_KEYS_RETRY_AFTER_SECONDS)},
+            ) from error
+        raise HTTPException(
+            HTTPStatus.UNAUTHORIZED,
+            detail="The access token is invalid or expired.",
+            headers={
+                "WWW-Authenticate": f'Bearer realm="{REALM}", error="invalid_token"'
+            },
+        ) from error
+
+
+PrincipalDep = Annotated[Principal, Depends(authenticate)]
+
+
+def require(permission: Permission) -> Callable[[Principal], Awaitable[Principal]]:
+    """Build a dependency that admits only principals holding a permission.
+
+    Args:
+        permission: Permission the route requires.
+
+    Returns:
+        An async dependency that returns the principal or raises 403.
+    """
+    scope_hint = " ".join(scopes_granting(permission))
+
+    async def dependency(principal: PrincipalDep) -> Principal:
+        if not is_allowed(principal, permission):
+            logger.info("permission %s denied", permission)
+            raise HTTPException(
+                HTTPStatus.FORBIDDEN,
+                detail="The access token does not grant this operation.",
+                headers={
+                    "WWW-Authenticate": (
+                        f'Bearer realm="{REALM}", error="insufficient_scope", '
+                        f'scope="{scope_hint}"'
+                    )
+                },
+            )
+        return principal
+
+    return dependency

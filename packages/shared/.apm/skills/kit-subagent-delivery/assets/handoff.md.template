@@ -1,0 +1,34 @@
+# Handoff: <task id> <one-line outcome>
+
+- Status: <done | partial | blocked>
+- Worker role: <role id and tier>
+
+## Changed paths
+
+- `<path>`: <created | modified | deleted>, <one-line reason>
+
+## Evidence
+
+- `<exact command>`: <pass | fail, with the first relevant line>
+
+## Limitations
+
+- Not verified: <surface and why>
+- Assumptions: <none | list>
+- Follow-ups for the coordinator: <none | list>
+
+## Requests for the coordinator
+
+- <none | shared file and the exact change needed>
+
+---
+
+## Review package (coordinator fills in)
+
+- Diff matches the changed paths: <yes | no, with the extra paths>
+- Handoff check: `python check_handoff.py <file>`: <exit code>
+- Focused checks re-run by the coordinator:
+  - `<exact command>`: <result>
+- Reviewer and focus: <correctness | coupling | security | delivery | docs>
+- Findings: <none | path:line, scenario, severity>
+- Decision: <accepted | fix directly | follow-up assignment | rejected>

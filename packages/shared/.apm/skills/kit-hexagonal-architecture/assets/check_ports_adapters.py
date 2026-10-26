@@ -6,9 +6,17 @@ either a class that names the port as a base class (explicit) or, with
 ``--structural``, any other class that defines every member of the port.
 
 For each implementation it reports missing members, extra public methods,
-sync/async differences, parameter name, order or kind differences, and default
-value differences. Return annotations are left to a type checker. Output lines
-are ``path:line: message``; the exit status is 1 when anything is reported.
+callable-kind differences, parameter name, order or kind differences, and default
+value differences. Coroutines must match coroutines; async generators are not
+coroutines. A normal ``def`` port annotated with a bare or qualified
+``AsyncIterator`` (optionally subscripted) also accepts an async generator.
+Ordinary functions and synchronous generators remain compatible.
+
+This is a syntactic body check: nested function, class and lambda scopes are
+skipped, including their headers. Annotation aliases, strings, decorators that
+change call behavior and general return-type equivalence are not resolved.
+Other return-type checking belongs to a type checker. Output lines are
+``path:line: message``; the exit status is 1 when anything is reported.
 
 Example:
     python check_ports_adapters.py src tests --ports src/app/application/ports
@@ -17,6 +25,8 @@ Example:
 import argparse
 import ast
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 import sys
 from typing import NamedTuple
@@ -40,9 +50,33 @@ _IGNORED_MEMBERS = frozenset(
 _SKIPPED_DECORATORS = frozenset({"setter", "deleter", "overload"})
 _PROPERTY_DECORATORS = frozenset({"property", "cached_property"})
 _DATA_KINDS = frozenset({"attribute", "property"})
-_CALLABLE_KINDS = frozenset({"method", "classmethod", "staticmethod"})
+_CALLABLE_KINDS = frozenset(
+    {"method", "classmethod", "staticmethod", "async method", "async generator method"}
+)
 _ANY_DEFAULT = "..."
 _EXIT_USAGE = 2
+
+
+class _CallableKind(StrEnum):
+    """Syntactic execution kinds, independent of method binding."""
+
+    NORMAL = "normal"
+    GENERATOR = "generator"
+    COROUTINE = "coroutine"
+    ASYNC_GENERATOR = "async generator"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _CallableContract:
+    """Invocation shape and the narrow ``AsyncIterator`` annotation hint.
+
+    Attributes:
+        kind: Execution kind derived from the function's own body.
+        returns_async_iterator: Whether the annotation names ``AsyncIterator``.
+    """
+
+    kind: _CallableKind
+    returns_async_iterator: bool
 
 
 class Param(NamedTuple):
@@ -64,16 +98,17 @@ class Member(NamedTuple):
 
     Attributes:
         name: Member name.
-        kind: ``method``, ``async method``, ``classmethod``, ``staticmethod``,
-            ``property`` or ``attribute``.
+        kind: Method binding or execution label, ``property`` or ``attribute``.
         params: Parameters after the implicit first argument.
         line: Line of the declaration.
+        contract: Invocation shape for a function; absent for attributes.
     """
 
     name: str
     kind: str
     params: tuple[Param, ...]
     line: int
+    contract: _CallableContract | None = None
 
 
 class ClassInfo(NamedTuple):
@@ -183,23 +218,80 @@ def _decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return {_simple_name(item) for item in node.decorator_list}
 
 
+def _has_yield(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Find ``yield`` or ``yield from`` without entering nested scopes."""
+    pending: list[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Yield | ast.YieldFrom):
+            return True
+        if not isinstance(
+            node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _callable_contract(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> _CallableContract:
+    """Classify a body and recognize only a literal ``AsyncIterator`` name."""
+    has_yield = _has_yield(function)
+    if isinstance(function, ast.AsyncFunctionDef):
+        kind = _CallableKind.ASYNC_GENERATOR if has_yield else _CallableKind.COROUTINE
+    else:
+        kind = _CallableKind.GENERATOR if has_yield else _CallableKind.NORMAL
+    annotation = function.returns
+    if isinstance(annotation, ast.Subscript):
+        annotation = annotation.value
+    return _CallableContract(
+        kind=kind,
+        returns_async_iterator=isinstance(annotation, ast.Name | ast.Attribute)
+        and _simple_name(annotation) == "AsyncIterator",
+    )
+
+
+def _callables_compatible(
+    expected: _CallableContract, actual: _CallableContract
+) -> bool:
+    """Compare invocation shapes without inferring general type equivalence."""
+    if (
+        expected.kind is _CallableKind.COROUTINE
+        or actual.kind is _CallableKind.COROUTINE
+    ):
+        return expected.kind is actual.kind
+    if expected.kind is _CallableKind.ASYNC_GENERATOR:
+        return actual.kind is _CallableKind.ASYNC_GENERATOR
+    if actual.kind is _CallableKind.ASYNC_GENERATOR:
+        return expected.kind is _CallableKind.NORMAL and expected.returns_async_iterator
+    return True
+
+
+def _binding_kind(decorators: set[str]) -> str:
+    """Describe binding separately from callable execution."""
+    if decorators & _PROPERTY_DECORATORS:
+        return "property"
+    if "staticmethod" in decorators:
+        return "staticmethod"
+    if "classmethod" in decorators:
+        return "classmethod"
+    return "method"
+
+
 def _function_member(node: ast.FunctionDef | ast.AsyncFunctionDef) -> Member:
     """Describe one function definition as a class member."""
     decorators = _decorators(node)
     params = _params(node.args)
-    if decorators & _PROPERTY_DECORATORS:
-        kind = "property"
-    elif "staticmethod" in decorators:
-        kind = "staticmethod"
-    elif "classmethod" in decorators:
-        kind = "classmethod"
-    elif isinstance(node, ast.AsyncFunctionDef):
-        kind = "async method"
-    else:
-        kind = "method"
-    if kind != "staticmethod":
+    contract = _callable_contract(node)
+    kind = _binding_kind(decorators)
+    if kind in _CALLABLE_KINDS:
+        kind = {
+            _CallableKind.COROUTINE: "async method",
+            _CallableKind.ASYNC_GENERATOR: "async generator method",
+        }.get(contract.kind, kind)
+    if "staticmethod" not in decorators:
         params = params[1:]
-    return Member(node.name, kind, params, node.lineno)
+    return Member(node.name, kind, params, node.lineno, contract)
 
 
 def _instance_attributes(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[Member]:
@@ -345,12 +437,23 @@ def _render(params: Sequence[Param]) -> str:
 
 
 def _kinds_compatible(expected: str, actual: str) -> bool:
-    """Treat attributes and properties alike, and all synchronous callables alike."""
+    """Compare data or method categories; invocation shape is checked separately."""
     if expected == actual:
         return True
     if expected in _DATA_KINDS and actual in _DATA_KINDS:
         return True
     return expected in _CALLABLE_KINDS and actual in _CALLABLE_KINDS
+
+
+def _members_compatible(expected: Member, actual: Member) -> bool:
+    """Check member categories and, for callables, their invocation contracts."""
+    if not _kinds_compatible(expected.kind, actual.kind):
+        return False
+    if expected.kind in _DATA_KINDS:
+        return True
+    if expected.contract is None or actual.contract is None:
+        return expected.contract is actual.contract
+    return _callables_compatible(expected.contract, actual.contract)
 
 
 def _compare(
@@ -359,7 +462,7 @@ def _compare(
     """Compare one implemented member with the port declaration."""
     where = f"'{owner.name}.{actual.name}'"
     declared = f"port '{port.name}.{expected.name}'"
-    if not _kinds_compatible(expected.kind, actual.kind):
+    if not _members_compatible(expected, actual):
         return [
             Finding(
                 owner.path,
@@ -559,6 +662,7 @@ def _read(paths: Iterable[Path]) -> list[tuple[str, str]]:
 
 
 _SELF_TEST_PORT = """
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 class DocumentStore(Protocol):
@@ -571,6 +675,9 @@ class AuditedStore(DocumentStore, Protocol):
 
 class Unused(Protocol):
     def ping(self) -> None: ...
+
+class EventStream(Protocol):
+    def events(self) -> AsyncIterator[bytes]: ...
 """
 
 _SELF_TEST_ADAPTERS = """
@@ -600,6 +707,16 @@ class PartialAudit(AuditedStore):
     limit = 1
     async def get(self, key: str) -> bytes: return b""
     def put(self, key: str, data: bytes, *, overwrite: bool = False) -> None: pass
+
+class GoodStream:
+    async def events(self):
+        yield b""
+
+class BadStream:
+    async def events(self):
+        def helper():
+            yield b""
+        return helper()
 """
 
 
@@ -620,13 +737,14 @@ def self_test() -> list[str]:
         "renamed parameter": "'Audited.put'(name, data",
         "missing member": "does not implement 'AuditedStore.history'",
         "unimplemented port": "port 'Unused' has no implementation",
+        "coroutine is not an iterator factory": "'BadStream.events' is an async method",
     }
     failures = [
         f"expected {label}: {needle!r}"
         for label, needle in expectations.items()
         if needle not in rendered
     ]
-    if "GoodStore" in rendered:
+    if "GoodStore" in rendered or "GoodStream" in rendered:
         failures.append("a matching adapter was reported")
     lenient = analyze(
         [("ports.py", _SELF_TEST_PORT)],

@@ -195,6 +195,6 @@ A passing file test does not certify a native IDE, CLI, or cloud session.
 - [GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)
 - [VS Code agent hooks](https://code.visualstudio.com/docs/agent-customization/hooks)
 - [VS Code Local hooks reference](https://code.visualstudio.com/docs/agents/reference/hooks-reference)
-- [VS Code agent tools](https://code.visualstudio.com/docs/agents/agent-tools)
+- [VS Code agent tools](https://code.visualstudio.com/docs/agents/run/tools)
 - [OWASP LLM01 prompt injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
 - [OWASP LLM06 excessive agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)

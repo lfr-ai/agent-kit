@@ -19,6 +19,8 @@ pass typed values explicitly to the code that needs them.
 | Contract tests | [settings tests](../assets/test_settings.py.template) |
 | Hidden environment reads | [checker](../assets/check_from_config_pattern.py) |
 | Deployment manifest key list | [required keys](../assets/required_keys.json.template) |
+| Optional composed experiments, Hydra compatibility and bounded sweeps | [reproducible experiments](reproducible-experiments.md) |
+| Dependency-free experiment validation and manifests | [experiment template](../assets/experiment_config.py.template), [public JSON input](../assets/experiment.json.template) |
 
 ## Acceptance gates
 
@@ -75,6 +77,9 @@ This skill covers configuration semantics, validation, and secret handling in
 application code. It does not replace secret-store access reviews, platform
 policy, or deployment orchestration checks. The checker is a static heuristic: it
 cannot see environment access through dynamic imports or third-party libraries.
+The optional experiment branch covers public composition/provenance, not model
+execution. Its stdlib regressions do not certify native Hydra or plugin behavior;
+the consumer owns dependency compatibility and runtime verification.
 
 ## Sources
 

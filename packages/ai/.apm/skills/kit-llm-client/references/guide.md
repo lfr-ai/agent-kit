@@ -15,6 +15,7 @@ controls. This guide maps the references and copyable assets of the skill.
 | Schemas, parsing, repair, business validation, tool calls | [structured-output.md](structured-output.md) |
 | Tokens, cost, budgets, logging, redaction, tracing, prompt versions | [accounting-and-observability.md](accounting-and-observability.md) |
 | Evaluation sets, graders, reporting, gates | [evaluation.md](evaluation.md) |
+| Langfuse-managed prompts, version pins, rollout labels, cache and failure policy | [prompt-management.md](prompt-management.md) |
 
 ## Assets and copy targets
 
@@ -26,12 +27,15 @@ controls. This guide maps the references and copyable assets of the skill.
 | [redaction.py.template](../assets/redaction.py.template) | `llm/redaction.py` | stdlib |
 | [fake_llm.py.template](../assets/fake_llm.py.template) | `llm/fakes.py` | port |
 | [litellm_adapter.py.template](../assets/litellm_adapter.py.template) | `llm/adapters/litellm.py` | litellm |
+| [managed_prompts.py.template](../assets/managed_prompts.py.template) | `llm/managed_prompts.py` | port, stdlib |
+| [langfuse_prompts.py.template](../assets/langfuse_prompts.py.template) | `llm/adapters/langfuse_prompts.py` | managed prompts, consumer SDK facade |
 | [llm_request_template.json.template](../assets/llm_request_template.json.template) | design review or fixture | none |
 
 Tests: [policies](../assets/test_llm_policies.py.template),
 [structured output](../assets/test_structured_output.py.template),
 [LiteLLM adapter](../assets/test_litellm_adapter.py.template),
-[prompts and redaction](../assets/test_prompt_and_redaction.py.template).
+[prompts and redaction](../assets/test_prompt_and_redaction.py.template),
+[managed prompts](../assets/test_managed_prompts.py.template).
 None of them sends a model request.
 
 ## Acceptance gates

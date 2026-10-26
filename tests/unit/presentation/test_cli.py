@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
@@ -142,6 +142,45 @@ def test_context_reports_missing_entry_files(
     assert result == 0
     assert "Missing agent context files: PROJECT.md." in output
     assert '"hookEventName": "SessionStart"' in output
+
+
+def test_context_json_is_safe_for_cp1252_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "\u65e5\u672c\U0001f680"
+    workspace.mkdir()
+    monkeypatch.setattr("sys.stdin", _input_stream(json.dumps({"cwd": str(workspace)})))
+    buffer = BytesIO()
+    with TextIOWrapper(buffer, encoding="cp1252", errors="strict") as stream:
+        monkeypatch.setattr("sys.stdout", stream)
+
+        assert main(_cli_actions(context=session_context), ["context"]) == 0
+
+        stream.flush()
+        raw = buffer.getvalue()
+        response = json.loads(raw.decode("ascii"))
+        context = response["hookSpecificOutput"]["additionalContext"]
+        assert str(workspace) in context
+        assert response["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+
+
+def test_check_json_is_safe_for_cp1252_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = "assets/\u65e5\u672c\U0001f680.md"
+    report = CheckReport(
+        findings=(Finding(code="links.missing", message="Missing guide.", path=path),),
+        profiles=(),
+        version="0.1.0",
+    )
+    buffer = BytesIO()
+    with TextIOWrapper(buffer, encoding="cp1252", errors="strict") as stream:
+        monkeypatch.setattr("sys.stdout", stream)
+
+        assert main(_cli_actions(check=lambda _root: report), ["check", "--json"]) == 1
+
+        stream.flush()
+        response = json.loads(buffer.getvalue().decode("ascii"))
+        assert response["valid"] is False
+        assert response["findings"][0]["path"] == path
 
 
 def test_context_malformed_json_reports_failure(

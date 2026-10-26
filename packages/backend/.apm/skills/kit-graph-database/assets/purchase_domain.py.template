@@ -1,0 +1,78 @@
+"""Minimal purchase domain types and the graph port implemented by the adapter.
+
+Copy to ``shop/core/purchases.py`` only when the project has no equivalent
+types; model richer domain behavior with the ``kit-domain-model`` templates.
+The port speaks domain types only; no driver, record, or Cypher crosses it.
+"""
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+
+_DEFAULT_LIMIT = 20
+
+
+class GraphUnavailableError(Exception):
+    """The graph store stayed unreachable after the driver's retries."""
+
+    def __init__(self, *, operation: str) -> None:
+        """Record which port operation failed.
+
+        Args:
+            operation: Name of the port method that could not complete.
+        """
+        super().__init__(f"graph store unavailable during {operation}")
+        self.operation = operation
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Purchase:
+    """One product bought by a customer in one order."""
+
+    customer_id: str
+    sku: str
+    order_id: str
+    purchased_at: datetime
+
+    def __post_init__(self) -> None:
+        """Reject naive purchase timestamps.
+
+        Raises:
+            ValueError: If ``purchased_at`` has no time zone.
+        """
+        if self.purchased_at.tzinfo is None:
+            message = "purchased_at must be timezone-aware"
+            raise ValueError(message)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProductAffinity:
+    """A product and how many customers bought it together with another one."""
+
+    sku: str
+    together: int
+
+
+class PurchaseGraph(Protocol):
+    """Port for recording purchases and querying co-purchase relationships."""
+
+    async def record_purchases(self, purchases: Sequence[Purchase]) -> None:
+        """Record purchases idempotently or raise ``GraphUnavailableError``."""
+        ...
+
+    async def products_bought_together(
+        self, sku: str, *, limit: int = _DEFAULT_LIMIT
+    ) -> list[ProductAffinity]:
+        """Return products most often bought together with ``sku``."""
+        ...
+
+    async def customer_products(
+        self,
+        customer_id: str,
+        *,
+        after_sku: str | None = None,
+        limit: int = _DEFAULT_LIMIT,
+    ) -> list[str]:
+        """Return one keyset page of SKUs a customer bought."""
+        ...

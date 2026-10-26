@@ -141,7 +141,11 @@ class _WorkflowLoader(yaml.BaseLoader):
     def construct_mapping(
         self, node: MappingNode, deep: bool = False
     ) -> dict[str, object]:
-        """Prevent duplicate keys from overriding earlier permission declarations."""
+        """Prevent duplicate keys from overriding earlier permission declarations.
+
+        Raises:
+            _GovernanceInputError: A workflow key is repeated.
+        """
         result: dict[str, object] = {}
         for key_node, value_node in node.value:
             key = self.construct_object(key_node, deep=deep)
@@ -157,7 +161,11 @@ def _mapping(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Reject duplicate maintainer fields without exposing their contents."""
+    """Reject duplicate maintainer fields without exposing their contents.
+
+    Raises:
+        _GovernanceInputError: A maintainer field is repeated.
+    """
     value: dict[str, object] = {}
     for key, item in pairs:
         if key in value:
@@ -176,7 +184,11 @@ def _valid_owners(owners: object) -> bool:
 
 
 def _verify_contact(field: str, contact: object) -> None:
-    """Accept an absent contact or a private HTTPS or mailto route."""
+    """Accept an absent contact or a private HTTPS or mailto route.
+
+    Raises:
+        _GovernanceInputError: The contact is not a private HTTPS or mailto route.
+    """
     if contact is None:
         return
     if not isinstance(contact, str) or any(char.isspace() for char in contact):
@@ -193,7 +205,11 @@ def _verify_contact(field: str, contact: object) -> None:
 
 
 def _maintainers(root: Path) -> dict[str, object]:
-    """Read the explicit account-neutral ownership source."""
+    """Read the explicit account-neutral ownership source.
+
+    Raises:
+        _GovernanceInputError: The maintainer source is malformed.
+    """
     raw: object = json.loads(
         (root / ".github/maintainers.json").read_text(encoding="utf-8"),
         object_pairs_hook=_unique_pairs,

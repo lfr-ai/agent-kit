@@ -12,7 +12,10 @@ license: MIT
    List the examples as test names first in the [behavior cases](assets/cases.md.template)
    worksheet: ordinary, highest-risk boundary or invalid input, failure or recovery.
 2. Find the narrowest existing test layer that can observe that result without faking the
-   policy ([test tiers](references/test-tiers.md)).
+   policy ([test tiers](references/test-tiers.md)). For a new or reorganized suite,
+   lay out tiers, conftest layers, markers, tier sessions and coverage per
+   [test suite architecture](references/test-suite-architecture.md), starting from
+   the [nox template](assets/noxfile.py.template).
 3. Write one test. Name it after the behavior and outcome, not the function
    ([naming guidance](references/naming-speed-coverage.md)).
 4. Assert returned values, side effects, and error meaning rather than private call
@@ -40,7 +43,10 @@ license: MIT
     - [`check_test_hygiene.py`](assets/check_test_hygiene.py) (`python check_test_hygiene.py tests`):
       heavy module-level imports, sleeps, duplicate test module names;
     - [`check_test_naming.py`](assets/check_test_naming.py) (`python check_test_naming.py tests`):
-      generic, numbered, too-short and redefined test names.
+      generic, numbered, too-short and redefined test names;
+    - [`check_test_layout.py`](assets/check_test_layout.py) (`python check_test_layout.py tests`):
+      test modules outside tier directories, test files not named `test_*.py`, and tests
+      without an assertion or `pytest.raises`.
 14. Report any test that could not run and the reason.
 
 For a pure restructuring, first establish the pre-change behavior as a baseline
@@ -53,7 +59,8 @@ with characterization tests that pass against the unchanged code.
 - A deliberate defect in the new code makes at least one test fail.
 - Ordinary, boundary or invalid, and failure or recovery cases observe public results.
 - Tests pass alone, in any order, and without network, real time or developer settings.
-- `check_test_hygiene.py` and `check_test_naming.py` report no new findings in touched files.
+- `check_test_hygiene.py`, `check_test_naming.py` and `check_test_layout.py` report no new
+  findings in touched files.
 - Coverage thresholds are unchanged; new branches are exercised in both directions.
 - Live or integration coverage that could not run is reported as unavailable, not passed.
 

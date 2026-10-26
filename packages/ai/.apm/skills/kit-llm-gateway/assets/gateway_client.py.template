@@ -1,0 +1,127 @@
+"""Copy to ``llm/gateway_settings.py``: validated client settings for a model gateway.
+
+Stdlib only. Loads the gateway address, virtual key, alias and timeout once at
+startup and produces keyword arguments for the ``kit-llm-client`` LiteLLM
+adapter or an OpenAI-compatible SDK client. Retries stay disabled here because
+the gateway or the application policy layer owns them.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+import math
+import re
+from typing import final
+from urllib.parse import urlsplit
+
+DEFAULT_PREFIX: str = "LLM_GATEWAY_"
+MAX_TIMEOUT_SECONDS: float = 600.0
+LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+_ALIAS = re.compile(r"[a-z][a-z0-9-]{0,62}")
+
+
+class GatewaySettingsError(ValueError):
+    """A gateway setting is missing or invalid; the message never holds values."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class GatewayClientSettings:
+    """Validated settings; the key is excluded from ``repr``.
+
+    Args:
+        base_url (str): Gateway root URL without a trailing slash.
+        api_key (str): Virtual key issued by the gateway for this service.
+        model_alias (str): Job-named alias defined in the gateway model list.
+        timeout_seconds (float): Per-attempt request timeout.
+    """
+
+    base_url: str
+    api_key: str = field(repr=False)
+    model_alias: str
+    timeout_seconds: float
+
+    def litellm_kwargs(self) -> dict[str, object]:
+        """Return arguments for an in-process LiteLLM call through the proxy.
+
+        Returns:
+            dict[str, object]: ``model``, ``api_base``, ``api_key``, ``timeout``
+            and ``num_retries`` with retries disabled.
+        """
+        return {
+            "model": f"litellm_proxy/{self.model_alias}",
+            "api_base": self.base_url,
+            "api_key": self.api_key,
+            "timeout": self.timeout_seconds,
+            "num_retries": 0,
+        }
+
+    def openai_client_kwargs(self) -> dict[str, object]:
+        """Return constructor arguments for an OpenAI-compatible SDK client.
+
+        Returns:
+            dict[str, object]: ``base_url``, ``api_key``, ``timeout`` and
+            ``max_retries`` with retries disabled.
+        """
+        return {
+            "base_url": f"{self.base_url}/v1",
+            "api_key": self.api_key,
+            "timeout": self.timeout_seconds,
+            "max_retries": 0,
+        }
+
+
+def _base_url(value: str) -> str:
+    parts = urlsplit(value)
+    secure = parts.scheme == "https"
+    loopback = parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS
+    if not parts.hostname or not (secure or loopback) or parts.query or parts.fragment:
+        message = "base URL must be https, or http on a loopback host"
+        raise GatewaySettingsError(message)
+    if parts.username or parts.password:
+        message = "base URL must not embed credentials"
+        raise GatewaySettingsError(message)
+    return value.rstrip("/")
+
+
+def _timeout(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError as error:
+        message = "timeout must be a number of seconds"
+        raise GatewaySettingsError(message) from error
+    if not math.isfinite(seconds) or not 0 < seconds <= MAX_TIMEOUT_SECONDS:
+        message = "timeout must be positive and at most the maximum"
+        raise GatewaySettingsError(message)
+    return seconds
+
+
+def load_gateway_settings(
+    *, environ: Mapping[str, str], prefix: str = DEFAULT_PREFIX
+) -> GatewayClientSettings:
+    """Read and validate ``<prefix>URL``, ``KEY``, ``ALIAS`` and ``TIMEOUT_SECONDS``.
+
+    Args:
+        environ (Mapping[str, str]): Environment mapping, injected for tests.
+        prefix (str): Variable name prefix.
+
+    Returns:
+        GatewayClientSettings: Immutable settings.
+
+    Raises:
+        GatewaySettingsError: A variable is missing or invalid.
+    """
+    names = ("URL", "KEY", "ALIAS", "TIMEOUT_SECONDS")
+    values = {name: environ.get(f"{prefix}{name}", "").strip() for name in names}
+    missing = sorted(f"{prefix}{name}" for name, value in values.items() if not value)
+    if missing:
+        message = f"missing gateway settings: {', '.join(missing)}"
+        raise GatewaySettingsError(message)
+    if _ALIAS.fullmatch(values["ALIAS"]) is None:
+        message = "alias must be a lowercase job name such as chat-default"
+        raise GatewaySettingsError(message)
+    return GatewayClientSettings(
+        base_url=_base_url(values["URL"]),
+        api_key=values["KEY"],
+        model_alias=values["ALIAS"],
+        timeout_seconds=_timeout(values["TIMEOUT_SECONDS"]),
+    )

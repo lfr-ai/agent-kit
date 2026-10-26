@@ -1,0 +1,27 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "remote-api-token",
+      "description": "Token for REVIEWED_REMOTE_NAME (stored by VS Code, never committed)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "project-tools": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--locked", "--directory", "${workspaceFolder}", "python", "-m", "REVIEWED_PACKAGE.mcp_server"],
+      "env": {
+        "PROJECT_TOOLS_READ_ONLY": "true"
+      }
+    },
+    "reviewed-remote": {
+      "type": "http",
+      "url": "https://REVIEWED_HOST.example/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:remote-api-token}"
+      }
+    }
+  }
+}

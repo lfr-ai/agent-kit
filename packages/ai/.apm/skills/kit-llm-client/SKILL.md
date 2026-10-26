@@ -33,7 +33,9 @@ license: MIT
    ([structured-output.md](references/structured-output.md),
    [structured_output.py.template](assets/structured_output.py.template)).
 9. Version prompts, keep untrusted text in the user message, and record prompt
-   name, version and served model on every call.
+   name, version and served model on every call. For optional Langfuse-managed
+   versions, rollout labels and cold-start failure policy, select
+   [prompt-management.md](references/prompt-management.md).
 10. Log and trace metadata only; keep prompts, completions and provider
     messages out of normal logs and attach redaction to remaining paths
     ([accounting-and-observability.md](references/accounting-and-observability.md),

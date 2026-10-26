@@ -1,0 +1,136 @@
+"""CLI tests through ``main(argv)`` plus one subprocess smoke test.
+
+Copy into ``tests/cli/test_cli.py``. In-process tests call ``main`` with an
+explicit environment mapping so the developer's environment never leaks in;
+the smoke test runs ``python -m shop`` to prove the entry point is wired.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from shop.cli import ExitCode, main
+
+ORDER = {
+    "lines": [
+        {"unit_price": "1.20", "quantity": 2},
+        {"unit_price": "0.05", "quantity": 1},
+    ]
+}
+
+
+@pytest.fixture
+def order_file(tmp_path: Path) -> Path:
+    path = tmp_path / "order.json"
+    path.write_text(json.dumps(ORDER), encoding="utf-8")
+    return path
+
+
+def test_total_text_goes_to_stdout(
+    order_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["total", str(order_file)], env={}) == ExitCode.OK
+    captured = capsys.readouterr()
+    assert captured.out == "2.45 EUR\n"
+    assert captured.err == ""
+
+
+def test_json_output_is_one_document(
+    order_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--json", "total", str(order_file)], env={}) == ExitCode.OK
+    assert json.loads(capsys.readouterr().out) == {
+        "currency": "EUR",
+        "lines": 2,
+        "total": "2.45",
+    }
+
+
+def test_precedence_flags_over_env_over_file_over_defaults(
+    tmp_path: Path, order_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "shop.toml"
+    config.write_text('currency = "USD"\nprecision = 3\n', encoding="utf-8")
+    env = {"SHOP_CONFIG": str(config), "SHOP_CURRENCY": "GBP"}
+    assert (
+        main(["--json", "total", str(order_file), "--precision", "1"], env=env)
+        == ExitCode.OK
+    )
+    assert json.loads(capsys.readouterr().out) == {
+        "currency": "GBP",
+        "lines": 2,
+        "total": "2.5",
+    }
+    assert main(["--json", "config"], env=env) == ExitCode.OK
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["currency"] == {"source": "env", "value": "GBP"}
+    assert shown["precision"] == {"source": "file", "value": 3}
+
+
+def test_token_is_reported_only_as_set(capsys: pytest.CaptureFixture[str]) -> None:
+    # pragma: allowlist nextline secret: synthetic redaction fixture
+    secret = "token-value-that-must-not-print"
+    assert main(["-v", "config"], env={"SHOP_API_TOKEN": secret}) == ExitCode.OK
+    captured = capsys.readouterr()
+    assert "api_token = set" in captured.out
+    assert secret not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    ("argv", "content", "code", "message"),
+    [
+        (["total", "missing.json"], None, ExitCode.NO_INPUT, "not found"),
+        (["total", "{path}"], "not json", ExitCode.DATA_ERROR, "unreadable"),
+        (
+            ["total", "{path}"],
+            '{"lines": [{"unit_price": "x", "quantity": 1}]}',
+            ExitCode.DATA_ERROR,
+            "unit_price",
+        ),
+        (
+            ["total", "{path}", "--currency", "eur"],
+            '{"lines": []}',
+            ExitCode.CONFIG_ERROR,
+            "currency",
+        ),
+    ],
+)
+def test_errors_go_to_stderr_with_exit_codes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    content: str | None,
+    code: ExitCode,
+    message: str,
+) -> None:
+    path = tmp_path / "order.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    resolved = [item.format(path=path) for item in argv]
+    assert main(resolved, env={}) == code
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert message in captured.err
+
+
+def test_usage_errors_and_help_return_instead_of_exiting(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["total"], env={}) == ExitCode.USAGE
+    assert main(["--help"], env={}) == ExitCode.OK
+    assert "COMMAND" in capsys.readouterr().out
+
+
+def test_module_entry_point_smoke() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "shop", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "total" in result.stdout

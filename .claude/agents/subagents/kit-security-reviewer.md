@@ -2,7 +2,6 @@
 name: kit-security-reviewer
 description: "Review identity, inputs, secrets, and access boundaries in an assigned scope."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Review security boundaries
 

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "project-tools": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--locked", "python", "-m", "REVIEWED_PACKAGE.mcp_server"],
+      "env": {
+        "PROJECT_TOOLS_READ_ONLY": "true"
+      }
+    },
+    "reviewed-remote": {
+      "type": "http",
+      "url": "https://REVIEWED_HOST.example/mcp",
+      "headers": {
+        "Authorization": "Bearer ${REVIEWED_REMOTE_TOKEN}"
+      }
+    }
+  }
+}

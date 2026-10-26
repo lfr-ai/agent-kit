@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import tomllib
 
 from identify.identify import tags_from_filename
@@ -274,6 +276,70 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
     editor = json.loads((_ROOT / ".vscode/tasks.json").read_text())["tasks"]
     assert all(task["args"][0] in tasks for task in editor)
     assert len(editor) == len({task["args"][0] for task in editor})
+
+
+def test_task_verification_never_syncs_before_dependency_audit() -> None:
+    tasks = yaml.safe_load((_ROOT / "Taskfile.yml").read_text())["tasks"]
+    command = shlex.split(tasks["verify"]["cmds"][0])
+
+    assert command[:5] == ["uv", "run", "--locked", "--no-sync", "python"]
+    assert command[5:] == ["scripts/verify.py", "{{.CLI_ARGS}}"]
+    workflow = yaml.safe_load((_ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["verify"]["steps"]
+    gate = next(
+        step
+        for step in steps
+        if step.get("name") == "Same check-only gate as task verify"
+    )
+    assert shlex.split(gate["run"]) == command[:-1]
+    assert next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("run") == "uv sync --locked"
+    ) < steps.index(gate)
+
+
+@pytest.mark.parametrize("lock_exit", [0, 1])
+def test_full_verification_checks_lock_before_other_gates(
+    monkeypatch: pytest.MonkeyPatch, lock_exit: int
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        code = lock_exit if command == ["uv", "lock", "--check"] else 0
+        return subprocess.CompletedProcess(command, code)
+
+    monkeypatch.setattr(verify_module.sys, "argv", ["verify.py"])
+    monkeypatch.setattr(verify_module.shutil, "which", lambda name: name)
+    monkeypatch.setattr(verify_module.subprocess, "run", run)
+
+    assert verify_module.main() == lock_exit
+    assert calls[0] == ["uv", "lock", "--check"]
+    expected = 1 if lock_exit else len(verify_module._CHECKS)
+    assert len(calls) == expected
+    assert not any(command[-1] == "scripts/audit_dependencies.py" for command in calls)
+
+
+def test_network_audit_does_not_run_installation_or_other_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(
+        command: list[str], *, env: dict[str, str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert env["APM_NO_SCRIPTS"] == "1"
+        assert env["APM_NON_INTERACTIVE"] == "1"
+        return subprocess.CompletedProcess(command, 7)
+
+    monkeypatch.setattr(verify_module.sys, "argv", ["verify.py", "dependencies"])
+    monkeypatch.setattr(verify_module.shutil, "which", lambda name: name)
+    monkeypatch.setattr(verify_module.subprocess, "run", run)
+
+    assert verify_module.main() == 7
+    assert calls == [[verify_module._PYTHON, "scripts/audit_dependencies.py"]]
 
 
 def test_workspace_settings_stay_discoverable_and_strict_json() -> None:

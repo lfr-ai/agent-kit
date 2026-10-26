@@ -1,0 +1,31 @@
+# Shop API requests for editors that run .http files (VS Code REST Client,
+# JetBrains HTTP Client). Variables below are placeholders; put the access
+# token in the editor's private environment file, which stays out of version
+# control, and reference it as {{accessToken}}.
+
+@baseUrl = http://localhost:8000
+@apiPrefix = /api/v1
+
+### Liveness
+GET {{baseUrl}}/health/live
+
+### Readiness
+GET {{baseUrl}}/health/ready
+
+### Get one item
+GET {{baseUrl}}{{apiPrefix}}/items/sku-1
+Accept: application/json
+Authorization: Bearer {{accessToken}}
+X-Request-ID: manual-check-0001
+
+### Missing item returns 404 problem details
+GET {{baseUrl}}{{apiPrefix}}/items/does-not-exist
+Authorization: Bearer {{accessToken}}
+
+### Missing token returns 401 with WWW-Authenticate
+GET {{baseUrl}}{{apiPrefix}}/items/sku-1
+
+### Disallowed CORS origin gets no Access-Control-Allow-Origin header
+OPTIONS {{baseUrl}}{{apiPrefix}}/items/sku-1
+Origin: https://not-allowed.example.test
+Access-Control-Request-Method: GET

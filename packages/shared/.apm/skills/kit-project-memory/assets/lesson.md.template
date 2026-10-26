@@ -1,0 +1,21 @@
+# Lessons
+
+<!-- Copy one entry block per surprising, evidenced fact into the repository's
+lessons file. Newest first. Each heading starts with the ISO date it was
+recorded; check_memory_files.py reads it. Required fields: Status, Evidence.
+Allowed Status values: active, superseded. Never delete an entry; supersede it. -->
+
+## YYYY-MM-DD One sentence a newcomer can act on
+
+- Status: active
+- Scope: applies to <package, command or environment>; does not apply to <...>
+- Evidence: [owning test or file](../path/to/evidence) and the command that showed it
+- Expected instead: the assumption it contradicted, which made it surprising
+- Promote to: nothing yet / check / policy line / decision record, and when
+  (usually once it recurs)
+- Last verified: YYYY-MM-DD
+
+<!-- When replaced:
+- Status: superseded
+- Superseded by: [check, record or newer entry](../path)
+-->

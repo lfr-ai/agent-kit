@@ -1,0 +1,79 @@
+# Edge and TLS review worksheet
+
+Copy to the change record and fill every row. Write "not applicable" with a
+reason rather than deleting a row. Record evidence (command, output excerpt,
+tool version), not opinions.
+
+## Scope
+
+- Change: <pull request or change ID>
+- Edge component: nginx | Caddy | Traefik | managed (Front Door, Application Gateway, other)
+- Version and TLS library: <for example nginx 1.27.x with OpenSSL 3.x>
+- Hops from client to application: <client -> CDN -> load balancer -> proxy -> app>
+- Reviewer and date: <name, YYYY-MM-DD>
+- Operator who reloads or deploys: <name>
+
+## TLS
+
+| Check | Expected | Evidence |
+| --- | --- | --- |
+| Protocols | TLS 1.2 and 1.3 only; 1.3 preferred by clients | `openssl s_client -tls1_1` fails |
+| Cipher and curve profile | Mozilla intermediate (or modern) for the deployed versions | Generator link and version |
+| Certificate automation | ACME or managed renewal; renewal alert before expiry | Renewal log, alert rule |
+| Certificate chain | Full chain served; key not readable by the app user | `openssl s_client -showcerts` |
+| Revocation and stapling | Stapling on only when the certificate has an OCSP URL | `openssl x509 -ocsp_uri` |
+| HSTS | max-age staged; includeSubDomains and preload only with owner approval | Response headers |
+| HTTP to HTTPS | Permanent redirect to a fixed host name, not the request Host | `curl -I http://...` |
+| Unknown host names | Rejected (444 or TLS handshake rejection) | `curl --resolve` with a bogus name |
+
+## Forwarding and trust
+
+| Check | Expected | Evidence |
+| --- | --- | --- |
+| Trusted proxy list | Only the known previous hop ranges | Proxy config and app server flags |
+| X-Forwarded-For handling | Client-supplied values discarded or appended by the first trusted hop | Request echo in a test environment |
+| X-Forwarded-Proto / Forwarded | Set by the proxy on every proxied route | `check_nginx_config.py` output |
+| Application server | `--proxy-headers` with `--forwarded-allow-ips` limited to the proxy | Process arguments |
+| Host header | Fixed upstream Host or validated allow-list | Proxy config |
+
+## Limits and timeouts
+
+| Check | Expected | Evidence |
+| --- | --- | --- |
+| Request body limit | Explicit per site; larger only on named upload routes | Config line |
+| Header and body read timeouts | Explicit, shorter than the load balancer idle timeout | Config lines |
+| Upstream connect and read timeouts | Connect short; read just above the slowest normal response | Config lines |
+| Streaming routes | Buffering off, compression off, long read timeout, heartbeats below idle timeouts | First event arrives before the stream ends |
+| WebSocket routes | Upgrade and Connection headers forwarded; idle timeout set | Upgrade succeeds through every hop |
+| Rate limiting | Coarse per-client limit at the edge; per-user quotas in the app | Config and app setting |
+
+## Health and rollout
+
+| Check | Expected | Evidence |
+| --- | --- | --- |
+| Health routing | Load balancer probes application readiness, not proxy liveness | Probe path and result while draining |
+| Draining | Instance leaves rotation before shutdown; grace period longer than longest request | Deploy log |
+| Sticky sessions | Not required, or justified with a failure plan | Design note |
+| Reload | Config test passes before a graceful reload; no restart | `nginx -t`, `caddy validate`, or Traefik log |
+| Rollback | Previous configuration kept and reloadable | Path or commit |
+
+## Security headers and disclosure
+
+| Check | Expected | Evidence |
+| --- | --- | --- |
+| Version disclosure | Server version hidden | Response headers |
+| Baseline headers | nosniff, Referrer-Policy, frame protection, HSTS | Response headers |
+| Content-Security-Policy | Owned by the application, not invented at the edge | App response |
+| Admin and metrics endpoints | Not reachable from the internet | External probe |
+
+## Findings
+
+| Finding | Severity | Owner | Due |
+| --- | --- | --- | --- |
+| | | | |
+
+## Skipped checks
+
+| Check | Reason | Risk accepted by |
+| --- | --- | --- |
+| | | |

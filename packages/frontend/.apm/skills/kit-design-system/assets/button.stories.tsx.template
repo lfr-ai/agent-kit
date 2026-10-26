@@ -1,0 +1,78 @@
+// src/shared/ui/button.stories.tsx
+// CSF3 stories: one per variant and state, shared defaults on meta, interaction
+// tests in play functions, and axe checks from the accessibility addon.
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, fn } from "storybook/test";
+import { Button } from "./button-variants";
+
+const meta = {
+  title: "Shared/Button",
+  component: Button,
+  tags: ["autodocs"],
+  args: {
+    children: "Save changes",
+    onClick: fn(),
+  },
+  argTypes: {
+    intent: { control: "inline-radio", options: ["primary", "secondary", "danger", "ghost"] },
+    size: { control: "inline-radio", options: ["sm", "md", "lg"] },
+  },
+  parameters: {
+    // Fail the story test on any axe violation; downgrade per story only with a tracked reason.
+    a11y: { test: "error" },
+  },
+} satisfies Meta<typeof Button>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Secondary: Story = {};
+
+export const Primary: Story = {
+  args: { intent: "primary" },
+  play: async ({ args, canvas, userEvent }) => {
+    const button = canvas.getByRole("button", { name: "Save changes" });
+    await userEvent.click(button);
+    await expect(args.onClick).toHaveBeenCalledOnce();
+  },
+};
+
+export const Danger: Story = {
+  args: { intent: "danger", children: "Delete order" },
+};
+
+export const Ghost: Story = {
+  args: { intent: "ghost", size: "sm", children: "Cancel" },
+};
+
+export const KeyboardActivation: Story = {
+  args: { intent: "primary" },
+  play: async ({ args, canvas, userEvent }) => {
+    await userEvent.tab();
+    await expect(canvas.getByRole("button", { name: "Save changes" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onClick).toHaveBeenCalledOnce();
+  },
+};
+
+export const Disabled: Story = {
+  args: { intent: "primary", disabled: true },
+  play: async ({ args, canvas, userEvent }) => {
+    const button = canvas.getByRole("button", { name: "Save changes" });
+    await expect(button).toBeDisabled();
+    await userEvent.click(button, { pointerEventsCheck: 0 });
+    await expect(args.onClick).not.toHaveBeenCalled();
+  },
+};
+
+export const LongLabel: Story = {
+  args: {
+    children: "Save changes and notify every subscribed reviewer by email",
+    fullWidth: true,
+  },
+};
+
+export const DarkTheme: Story = {
+  args: { intent: "primary" },
+  globals: { theme: "dark" },
+};

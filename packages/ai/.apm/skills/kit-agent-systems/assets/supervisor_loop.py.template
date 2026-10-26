@@ -1,0 +1,357 @@
+"""Copy to ``agents/supervisor.py``: a bounded supervisor loop with a fake model.
+
+Stdlib only. A supervisor model chooses one action per step: call a tool,
+delegate a subtask to a named worker, or finish. The loop enforces a step
+budget, a cost budget, a wall-clock deadline and repeated-action detection,
+and records a content-free trajectory for evaluation and tracing.
+"""
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum, unique
+import hashlib
+import json
+import time
+from typing import Protocol, final
+
+DEFAULT_MAX_REPEATS: int = 2
+_DIGEST_CHARS = 16
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CallTool:
+    """Ask the tool gateway to run one allow-listed tool.
+
+    Args:
+        name (str): Tool name.
+        arguments (Mapping[str, object]): Model-proposed arguments.
+    """
+
+    name: str
+    arguments: Mapping[str, object] = field(default_factory=dict)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Delegate:
+    """Hand a bounded subtask to a named worker agent.
+
+    Args:
+        worker (str): Registered worker name.
+        task (str): Self-contained subtask description.
+    """
+
+    worker: str
+    task: str
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Finish:
+    """End the run with an answer.
+
+    Args:
+        answer (str): Final answer for the caller.
+    """
+
+    answer: str
+
+
+type Action = CallTool | Delegate | Finish
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Observation:
+    """Result of one action as seen by the supervisor model.
+
+    Args:
+        action (Action): Action that produced it.
+        ok (bool): Whether the action succeeded.
+        content (str): Result text, already bounded by the tool or worker.
+    """
+
+    action: Action
+    ok: bool
+    content: str
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ModelTurn:
+    """One supervisor decision and its cost.
+
+    Args:
+        action (Action): Chosen action.
+        cost_micros (int): Cost of this model call in millionths of a currency unit.
+    """
+
+    action: Action
+    cost_micros: int
+
+
+@unique
+class Outcome(StrEnum):
+    """Terminal status of a run; only ``COMPLETED`` carries an answer."""
+
+    COMPLETED = "completed"
+    STEP_BUDGET = "step_budget_exhausted"
+    COST_BUDGET = "cost_budget_exhausted"
+    DEADLINE = "deadline_exceeded"
+    REPEATED_ACTION = "repeated_action"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TrajectoryStep:
+    """Content-free record of one step for traces and trajectory evaluation.
+
+    Args:
+        index (int): Zero-based step number.
+        kind (str): ``tool``, ``delegate`` or ``finish``.
+        target (str): Tool or worker name; empty for ``finish``.
+        arguments_digest (str): Short digest of the arguments, never the values.
+        ok (bool): Whether the action succeeded.
+        cost_micros (int): Model cost of the step.
+    """
+
+    index: int
+    kind: str
+    target: str
+    arguments_digest: str
+    ok: bool
+    cost_micros: int
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RunResult:
+    """Terminal result of a supervisor run.
+
+    Args:
+        outcome (Outcome): Why the run stopped.
+        answer (str | None): Answer when completed.
+        trajectory (tuple[TrajectoryStep, ...]): Steps taken.
+        cost_micros (int): Total model cost.
+    """
+
+    outcome: Outcome
+    answer: str | None
+    trajectory: tuple[TrajectoryStep, ...]
+    cost_micros: int
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Budget:
+    """Hard limits for one run.
+
+    Args:
+        max_steps (int): Maximum supervisor decisions.
+        max_cost_micros (int): Maximum total model cost.
+        deadline_seconds (float): Wall-clock limit for the whole run.
+        max_repeats (int): Identical actions allowed before stopping.
+    """
+
+    max_steps: int
+    max_cost_micros: int
+    deadline_seconds: float
+    max_repeats: int = DEFAULT_MAX_REPEATS
+
+
+class SupervisorModel(Protocol):
+    """Model port that proposes the next action; adapters wrap a real model."""
+
+    def decide(self, *, goal: str, history: Sequence[Observation]) -> ModelTurn:
+        """Return the next action.
+
+        Args:
+            goal (str): The user goal.
+            history (Sequence[Observation]): Prior observations in order.
+
+        Returns:
+            ModelTurn: Proposed action and its cost.
+        """
+        ...
+
+
+class ToolGateway(Protocol):
+    """Allow-listed tool dispatcher, for example ``ToolRegistry``."""
+
+    def run(
+        self, *, name: str, arguments: Mapping[str, object], key: str
+    ) -> Observation:
+        """Execute one tool call.
+
+        Args:
+            name (str): Tool name.
+            arguments (Mapping[str, object]): Model-proposed arguments.
+            key (str): Idempotency key for this run and step.
+
+        Returns:
+            Observation: Bounded result.
+        """
+        ...
+
+
+type Worker = Callable[[str], str]
+type Clock = Callable[[], float]
+
+
+def _digest(arguments: Mapping[str, object] | str) -> str:
+    text = json.dumps(arguments, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:_DIGEST_CHARS]
+
+
+def _describe(action: Action) -> tuple[str, str, str]:
+    match action:
+        case CallTool(name=name, arguments=arguments):
+            return "tool", name, _digest(arguments)
+        case Delegate(worker=worker, task=task):
+            return "delegate", worker, _digest(task)
+        case Finish():
+            return "finish", "", ""
+
+
+@final
+class Supervisor:
+    """Run one goal to a terminal outcome within explicit budgets."""
+
+    def __init__(
+        self,
+        *,
+        model: SupervisorModel,
+        tools: ToolGateway,
+        workers: Mapping[str, Worker],
+        clock: Clock = time.monotonic,
+    ) -> None:
+        """Wire collaborators.
+
+        Args:
+            model (SupervisorModel): Decision port.
+            tools (ToolGateway): Allow-listed tool dispatcher.
+            workers (Mapping[str, Worker]): Named worker agents; workers never
+                delegate further.
+            clock (Clock): Monotonic clock, injected for tests.
+        """
+        self._model = model
+        self._tools = tools
+        self._workers = dict(workers)
+        self._clock = clock
+
+    def _act(self, action: Action, *, key: str) -> Observation:
+        match action:
+            case CallTool(name=name, arguments=arguments):
+                return self._tools.run(name=name, arguments=arguments, key=key)
+            case Delegate(worker=worker, task=task):
+                run_worker = self._workers.get(worker)
+                if run_worker is None:
+                    return Observation(
+                        action=action, ok=False, content="unknown_worker"
+                    )
+                return Observation(action=action, ok=True, content=run_worker(task))
+            case Finish(answer=answer):
+                return Observation(action=action, ok=True, content=answer)
+
+    def run(self, *, goal: str, budget: Budget, run_id: str) -> RunResult:
+        """Execute until finish or a budget stops the run.
+
+        Args:
+            goal (str): User goal.
+            budget (Budget): Hard limits.
+            run_id (str): Stable run identifier used in idempotency keys.
+
+        Returns:
+            RunResult: Terminal outcome with a content-free trajectory.
+        """
+        started = self._clock()
+        history: list[Observation] = []
+        trajectory: list[TrajectoryStep] = []
+        seen: dict[tuple[str, str, str], int] = {}
+        spent = 0
+        for index in range(budget.max_steps):
+            if self._clock() - started > budget.deadline_seconds:
+                return RunResult(
+                    outcome=Outcome.DEADLINE,
+                    answer=None,
+                    trajectory=tuple(trajectory),
+                    cost_micros=spent,
+                )
+            turn = self._model.decide(goal=goal, history=tuple(history))
+            spent += turn.cost_micros
+            signature = _describe(turn.action)
+            seen[signature] = seen.get(signature, 0) + 1
+            stop = self._stop_reason(
+                spent=spent, budget=budget, repeats=seen[signature]
+            )
+            if stop is not None:
+                return RunResult(
+                    outcome=stop,
+                    answer=None,
+                    trajectory=tuple(trajectory),
+                    cost_micros=spent,
+                )
+            observation = self._act(turn.action, key=f"{run_id}:{index}")
+            kind, target, digest = signature
+            trajectory.append(
+                TrajectoryStep(
+                    index=index,
+                    kind=kind,
+                    target=target,
+                    arguments_digest=digest,
+                    ok=observation.ok,
+                    cost_micros=turn.cost_micros,
+                )
+            )
+            if isinstance(turn.action, Finish):
+                return RunResult(
+                    outcome=Outcome.COMPLETED,
+                    answer=turn.action.answer,
+                    trajectory=tuple(trajectory),
+                    cost_micros=spent,
+                )
+            history.append(observation)
+        return RunResult(
+            outcome=Outcome.STEP_BUDGET,
+            answer=None,
+            trajectory=tuple(trajectory),
+            cost_micros=spent,
+        )
+
+    @staticmethod
+    def _stop_reason(*, spent: int, budget: Budget, repeats: int) -> Outcome | None:
+        if spent > budget.max_cost_micros:
+            return Outcome.COST_BUDGET
+        if repeats > budget.max_repeats:
+            return Outcome.REPEATED_ACTION
+        return None
+
+
+@final
+class ScriptedModel:
+    """Fake supervisor model that replays turns; for tests only."""
+
+    def __init__(self, *, turns: Sequence[ModelTurn]) -> None:
+        """Create the fake.
+
+        Args:
+            turns (Sequence[ModelTurn]): Turns returned in order; the last repeats.
+        """
+        self._turns = tuple(turns)
+        self.calls = 0
+
+    def decide(self, *, goal: str, history: Sequence[Observation]) -> ModelTurn:
+        """Return the next scripted turn.
+
+        Args:
+            goal (str): Ignored.
+            history (Sequence[Observation]): Ignored.
+
+        Returns:
+            ModelTurn: Scripted turn.
+        """
+        del goal, history
+        turn = self._turns[min(self.calls, len(self._turns) - 1)]
+        self.calls += 1
+        return turn

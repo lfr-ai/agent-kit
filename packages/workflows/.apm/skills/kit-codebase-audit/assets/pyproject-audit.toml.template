@@ -1,0 +1,52 @@
+# Audit tool tables for pyproject.toml.
+# Merge only the tables the audit needs into the project's pyproject.toml on an
+# audit branch, or keep them in a copy passed with each tool's --config option.
+# Replace "shop" and the module names with the real package layout. Every
+# ignore entry needs a comment with a reason.
+
+[tool.vulture]
+# vulture --config pyproject.toml   (paths below are scanned)
+paths = ["src", "tests"]
+exclude = ["*/migrations/*", "*/generated/*"]
+min_confidence = 80
+sort_by_size = true
+# Framework entry points that are called by name, not by import.
+ignore_decorators = ["@app.get", "@app.post", "@pytest.fixture"]
+ignore_names = ["visit_*", "model_config"]
+
+[tool.deptry]
+# deptry . --json-output audit/deptry.json
+known_first_party = ["shop"]
+extend_exclude = ["audit", "docs", "scripts"]
+
+[tool.deptry.per_rule_ignores]
+# DEP002 unused: loaded as a plugin through an entry point, never imported.
+DEP002 = ["uvicorn"]
+
+[tool.ty.environment]
+# ty check --output-format gitlab --exit-zero > audit/ty.json
+python-version = "3.13"
+
+[tool.importlinter]
+# lint-imports   (reads this table when no .importlinter file exists)
+root_package = "shop"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Presentation over application over domain"
+type = "layers"
+layers = ["shop.presentation", "shop.application", "shop.domain"]
+
+[[tool.importlinter.contracts]]
+name = "Domain stays free of frameworks and drivers"
+type = "forbidden"
+source_modules = ["shop.domain"]
+forbidden_modules = ["fastapi", "sqlalchemy", "httpx"]
+
+[[tool.importlinter.contracts]]
+name = "Only the composition root imports infrastructure"
+type = "forbidden"
+source_modules = ["shop.presentation", "shop.application"]
+forbidden_modules = ["shop.infrastructure"]
+# Reason: shop.presentation.main is the composition root that wires adapters.
+ignore_imports = ["shop.presentation.main -> shop.infrastructure.**"]

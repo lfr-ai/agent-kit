@@ -1,0 +1,50 @@
+# Evaluation report: <change under test>
+
+## Run identity
+
+| Field | Baseline | Candidate |
+| --- | --- | --- |
+| Run id (kit-config `run_id`) | | |
+| Prompt name, version (not label) | | |
+| Model alias and served snapshot or fingerprint | | |
+| Temperature, seed, max output tokens | | |
+| Dataset version and fingerprint | | |
+| Scorer and judge rubric versions | | |
+| Code revision and lockfile digest | | |
+| Repeats per case | | |
+
+## Results
+
+| Metric | Baseline mean | Candidate mean | 95% CI (candidate) | Delta | Min. detectable difference | Gate | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| exact_match | | | | | | floor / max regression | |
+| schema_validity | | | | | | | |
+| judge_<name> | | | | | | | |
+| refusal on must-refuse | | | | | | | |
+| p50 / p95 latency (ms) | | | | | | | |
+| cost per case | | | | | | | |
+
+A delta smaller than the minimum detectable difference, or with overlapping
+paired intervals, is reported as "no measurable change", not as an improvement.
+
+## Slices
+
+| Tag | Cases | Baseline | Candidate | Note |
+| --- | --- | --- | --- | --- |
+| adversarial | | | | |
+| no-answer | | | | |
+
+## Failure analysis
+
+For each regressed case: case id, failure class (format, factual, refusal,
+safety, retrieval), suspected cause and whether it is a dataset error.
+
+## Safety and privacy
+
+- [ ] Red-team and must-refuse slices ran and met their gates.
+- [ ] No production personal data entered the dataset, traces or report.
+- [ ] Hosted evaluation data export was approved, or the run stayed local.
+
+## Decision
+
+Adopt / revise / reject, the approver role, and the baseline update (yes/no).

@@ -2,7 +2,6 @@
 
 import argparse
 from enum import Enum
-import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -11,11 +10,18 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
+from agent_kit.infrastructure import apm_adapter
+
 _ROOT = Path(__file__).resolve().parents[1]
-_VERSION = "0.33.0"
 _TIMEOUT_SECONDS = 600
 _RUNTIMES = "copilot,claude"
-_SMOKE_SELECTIONS = (("fullstack", ("iac", "workflows", "ai")),)
+# Each selection must fit the profile description budget; together they cover
+# every portable bundle.
+_SMOKE_SELECTIONS = (
+    ("fullstack", ()),
+    ("ai", ("iac",)),
+    ("workflows", ()),
+)
 
 
 class _SmokeIssue(Enum):
@@ -98,7 +104,12 @@ def delivery_failures(
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
-    """Run a controlled boundary command and surface its exact failure."""
+    """Run a controlled boundary command and surface its exact failure.
+
+    Raises:
+        _SmokeCommandTimeout: The command exceeds the timeout.
+        SystemExit: The command exits with a non-zero status.
+    """
     try:
         result = subprocess.run(  # noqa: S603 - fixed executables and validated paths
             command,
@@ -142,7 +153,11 @@ def _compose_command(
 def _selected_source(
     package: Path, *, session_skills: tuple[str, ...]
 ) -> tuple[set[str], set[str], dict[str, bytes]]:
-    """Return the composed skill roster, native roles and skill resources."""
+    """Return the composed skill roster, native roles and skill resources.
+
+    Raises:
+        _SmokeContractError: Skills or native roles differ from the contract.
+    """
     expected_skills = {
         path.parent.name for path in (package / ".apm/skills").rglob("SKILL.md")
     }
@@ -271,6 +286,18 @@ def smoke_profile(
     return 0
 
 
+def _smoke_apm_executable() -> str | None:
+    """Resolve the approved launcher while retaining smoke CLI diagnostics."""
+    try:
+        return apm_adapter.pinned_apm_executable()
+    except apm_adapter.ApmAvailabilityError as error:
+        if error.issue is apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE:
+            print("Use the locked toolkit environment.", file=sys.stderr)
+        else:
+            print(f"APM {apm_adapter.APM_VERSION} is required.", file=sys.stderr)
+        return None
+
+
 def main() -> int:
     """Verify the portable library in bounded packages, or one narrow session."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -293,12 +320,11 @@ def main() -> int:
         if arguments.session
         else ()
     )
-    if importlib.metadata.version("apm-cli") != _VERSION:
-        print(f"APM {_VERSION} is required.", file=sys.stderr)
+    apm = _smoke_apm_executable()
+    if apm is None:
         return 1
-    apm = shutil.which("apm")
     toolkit = shutil.which("agent-kit")
-    if apm is None or toolkit is None:
+    if toolkit is None:
         print("Use the locked toolkit environment.", file=sys.stderr)
         return 1
     env = {

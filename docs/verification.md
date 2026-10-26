@@ -33,7 +33,7 @@ second copy into the environment.
 | Unit/property tests | Synthetic profile, collision, path, provenance, and process boundaries |
 | Architecture | Declarative inward import contracts |
 | Documentation | Source entry files and local links, excluding consumer templates |
-| Actual APM | Full portable union install/compile, both native rosters, exact installed resource bytes, explicit policy, audit and frozen reproduction |
+| Actual APM | Three budget-compliant selections (`fullstack`; `ai` with `iac`; `workflows`) that together cover every portable bundle: install/compile, both native rosters, exact installed resource bytes, explicit policy, audit and frozen reproduction |
 | Session context | Explicit allowlist, selected-skill instruction links, role omission and real narrowed APM delivery |
 | Distribution | Build the Python wheel/sdist with the declared build backend |
 | Native host | Separate live-session certification, not inferred from CLI tests |
@@ -60,9 +60,10 @@ Compare installed module bytes with the new archive before accepting CLI results
 
 `uv run --locked python -m scripts.check_resources --json` emits the real per-skill census without generating
 another authored manifest. Coverage invokes this structural gate, and tests run
-trusted first-party portable checkers' isolated self-checks. The all-stack
-composition regression compares original resource bytes and the full 24-role
-native roster. These checks do not execute consumer code or connect MCP servers.
+trusted first-party portable checkers' isolated self-checks. The smoke-matrix
+composition regression composes each smoke selection, compares original resource
+bytes, and requires every one of the 27 declared roles in at least one native
+roster per adapter. These checks do not execute consumer code or connect MCP servers.
 See the [setup walkthrough](setup-completeness.md) for the consumer/host gates.
 
 APM smoke uses a disposable home as well as a disposable package: the pinned CLI

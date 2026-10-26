@@ -2,7 +2,6 @@
 name: kit-planner
 description: "Define acceptance criteria and ordered vertical tasks for one scoped request."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Plan one scoped request
 

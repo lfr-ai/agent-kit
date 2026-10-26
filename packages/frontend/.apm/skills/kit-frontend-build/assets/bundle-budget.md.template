@@ -1,0 +1,46 @@
+# Bundle budget worksheet
+
+Build: <!-- commit or version -->
+Measured with: <!-- command and compression (gzip or brotli) -->
+Date: <!-- YYYY-MM-DD -->
+
+## Budgets
+
+| Asset | Budget (compressed) | Previous | Current | Delta | Status |
+| --- | --- | --- | --- | --- | --- |
+| Entry JavaScript | 150 KB | | | | |
+| Largest route chunk | 100 KB | | | | |
+| Total CSS | 50 KB | | | | |
+| Requests on first navigation | recorded | | | | |
+
+## Dependency changes
+
+| Package | Version | Size impact | Maintenance signals | License | Alternative considered |
+| --- | --- | --- | --- | --- | --- |
+
+## Chunking
+
+- [ ] Routes load through dynamic imports.
+- [ ] Manual chunk groups (if any) are justified by measured cache behavior.
+- [ ] No duplicate framework copies in the output.
+
+## Source maps and public output
+
+- Source map policy: <!-- hidden plus upload, none, or public -->
+- [ ] `.map` files are absent from the deployed directory, or public by decision.
+- [ ] `check_frontend_env.py` result:
+- [ ] Bundle scan (kit-runtime-config) result:
+
+## Content Security Policy
+
+- Policy tested: <!-- header value or link -->
+- [ ] Production build served with the policy shows no violations.
+
+## Exceptions
+
+| Budget raised | From | To | Reason | Owner | Review by |
+| --- | --- | --- | --- | --- | --- |
+
+## Checks not run
+
+<!-- list each with the reason -->

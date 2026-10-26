@@ -19,6 +19,9 @@ line-ending = "lf"
 docstring-code-format = true
 
 [lint]
+# Preview applies only to preview rules selected by exact code below.
+preview = true
+explicit-preview-rules = true
 # Ruff's default rule set: docs.astral.sh/ruff/default-rules
 extend-select = [
   "W",     # pycodestyle warnings — style warnings and formatting issues
@@ -69,6 +72,7 @@ extend-select = [
   "ERA",   # eradicate — detects commented-out code
   "FURB",  # refurb — suggests modern, idiomatic Python replacements
   "RUF",   # Ruff-specific — e.g. unused noqa, mutable dataclass defaults
+  "DOC501", # pydoclint (preview) — raised exception missing from 'Raises:'
 ]
 
 [lint.pylint]

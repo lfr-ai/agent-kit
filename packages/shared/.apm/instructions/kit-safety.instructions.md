@@ -4,6 +4,7 @@ applyTo: "**"
 ---
 
 - Read package ownership, generated-file markers, and nearby conventions before editing; change only the files the request needs.
+- Keep solutions simple, readable and maintainable; minimize cognitive load and task context without removing required behavior or safeguards.
 - Use the repository's declared manager, lockfile, and toolchain; preserve unrelated workspace changes and leave untouched files unformatted.
 - Add a dependency only when the standard library or an existing dependency cannot do the job, and state why in the change.
 - Never install or run packages ad hoc (`pip install`, `npx`, `uvx`); change the manifest and lockfile, audit the lock, then install with the locked command. Pin tools, hooks, actions and images to exact versions, commits or digests.

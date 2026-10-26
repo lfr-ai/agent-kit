@@ -1,6 +1,6 @@
 ---
 name: kit-ci-review
-description: Use when reviewing CI workflow changes that affect triggers, permissions, or publishing steps to ensure least privilege and reproducible validation.
+description: Use when CI workflow changes affect triggers, permissions, secrets or publishing steps.
 license: MIT
 ---
 

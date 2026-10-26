@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from enum import StrEnum, unique
+import ntpath
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import sys
@@ -93,7 +94,12 @@ class UnsupportedPublicationError(NotImplementedError):
 
 
 def _publish_directory(stage: Path, output: Path) -> None:
-    """Publish without replacing an existing directory on supported platforms."""
+    """Publish without replacing an existing directory on supported platforms.
+
+    Raises:
+        UnsupportedPublicationError: The platform lacks a no-replace rename.
+        OSError: The no-replace rename fails.
+    """
     if sys.platform == "win32":
         _publish_windows_directory(stage, output)
         return
@@ -122,7 +128,12 @@ def _publish_directory(stage: Path, output: Path) -> None:
 
 
 def _rename_once(stage: Path, output: Path, *, final_attempt: bool) -> bool:
-    """Attempt one no-replace rename; ``False`` reports a transient sharing denial."""
+    """Attempt one no-replace rename; ``False`` reports a transient sharing denial.
+
+    Raises:
+        OutputExistsError: The output already exists.
+        PermissionError: The rename is denied for a non-transient reason.
+    """
     _require_unlinked_path(stage)
     _require_unlinked_path(output)
     if output.exists():
@@ -149,7 +160,11 @@ def _publish_windows_directory(stage: Path, output: Path) -> None:
 
 
 def _require_unlinked_path(path: Path) -> None:
-    """Reject symlinks and junctions before writing or retrying publication."""
+    """Reject symlinks and junctions before writing or retrying publication.
+
+    Raises:
+        OutputPathError: The path is a symlink or junction.
+    """
     current = Path(path.anchor)
     for part in path.parts[1:]:
         current = current / part
@@ -164,7 +179,11 @@ class OutputAdapter:
         """Create the stateless output adapter."""
 
     def write(self, plan: CompositionPlan, requested_output: Path) -> Path:
-        """Write a validated plan through a sibling staging directory."""
+        """Write a validated plan through a sibling staging directory.
+
+        Raises:
+            OutputExistsError: The output already exists.
+        """
         absolute_output = requested_output.expanduser().absolute()
         _require_unlinked_path(absolute_output)
         output = absolute_output.resolve(strict=False)
@@ -189,7 +208,12 @@ class OutputAdapter:
     def _validate_files(
         self, files: tuple[PlannedFile, ...]
     ) -> tuple[tuple[PurePosixPath, PlannedFile], ...]:
-        """Validate output containment and case-insensitive destination uniqueness."""
+        """Validate output containment and case-insensitive destination uniqueness.
+
+        Raises:
+            OutputPathError: A planned path is unsafe.
+            OutputCollisionError: Two files differ only by case.
+        """
         validated: list[tuple[PurePosixPath, PlannedFile]] = []
         folded_paths: dict[str, str] = {}
         for item in files:
@@ -202,7 +226,10 @@ class OutputAdapter:
                 or windows.is_absolute()
                 or windows.drive
                 or "\\" in item.relative_path
-                or any(part in {"..", ""} for part in relative.parts)
+                or any(
+                    part in {"..", ""} or ":" in part or ntpath.isreserved(part)
+                    for part in relative.parts
+                )
             ):
                 raise OutputPathError(OutputPathIssue.UNSAFE_PLAN)
             key = relative.as_posix().casefold()
@@ -215,7 +242,11 @@ class OutputAdapter:
         return tuple(validated)
 
     def _check_output_location(self, plan: CompositionPlan, output: Path) -> None:
-        """Reject destinations that could overwrite source or its ancestors."""
+        """Reject destinations that could overwrite source or its ancestors.
+
+        Raises:
+            OutputPathError: The output overlaps the source tree.
+        """
         root = plan.root.resolve(strict=False)
         if output == root or root.is_relative_to(output):
             raise OutputPathError(OutputPathIssue.SOURCE_ANCESTOR)

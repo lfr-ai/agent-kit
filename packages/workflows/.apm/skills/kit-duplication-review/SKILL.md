@@ -1,6 +1,6 @@
 ---
 name: kit-duplication-review
-description: Use when reviewing repeated code or content to decide whether a shared abstraction improves maintenance without obscuring ownership.
+description: Use when deciding whether repeated code or content should share an abstraction without obscuring ownership.
 license: MIT
 ---
 

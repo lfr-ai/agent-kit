@@ -1,0 +1,64 @@
+# Dependency adoption review: `<package>`
+
+Copy one file per proposed runtime dependency (development tools may share
+one review per group). Replace every `<placeholder>`. Record the date and the
+source URL for each piece of evidence so it can be re-checked.
+
+## Request
+
+| Field | Value |
+| --- | --- |
+| Package and ecosystem | `<name>` on `<PyPI, npm, ...>` |
+| Exact index URL | `<https://pypi.org/project/name/>` |
+| Proposed constraint | `<range for a library, exact version for an application>` |
+| Dependency type | runtime / optional extra / development group |
+| Requested by and date | `<handle>`, `<YYYY-MM-DD>` |
+| Purpose | `<one sentence: what the code needs>` |
+
+## Alternatives considered
+
+| Option | Why not chosen |
+| --- | --- |
+| Standard library | `<reason>` |
+| Existing dependency `<name>` | `<reason>` |
+| Write and test locally | `<reason>` |
+
+## Name and source verification
+
+- [ ] Name copied from the project's own documentation or repository.
+- [ ] Index page links to the repository and the repository links back.
+- [ ] Near-miss names checked (separators, plurals, transpositions, prefixes).
+- [ ] Not a brand-new package or a recent ownership transfer, or that risk is
+      accepted below.
+- [ ] Resolves from the intended index only (no shadowing internal name).
+
+## Evidence
+
+| Criterion | Evidence | Source and date | Meets hard limit |
+| --- | --- | --- | --- |
+| Maintenance | `<last release, open security issues>` | `<url, date>` | yes / no |
+| Maintainers | `<people or organization with publish rights>` | `<url, date>` | yes / no |
+| Release cadence | `<releases in the last year, changelog quality>` | `<url, date>` | yes / no |
+| Adoption | `<dependents, download trend>` | `<url, date>` | context only |
+| License | `<SPDX identifier>` | `<url, date>` | yes / no |
+| Security posture | `<Scorecard score and failing checks; security policy; signed or attested releases>` | `<url, date>` | yes / no |
+| Install-time code | `<wheels for all targets? lifecycle scripts?>` | `<url, date>` | yes / no |
+| Transitive footprint | `<count and notable new packages>` | `<uv tree or npm ls output>` | yes / no |
+| Known vulnerabilities | `<audit result for the proposed version>` | `<tool, version, date>` | yes / no |
+
+## Decision
+
+| Field | Value |
+| --- | --- |
+| Decision | approve / approve with conditions / reject |
+| Conditions | `<for example: wheels only, pinned exactly, isolated behind an adapter>` |
+| Accepted risks | `<risk, reason>` |
+| Owner | `<handle>` |
+| Revisit by | `<YYYY-MM-DD>` |
+
+## Verification after adoption
+
+- [ ] Manifest and lock changed together; lock freshness check passed.
+- [ ] Lock audited before install; output attached.
+- [ ] License guard passed on the installed environment.
+- [ ] Full project gate passed.

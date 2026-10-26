@@ -2,7 +2,6 @@
 name: kit-code-reviewer
 description: "Review an assigned change for high-confidence correctness defects."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Review a change for correctness
 

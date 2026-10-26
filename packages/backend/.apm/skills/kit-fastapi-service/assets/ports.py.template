@@ -1,0 +1,63 @@
+"""Application ports and records the HTTP layer depends on.
+
+Copy into ``src/shop/application/ports.py``. Adapters implement these protocols;
+the composition root in ``main.py`` chooses the implementation, and tests pass
+fakes. Nothing here imports FastAPI.
+"""
+
+from dataclasses import dataclass
+from typing import Protocol
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Item:
+    """Catalog item returned by the application layer.
+
+    Attributes:
+        item_id: Stable identifier.
+        name: Display name.
+        price_cents: Unit price in minor currency units.
+    """
+
+    item_id: str
+    name: str
+    price_cents: int
+
+
+class ItemCatalog(Protocol):
+    """Read access to catalog items."""
+
+    async def get(self, item_id: str, /) -> Item:
+        """Return one item.
+
+        Args:
+            item_id: Identifier to look up.
+
+        Returns:
+            The matching item.
+
+        Raises:
+            NotFoundError: No item has this identifier.
+        """
+        ...
+
+
+class ReadinessCheck(Protocol):
+    """One dependency probe used by the readiness endpoint."""
+
+    @property
+    def name(self) -> str:
+        """Stable, non-sensitive name reported in readiness output."""
+        ...
+
+    async def check(self) -> bool:
+        """Return whether the dependency can serve traffic now.
+
+        Returns:
+            True when the dependency is usable.
+
+        Raises:
+            OSError: The dependency could not be reached.
+            TimeoutError: The probe exceeded its own deadline.
+        """
+        ...

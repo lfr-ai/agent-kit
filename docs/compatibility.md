@@ -22,6 +22,17 @@ bounded delays totaling 1.5 seconds. Every attempt retains atomic no-replace
 rename, rejects an existing destination and rechecks symlink/junction paths.
 Persistent denials and unrelated permission errors remain explicit failures.
 
+Planned output components must be safe Windows regular-file names on every
+platform. Trailing dots/spaces, reserved device names, alternate-stream colons,
+and disallowed/control characters fail before staging writes. This intentionally
+rejects names that a Unix filesystem might otherwise permit: composition must
+not silently rename files or produce an archive that cannot be relocated.
+
+APM commands use the launcher recorded by the pinned distribution in the active
+Python environment's scripts directory, not an unrelated executable on `PATH`.
+Installations without that recorded executable fail explicitly. Command timeout
+values must be finite and positive; NaN and infinity are invalid configuration.
+
 ## Native exceptions
 
 - Roles use one procedure body with separately rendered native metadata.

@@ -62,6 +62,6 @@ reference and keep the body procedural.
 ## Sources
 
 - [VS Code custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents)
-- [VS Code subagents](https://code.visualstudio.com/docs/agents/subagents)
+- [VS Code subagents](https://code.visualstudio.com/docs/agents/run/subagents)
 - [Claude Code subagents](https://code.claude.com/docs/en/sub-agents)
 - [GitHub Copilot custom agents](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/create-custom-agents)

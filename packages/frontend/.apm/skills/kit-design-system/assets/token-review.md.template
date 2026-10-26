@@ -1,0 +1,43 @@
+# Token review worksheet
+
+Change: <!-- short description -->
+Reviewer: <!-- role, not personal name -->
+Date: <!-- YYYY-MM-DD -->
+
+## Inventory
+
+| Token | Layer (palette, semantic, component) | Light value | Dark value | Replaces |
+| --- | --- | --- | --- | --- |
+| `--primary` | semantic | `var(--palette-blue-600)` | `var(--palette-blue-300)` | |
+
+## Contrast pairs
+
+| Foreground | Background | State | Light ratio | Dark ratio | Required | Pass |
+| --- | --- | --- | --- | --- | --- | --- |
+| `--primary-foreground` | `--primary` | default | | | 4.5:1 | |
+| `--ring` | `--surface` | focus | | | 3:1 | |
+
+## Utilities and variants
+
+- [ ] New tokens produce the expected utilities after a CSS build.
+- [ ] No default palette utilities (`bg-red-500`) or arbitrary values remain.
+- [ ] Variants use `cva` with `defaultVariants`; no boolean style props.
+
+## Preferences and modes
+
+- [ ] Dark mode overrides semantic variables only.
+- [ ] Forced colors keep borders and focus visible.
+- [ ] Reduced motion sets motion tokens to zero.
+- [ ] Theme is applied before first paint.
+
+## Owned third-party source
+
+| Component | Origin (registry item) | Copied on | Local changes | Tests |
+| --- | --- | --- | --- | --- |
+
+## Evidence
+
+- `check_design_tokens.py` command and result:
+- Story test command and result:
+- Visual baseline review (images reviewed, accepted, rejected):
+- Checks not run and why:

@@ -1,0 +1,70 @@
+# Remote access runbook worksheet
+
+Fill one copy per planned access or per automation identity. Remote access to
+shared or production systems is an operator action: the reviewer prepares and
+checks this worksheet, the named operator performs and records the access.
+
+## Request
+
+- Change or incident ID: <ID>
+- Purpose (one sentence): <what must be done remotely, and why it cannot be done through the deployment pipeline>
+- Target hosts or resources: <names, environment>
+- Requested by / approved by: <name> / <name, date>
+- Operator performing the access: <name>
+- Window: <start - end, time zone>
+
+## Access path
+
+| Item | Value |
+| --- | --- |
+| Method | Bastion and ProxyJump / Azure Bastion / just-in-time port opening / session manager / other |
+| Entry point | <bastion host or managed service> |
+| Network rule opened, and when it closes | <rule, expiry> |
+| Host key or host certificate verification | <known_hosts entry, @cert-authority line, or managed> |
+| Session recording or audit log location | <where, retention> |
+
+## Credentials
+
+| Item | Value |
+| --- | --- |
+| Key type | ed25519 with passphrase, or hardware-backed (`-sk`) key |
+| Certificate | Principal <name>, validity <for example 8h>, serial <n> |
+| Agent | Local agent only; no agent forwarding |
+| Privilege on target | <account>, escalation through sudo with logging |
+
+Never paste private keys, passphrases, or tokens into this worksheet, tickets,
+chat, or version control.
+
+## Plan
+
+| Step | Command or action | Expected result | Rollback |
+| --- | --- | --- | --- |
+| 1 | | | |
+| 2 | | | |
+
+Run read-only inspection first. State-changing commands need the approval
+above and a tested rollback.
+
+## Automation identity (when a pipeline or tool connects)
+
+| Item | Value |
+| --- | --- |
+| Identity and owner | <service principal, deploy key, or certificate principal> |
+| Allowed commands | `command=` restriction, forced command, or sudo rule |
+| Source restriction | `from=` pattern or network rule |
+| Forwarding | `restrict` option on the authorized key, or certificate without extensions |
+| Credential lifetime and rotation | <for example certificate valid 1h, issued per run> |
+| Secret storage | <secret store name; never the repository> |
+
+## Close-out
+
+- [ ] Temporary network rules and just-in-time grants removed or expired.
+- [ ] Short-lived certificates expired; any long-lived key used is rotated or revoked.
+- [ ] Session log and command history attached to the change record.
+- [ ] Unexpected findings raised as follow-up items with owners.
+- [ ] Host key changes, if any, explained and distributed.
+
+## Sign-off
+
+- Operator: <name, date>
+- Reviewer: <name, date>

@@ -46,7 +46,7 @@ def _parse_aliases(values: Sequence[str]) -> list[tuple[str, PurePosixPath]]:
         Pairs of import prefix and root-relative directory, longest prefix first.
 
     Raises:
-        ValueError: If a declaration has no ``=`` or an empty prefix.
+        FeatureAliasError: If a declaration has no ``=`` or an empty prefix.
     """
     aliases: list[tuple[str, PurePosixPath]] = []
     for value in values:
@@ -250,7 +250,7 @@ def self_test() -> None:
     """Exercise passing, deep, aliased and shared-inversion imports in a temp tree.
 
     Raises:
-        AssertionError: If any synthetic expectation does not hold.
+        SelfTestError: If any synthetic expectation does not hold.
     """
     with TemporaryDirectory(prefix="agent-kit-feature-imports-") as directory:
         root = Path(directory)

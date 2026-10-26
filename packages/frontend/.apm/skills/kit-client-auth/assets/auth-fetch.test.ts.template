@@ -1,0 +1,96 @@
+// src/shared/api/auth-fetch.test.ts
+// Behavior of the auth fetch wrapper with a scripted fake transport: trusted
+// origins only, single-flight renewal, one retry, and 403 left to the caller.
+import { describe, expect, it, vi } from "vitest";
+import { createAuthFetch, type AuthFetchOptions } from "./auth-fetch";
+
+const API = "https://api.example.test";
+const OTHER = "https://cdn.example.test";
+
+function scriptedFetch(statuses: number[]) {
+  const requests: Request[] = [];
+  const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push(new Request(input, init));
+    return new Response(null, { status: statuses.shift() ?? 200 });
+  });
+  return { fetchImpl, requests };
+}
+
+function setup(statuses: number[], overrides: Partial<AuthFetchOptions> = {}) {
+  const transport = scriptedFetch(statuses);
+  const renew = vi.fn(async () => true);
+  const onSessionExpired = vi.fn();
+  const authFetch = createAuthFetch({
+    allowedOrigins: [API],
+    renew,
+    onSessionExpired,
+    fetchImpl: transport.fetchImpl,
+    ...overrides,
+  });
+  return { authFetch, renew, onSessionExpired, ...transport };
+}
+
+describe("createAuthFetch", () => {
+  it("adds CSRF protection and credentials only for trusted origins", async () => {
+    const { authFetch, requests } = setup([200, 200]);
+    await authFetch(`${API}/orders`, { method: "POST", body: "{}" });
+    await authFetch(`${OTHER}/logo.svg`);
+    expect(requests[0]?.headers.get("X-CSRF")).toBe("1");
+    expect(requests[0]?.credentials).toBe("include");
+    expect(requests[1]?.headers.get("X-CSRF")).toBeNull();
+    expect(requests[1]?.credentials).toBe("omit");
+  });
+
+  it("sends an in-memory bearer token to trusted origins only", async () => {
+    const { authFetch, requests } = setup([200, 200], { getAccessToken: () => "synthetic-token" });
+    await authFetch(`${API}/orders`);
+    await authFetch(`${OTHER}/logo.svg`);
+    expect(requests[0]?.headers.get("Authorization")).toBe("Bearer synthetic-token");
+    expect(requests[1]?.headers.get("Authorization")).toBeNull();
+  });
+
+  it("renews once for concurrent 401 responses and retries each request once", async () => {
+    const { authFetch, renew, requests } = setup([401, 401, 200, 200]);
+    const responses = await Promise.all([authFetch(`${API}/a`), authFetch(`${API}/b`)]);
+    expect(renew).toHaveBeenCalledOnce();
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(requests).toHaveLength(4);
+  });
+
+  it("returns a second 401 to the caller without another renewal", async () => {
+    const { authFetch, renew } = setup([401, 401]);
+    const response = await authFetch(`${API}/orders`);
+    expect(response.status).toBe(401);
+    expect(renew).toHaveBeenCalledOnce();
+  });
+
+  it("reports expiry once when renewal fails", async () => {
+    const { authFetch, onSessionExpired } = setup([401, 401], { renew: vi.fn(async () => false) });
+    const responses = await Promise.all([authFetch(`${API}/a`), authFetch(`${API}/b`)]);
+    expect(responses.map((response) => response.status)).toEqual([401, 401]);
+    expect(onSessionExpired).toHaveBeenCalledOnce();
+  });
+
+  it("treats a rejected renewal as expiry", async () => {
+    const { authFetch, onSessionExpired } = setup([401], {
+      renew: vi.fn(async () => {
+        throw new Error("network");
+      }),
+    });
+    expect((await authFetch(`${API}/orders`)).status).toBe(401);
+    expect(onSessionExpired).toHaveBeenCalledOnce();
+  });
+
+  it("leaves 403 to the caller without renewing or signing out", async () => {
+    const { authFetch, renew, onSessionExpired } = setup([403]);
+    expect((await authFetch(`${API}/orders`)).status).toBe(403);
+    expect(renew).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it("does not renew for 401 from untrusted origins", async () => {
+    const { authFetch, renew } = setup([401]);
+    expect((await authFetch(`${OTHER}/feed`)).status).toBe(401);
+    expect(renew).not.toHaveBeenCalled();
+  });
+});

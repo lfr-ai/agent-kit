@@ -58,6 +58,11 @@ def test_session_mode_omits_prompts(source_root: Path) -> None:
     assert not any(
         item.relative_path.startswith(".apm/prompts/") for item in plan.files
     )
+    files = {item.relative_path: item.content for item in plan.files}
+    manifest = json.loads(files["apm.yml"])
+    assert ".apm/prompts/" not in manifest["includes"]
+    for include in manifest["includes"]:
+        assert any(path.startswith(include) for path in files)
 
 
 @pytest.mark.parametrize(

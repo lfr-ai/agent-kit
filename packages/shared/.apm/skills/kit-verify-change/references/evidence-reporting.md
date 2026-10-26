@@ -33,6 +33,13 @@ suits small changes.
 
 Never fold `unavailable`, `skipped` or `inspected` into "all green".
 
+The gate records fixer and checker attempts separately with a `phase` field.
+A failed fixer remains a failure even if its subsequent check passes. The check
+still runs to collect diagnostics; without `--keep-going`, later steps are
+skipped after either attempt fails. Consumers of the JSON report must allow
+multiple attempts for one step name and must not discard failures when grouping
+by name. Launch errors and timeouts are explicit unsuccessful outcomes.
+
 ## Behavioral evidence
 
 Gate results show the tree is clean; behavioral evidence shows the change

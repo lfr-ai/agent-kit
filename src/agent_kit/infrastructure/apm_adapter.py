@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from enum import StrEnum, unique
 import importlib.metadata
+import math
 import os
-import shutil
+from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING
+import sys
+import sysconfig
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-_APM_VERSION = "0.33.0"
+APM_VERSION = "0.33.0"
 _DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
@@ -24,8 +23,8 @@ class ApmCliError(RuntimeError):
 class ApmAvailabilityIssue(StrEnum):
     """Pinned executable prerequisites that can prevent an APM invocation."""
 
-    MISSING_PACKAGE = f"pinned apm-cli=={_APM_VERSION} is not installed"
-    VERSION_MISMATCH = f"installed apm-cli version does not match {_APM_VERSION}"
+    MISSING_PACKAGE = f"pinned apm-cli=={APM_VERSION} is not installed"
+    VERSION_MISMATCH = f"installed apm-cli version does not match {APM_VERSION}"
     MISSING_EXECUTABLE = "apm executable is unavailable"
 
 
@@ -38,6 +37,7 @@ class ApmAvailabilityError(ApmCliError):
         Args:
             issue (ApmAvailabilityIssue): Missing or incompatible prerequisite.
         """
+        self.issue = issue
         super().__init__(issue.value)
 
 
@@ -76,11 +76,11 @@ class ApmExitError(ApmCliError):
 
 
 class InvalidApmTimeoutError(ValueError):
-    """The process timeout would not provide a positive execution bound."""
+    """The process timeout would not provide a finite positive execution bound."""
 
     def __init__(self) -> None:
-        """Describe the positive-timeout requirement."""
-        super().__init__("timeout_seconds must be positive")
+        """Describe the finite positive-timeout requirement."""
+        super().__init__("timeout_seconds must be finite and positive")
 
 
 class ApmCliAdapter:
@@ -91,14 +91,17 @@ class ApmCliAdapter:
 
         Args:
             timeout_seconds (float): Maximum duration for each APM command in seconds.
+
+        Raises:
+            InvalidApmTimeoutError: ``timeout_seconds`` is not finite and positive.
         """
-        if timeout_seconds <= 0:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise InvalidApmTimeoutError
         self._timeout_seconds = timeout_seconds
 
     def check(self, root: Path) -> None:
         """Run explicit policy status and CI audit commands."""
-        executable = _pinned_executable()
+        executable = pinned_apm_executable()
         environment = os.environ.copy()
         environment["APM_NO_SCRIPTS"] = "1"
         environment["APM_NON_INTERACTIVE"] = "1"
@@ -113,7 +116,12 @@ class ApmCliAdapter:
         root: Path,
         environment: dict[str, str],
     ) -> None:
-        """Run one fixed APM command, reporting only its label and status."""
+        """Run one fixed APM command, reporting only its label and status.
+
+        Raises:
+            ApmCommandError: The command cannot start or times out.
+            ApmExitError: The command exits with a non-zero status.
+        """
         try:
             result = subprocess.run(  # noqa: S603 -- executable and argv are constrained above
                 arguments,
@@ -134,18 +142,27 @@ class ApmCliAdapter:
             raise ApmExitError(command=label, returncode=result.returncode)
 
 
-def _pinned_executable() -> str:
-    """Return the ``apm`` executable after verifying the pinned package version."""
+def pinned_apm_executable() -> str:
+    """Return the environment's launcher recorded by the pinned distribution.
+
+    Raises:
+        ApmAvailabilityError: APM is missing, the wrong version, or lacks an executable.
+    """
     try:
-        installed_version = importlib.metadata.version("apm-cli")
+        distribution = importlib.metadata.distribution("apm-cli")
     except importlib.metadata.PackageNotFoundError as error:
         raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_PACKAGE) from error
-    if installed_version != _APM_VERSION:
+    if distribution.version != APM_VERSION:
         raise ApmAvailabilityError(ApmAvailabilityIssue.VERSION_MISMATCH)
-    executable = shutil.which("apm")
-    if executable is None:
+    launcher = "apm.exe" if sys.platform == "win32" else "apm"
+    executable = (Path(sysconfig.get_path("scripts")) / launcher).resolve()
+    recorded = any(
+        Path(str(distribution.locate_file(item))).resolve() == executable
+        for item in distribution.files or ()
+    )
+    if not recorded or not executable.is_file() or not os.access(executable, os.X_OK):
         raise ApmAvailabilityError(ApmAvailabilityIssue.MISSING_EXECUTABLE)
-    return executable
+    return str(executable)
 
 
 def _commands(executable: str) -> tuple[tuple[str, list[str]], ...]:

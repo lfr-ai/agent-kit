@@ -1,0 +1,52 @@
+# Upgrade batch plan: <batch id> - <one reason>
+
+Ledger items: <#, #>
+Tier: <0 tooling | 1 runtime patch and minor | 2 interpreter | 3 major or replacement | 4 syntax rewrite>
+Owner: <handle>
+Branch: <branch name>
+
+## Change
+
+| Package or rule | From | To | Migration notes or changelog link |
+| --- | --- | --- | --- |
+| `<package>` | `<x.y.z>` | `<x.y.z>` | `<url>` |
+| `<Ruff rule family>` | `<count>` | 0 | `<unsafe fixes reviewed: yes/no>` |
+
+Out of scope for this batch: <what is deliberately left for another batch>
+
+## Pre-checks
+
+- [ ] Baseline green: `<test command>` - `<result>`
+- [ ] Types and lint green: `<commands>` - `<results>`
+- [ ] Changelogs and migration guides read for every version crossed
+- [ ] Supported Python range of each upgraded package covers ours
+
+## Steps
+
+1. `<command, for example uv lock --upgrade-package name>`
+2. `<command, for example ruff check --select UP045 --fix src tests>`
+3. `<manual edits, if any, with file list>`
+
+## Verification
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused tests | `<command>` | |
+| Full suite | `<command>` | |
+| Deprecations as errors | `python -W error::DeprecationWarning -m pytest` | |
+| Types | `<command>` | |
+| Lint and legacy count | `ruff check .`, `python check_legacy_syntax.py src tests` | |
+| Lock consistency | `uv lock --check` | |
+| Wheel install away from checkout | `uv build` then install and import in a clean environment | |
+
+## Rollback
+
+- Revert commit: `<commit id once merged>`, including `uv.lock`
+- Proof of rollback: `<baseline command>` passes after revert
+- Deployed artifact to restore if released: `<artifact or version>`
+
+## Result
+
+Status: <done | reverted | split>
+Ledger updated: <yes/no>
+Follow-up batches: <ids>

@@ -14,6 +14,7 @@ references and copyable assets of the skill.
 | Boundaries, sizing, normalization, chunk failure modes | [chunking.md](chunking.md) |
 | Golden sets, recall@k, MRR, nDCG, groundedness | [evaluation.md](evaluation.md) |
 | Keeping LangChain, LlamaIndex and drivers behind ports | [framework-adapters.md](framework-adapters.md) |
+| SQLite, PostgreSQL, FAISS, Neo4j, LightRAG, RAG-Anything and local models | [storage and multimodal selection](storage-and-multimodal.md) |
 | Tenancy, access lists, deletion and permission propagation | [access-control-and-deletion.md](access-control-and-deletion.md) |
 
 ## Assets and copy targets
@@ -37,6 +38,7 @@ the package consistently if needed. Tests use only `pytest` and `asyncio.run`.
 | [schema.sql.template](../assets/schema.sql.template) | `schema.sql` | PostgreSQL with pgvector |
 | [compose.vector-store.yaml.template](../assets/compose.vector-store.yaml.template) | `compose.vector-store.yaml` | Docker Compose |
 | [chunk_template.json.template](../assets/chunk_template.json.template) | test fixture | none |
+| [backend-acceptance.md.template](../assets/backend-acceptance.md.template) | measured backend adoption/rollback record | consumer evidence |
 
 Tests: [chunking](../assets/test_chunking.py.template),
 [fusion](../assets/test_rrf_fusion.py.template),

@@ -1,0 +1,74 @@
+"""Liveness and readiness endpoints for orchestrators and load balancers.
+
+Copy into ``src/shop/api/health.py``. Liveness proves the process can answer and
+never touches dependencies; readiness runs bounded probes and returns 503 when
+any required dependency is unusable, so traffic drains instead of failing.
+"""
+
+import asyncio
+from typing import Literal
+
+from fastapi import APIRouter, Response, status
+from pydantic import BaseModel
+
+from shop.api.dependencies import ContainerDep
+from shop.application.ports import ReadinessCheck
+
+_PROBE_TIMEOUT_SECONDS = 2.0
+
+router = APIRouter(prefix="/health", tags=["health"])
+
+
+class LivenessOut(BaseModel):
+    """Liveness body."""
+
+    status: Literal["ok"]
+
+
+class CheckOut(BaseModel):
+    """Result of one named probe; failure details stay in server logs."""
+
+    name: str
+    ready: bool
+
+
+class ReadinessOut(BaseModel):
+    """Readiness body with one entry per probe."""
+
+    status: Literal["ready", "unavailable"]
+    checks: list[CheckOut]
+
+
+@router.get("/live", operation_id="getLiveness")
+async def live() -> LivenessOut:
+    """Report that the process is running."""
+    return LivenessOut(status="ok")
+
+
+@router.get(
+    "/ready",
+    operation_id="getReadiness",
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessOut}},
+)
+async def ready(container: ContainerDep, response: Response) -> ReadinessOut:
+    """Run every probe concurrently and report readiness."""
+    results = await asyncio.gather(
+        *(_probe(check) for check in container.readiness_checks)
+    )
+    checks = [
+        CheckOut(name=check.name, ready=result)
+        for check, result in zip(container.readiness_checks, results, strict=True)
+    ]
+    all_ready = all(result for result in results)
+    if not all_ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return ReadinessOut(status="ready" if all_ready else "unavailable", checks=checks)
+
+
+async def _probe(check: ReadinessCheck) -> bool:
+    """Run one probe with a deadline; connection failures mean not ready."""
+    try:
+        async with asyncio.timeout(_PROBE_TIMEOUT_SECONDS):
+            return await check.check()
+    except (TimeoutError, OSError):
+        return False

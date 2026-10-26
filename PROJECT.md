@@ -15,7 +15,7 @@
 ## Commands
 
 ```powershell
-uv sync --locked
+task bootstrap
 task verify
 uv run agent-kit check --root .
 uv run agent-kit compose backend --root . --output build/backend
@@ -23,9 +23,10 @@ uv run agent-kit provenance --root build/backend
 task apm:smoke
 ```
 
-- `task verify`: check-only formatting, lint, types, architecture, source contracts,
+- `task verify`: check-only lock consistency, formatting, lint, types, architecture, source contracts,
   dependency licenses, every test tier with branch coverage, and docs; does not
-  update outputs or require network access.
+  update outputs, synchronize dependencies or require network access. Provision
+  the reviewed environment with `task bootstrap` first.
 - `task verify -- dependencies`: network audit of the locked dependencies before
   installation. `task verify -- pins` rejects floating versions, mutable hook
   revisions, undigested images and package runners. See

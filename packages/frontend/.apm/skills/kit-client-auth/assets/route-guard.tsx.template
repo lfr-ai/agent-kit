@@ -1,0 +1,69 @@
+// src/app/auth/route-guard.tsx
+// Route-level access checks for a React Router data router, plus role-aware UI.
+// Both are navigation aids: hidden buttons and guarded routes do not authorize
+// anything, and the API must reject every request the UI would not offer.
+// The plain signed-in check (requireSession) and safeReturnTo live in the
+// kit-routing templates; this file adds role checks and session feedback.
+import { data, redirect, type LoaderFunctionArgs } from "react-router";
+import type { ReactElement, ReactNode } from "react";
+import { safeReturnTo } from "@/app/search-params";
+import { useAuth, type User } from "./auth-provider";
+
+const HTTP_FORBIDDEN = 403;
+
+function signInRedirect(request: Request): Response {
+  const url = new URL(request.url);
+  const returnTo = safeReturnTo(url.pathname + url.search);
+  return redirect(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
+}
+
+/**
+ * Loader guard: redirects anonymous users to sign-in and renders the route
+ * error boundary with 403 when the user lacks every listed role. Runs before
+ * render, so protected content never flashes.
+ */
+export function requireAnyRole(
+  loadUser: (signal: AbortSignal) => Promise<User | null>,
+  roles: readonly string[],
+) {
+  return async ({ request }: LoaderFunctionArgs): Promise<User> => {
+    const user = await loadUser(request.signal);
+    if (user === null) {
+      throw signInRedirect(request);
+    }
+    if (!roles.some((role) => user.roles.includes(role))) {
+      throw data("You do not have access to this page.", { status: HTTP_FORBIDDEN });
+    }
+    return user;
+  };
+}
+
+export type AuthorizedProps = Readonly<{
+  anyOf: readonly string[];
+  children: ReactNode;
+  /** Optional explanation instead of hiding the action entirely. */
+  fallback?: ReactNode;
+}>;
+
+/** Shows children only for matching roles. Display convenience, not security. */
+export function Authorized({ anyOf, children, fallback = null }: AuthorizedProps): ReactElement {
+  const { hasRole } = useAuth();
+  return <>{anyOf.some((role) => hasRole(role)) ? children : fallback}</>;
+}
+
+/** Announces an expired session and offers to sign in again without losing the page. */
+export function SessionExpiredNotice(): ReactElement | null {
+  const { state, signIn } = useAuth();
+  if (state.status !== "signed-out" || state.reason !== "expired") {
+    return null;
+  }
+  const here = safeReturnTo(window.location.pathname + window.location.search);
+  return (
+    <div role="alert">
+      <p>Your session has ended. Sign in again to continue; unsaved changes on this page are kept.</p>
+      <button type="button" onClick={() => signIn(here)}>
+        Sign in again
+      </button>
+    </div>
+  );
+}

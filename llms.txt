@@ -24,3 +24,5 @@
 - [Setup review](docs/setup-review.md): Original capability mapping and limits.
 - [Complete setup](docs/setup-completeness.md): Acceptance plan, resource depth,
   consumer knowledge/guards, native certification and optional MCP adoption.
+- [Capability review](docs/capability-review.md): Topic owners and remaining consumer verification.
+- [Technology coverage](.agents/agentic-setup/technology-coverage.md): Technologies mapped to instructions, skills and roles.

@@ -1,0 +1,64 @@
+// src/shared/ui/button-variants.test.tsx
+// Variant contract: defaults, semantic tokens only, predictable overrides, and
+// native button behavior that variants must not change.
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import { Button, buttonVariants, cn } from "./button-variants";
+
+const intents = ["primary", "secondary", "danger", "ghost"] as const;
+const sizes = ["sm", "md", "lg"] as const;
+
+describe("buttonVariants", () => {
+  it("applies the default intent and size", () => {
+    expect(buttonVariants()).toContain("bg-surface");
+    expect(buttonVariants()).toContain("h-11");
+  });
+
+  it.each(intents.flatMap((intent) => sizes.map((size) => [intent, size] as const)))(
+    "uses only token utilities for %s/%s",
+    (intent, size) => {
+      const classes = buttonVariants({ intent, size });
+      expect(classes).not.toMatch(/#[0-9a-f]{3,8}/i);
+      expect(classes).not.toMatch(/\[\d+(\.\d+)?px\]/);
+    },
+  );
+
+  it("lets later classes override conflicting utilities", () => {
+    expect(cn(buttonVariants({ size: "md" }), "px-2")).toContain("px-2");
+    expect(cn(buttonVariants({ size: "md" }), "px-2")).not.toContain("px-4");
+  });
+});
+
+describe("Button", () => {
+  it("renders a native button that does not submit forms by default", () => {
+    render(<Button>Save</Button>);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("type", "button");
+  });
+
+  it("activates from the keyboard", async () => {
+    const onClick = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Button intent="primary" onClick={onClick}>
+        Save
+      </Button>,
+    );
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("does not activate when disabled", async () => {
+    const onClick = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Button disabled onClick={onClick}>
+        Save
+      </Button>,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onClick).not.toHaveBeenCalled();
+  });
+});

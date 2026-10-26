@@ -1,0 +1,37 @@
+# Security policy
+
+## Supported versions
+
+| Version | Supported |
+| --- | --- |
+| LATEST_MAJOR.x | yes |
+| older | no; upgrade to a supported version |
+
+## Report a vulnerability
+
+Do not open a public issue, discussion or pull request for a vulnerability.
+
+1. Use **Security > Report a vulnerability** on the repository (GitHub private
+   vulnerability reporting).
+2. If that is unavailable, write to SECURITY_CONTACT (a team address, not a
+   personal one).
+
+Include the affected version, a minimal reproduction with synthetic data, the
+impact you observed, and any suggested fix. Do not include real credentials or
+other people's data.
+
+## What to expect
+
+- Acknowledgement target: ACK_TARGET.
+- Assessment and fix plan target: ASSESSMENT_TARGET.
+- These are intentions, not guarantees; we will keep you informed.
+
+We coordinate disclosure with the reporter, publish an advisory with credit
+(unless you prefer otherwise) once a fix is released, and request a CVE when
+appropriate.
+
+## Scope
+
+In scope: code in this repository and its released artifacts.
+Out of scope: third-party services, social engineering, and findings that need
+a compromised developer machine.

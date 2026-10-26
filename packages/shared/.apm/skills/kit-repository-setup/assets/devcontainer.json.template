@@ -1,0 +1,34 @@
+{
+  "name": "PROJECT_NAME",
+  "image": "mcr.microsoft.com/devcontainers/base:REVIEWED_TAG@sha256:REVIEWED_SHA256",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "REVIEWED_PYTHON_VERSION",
+      "installTools": false
+    },
+    "ghcr.io/devcontainers-extra/features/uv:1": {
+      "version": "REVIEWED_UV_VERSION"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "REVIEWED_NODE_VERSION"
+    }
+  },
+  "containerEnv": {
+    "PYTHONUTF8": "1",
+    "UV_LINK_MODE": "copy"
+  },
+  "updateContentCommand": "BOOTSTRAP_COMMAND",
+  "postCreateCommand": "GATE_SMOKE_COMMAND",
+  "forwardPorts": [],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "davidanson.vscode-markdownlint",
+        "editorconfig.editorconfig",
+        "ms-python.python",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
+  }
+}

@@ -26,6 +26,13 @@ flowchart LR
 - CI ([`ci-gate.yml.template`](../assets/ci-gate.yml.template)) calls the gate
   script, never a hand-copied list of commands.
 
+Provision the reviewed locked Python environment and frozen hook environments
+in a separate bootstrap step. The runner uses `uv run --locked --no-sync` and
+the declared CSpell/Markdown hooks instead of `npx`, version ranges or other
+ephemeral package runners. Pre-commit can provision a missing frozen environment,
+so initialize hooks during approved bootstrap and prewarm their caches before
+an offline gate; the runner is not a network sandbox.
+
 ## Sources of drift and how to remove them
 
 | Drift | Example | Remedy |

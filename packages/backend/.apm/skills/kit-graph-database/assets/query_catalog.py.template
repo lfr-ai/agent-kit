@@ -1,0 +1,58 @@
+"""Cypher query catalog for the purchase graph adapter.
+
+Copy to ``shop/infrastructure/graph/queries.py``. Every query is a constant
+``LiteralString``: values travel as ``$parameters`` and labels are fixed, so the
+driver's annotations reject formatted text at type-check time. Read queries end
+with ``LIMIT``, aggregate, or seek a unique key. Structure that varies (a label)
+is chosen from an allow-listed enum, never formatted into the text.
+"""
+
+from collections.abc import Mapping
+from enum import StrEnum, unique
+from types import MappingProxyType
+from typing import Final, LiteralString
+
+
+@unique
+class NodeKind(StrEnum):
+    """Node labels a caller may count; the values are the stored labels."""
+
+    CUSTOMER = "Customer"
+    PRODUCT = "Product"
+
+
+RECORD_PURCHASES: Final[LiteralString] = """
+UNWIND $rows AS row
+MERGE (c:Customer {customerId: row.customerId})
+MERGE (p:Product {sku: row.sku})
+MERGE (c)-[r:PURCHASED {orderId: row.orderId}]->(p)
+ON CREATE SET r.purchasedAt = row.purchasedAt
+"""
+
+PRODUCTS_BOUGHT_TOGETHER: Final[LiteralString] = """
+MATCH (:Product {sku: $sku})<-[:PURCHASED]-(:Customer)-[:PURCHASED]->(other:Product)
+WHERE other.sku <> $sku
+RETURN other.sku AS sku, count(*) AS together
+ORDER BY together DESC, sku
+LIMIT $limit
+"""
+
+CUSTOMER_PRODUCTS: Final[LiteralString] = """
+MATCH (:Customer {customerId: $customer_id})-[:PURCHASED]->(p:Product)
+WHERE $after_sku IS NULL OR p.sku > $after_sku
+RETURN DISTINCT p.sku AS sku
+ORDER BY sku
+LIMIT $limit
+"""
+
+FIND_CUSTOMER: Final[LiteralString] = """
+MATCH (c:Customer {customerId: $customer_id})
+RETURN c.customerId AS customer_id
+"""
+
+COUNT_BY_KIND: Final[Mapping[NodeKind, LiteralString]] = MappingProxyType(
+    {
+        NodeKind.CUSTOMER: "MATCH (n:Customer) RETURN count(n) AS total",
+        NodeKind.PRODUCT: "MATCH (n:Product) RETURN count(n) AS total",
+    }
+)

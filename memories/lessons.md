@@ -1,5 +1,13 @@
 # Lessons
 
+## Windows reserved-path checks interpret drive prefixes
+
+`ntpath.isreserved("a:metadata")` treats `a:` as a drive prefix rather than a
+filename colon. When validating individual output components, reject colons
+explicitly as well as reserved names. Evidence:
+`test_single_letter_alternate_stream_is_rejected_before_any_write` covers all
+52 ASCII letters and requires rejection before any filesystem writes.
+
 ## Keep the recorded coverage inventory explicit
 
 New capabilities require an intentional update to `coverage.json`, the baseline
@@ -120,3 +128,12 @@ Current uv documents `build-constraint-dependencies` entries as tables with
 `requirement` and `hashes`, but uv 0.10 rejects that form ("invalid type: map,
 expected a string"). Keep exact string pins until `required-version` is raised.
 Evidence: `uv lock` failed with the table form and passed with string pins.
+
+## A pinned role model that the host lacks disables the role
+
+Copilot role files rendered with `model: ["GPT-5 mini", "Claude Haiku 4.5"]`
+failed to start in a Copilot SDK host with "Model 'GPT-5 mini' is not
+available"; the host did not fall back to the next list entry. Role assets now
+omit `models`, so roles inherit the caller's model. Hosts cache role definitions
+for the session, so the fix applies to new sessions. Evidence: the failed
+`kit-plan-architect` delegation and the re-rendered native ownership check.

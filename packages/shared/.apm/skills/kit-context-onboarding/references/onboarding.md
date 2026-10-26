@@ -80,9 +80,8 @@ covers it.
 - Unverified: <items and why>
 ```
 
-Record durable discoveries (a surprising command, a non-obvious boundary) with
-the [memory entry template](../assets/memory-entry.md.template); keep the rest
-in the task hand-off.
+Record durable discoveries (a surprising command, a non-obvious boundary) as
+lessons with the `kit-project-memory` skill; keep the rest in the task hand-off.
 
 ## Stop conditions
 

@@ -25,7 +25,13 @@ class UnavailableContextWorkspaceError(ValueError):
 
 
 def session_context(payload: object) -> SessionContext:
-    """Inspect only the existence of the approved workspace entry files."""
+    """Inspect only the existence of the approved workspace entry files.
+
+    Raises:
+        InputTypeError: The payload or its ``cwd`` has the wrong type.
+        InvalidContextDirectoryError: ``cwd`` is empty or not absolute.
+        UnavailableContextWorkspaceError: The workspace is not a directory.
+    """
     if not isinstance(payload, dict):
         raise InputTypeError(location="session context input", expected="an object")
     supplied = payload.get("cwd")

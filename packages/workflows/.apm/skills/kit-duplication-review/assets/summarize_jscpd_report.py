@@ -102,7 +102,12 @@ class DuplicationInputTypeError(TypeError):
 
 
 def _int(value: object, where: str) -> int:
-    """Return a non-negative integer or raise a located error."""
+    """Return a non-negative integer or raise a located error.
+
+    Raises:
+        DuplicationInputTypeError: The value is not an integer.
+        DuplicationInputError: The value is negative.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.NONNEGATIVE_INTEGER, where=where
@@ -115,7 +120,11 @@ def _int(value: object, where: str) -> int:
 
 
 def _required_int(item: dict[str, object], key: str, where: str) -> int:
-    """Require an integer field, distinguishing absence from a wrong type."""
+    """Require an integer field, distinguishing absence from a wrong type.
+
+    Raises:
+        DuplicationInputError: The field is missing.
+    """
     if key not in item:
         raise DuplicationInputError(
             DuplicationInputIssue.NONNEGATIVE_INTEGER, where=where
@@ -132,7 +141,12 @@ def _line(item: dict[str, object], key: str, where: str) -> int:
 
 
 def _fragment(value: object, where: str) -> Fragment:
-    """Parse ``firstFile`` or ``secondFile`` including the ``startLoc`` fallback."""
+    """Parse ``firstFile`` or ``secondFile`` including the ``startLoc`` fallback.
+
+    Raises:
+        DuplicationInputTypeError: The fragment or a field has the wrong type.
+        DuplicationInputError: The file name is missing or empty.
+    """
     if not isinstance(value, dict):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.OBJECT_REQUIRED, where=where
@@ -154,7 +168,11 @@ def _fragment(value: object, where: str) -> Fragment:
 
 
 def _required_fragment(item: dict[str, object], key: str, where: str) -> Fragment:
-    """Require a clone fragment, distinguishing absence from a wrong type."""
+    """Require a clone fragment, distinguishing absence from a wrong type.
+
+    Raises:
+        DuplicationInputError: The fragment is missing.
+    """
     if key not in item:
         raise DuplicationInputError(DuplicationInputIssue.OBJECT_REQUIRED, where=where)
     return _fragment(item[key], where)
@@ -170,8 +188,8 @@ def parse_report(payload: object) -> tuple[list[Clone], float | None]:
         Clone pairs and the overall duplicated-lines percentage, if reported.
 
     Raises:
-        ValueError: The document does not match the expected report shape.
-        TypeError: The document or a present field has the wrong Python type.
+        DuplicationInputError: The document does not match the expected report shape.
+        DuplicationInputTypeError: The document or a present field has the wrong type.
     """
     if not isinstance(payload, dict):
         raise DuplicationInputTypeError(DuplicationInputIssue.REPORT_SHAPE)
@@ -187,7 +205,11 @@ def parse_report(payload: object) -> tuple[list[Clone], float | None]:
 
 
 def _clone(item: object, where: str) -> Clone:
-    """Parse one ``duplicates`` entry into a clone pair."""
+    """Parse one ``duplicates`` entry into a clone pair.
+
+    Raises:
+        DuplicationInputTypeError: The entry is not an object.
+    """
     if not isinstance(item, dict):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.OBJECT_REQUIRED, where=where
@@ -325,7 +347,12 @@ class SelfTestError(AssertionError):
 
 
 def _check_sample() -> None:
-    """Exercise parsing, filtering and rendering of the bundled sample."""
+    """Exercise parsing, filtering and rendering of the bundled sample.
+
+    Raises:
+        AssertionError: Parsing, filtering, or rendering is wrong.
+        SelfTestError: The Markdown clone is missing.
+    """
     clones, percentage = parse_report(_SAMPLE)
     if percentage != _SAMPLE_PERCENTAGE or len(clones) != len(_SAMPLE["duplicates"]):
         raise AssertionError((clones, percentage))
@@ -343,6 +370,7 @@ def self_test() -> None:
 
     Raises:
         AssertionError: Behavior differs from the documented contract.
+        SelfTestError: Invalid input is accepted or the gate fails.
     """
     _check_sample()
     for broken in _SELF_TEST_BROKEN_REPORTS:

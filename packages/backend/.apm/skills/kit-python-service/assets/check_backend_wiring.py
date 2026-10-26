@@ -64,7 +64,7 @@ def parse_rule(text: str, *, absolute: bool = False) -> Rule:
         The parsed rule.
 
     Raises:
-        ValueError: If the text has no source or no target.
+        ImportRuleError: If the text has no source or no target.
     """
     source, separator, raw_targets = text.partition(":")
     targets = tuple(item.strip() for item in raw_targets.split(",") if item.strip())

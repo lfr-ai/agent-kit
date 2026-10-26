@@ -29,11 +29,12 @@ license: MIT
 7. Run the read-only [context checker](assets/check_context.py) with `--root`
    (and repeated `--entry` for other names). It checks files and links, not
    factual accuracy.
-8. Structure durable knowledge as in [knowledge base and freshness](references/knowledge-base.md),
-   recording lessons with the [memory entry template](assets/memory-entry.md.template).
-9. Run the [memory freshness checker](assets/check_memory_freshness.py) over
-   memory and decision folders with an agreed `--max-age-days`; re-verify,
-   update or supersede every flagged entry.
+8. Structure durable knowledge as in [knowledge base and freshness](references/knowledge-base.md).
+   Record lessons, decisions and handoffs with the `kit-project-memory` skill,
+   which owns their templates.
+9. Run the `kit-project-memory` memory checker over memory and decision
+   folders with an agreed `--max-age-days` (add `--freshness-only` for plain
+   dated notes); re-verify, update or supersede every flagged entry.
 10. At the end of the task, run the [self-reflection loop](references/self-reflection.md)
     and put each lesson in its single owning place, preferring a check over prose.
 11. Ask for clarification when ownership or a destructive consequence cannot be
@@ -47,7 +48,8 @@ The [context map](references/guide.md) summarizes ownership and lifetimes.
   reported as unavailable, with working directory.
 - One call path for the requested behavior is mapped to `file:function` steps
   and its nearest test.
-- Both checkers exit 0, or every finding is listed with its resolution.
+- The context checker and the `kit-project-memory` memory checker exit 0, or
+  every finding is listed with its resolution.
 - New memory entries are dated, evidenced, scoped and free of credentials,
   personal data and transcripts.
 - No private repository facts were copied into portable bundles.

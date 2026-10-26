@@ -195,7 +195,11 @@ def _mapping(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Reject repeated JSON keys rather than accepting the final value."""
+    """Reject repeated JSON keys rather than accepting the final value.
+
+    Raises:
+        DuplicateJsonFieldError: A JSON object repeats a key.
+    """
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -205,7 +209,12 @@ def _object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _checked_runtimes(runtimes: tuple[str, ...]) -> tuple[str, ...]:
-    """Require one or more unique, supported runtime targets."""
+    """Require one or more unique, supported runtime targets.
+
+    Raises:
+        NativeRuntimeError: No target is given, or one is unknown or repeated.
+        InputTypeError: A runtime target is not a string.
+    """
     if not runtimes:
         raise NativeRuntimeError
     seen: set[str] = set()
@@ -226,7 +235,13 @@ def _require_fields(
     optional: set[str],
     location: str,
 ) -> dict[str, object]:
-    """Validate an object's exact required and optional field set."""
+    """Validate an object's exact required and optional field set.
+
+    Raises:
+        InputTypeError: The value is not an object.
+        MissingNativeFieldError: A required field is absent.
+        UnknownNativeFieldError: A field is neither required nor optional.
+    """
     if not _mapping(value):
         raise InputTypeError(location=location, expected="an object")
     missing = sorted(required - value.keys())
@@ -239,7 +254,14 @@ def _require_fields(
 
 
 def _check_text(value: object, location: str, *, maximum: int | None) -> str:
-    """Require bounded visible text without secret-like credential material."""
+    """Require bounded visible text without secret-like credential material.
+
+    Raises:
+        InputTypeError: The value is not a string.
+        NativeRoleError: The text is blank, has control characters, or looks
+            like a credential.
+        NativeTextLimitError: The text exceeds ``maximum`` characters.
+    """
     if not isinstance(value, str):
         raise InputTypeError(location=location, expected="a string")
     if not value.strip():
@@ -258,7 +280,12 @@ def _check_text(value: object, location: str, *, maximum: int | None) -> str:
 
 
 def _copilot_models(raw: object, location: str) -> tuple[str, ...]:
-    """Validate a non-empty, unique list of supported Copilot models."""
+    """Validate a non-empty, unique list of supported Copilot models.
+
+    Raises:
+        InputTypeError: The models are not a list of strings.
+        NativeRoleError: The list is empty, repeats, or names an unsupported model.
+    """
     field = f"{location}.models.copilot"
     if not isinstance(raw, list):
         raise InputTypeError(location=field, expected="a list")
@@ -275,7 +302,12 @@ def _copilot_models(raw: object, location: str) -> tuple[str, ...]:
 
 
 def _claude_model(raw: object, location: str) -> str:
-    """Validate one supported Claude model alias."""
+    """Validate one supported Claude model alias.
+
+    Raises:
+        InputTypeError: The model is not a string.
+        NativeRoleError: The model alias is unsupported.
+    """
     if not isinstance(raw, str):
         raise InputTypeError(location=f"{location}.models.claude", expected="a string")
     if raw not in _CLAUDE_MODELS:
@@ -286,7 +318,13 @@ def _claude_model(raw: object, location: str) -> str:
 def _model_settings(
     value: object, location: str
 ) -> tuple[tuple[str, ...] | None, str | None]:
-    """Validate only the explicitly supported native model declarations."""
+    """Validate only the explicitly supported native model declarations.
+
+    Raises:
+        InputTypeError: The models value is not an object.
+        UnknownNativeFieldError: A provider is not supported.
+        NativeRoleError: No provider is declared.
+    """
     if not _mapping(value):
         raise InputTypeError(location=f"{location}.models", expected="an object")
     unknown = sorted(value.keys() - {"copilot", "claude"})
@@ -308,7 +346,12 @@ def _model_settings(
 
 
 def _role_identifier(value: object, location: str) -> str:
-    """Require a ``kit-`` role identifier."""
+    """Require a ``kit-`` role identifier.
+
+    Raises:
+        InputTypeError: The identifier is not a string.
+        NativeRoleError: The identifier lacks the ``kit-`` form.
+    """
     if not isinstance(value, str):
         raise InputTypeError(location=f"{location}.id", expected="a string")
     if not _ROLE_ID.fullmatch(value):
@@ -323,7 +366,12 @@ def _closed_choice(
     location: str,
     issue: NativeRoleIssue,
 ) -> str:
-    """Require a string drawn from a closed vocabulary."""
+    """Require a string drawn from a closed vocabulary.
+
+    Raises:
+        InputTypeError: The value is not a string.
+        NativeRoleError: The value is outside ``allowed``.
+    """
     if not isinstance(value, str):
         raise InputTypeError(location=f"{location}.{field}", expected="a string")
     if value not in allowed:
@@ -332,7 +380,11 @@ def _closed_choice(
 
 
 def _role_description(value: object, location: str) -> str:
-    """Require a bounded, single-line role description."""
+    """Require a bounded, single-line role description.
+
+    Raises:
+        NativeRoleError: The description spans several lines.
+    """
     field = f"{location}.description"
     description = _check_text(value, field, maximum=_MAX_ROLE_DESCRIPTION_CHARS)
     if "\n" in description or "\r" in description:
@@ -341,7 +393,11 @@ def _role_description(value: object, location: str) -> str:
 
 
 def _role_body(value: object, location: str) -> str:
-    """Require a role body within the shared line budget."""
+    """Require a role body within the shared line budget.
+
+    Raises:
+        NativeTextLimitError: The body exceeds the line budget.
+    """
     field = f"{location}.body"
     body = _check_text(value, field, maximum=None)
     if len(body.splitlines()) > _MAX_ROLE_BODY_LINES:
@@ -352,7 +408,12 @@ def _role_body(value: object, location: str) -> str:
 
 
 def _role_workers(value: object, location: str) -> tuple[str, ...]:
-    """Require a unique list of valid worker identifiers."""
+    """Require a unique list of valid worker identifiers.
+
+    Raises:
+        InputTypeError: The workers are not a list of strings.
+        NativeRoleError: A worker identifier is invalid or repeated.
+    """
     if not isinstance(value, list):
         raise InputTypeError(location=f"{location}.workers", expected="a list")
     workers: list[str] = []
@@ -376,7 +437,12 @@ def _role_workers(value: object, location: str) -> tuple[str, ...]:
 def _check_coordination(
     kind: str, tier: str, workers: tuple[str, ...], location: str
 ) -> None:
-    """Allow workers only on primary coordinators, which must name some."""
+    """Allow workers only on primary coordinators, which must name some.
+
+    Raises:
+        NativeRoleError: Workers appear outside a primary coordinator, or a
+            coordinator names none.
+    """
     if tier != "coordinator":
         if workers:
             raise NativeRoleError(
@@ -428,7 +494,13 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
 
 
 def _asset_roles(path: str, content: bytes) -> list[object]:
-    """Decode one native asset and return its raw role list."""
+    """Decode one native asset and return its raw role list.
+
+    Raises:
+        InvalidNativeJsonError: The asset cannot be read or decoded.
+        InputTypeError: The asset or its roles have the wrong type.
+        NativeRoleError: The asset has unexpected fields.
+    """
     try:
         decoded: object = json.loads(
             content.decode("utf-8"), object_pairs_hook=_object_pairs
@@ -456,7 +528,12 @@ def _asset_roles(path: str, content: bytes) -> list[object]:
 
 
 def _check_worker_links(roles: dict[str, _NativeRole]) -> None:
-    """Require every coordinator target to be an available worker role."""
+    """Require every coordinator target to be an available worker role.
+
+    Raises:
+        UnavailableWorkerError: A target names no available role.
+        InvalidWorkerTargetError: A target is not a worker role.
+    """
     for role in roles.values():
         for worker_id in role.workers:
             worker = roles.get(worker_id)
@@ -467,7 +544,11 @@ def _check_worker_links(roles: dict[str, _NativeRole]) -> None:
 
 
 def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:
-    """Decode every matching authored asset and resolve explicit worker links."""
+    """Decode every matching authored asset and resolve explicit worker links.
+
+    Raises:
+        DuplicateRoleError: Two assets declare the same role.
+    """
     roles: dict[str, _NativeRole] = {}
     for path in sorted(path for path in files if _ASSET_PATH.fullmatch(path)):
         for index, raw_role in enumerate(_asset_roles(path, files[path])):

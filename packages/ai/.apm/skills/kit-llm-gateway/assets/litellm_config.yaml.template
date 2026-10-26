@@ -1,0 +1,96 @@
+# LiteLLM proxy configuration. Copy to 'litellm_config.yaml'.
+# Reviewed 2026-10-23 against the LiteLLM proxy configuration reference.
+# Rules: every credential is an os.environ/ reference; every deployment has a
+# timeout; models are pinned snapshots or tagged local models; production
+# aliases have fallbacks. Validate before deploying:
+#   python -c "import json,sys,yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout)" \
+#     < litellm_config.yaml | python check_gateway_config.py --production chat-default -
+# Replace each <placeholder> with a reviewed value.
+
+model_list:
+  # Job-named aliases; clients never send provider model names.
+  - model_name: chat-default
+    litellm_params:
+      model: openai/<pinned-model-snapshot>
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 30
+      stream_timeout: 60
+      rpm: 600
+      tpm: 200000
+    model_info:
+      mode: chat
+  - model_name: chat-fallback
+    litellm_params:
+      model: azure/<deployment-name>
+      api_base: os.environ/AZURE_API_BASE
+      api_key: os.environ/AZURE_API_KEY
+      api_version: os.environ/AZURE_API_VERSION
+      timeout: 30
+      stream_timeout: 60
+    model_info:
+      mode: chat
+  # Local models through Ollama; pin an explicit tag, never latest.
+  - model_name: local-chat
+    litellm_params:
+      model: ollama_chat/<model>:<pinned-tag>
+      api_base: os.environ/OLLAMA_API_BASE
+      timeout: 120
+    model_info:
+      mode: chat
+  - model_name: local-embed
+    litellm_params:
+      model: ollama/<embedding-model>:<pinned-tag>
+      api_base: os.environ/OLLAMA_API_BASE
+      timeout: 30
+    model_info:
+      mode: embedding
+
+router_settings:
+  routing_strategy: simple-shuffle
+  # Retries live in one layer. Keep client-side retries off when the proxy retries.
+  num_retries: 2
+  timeout: 60
+  allowed_fails: 3
+  cooldown_time: 30
+  # Fallbacks only between aliases that passed the same evaluation suite and
+  # share data-residency and contractual terms.
+  fallbacks:
+    - chat-default: ["chat-fallback"]
+  context_window_fallbacks: []
+  # Shared state for rate limits and cooldowns across proxy replicas.
+  redis_host: os.environ/REDIS_HOST
+  redis_port: os.environ/REDIS_PORT
+  redis_password: os.environ/REDIS_PASSWORD
+
+litellm_settings:
+  # Fail on unsupported parameters instead of silently dropping them.
+  drop_params: false
+  request_timeout: 60
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    password: os.environ/REDIS_PASSWORD
+    ttl: 600
+  # Langfuse reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_HOST
+  # from the environment. Send metadata only; prompts and completions stay out.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+  turn_off_message_logging: true
+  redact_user_api_key_info: true
+  # Upper bounds for virtual keys created through /key/generate.
+  upperbound_key_generate_params:
+    max_budget: 100
+    budget_duration: 30d
+    rpm_limit: 600
+    tpm_limit: 200000
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Keep this file authoritative; UI edits would overlay it from the database.
+  store_model_in_db: false
+  background_health_checks: true
+  health_check_interval: 300
+  health_check_details: false

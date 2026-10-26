@@ -4,7 +4,8 @@
 #                     (docker buildx imagetools inspect python:3.13-slim-bookworm)
 #   orders_service    the importable package that starts the service
 # Expects pyproject.toml, a hash-locked requirements.txt, and src/.
-# Build: docker buildx build --sbom=true --provenance=mode=max -t orders:dev .
+# Local build: docker buildx build --load -t orders:dev .
+# Release provenance and optional SBOMs follow the kit-supply-chain policy.
 
 ARG PYTHON_BASE=python:3.13-slim-bookworm@sha256:PIN_IMAGE_DIGEST
 

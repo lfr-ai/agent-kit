@@ -25,7 +25,9 @@ side effects. Behavior changes, if requested, ship as a separate step.
    add [characterization tests](../skills/kit-refactor/references/characterization-tests.md)
    that pass against the unchanged code first.
 4. When the goal is simplification, record complexity or duplication numbers
-   before starting.
+   before starting. Prefer maintainable, readable control flow; explain reduced
+   navigation, state or unused options rather than equating fewer lines with
+   lower cognitive load.
 5. Apply one named transformation at a time from the refactoring catalog.
    Re-run focused tests after each. Undo a failing step instead of debugging
    forward.
@@ -44,6 +46,8 @@ side effects. Behavior changes, if requested, ship as a separate step.
 - [ ] No test weakened, skipped, or deleted to pass.
 - [ ] Every intentional difference is recorded with its authorization.
 - [ ] Complexity or duplication claims come with before and after numbers.
+- [ ] Touched naming, types and docstrings follow project conventions, with
+      the applicable checks and a readability review recorded.
 
 ## Output
 

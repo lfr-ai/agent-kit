@@ -1,0 +1,176 @@
+"""Map service and framework errors to RFC 9457 problem details.
+
+Copy into ``src/shop/api/errors.py``. ``create_app`` calls
+``install_exception_handlers`` once. Handlers translate; they never contain
+business rules. Unexpected errors return a generic body; the server logs the
+traceback and the access log records the request identifier.
+"""
+
+import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
+from http import HTTPStatus
+from types import MappingProxyType
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
+
+from shop.api.problems import problem_response
+from shop.core.exceptions import (
+    ConflictError,
+    DependencyUnavailableError,
+    NotFoundError,
+    PermissionDeniedError,
+    RuleViolationError,
+    ServiceError,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProblemSpec:
+    """Public description of one problem type.
+
+    Attributes:
+        status: HTTP status for the problem.
+        slug: Final path segment of the problem type URI.
+        title: Stable, human-readable summary.
+    """
+
+    status: HTTPStatus
+    slug: str
+    title: str
+
+
+PROBLEMS: Mapping[type[ServiceError], ProblemSpec] = MappingProxyType(
+    {
+        NotFoundError: ProblemSpec(
+            status=HTTPStatus.NOT_FOUND, slug="not-found", title="Resource not found"
+        ),
+        ConflictError: ProblemSpec(
+            status=HTTPStatus.CONFLICT,
+            slug="conflict",
+            title="Request conflicts with the current state",
+        ),
+        RuleViolationError: ProblemSpec(
+            status=HTTPStatus.UNPROCESSABLE_CONTENT,
+            slug="rule-violation",
+            title="Request violates a business rule",
+        ),
+        PermissionDeniedError: ProblemSpec(
+            status=HTTPStatus.FORBIDDEN,
+            slug="forbidden",
+            title="Operation not permitted",
+        ),
+        DependencyUnavailableError: ProblemSpec(
+            status=HTTPStatus.SERVICE_UNAVAILABLE,
+            slug="unavailable",
+            title="Service temporarily unavailable",
+        ),
+    }
+)
+_UNMAPPED = ProblemSpec(
+    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+    slug="internal",
+    title="Internal server error",
+)
+
+
+def install_exception_handlers(app: FastAPI, *, problem_base: str) -> None:
+    """Register problem-details handlers for service and framework errors.
+
+    Args:
+        app: Application whose default handlers are replaced.
+        problem_base: Absolute URI prefix of the documented problem types.
+    """
+    handlers = _Handlers(problem_base=problem_base.rstrip("/"))
+    app.add_exception_handler(ServiceError, handlers.service_error)
+    app.add_exception_handler(RequestValidationError, handlers.validation_error)
+    app.add_exception_handler(StarletteHTTPException, handlers.http_error)
+    app.add_exception_handler(Exception, handlers.unexpected_error)
+
+
+def spec_for(error: ServiceError) -> ProblemSpec:
+    """Return the most specific mapping for an error class.
+
+    Args:
+        error: Raised service error.
+
+    Returns:
+        The mapping of the nearest mapped base class, or the internal fallback.
+    """
+    for cls in type(error).__mro__:
+        spec = PROBLEMS.get(cls)
+        if spec is not None:
+            return spec
+    return _UNMAPPED
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Handlers:
+    """Exception handlers bound to one problem type base URI."""
+
+    problem_base: str
+
+    async def service_error(self, request: Request, error: Exception) -> JSONResponse:
+        """Render a mapped ``ServiceError`` with its caller-safe message."""
+        if not isinstance(error, ServiceError):
+            return await self.unexpected_error(request, error)
+        spec = spec_for(error)
+        if spec.status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            logger.warning("service error %s on %s", error.code, request.url.path)
+        return problem_response(
+            status=spec.status,
+            title=spec.title,
+            problem_type=f"{self.problem_base}/{spec.slug}",
+            detail=error.message,
+            extensions={"code": error.code},
+        )
+
+    async def validation_error(
+        self, request: Request, error: Exception
+    ) -> JSONResponse:
+        """Render request validation failures with JSON pointers, not input values."""
+        if not isinstance(error, RequestValidationError):
+            return await self.unexpected_error(request, error)
+        errors = [
+            {
+                "pointer": "/" + "/".join(str(part) for part in item.get("loc", ())),
+                "message": str(item.get("msg", "invalid value")),
+            }
+            for item in error.errors()
+        ]
+        return problem_response(
+            status=HTTPStatus.UNPROCESSABLE_CONTENT,
+            title="Request validation failed",
+            problem_type=f"{self.problem_base}/validation",
+            detail=f"{len(errors)} field(s) are invalid.",
+            extensions={"errors": errors},
+        )
+
+    async def http_error(self, request: Request, error: Exception) -> JSONResponse:
+        """Render framework HTTP errors, keeping headers such as ``WWW-Authenticate``."""
+        if not isinstance(error, StarletteHTTPException):
+            return await self.unexpected_error(request, error)
+        status = HTTPStatus(error.status_code)
+        detail = error.detail if isinstance(error.detail, str) else None
+        return problem_response(
+            status=status,
+            title=status.phrase,
+            detail=detail if detail != status.phrase else None,
+            headers=error.headers,
+        )
+
+    async def unexpected_error(
+        self, request: Request, error: Exception
+    ) -> JSONResponse:
+        """Return a generic 500 body; never echo the exception text."""
+        return problem_response(
+            status=_UNMAPPED.status,
+            title=_UNMAPPED.title,
+            problem_type=f"{self.problem_base}/{_UNMAPPED.slug}",
+            detail="The request could not be completed.",
+        )

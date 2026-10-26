@@ -8,7 +8,7 @@ license: MIT
 
 ## Procedure
 
-1. Find the authoritative settings model, its environment mapping, and the documented precedence. If none exists, create one root settings class from the [settings template](assets/settings.py.template).
+1. Find the authoritative settings model, its environment mapping, and the documented precedence. For composed experiments or bounded sweeps, use the optional [reproducible experiments branch](references/reproducible-experiments.md); otherwise, if no settings model exists, start from the [settings template](assets/settings.py.template).
 2. Classify each value: deploy-specific configuration, secret, or code constant. Only the first two belong in settings; see [twelve-factor configuration](references/twelve-factor.md).
 3. Declare every field with a precise type, bounds, and a unit in its name. Required values have no default; safe defaults are allowed only for non-secret values.
 4. Group related fields into frozen nested facets (database, outbound client, TLS) so collaborators receive only what they need.
@@ -30,6 +30,7 @@ license: MIT
 - No secret has a default, appears in an example with a realistic value, or is printed by `repr`, logs, or error output.
 - Precedence between arguments, environment, dotenv, and secret files is documented and covered by a test.
 - Domain and application layers receive plain values or facets through constructors; no module-level settings singleton is imported outside the composition root.
+- For experiments, validate public provenance and sweep budgets before launch, isolate job outputs, and keep secrets and unchecked executable config out of artifacts. Verify native Hydra behavior in the consumer; the stdlib template is not runtime certification.
 
 ## Commands
 

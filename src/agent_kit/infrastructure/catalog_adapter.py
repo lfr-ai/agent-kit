@@ -99,7 +99,12 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
     def construct_mapping(
         self, node: MappingNode, deep: bool = False
     ) -> dict[object, object]:
-        """Build a mapping only when each decoded key is unique."""
+        """Build a mapping only when each decoded key is unique.
+
+        Raises:
+            _UnhashableYamlKeyError: A key cannot be hashed.
+            _DuplicateYamlKeyError: A key is repeated.
+        """
         self.flatten_mapping(node)
         mapping: dict[object, object] = {}
         for key_node, value_node in node.value:
@@ -121,7 +126,11 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
 
 
 def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Build a JSON object and reject repeated property names."""
+    """Build a JSON object and reject repeated property names.
+
+    Raises:
+        DuplicateJsonFieldError: A property name is repeated.
+    """
     mapping: dict[str, object] = {}
     for key, value in pairs:
         if key in mapping:
@@ -180,13 +189,13 @@ def _decode_utf8(content: bytes) -> str | None:
 
 def _decode_frontmatter(text: str) -> tuple[object | None, bool]:
     """Parse leading ``---`` frontmatter, flagging an unterminated block."""
-    if text.splitlines()[:1] != ["---"]:
+    lines = text.splitlines()
+    if lines[:1] != ["---"]:
         return None, False
-    start = len(text.splitlines(keepends=True)[0])
-    closing = text.find("\n---", start)
-    if closing < 0:
-        return None, True
-    return _decode_mapping(text[start:closing])
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            return _decode_mapping("\n".join(lines[1:index]))
+    return None, True
 
 
 def _decoded_document(path: Path, relative_path: str, content: bytes) -> SourceDocument:

@@ -36,6 +36,7 @@ Do not replace a failing security or data-loss assertion with a weaker one.
 - [Property-based testing with Hypothesis](property-testing.md)
 - [Preventing and fixing flaky tests](flaky-tests.md)
 - [Test naming, speed hygiene and coverage](naming-speed-coverage.md)
+- [Test suite architecture](test-suite-architecture.md)
 
 ## Sources
 

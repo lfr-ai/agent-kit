@@ -1,0 +1,71 @@
+# Codebase audit report: <repository or area>
+
+Commit: <full commit id>
+Date: <YYYY-MM-DD>
+Auditor: <handle>
+Plan: <link to the audit plan>
+
+## Summary
+
+- Findings: <N> (critical <n>, high <n>, medium <n>, low <n>, info <n>)
+- Systemic themes: <three short phrases>
+- Highest-value next step: <one sentence>
+
+## Baseline and scope
+
+| Item | Value |
+| --- | --- |
+| Included paths | `<paths>` |
+| Excluded paths | `<paths and reasons>` |
+| Gates before the audit | `<pass or failing gates with counts>` |
+| Tool versions | `<tool: version, ...>` |
+
+## Ranked findings
+
+Ordered by severity, confidence, breadth, effort. Evidence is `path:line` or a
+command with its output file.
+
+| # | Severity | Confidence | Area | Finding | Evidence | Count | Owner skill | Batch |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | high | high | architecture | domain imports the HTTP client directly | `src/shop/domain/pricing.py:7`; `lint-imports` contract "Domain stays free of frameworks" broken | 3 | `kit-hexagonal-architecture` | B1 |
+| 2 | high | medium | error handling | broad except hides declined payments, caller retries | `src/shop/application/checkout.py:88` | 1 | `kit-python-service` | B1 |
+| 3 | medium | high | complexity | functions above complexity 10 in hot spots | `audit/tool-findings.md` rank 2 (`C901`), `src/shop/orders/rules.py:40` | 14 | `kit-refactor` | B2 |
+| 4 | `<severity>` | `<confidence>` | `<area>` | `<finding>` | `<path:line or command>` | `<n>` | `<skill>` | `<batch>` |
+
+## Tool summary
+
+Paste the table from `summarize_findings.py` and add count-only rows for tools
+without a mergeable format.
+
+| Tool | Rule or check | Count | Sample locations | Note |
+| --- | --- | --- | --- | --- |
+| vulture | unused function (60%) | `<n>` | `<path:line>` | confirmed by search: `<yes/no>` |
+| deptry | DEP002 unused dependency | `<n>` | `pyproject.toml` | plugins excluded |
+
+## Systemic themes
+
+### <Theme name>
+
+- Pattern and root cause: <text>
+- Count and counting command: <n>, `<command>`
+- Representative locations: `<path:line>`, `<path:line>`, `<path:line>`
+- Remediation that removes the cause: <gate, helper, generator>
+
+## Remediation batches
+
+| Batch | Findings | Owner skill | Risk removed | Effort | Prerequisite |
+| --- | --- | --- | --- | --- | --- |
+| B1 | 1, 2 | `kit-hexagonal-architecture`, `kit-python-service` | high | days | characterization tests on checkout |
+| B2 | 3 | `kit-refactor` | medium | weeks | B1 merged |
+
+## Not checked
+
+| Area | Reason | How to check later |
+| --- | --- | --- |
+| `<area>` | `<tool failed, out of time box, needs runtime access>` | `<command or owner>` |
+
+## Reproduce
+
+```text
+<exact commands in order, with tool versions and configuration files>
+```

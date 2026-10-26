@@ -1,0 +1,69 @@
+---
+status: proposed
+date: YYYY-MM-DD
+decision-makers: roles, not names or contact details
+supersedes: none
+superseded-by: none
+---
+
+# NNNN Short decision title in active voice
+
+<!-- MADR-style record. Copy to decisions/NNNN-short-title.md. Keep the number
+forever. Allowed status values: proposed, accepted, rejected, deprecated,
+superseded. When superseded, set superseded-by to a Markdown link to the new
+record and never edit the decision below. -->
+
+## Context and problem statement
+
+What forces a decision now, in two to four sentences. Link the evidence:
+owning code, a failing test, a measurement or an incident summary.
+
+## Decision drivers
+
+- Driver 1, for example a reliability or cost constraint
+- Driver 2
+
+## Considered options
+
+- Option A
+- Option B
+- Keep the current approach
+
+## Decision outcome
+
+Chosen option: "Option A", because it satisfies drivers 1 and 2 at a lower
+cost than option B.
+
+### Consequences
+
+- Good: what becomes easier or safer.
+- Bad: what becomes harder, and who accepted that trade-off (by role).
+- Follow-up: work this decision creates, with a plan or issue link.
+
+### Confirmation
+
+How compliance is checked: a test, lint rule, architecture check or review
+step, with a link to it. Prefer an automated check.
+
+## Pros and cons of the options
+
+### Option A
+
+- Good, because ...
+- Bad, because ...
+
+### Option B
+
+- Good, because ...
+- Bad, because ...
+
+### Keep the current approach
+
+- Good, because no migration is needed.
+- Bad, because ...
+
+## More information
+
+- Revisit when: a concrete trigger, such as a load threshold or a dependency
+  end-of-life date.
+- Related records: links.

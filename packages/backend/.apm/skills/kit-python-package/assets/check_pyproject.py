@@ -549,7 +549,7 @@ def self_test() -> None:
     """Exercise valid, legacy, dynamic, dependency, and entry-point cases.
 
     Raises:
-        AssertionError: A regression was detected.
+        SelfTestError: A regression was detected.
     """
     root = Path(__file__).parent
     valid = (

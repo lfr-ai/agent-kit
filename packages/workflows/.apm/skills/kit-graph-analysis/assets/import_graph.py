@@ -175,7 +175,7 @@ def build_graph(
         The import graph.
 
     Raises:
-        ValueError: The directory holds no Python modules.
+        GraphInputError: The directory holds no Python modules.
         SyntaxError: A module cannot be parsed.
         OSError: A module cannot be read.
     """
@@ -442,7 +442,11 @@ def _check_graph(package: Path) -> None:
 
 
 def _check_edges(graph: Graph) -> None:
-    """Verify resolved edges and the reported cycle."""
+    """Verify resolved edges and the reported cycle.
+
+    Raises:
+        AssertionError: An edge or the cycle is wrong.
+    """
     if graph.edges["shop.api"] != {"shop.orders": 1}:
         raise AssertionError(graph.edges["shop.api"])
     if set(graph.edges["shop.api.views"]) != {"shop.billing", "shop.api.helpers"}:
@@ -456,7 +460,12 @@ def _check_edges(graph: Graph) -> None:
 
 
 def _check_queries(package: Path, graph: Graph) -> None:
-    """Verify import filters, reverse reachability and chain queries."""
+    """Verify import filters, reverse reachability and chain queries.
+
+    Raises:
+        AssertionError: A filter or reverse query is wrong.
+        ChainQueryRegressionError: A chain query is wrong.
+    """
     filtered = build_graph(package, skip_type_checking=True, module_level_only=True)
     if filtered.edges["shop.api.views"]:
         raise AssertionError(filtered.edges["shop.api.views"])

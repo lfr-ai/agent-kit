@@ -1,0 +1,25 @@
+# Security lint configuration. Merge into ruff.toml (or [tool.ruff] in
+# pyproject.toml with the section names prefixed by "tool.ruff.").
+# Rule ids: https://docs.astral.sh/ruff/rules/#flake8-bandit-s
+
+[lint]
+extend-select = [
+  "S",     # flake8-bandit: injection, deserialization, crypto, temp files, timeouts
+  "BLE",   # blind except hides failures and fails open
+  "TRY",   # exception handling that loses context
+  "PGH",   # blanket noqa and type: ignore comments
+  "RUF100", # unused noqa comments, so stale suppressions are removed
+]
+
+[lint.flake8-bandit]
+# Directories that are legitimately used for temporary files on this platform.
+hardcoded-tmp-directory-extend = []
+# Also report try/except/pass (S110) for specific exception types.
+check-typed-exception = true
+
+[lint.per-file-ignores]
+"tests/**" = [
+  "S101", # assert is the pytest assertion idiom
+  "S105", # fake credentials in fixtures are not real secrets
+  "S106", # fake credentials passed as arguments in tests
+]

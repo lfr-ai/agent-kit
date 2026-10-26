@@ -1,0 +1,30 @@
+# Iteration log
+
+- Task: <one-line outcome>
+- Loop budget: <maximum iterations, default 3>
+- Early stop when: <all criteria met and checks pass / blocker outside scope>
+
+## Iteration 1
+
+- Findings (highest severity first, each with path:line and rule):
+  1. <finding>
+- Change made: <files and one-line reason>
+- Checks re-run after the change:
+  - `<command>`: <result>
+- Criteria status: <met / partial / unmet per criterion>
+- Decision: iterate / stop, because <rule>
+
+## Iteration 2
+
+- Findings:
+- Change made:
+- Checks re-run after the change:
+- Criteria status:
+- Decision:
+
+## Close
+
+- Iterations used: <n of budget>
+- Stop reason: <criteria met / budget spent / blocked / repeated finding>
+- Remaining findings: <none / list with severity>
+- Lessons recorded: <none / link to the entry or check>

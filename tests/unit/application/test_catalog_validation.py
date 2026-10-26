@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import json
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -58,6 +60,137 @@ def test_contained_catalog_path_accepts_normal_and_rejects_unsafe(
 ) -> None:
     """Containment validation accepts normalized relative paths and rejects unsafe ones."""
     assert _contained_catalog_path(value) == expected
+
+
+@pytest.mark.parametrize("root_name", ["skills", "instructions", "prompts"])
+def test_resource_roots_must_be_directories(source_root: Path, root_name: str) -> None:
+    bundle = source_root / "packages/shared"
+    resource_root = bundle / ".apm" / root_name
+    if resource_root.exists():
+        shutil.rmtree(resource_root)
+    resource_root.write_text("not a directory\n", encoding="utf-8")
+    manifest_path = bundle / "apm.yml"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    include = f".apm/{root_name}/"
+    if include not in manifest["includes"]:
+        manifest["includes"].append(include)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    snapshot = FileCatalogAdapter().load(source_root)
+
+    report = CatalogService().validate(snapshot)
+
+    assert any(
+        item.code == "source.root" and item.path.endswith(f"/.apm/{root_name}")
+        for item in report.findings
+    )
+    with pytest.raises(ValueError, match="source validation failed"):
+        CatalogService().compose(snapshot, "shared", (), ())
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_empty_effective_profiles_are_rejected(
+    source_root: Path, inherited: bool
+) -> None:
+    path = source_root / "catalog.json"
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    catalog["profiles"]["empty"] = {"extends": [], "bundles": []}
+    if inherited:
+        catalog["profiles"]["empty-child"] = {"extends": ["empty"], "bundles": []}
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+    snapshot = FileCatalogAdapter().load(source_root)
+
+    report = CatalogService().validate(snapshot)
+
+    expected = {"catalog.json:profiles:empty"}
+    if inherited:
+        expected.add("catalog.json:profiles:empty-child")
+    assert {
+        item.path for item in report.findings if item.code == "profile.empty"
+    } == expected
+    with pytest.raises(ValueError, match="source validation failed"):
+        CatalogService().compose(snapshot, "empty", (), ())
+
+
+def test_inheritance_only_nonempty_profile_has_valid_provenance(
+    source_root: Path,
+) -> None:
+    from agent_kit.application.services.provenance_service import ProvenanceService
+    from agent_kit.infrastructure.output_adapter import OutputAdapter
+
+    snapshot = FileCatalogAdapter().load(source_root)
+    service = CatalogService()
+    assert service.validate(snapshot).valid
+
+    plan = service.compose(snapshot, "fullstack", (), ())
+    assert plan.bundles == ("shared", "backend", "frontend")
+    output = OutputAdapter().write(plan, source_root.parent / "fullstack")
+    assert ProvenanceService().verify(FileCatalogAdapter().load_composed(output)).valid
+
+
+@pytest.mark.parametrize(
+    ("target", "valid"),
+    [
+        ("assets/Guide.md", False),
+        ("Assets/guide.md", False),
+        ("Assets/", False),
+        ("assets/guide.md", True),
+        ("assets/", True),
+    ],
+)
+def test_resource_links_require_exact_file_and_directory_spelling(
+    source_root: Path, target: str, valid: bool
+) -> None:
+    skill = source_root / "packages/shared/.apm/skills/kit-shared"
+    (skill / "assets").mkdir()
+    (skill / "assets/guide.md").write_text("# Guide\n", encoding="utf-8")
+    path = skill / "SKILL.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n[Guide]({target})\n",
+        encoding="utf-8",
+    )
+
+    report = CatalogService().validate(FileCatalogAdapter().load(source_root))
+
+    assert report.valid is valid
+    assert any(item.code == "links.missing" for item in report.findings) is not valid
+
+
+@pytest.mark.parametrize("kind", ["instruction", "prompt"])
+@pytest.mark.parametrize("closing", ["----", "---suffix"])
+def test_frontmatter_rejects_partial_closing_delimiters(
+    source_root: Path, kind: str, closing: str
+) -> None:
+    bundle = source_root / "packages/shared"
+    if kind == "instruction":
+        path = bundle / ".apm/instructions/kit-shared.instructions.md"
+        metadata = 'description: Shared instructions.\napplyTo: "**/*.py"\n'
+    else:
+        path = bundle / ".apm/prompts/kit-shared.prompt.md"
+        path.parent.mkdir()
+        metadata = "description: Shared prompt.\n"
+        manifest_path = bundle / "apm.yml"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["includes"].append(".apm/prompts/")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    path.write_text(f"---\n{metadata}{closing}\nBody.\n", encoding="utf-8")
+
+    report = CatalogService().validate(FileCatalogAdapter().load(source_root))
+
+    assert any(item.code == "frontmatter.parse" for item in report.findings)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("body", ["", "\nBody.\n"])
+def test_frontmatter_accepts_complete_closing_lines(
+    source_root: Path, newline: str, body: str
+) -> None:
+    path = source_root / "packages/shared/.apm/instructions/kit-shared.instructions.md"
+    text = '---\ndescription: Shared instructions.\napplyTo: "**/*.py"\n---' + body
+    path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+
+    report = CatalogService().validate(FileCatalogAdapter().load(source_root))
+
+    assert report.valid, report.findings
 
 
 @pytest.mark.parametrize(
@@ -470,6 +603,58 @@ def test_link_target_unsupported_scheme_and_empty_path() -> None:
     # empty path produces no finding
     _link_target("", "doc.md", set(), findings, base_is_bundle=True)
     assert not findings
+
+
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [("```python", "```"), ("~~~~python", "~~~~~"), ("   ```python", "   ```")],
+)
+def test_fenced_python_generics_are_not_markdown_links(
+    opening: str, closing: str
+) -> None:
+    text = (
+        f"{opening}\n"
+        "def logged[**P, R](function: Callable[P, R]) -> Callable[P, R]: ...\n"
+        "[example](../../outside.md)\n"
+        f"{closing}\n"
+        "[real](real.md)\n"
+    )
+    document = SourceDocument(
+        content=text.encode(),
+        frontmatter=None,
+        frontmatter_error=False,
+        is_directory=False,
+        is_symlink=False,
+        parse_error=False,
+        relative_path="guide.md",
+        text=text,
+        yaml_value=None,
+    )
+    findings: list[Finding] = []
+
+    _check_links(document, {"real.md"}, findings, base_is_bundle=True)
+
+    assert findings == []
+
+
+def test_real_unsafe_link_after_a_code_fence_is_still_rejected() -> None:
+    text = "```python\nvalue = 1\n```\n[unsafe](../../outside.md)\n"
+    document = SourceDocument(
+        content=text.encode(),
+        frontmatter=None,
+        frontmatter_error=False,
+        is_directory=False,
+        is_symlink=False,
+        parse_error=False,
+        relative_path="guide.md",
+        text=text,
+        yaml_value=None,
+    )
+    findings: list[Finding] = []
+
+    _check_links(document, set(), findings, base_is_bundle=True)
+
+    assert [finding.code for finding in findings] == ["links.escape"]
 
 
 def test_document_text_and_check_links_handle_none_text() -> None:

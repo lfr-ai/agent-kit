@@ -180,11 +180,12 @@ flowchart TD
 
 ## APM smoke
 
-`task apm:smoke` (portable union) or `task apm:smoke -- --session`.
+`task apm:smoke` (three selections covering every portable bundle) or
+`task apm:smoke -- --session`.
 
 1. Require `apm-cli` 0.33.0 and the locked `apm` and `agent-kit` executables.
 2. Run Check on the toolkit.
-3. For each selection (default `fullstack` with `iac`, `workflows`, `ai`; session
+3. For each selection (`fullstack`; `ai` with `iac`; `workflows`; session
    mode `backend` with `--skill kit-python-service`), create a disposable
    directory with its own home, compose, and run Provenance.
 4. Record expected skills, resource bytes and native roles; session mode must

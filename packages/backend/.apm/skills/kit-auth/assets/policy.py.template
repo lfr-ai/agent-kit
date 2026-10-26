@@ -1,0 +1,156 @@
+"""Closed role and scope policy evaluated after token verification.
+
+Copy into ``src/shop/auth/policy.py``. Standard library only. Unknown roles and
+scopes in a token are ignored, so the policy grants nothing that is not listed
+here; adding a permission is a reviewed code change with a test.
+"""
+
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from types import MappingProxyType
+
+
+class Role(StrEnum):
+    """Roles the authorization server may assign to a subject."""
+
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    ADMIN = "admin"
+
+
+class Permission(StrEnum):
+    """Operations the API protects."""
+
+    ITEMS_READ = "items:read"
+    ITEMS_WRITE = "items:write"
+    ITEMS_DELETE = "items:delete"
+
+
+ROLE_PERMISSIONS: Mapping[Role, frozenset[Permission]] = MappingProxyType(
+    {
+        Role.VIEWER: frozenset({Permission.ITEMS_READ}),
+        Role.EDITOR: frozenset({Permission.ITEMS_READ, Permission.ITEMS_WRITE}),
+        Role.ADMIN: frozenset(Permission),
+    }
+)
+
+SCOPE_PERMISSIONS: Mapping[str, frozenset[Permission]] = MappingProxyType(
+    {
+        "items.read": frozenset({Permission.ITEMS_READ}),
+        "items.write": frozenset({Permission.ITEMS_READ, Permission.ITEMS_WRITE}),
+        "items.admin": frozenset(Permission),
+    }
+)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Principal:
+    """Authenticated caller derived from verified claims.
+
+    Attributes:
+        subject: Stable subject identifier (``sub``); never an email address.
+        client_id: OAuth client that obtained the token, when present.
+        roles: Recognized roles; unknown values were dropped.
+        scopes: Recognized delegated scopes, or ``None`` when the token
+            carried no ``scope`` claim (for example an application token).
+    """
+
+    subject: str
+    client_id: str | None
+    roles: frozenset[Role]
+    scopes: frozenset[str] | None
+
+    def __repr__(self) -> str:
+        """Return a representation without the subject identifier."""
+        return f"Principal(roles={sorted(self.roles)}, scopes={self.scopes})"
+
+
+class ClaimsError(ValueError):
+    """Verified claims do not have the shape this policy requires."""
+
+
+def principal_from_claims(
+    claims: Mapping[str, object], *, roles_claim: str = "roles"
+) -> Principal:
+    """Build a principal from verified claims, dropping unknown values.
+
+    Args:
+        claims: Claims from a token whose signature and registered claims
+            were already validated.
+        roles_claim: Claim that carries role names.
+
+    Returns:
+        The principal.
+
+    Raises:
+        ClaimsError: ``sub`` is missing or claim types are wrong.
+    """
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject:
+        msg = "claim 'sub' must be a non-empty string"
+        raise ClaimsError(msg)
+    client_id = claims.get("client_id")
+    raw_roles = claims.get(roles_claim, [])
+    if not isinstance(raw_roles, list | tuple):
+        msg = f"claim {roles_claim!r} must be a list"
+        raise ClaimsError(msg)
+    raw_scope = claims.get("scope")
+    if raw_scope is not None and not isinstance(raw_scope, str):
+        msg = "claim 'scope' must be a space-delimited string"
+        raise ClaimsError(msg)
+    return Principal(
+        subject=subject,
+        client_id=client_id if isinstance(client_id, str) else None,
+        roles=frozenset(_known_roles(raw_roles)),
+        scopes=None
+        if raw_scope is None
+        else frozenset(
+            scope for scope in raw_scope.split() if scope in SCOPE_PERMISSIONS
+        ),
+    )
+
+
+def is_allowed(principal: Principal, permission: Permission) -> bool:
+    """Decide one permission; roles grant, delegated scopes can only narrow.
+
+    Args:
+        principal: Verified caller.
+        permission: Operation being attempted.
+
+    Returns:
+        True only when a role grants the permission and, for delegated
+        tokens, a scope also grants it.
+    """
+    granted = {item for role in principal.roles for item in ROLE_PERMISSIONS[role]}
+    if permission not in granted:
+        return False
+    if principal.scopes is None:
+        return True
+    return any(permission in SCOPE_PERMISSIONS[scope] for scope in principal.scopes)
+
+
+def scopes_granting(permission: Permission) -> tuple[str, ...]:
+    """List scopes that grant a permission, for ``insufficient_scope`` hints.
+
+    Args:
+        permission: Required permission.
+
+    Returns:
+        Sorted scope names.
+    """
+    return tuple(
+        sorted(
+            scope
+            for scope, granted in SCOPE_PERMISSIONS.items()
+            if permission in granted
+        )
+    )
+
+
+def _known_roles(values: Iterable[object]) -> Iterable[Role]:
+    """Yield recognized roles and skip unknown or non-string values."""
+    known = {role.value: role for role in Role}
+    for value in values:
+        if isinstance(value, str) and value in known:
+            yield known[value]

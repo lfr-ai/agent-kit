@@ -9,7 +9,8 @@ license: MIT
 Coordinate a review across infrastructure layers, then judge the combined
 risk. Detail for each layer lives in its specialist skill:
 `kit-terraform-validation`, `kit-azure-validation`, `kit-ci-review`,
-`kit-containers`, and `kit-observability`. Start with the
+`kit-containers`, `kit-observability`, `kit-edge-networking`, and
+`kit-remote-access`. Start with the
 [review guide](references/guide.md).
 
 ## Procedure
@@ -39,14 +40,22 @@ risk. Detail for each layer lives in its specialist skill:
    resources, version bumps that change behavior without template diffs, and
    rollback feasibility for data-bearing resources. Classify reversibility
    and record restore points with [rollback and recovery](references/rollback-and-recovery.md).
-7. Apply the [acceptance gates](references/acceptance-gates.md) and decide:
+   Check drift before trusting the plan, size the blast radius, and estimate
+   the cost delta with [drift, blast radius, and cost](references/drift-blast-radius-cost.md).
+7. Fill the [change-type worksheet](assets/templates/change-type-worksheets.md.template)
+   section for each change type present (network and edge, identity, data,
+   compute, pipeline, observability).
+8. Apply the [acceptance gates](references/acceptance-gates.md) and decide:
    accept, accept with conditions (never for destructive or access-widening
    gaps), or reject.
-8. Fill the [evidence record](assets/templates/infrastructure-evidence-template.md)
+9. Fill the [evidence record](assets/templates/infrastructure-evidence-template.md)
    and the [review report](assets/templates/review-report.md.template),
    including skipped checks with reasons.
-9. Hand apply, deploy, and rollback to the named operator with the evidence;
-   never apply during review. Escalate unresolved questions to the owners.
+10. Hand apply, deploy, and rollback to the named operator with the evidence;
+    never apply during review. Escalate unresolved questions to the owners.
+
+A read-only reviewer role for delegated reviews is defined in
+[agents.json](assets/agents.json).
 
 ## Acceptance gates
 
@@ -57,6 +66,7 @@ risk. Detail for each layer lives in its specialist skill:
 - [ ] Access-widening changes carry security owner approval.
 - [ ] Supply-chain inputs are pinned (SHA, digest, or exact version).
 - [ ] New resources are observable and alerted.
+- [ ] Drift resolved before the plan; blast radius and cost delta recorded.
 - [ ] Evidence record and review report are complete.
 - [ ] A named operator owns apply and rollback.
 

@@ -1,0 +1,173 @@
+"""Contract tests for the SQLAlchemy order repository and unit of work.
+
+Copy next to the persistence ``conftest.py``. Every test runs on SQLite and on
+PostgreSQL through the parametrized ``database_url`` fixture. Assumes ``Order``
+is a keyword-only dataclass, so ``dataclasses.replace`` builds variants.
+"""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+import uuid
+
+import pytest
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+from shop.core.orders import (
+    ConcurrentUpdateError,
+    DuplicateOrderError,
+    Money,
+    Order,
+    OrderLine,
+    OrderNotFoundError,
+    OrderStatus,
+)
+from shop.infrastructure.persistence.orders import SqlAlchemyOrderRepository
+from shop.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+pytestmark = pytest.mark.asyncio
+
+CUSTOMER = uuid.UUID(int=1)
+START = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def make_order(*, offset_minutes: int = 0) -> Order:
+    """Build a valid draft order created ``offset_minutes`` after ``START``."""
+    return Order(
+        id=uuid.uuid4(),
+        customer_id=CUSTOMER,
+        status=OrderStatus.DRAFT,
+        currency="EUR",
+        lines=(
+            OrderLine(
+                sku="SKU-1",
+                quantity=2,
+                unit_price=Money(amount=Decimal("12.50"), currency="EUR"),
+            ),
+        ),
+        created_at=START + timedelta(minutes=offset_minutes),
+        shipped_at=None,
+        version=0,
+    )
+
+
+@contextmanager
+def count_statements(engine: AsyncEngine) -> Iterator[list[str]]:
+    """Collect every SQL statement the engine sends while the block runs."""
+    statements: list[str] = []
+
+    def record(*args: object) -> None:
+        statements.append(str(args[2]))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+
+
+async def test_add_then_get_round_trips_every_field(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+    order = make_order()
+
+    await repository.add(order)
+    session.expunge_all()
+    stored = await repository.get(order.id)
+
+    assert stored == replace(order, version=1)
+    assert stored.created_at.tzinfo is not None
+
+
+async def test_add_rejects_duplicate_identifier(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+    order = make_order()
+    await repository.add(order)
+    session.expunge_all()
+
+    with pytest.raises(DuplicateOrderError):
+        await repository.add(order)
+
+
+async def test_get_unknown_order_raises_not_found(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+
+    with pytest.raises(OrderNotFoundError):
+        await repository.get(uuid.uuid4())
+
+
+async def test_save_rejects_stale_version(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+    order = make_order()
+    await repository.add(order)
+    stored = await repository.get(order.id)
+
+    with pytest.raises(ConcurrentUpdateError):
+        await repository.save(replace(stored, version=stored.version + 1))
+
+
+async def test_keyset_pages_cover_all_rows_once(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+    orders = [make_order(offset_minutes=minute) for minute in range(5)]
+    for order in orders:
+        await repository.add(order)
+
+    seen: list[uuid.UUID] = []
+    page = await repository.list_for_customer(CUSTOMER, limit=2)
+    seen.extend(item.id for item in page.items)
+    while page.next_cursor is not None:
+        page = await repository.list_for_customer(
+            CUSTOMER, after=page.next_cursor, limit=2
+        )
+        seen.extend(item.id for item in page.items)
+
+    assert seen == [order.id for order in orders]
+
+
+async def test_list_rejects_out_of_range_limit(session: AsyncSession) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+
+    with pytest.raises(ValueError, match="limit"):
+        await repository.list_for_customer(CUSTOMER, limit=0)
+
+
+async def test_list_query_count_does_not_grow_with_rows(
+    engine: AsyncEngine, session: AsyncSession
+) -> None:
+    repository = SqlAlchemyOrderRepository(session=session)
+    for minute in range(5):
+        await repository.add(make_order(offset_minutes=minute))
+    session.expunge_all()
+
+    with count_statements(engine) as few:
+        await repository.list_for_customer(CUSTOMER, limit=1)
+    with count_statements(engine) as many:
+        await repository.list_for_customer(CUSTOMER)
+
+    assert len(many) == len(few)
+
+
+async def test_unit_of_work_without_commit_persists_nothing(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    order = make_order()
+    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+        await uow.orders.add(order)
+
+    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+        with pytest.raises(OrderNotFoundError):
+            await uow.orders.get(order.id)
+
+
+async def test_unit_of_work_commit_persists_changes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    order = make_order()
+    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+        await uow.orders.add(order)
+        await uow.commit()
+
+    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+        assert (await uow.orders.get(order.id)).id == order.id

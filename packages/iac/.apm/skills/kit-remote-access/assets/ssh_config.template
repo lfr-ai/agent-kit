@@ -1,0 +1,42 @@
+# OpenSSH client configuration template (OpenSSH 9.x or newer).
+# Copy to ~/.ssh/config.d/operations.conf and include it from the first line
+# of ~/.ssh/config:
+#   Include config.d/*.conf
+# Replace the example.invalid host names and OPERATOR_USER before use.
+# Inspect the effective settings for a host without connecting:
+#   ssh -G app-01.internal.example.invalid
+# Never commit private keys, known_hosts with internal names, or this file
+# with real host names to a public repository.
+
+# Jump host: the only address reachable from operator networks.
+Host bastion
+    HostName bastion.example.invalid
+    User OPERATOR_USER
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+
+# Private hosts are reached through the jump host. ProxyJump keeps keys on
+# this machine; agent forwarding would expose them to the jump host.
+Host *.internal.example.invalid
+    ProxyJump bastion
+    User OPERATOR_USER
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+
+# Defaults for every host. Keep this block last: ssh uses the first value
+# it finds for each option.
+Host *
+    ForwardAgent no
+    ForwardX11 no
+    # Refuse unknown or changed host keys. Distribute host keys or a host
+    # certificate authority (@cert-authority line in known_hosts) instead of
+    # accepting keys on first use.
+    StrictHostKeyChecking yes
+    HashKnownHosts yes
+    UpdateHostKeys yes
+    # Keys stay in the agent for one hour; the key file keeps its passphrase.
+    AddKeysToAgent 1h
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    ServerAliveInterval 30
+    ServerAliveCountMax 3

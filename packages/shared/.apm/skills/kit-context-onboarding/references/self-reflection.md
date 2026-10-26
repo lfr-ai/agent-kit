@@ -37,8 +37,9 @@ task; with an undisciplined loop, the knowledge base fills with opinions.
 6. **Retire what the task disproved.** Mark contradicted memory entries
    superseded, fix stale commands in project facts, and correct guidance that
    led you astray.
-7. **Verify the change**: run the check you added, run the context and memory
-   freshness checkers, and re-read the edited entry as a newcomer would.
+7. **Verify the change**: run the check you added, the context checker and
+   the `kit-project-memory` memory checker, and re-read the edited entry as a
+   newcomer would.
 
 ## Questions that surface good lessons
 

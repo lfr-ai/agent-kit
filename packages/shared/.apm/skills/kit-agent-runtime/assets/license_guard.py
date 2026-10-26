@@ -202,7 +202,12 @@ class LicenseInputTypeError(TypeError):
 
 
 def _identifiers(value: object, label: str) -> frozenset[str]:
-    """Validate a list of non-empty identifier strings."""
+    """Validate a list of non-empty identifier strings.
+
+    Raises:
+        LicenseInputTypeError: The value is not a list of strings.
+        LicenseInputError: An identifier is blank.
+    """
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise LicenseInputTypeError(LicenseInputIssue.IDENTIFIER_LIST, label=label)
     if not all(item.strip() for item in value):
@@ -213,7 +218,12 @@ def _identifiers(value: object, label: str) -> frozenset[str]:
 def _waiver_text(
     value: dict[object, object], key: str, issue: LicenseInputIssue, *, name: str
 ) -> str:
-    """Return a required, non-blank, stripped text field of one exception entry."""
+    """Return a required, non-blank, stripped text field of one exception entry.
+
+    Raises:
+        LicenseInputError: The field is missing or blank.
+        LicenseInputTypeError: The field is not a string.
+    """
     if key not in value:
         raise LicenseInputError(issue, name=name)
     text = value[key]
@@ -225,7 +235,12 @@ def _waiver_text(
 
 
 def _exception(name: str, value: object) -> Waiver:
-    """Validate one exception entry."""
+    """Validate one exception entry.
+
+    Raises:
+        LicenseInputTypeError: The entry or its expiry has the wrong type.
+        LicenseInputError: The entry has unexpected fields.
+    """
     if not isinstance(value, dict):
         raise LicenseInputTypeError(LicenseInputIssue.EXCEPTION_FIELDS, name=name)
     if value.keys() - _EXCEPTION_FIELDS:
@@ -247,7 +262,12 @@ def _exception(name: str, value: object) -> Waiver:
 
 
 def _check_schema_version(data: dict[object, object]) -> None:
-    """Require the supported integer ``schema_version``."""
+    """Require the supported integer ``schema_version``.
+
+    Raises:
+        LicenseInputError: The version is missing or unsupported.
+        LicenseInputTypeError: The version is not an integer.
+    """
     if "schema_version" not in data:
         raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
     version = data["schema_version"]
@@ -258,7 +278,11 @@ def _check_schema_version(data: dict[object, object]) -> None:
 
 
 def _exceptions(raw: object) -> dict[str, Waiver]:
-    """Validate exception entries keyed by canonical distribution name."""
+    """Validate exception entries keyed by canonical distribution name.
+
+    Raises:
+        LicenseInputTypeError: The exceptions value is not an object.
+    """
     if not isinstance(raw, dict):
         raise LicenseInputTypeError(LicenseInputIssue.EXCEPTIONS_OBJECT)
     return {
@@ -271,7 +295,8 @@ def parse_allowlist(text: str) -> Allowlist:
 
     Raises:
         ValueError: A required field is missing or an allowlist value is invalid.
-        TypeError: The document or a present field has the wrong Python type.
+        LicenseInputTypeError: The document or a present field has the wrong type.
+        LicenseInputError: A field is unknown, missing, or conflicting.
     """
     data = json.loads(text)
     if not isinstance(data, dict):
@@ -297,7 +322,11 @@ def parse_allowlist(text: str) -> Allowlist:
 
 
 def load_allowlist(path: Path) -> Allowlist:
-    """Read a bounded allowlist file and validate it."""
+    """Read a bounded allowlist file and validate it.
+
+    Raises:
+        LicenseInputError: The file exceeds the size limit.
+    """
     with path.open("rb") as handle:
         data = handle.read(_MAX_CONFIG_BYTES + 1)
     if len(data) > _MAX_CONFIG_BYTES:
@@ -346,7 +375,11 @@ class _ExpressionParser:
         return "unknown" if "unknown" in statuses else "allowed"
 
     def _factor(self) -> str:
-        """Parse a parenthesized expression or one license with optional WITH."""
+        """Parse a parenthesized expression or one license with optional WITH.
+
+        Raises:
+            LicenseInputError: The expression ends early or has a stray term.
+        """
         current = self._peek()
         if current is None:
             raise LicenseInputError(LicenseInputIssue.EXPRESSION_END)
@@ -357,7 +390,11 @@ class _ExpressionParser:
         return self._license()
 
     def _parenthesized(self) -> str:
-        """Parse ``( expression )`` starting at the opening parenthesis."""
+        """Parse ``( expression )`` starting at the opening parenthesis.
+
+        Raises:
+            LicenseInputError: The parenthesis is not closed.
+        """
         self.position += 1
         status = self.expression()
         if self._peek() != ")":
@@ -366,7 +403,11 @@ class _ExpressionParser:
         return status
 
     def _license(self) -> str:
-        """Parse one license identifier with an optional ``WITH`` addition."""
+        """Parse one license identifier with an optional ``WITH`` addition.
+
+        Raises:
+            LicenseInputError: ``WITH`` has no addition.
+        """
         base = self._tokens[self.position]
         self.position += 1
         leaf = base
@@ -385,7 +426,11 @@ class _ExpressionParser:
 
 
 def classify(expression: str, allowlist: Allowlist) -> str:
-    """Return ``allowed``, ``denied``, or ``unknown`` for an SPDX expression."""
+    """Return ``allowed``, ``denied``, or ``unknown`` for an SPDX expression.
+
+    Raises:
+        LicenseInputError: The expression is empty or malformed.
+    """
     tokens = _TOKEN.findall(expression)
     if not tokens:
         raise LicenseInputError(LicenseInputIssue.EMPTY_EXPRESSION)

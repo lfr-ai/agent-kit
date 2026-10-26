@@ -10,7 +10,8 @@ mechanically where a tool can.
 
 | Kind | Convention | Why | Example |
 | --- | --- | --- | --- |
-| Python module / package | `snake_case` | must be a valid identifier to import | `invoice_repository.py` |
+| Python module | short lowercase, underscores where readable | PEP 8 and the project's module style | `invoice_repository.py` |
+| Python import package | short lowercase, following project underscore policy | PEP 8 discourages unnecessary package-name underscores | `billing`, or `agent_kit` by project convention |
 | Python class | `CapWords` | PEP 8; distinguishes types from functions | `InvoiceRepository` |
 | Function, method, variable | `snake_case` | PEP 8 | `list_open_invoices` |
 | Constant | `UPPER_SNAKE` (`_UPPER` when private) | PEP 8 | `DEFAULT_TIMEOUT` |
@@ -25,6 +26,10 @@ mechanically where a tool can.
 
 Language-neutral principles that apply beyond Python:
 
+- **Match responsibility before class count.** A module name should explain
+  its cohesive contents. Class/file matching is a project convention where
+  adopted, not a Python requirement; use the
+  [layout decisions](module-layout.md) before splitting or nesting files.
 - **Name by meaning, not by type or layer**: `open_invoices`, not
   `invoice_list` or `invoice_dto_array`. Layer suffixes (`Repository`,
   `Gateway`, `Adapter`) are fine when they name a role.

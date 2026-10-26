@@ -323,7 +323,7 @@ def self_test() -> None:
     """Exercise each v1 pattern, waivers, and clean v2 code.
 
     Raises:
-        AssertionError: A regression was detected.
+        SelfTestError: A regression was detected.
     """
     risky = {
         "from pydantic.v1 import BaseModel\n": "pydantic.v1",

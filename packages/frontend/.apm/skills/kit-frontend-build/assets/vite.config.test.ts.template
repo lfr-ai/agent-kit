@@ -1,0 +1,25 @@
+// vite.config.test.ts
+// Contract test for build settings that protect users. Runs in the Node
+// project of vitest.config.ts; a failing assertion means a reviewed policy
+// changed, not that the test needs updating.
+import { describe, expect, it } from "vitest";
+import config from "./vite.config";
+
+describe("vite.config", () => {
+  it("exposes only the VITE_ prefix to client code", () => {
+    expect(config.envPrefix).toEqual(["VITE_"]);
+  });
+
+  it("does not link or inline source maps in production output", () => {
+    expect(config.build?.sourcemap).not.toBe(true);
+    expect(config.build?.sourcemap).not.toBe("inline");
+  });
+
+  it("keeps the development proxy out of preview", () => {
+    expect(config.preview?.proxy).toBeUndefined();
+  });
+
+  it("emits a manifest for long-lived cache headers", () => {
+    expect(config.build?.manifest).toBe(true);
+  });
+});

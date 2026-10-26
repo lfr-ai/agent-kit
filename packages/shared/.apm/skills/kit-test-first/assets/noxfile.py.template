@@ -1,0 +1,94 @@
+"""Run each test tier in its own nox session against the locked environment.
+
+Copy to ``noxfile.py``. Sessions install from ``uv.lock`` through
+``uv sync --locked`` so nox, CI and developers test the same versions. Run
+``nox -s unit`` while iterating and ``nox`` before handoff; CI runs the same
+sessions. Coverage thresholds live in the coverage configuration
+(``fail_under``), not in session arguments, so every entry point agrees.
+"""
+
+import nox
+
+nox.options.default_venv_backend = "uv"
+nox.options.sessions = ["layout", "unit", "property", "integration", "coverage"]
+nox.options.error_on_missing_interpreters = True
+
+PYTHON_VERSIONS: list[str] = ["3.13"]
+TIER_DIRECTORIES: dict[str, str] = {
+    "unit": "tests/unit",
+    "property": "tests/property",
+    "integration": "tests/integration",
+    "contract": "tests/contract",
+    "e2e": "tests/e2e",
+}
+
+
+def _install_locked(session: nox.Session) -> None:
+    """Install the project and its development group exactly from the lockfile."""
+    session.run_install(
+        "uv",
+        "sync",
+        "--locked",
+        "--group",
+        "dev",
+        f"--python={session.virtualenv.location}",
+        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
+    )
+
+
+def _pytest(session: nox.Session, tier: str, *extra: str) -> None:
+    """Run one tier's directory with any extra pytest arguments."""
+    _install_locked(session)
+    session.run("pytest", TIER_DIRECTORIES[tier], *extra, *session.posargs)
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def layout(session: nox.Session) -> None:
+    """Check tier placement, module names and assertion presence."""
+    session.run("python", "scripts/check_test_layout.py", "tests", external=True)
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def unit(session: nox.Session) -> None:
+    """Fast, isolated tests; run on every change."""
+    _pytest(session, "unit", "-m", "unit")
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def property(session: nox.Session) -> None:  # noqa: A001 - session name matches the tier
+    """Hypothesis tests with the CI profile."""
+    _pytest(session, "property", "--hypothesis-profile=ci")
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def integration(session: nox.Session) -> None:
+    """Real boundaries: databases, subprocesses, HTTP servers."""
+    _pytest(session, "integration")
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def contract(session: nox.Session) -> None:
+    """Provider and consumer contract suites."""
+    _pytest(session, "contract")
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def e2e(session: nox.Session) -> None:
+    """End-to-end tests against a running deployment named in the environment."""
+    _pytest(session, "e2e")
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def coverage(session: nox.Session) -> None:
+    """Every fast tier with branch coverage; the configured fail_under decides."""
+    _install_locked(session)
+    session.run(
+        "pytest",
+        TIER_DIRECTORIES["unit"],
+        TIER_DIRECTORIES["property"],
+        TIER_DIRECTORIES["integration"],
+        "--cov",
+        "--cov-branch",
+        "--cov-report=term-missing:skip-covered",
+        *session.posargs,
+    )

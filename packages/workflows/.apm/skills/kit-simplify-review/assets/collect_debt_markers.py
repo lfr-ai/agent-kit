@@ -322,6 +322,7 @@ def self_test() -> None:
 
     Raises:
         AssertionError: Behavior differs from the documented contract.
+        SelfTestError: A date or finding check fails.
     """
     with TemporaryDirectory(prefix="debt-ledger-") as raw:
         root = Path(raw)

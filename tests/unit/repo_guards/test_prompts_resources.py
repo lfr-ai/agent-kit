@@ -8,6 +8,9 @@ import re
 import pytest
 import yaml
 
+from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+
 ROOT = Path(__file__).parents[3]
 PACKAGES = ROOT / "packages"
 EXPECTED: dict[str, frozenset[str]] = {
@@ -24,6 +27,8 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-reflect-and-learn",
             "kit-prepare-release",
             "kit-write-docs",
+            "kit-hand-off",
+            "kit-run-feedback-loop",
         }
     ),
     "backend": frozenset(
@@ -32,6 +37,7 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-add-endpoint",
             "kit-add-migration",
             "kit-model-domain",
+            "kit-add-middleware",
         }
     ),
     "frontend": frozenset(
@@ -44,7 +50,9 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-audit-accessibility",
         }
     ),
-    "ai": frozenset({"kit-evaluate-retrieval", "kit-add-llm-call"}),
+    "ai": frozenset(
+        {"kit-evaluate-retrieval", "kit-add-llm-call", "kit-run-llm-experiment"}
+    ),
     "iac": frozenset(
         {
             "kit-review-terraform-plan",
@@ -61,6 +69,9 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-spec-archive",
             "kit-analyze-impact",
             "kit-simplify",
+            "kit-audit-codebase",
+            "kit-modernize",
+            "kit-improve-codebase",
         }
     ),
     "coordination": frozenset({"kit-deliver-fullstack-feature"}),
@@ -145,3 +156,37 @@ def test_prompt_links_stay_inside_the_package(package: str, name: str) -> None:
         resolved = (path.parent / target).resolve()
         assert resolved.is_file(), target
         assert resolved.is_relative_to(apm), target
+
+
+def test_improvement_prompt_ships_with_its_procedures_but_not_narrow_sessions() -> None:
+    """The opt-in improvement facade retains its owners without widening sessions."""
+    snapshot = FileCatalogAdapter().load(ROOT)
+    service = CatalogService()
+    project = service.compose(snapshot, "workflows", (), ())
+    files = {item.relative_path: item.content for item in project.files}
+    prompt = "kit-improve-codebase"
+
+    assert (
+        files[f".apm/prompts/{prompt}.prompt.md"]
+        == _prompt_path("workflows", prompt).read_bytes()
+    )
+    for skill in (
+        "kit-codebase-audit",
+        "kit-modernize",
+        "kit-simplify-review",
+        "kit-refactor",
+        "kit-consistency",
+    ):
+        assert f".apm/skills/{skill}/SKILL.md" in files
+    instruction = "kit-readability.instructions.md"
+    assert (
+        files[f".apm/instructions/{instruction}"]
+        == (PACKAGES / "shared" / ".apm" / "instructions" / instruction).read_bytes()
+    )
+
+    session = service.compose(
+        snapshot, "workflows", (), (), skills=("kit-codebase-audit",)
+    )
+    assert not any(
+        item.relative_path.startswith(".apm/prompts/") for item in session.files
+    )

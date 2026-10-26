@@ -1,0 +1,111 @@
+"""Application factory: one function returns a fully wired FastAPI app.
+
+Copy into ``src/shop/api/app.py``. The factory takes validated settings and an
+async context manager that builds the container, so production (``main.py``) and
+tests construct the same app with different adapters. Nothing happens at
+import time.
+"""
+
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+
+from fastapi import APIRouter, FastAPI
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from shop.api.dependencies import Container
+from shop.api.errors import install_exception_handlers
+from shop.api.health import router as health_router
+from shop.api.items import router as items_router
+from shop.api.middleware import (
+    AccessLogMiddleware,
+    BodySizeLimitMiddleware,
+    RequestIdMiddleware,
+    SecurityHeadersMiddleware,
+)
+from shop.api.problems import REQUEST_ID_HEADER
+from shop.api.rate_limit import RateLimitMiddleware, RateLimitStore
+from shop.api.settings import HttpSettings
+
+type ContainerFactory = Callable[[], AbstractAsyncContextManager[Container]]
+
+_CORS_MAX_AGE_SECONDS = 600
+_CORS_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+_CORS_HEADERS = ("Authorization", "Content-Type", "Idempotency-Key", REQUEST_ID_HEADER)
+
+
+def create_app(
+    *,
+    settings: HttpSettings,
+    container_factory: ContainerFactory,
+    rate_limit_store: RateLimitStore,
+) -> FastAPI:
+    """Build the application, its routes, middleware, and error handling.
+
+    Args:
+        settings: Validated HTTP settings facet.
+        container_factory: Opens the container on startup and closes it on
+            shutdown, after in-flight requests finish.
+        rate_limit_store: Counter backend shared by all workers.
+
+    Returns:
+        The configured ASGI application.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, Container]]:
+        async with container_factory() as container:
+            yield {"container": container}
+
+    app = FastAPI(
+        title=settings.title,
+        version=settings.version,
+        lifespan=lifespan,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url=None,
+    )
+    install_exception_handlers(app, problem_base=settings.problem_base)
+    _install_middleware(app, settings=settings, rate_limit_store=rate_limit_store)
+    version_one = APIRouter(prefix=settings.api_prefix)
+    version_one.include_router(items_router)
+    app.include_router(version_one)
+    app.include_router(health_router)
+    return app
+
+
+def _install_middleware(
+    app: FastAPI, *, settings: HttpSettings, rate_limit_store: RateLimitStore
+) -> None:
+    """Add middleware innermost first; the last one added runs first.
+
+    Resulting order from the outside in: request id, access log, security
+    headers, trusted host, CORS, rate limit, body size, GZip, then routing.
+    """
+    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_bytes)
+    app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_body_bytes)
+    app.add_middleware(
+        RateLimitMiddleware,
+        store=rate_limit_store,
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_credentials=settings.cors_allow_credentials,
+            allow_methods=list(_CORS_METHODS),
+            allow_headers=list(_CORS_HEADERS),
+            expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+            max_age=_CORS_MAX_AGE_SECONDS,
+        )
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=list(settings.trusted_hosts)
+    )
+    app.add_middleware(
+        SecurityHeadersMiddleware, hsts_max_age_seconds=settings.hsts_max_age_seconds
+    )
+    app.add_middleware(AccessLogMiddleware)
+    app.add_middleware(RequestIdMiddleware)

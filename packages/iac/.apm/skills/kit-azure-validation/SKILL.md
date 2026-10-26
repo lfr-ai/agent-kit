@@ -1,6 +1,6 @@
 ---
 name: kit-azure-validation
-description: Use when reviewing Azure deployment previews (what-if) or compiled ARM/Bicep outputs to detect destructive or scope-changing operations without performing authenticated deploys.
+description: Use when reviewing Azure what-if output or compiled Bicep/ARM for destructive or scope-changing operations.
 license: MIT
 ---
 

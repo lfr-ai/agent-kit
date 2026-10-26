@@ -50,7 +50,11 @@ class _NativeRoleError(ValueError):
 
 
 def _owned_path(root: Path, relative: str) -> Path:
-    """Reject linked parents and path escapes for reads, writes, deletions, and rollback."""
+    """Reject linked parents and path escapes for reads, writes, deletions, and rollback.
+
+    Raises:
+        _NativeRoleError: The path escapes the root or crosses a link.
+    """
     parts = PurePosixPath(relative)
     if (
         root.is_symlink()
@@ -88,7 +92,11 @@ def _replace(path: Path, content: bytes) -> None:
 
 
 def expected(root: Path) -> dict[str, bytes]:
-    """Resolve the repository's own selection through the canonical catalog."""
+    """Resolve the repository's own selection through the canonical catalog.
+
+    Raises:
+        _NativeRoleError: The repository self-selection is malformed.
+    """
     config = json.loads(
         (root / ".agents/agentic-setup/self.json").read_text(encoding="utf-8")
     )

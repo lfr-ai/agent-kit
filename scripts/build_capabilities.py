@@ -70,7 +70,11 @@ def _write_entries(
 
 
 def _verify_archive(output: Path) -> None:
-    """Reject an archive that lacks required entries or any capability."""
+    """Reject an archive that lacks required entries or any capability.
+
+    Raises:
+        _ArchiveContractError: Required entries or capabilities are missing.
+    """
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
     if not {"LICENSE", "apm.yml", "apm-policy.yml", "provenance.json"}.issubset(names):

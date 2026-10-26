@@ -23,6 +23,10 @@ these stages needs cloud credentials.
 
 ## Trivy and Checkov
 
+- Choose one configuration scanner, not both by default. The Trivy template
+  selects only Terraform misconfiguration scanning; keep repository credential
+  checks in the existing secret scanner. Hadolint and zizmor cover other targets
+  and do not replace Terraform security analysis.
 - Both scan HCL for misconfigurations; both can also scan a plan JSON, which
   resolves variables and module outputs that static HCL scanning cannot see.
 - Fail on HIGH and CRITICAL; record accepted findings in an ignore file

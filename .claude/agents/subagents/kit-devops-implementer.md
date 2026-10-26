@@ -2,7 +2,6 @@
 name: kit-devops-implementer
 description: "Implement one approved CI, container, or infrastructure authoring task."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
-model: "haiku"
 ---
 # Implement one infrastructure authoring task
 

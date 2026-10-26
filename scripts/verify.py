@@ -10,6 +10,7 @@ import sys
 _ROOT = Path(__file__).resolve().parents[1]
 _PYTHON = sys.executable
 _CHECKS = {
+    "lock": ("uv", "lock", "--check"),
     "format": (_PYTHON, "-m", "ruff", "format", "--check"),
     "lint": (_PYTHON, "-m", "ruff", "check"),
     "types": (_PYTHON, "-m", "ty", "check"),

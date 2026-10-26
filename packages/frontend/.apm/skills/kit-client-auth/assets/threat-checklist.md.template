@@ -1,0 +1,72 @@
+# Client authentication threat checklist
+
+Application: <!-- name -->
+Data classification: <!-- public, internal, confidential, regulated -->
+Identity provider and library (version, release date): <!-- -->
+Date: <!-- YYYY-MM-DD -->
+
+## Architecture
+
+- [ ] Pattern chosen: BFF / same-domain session / token-mediating backend /
+      browser-based client. Reason recorded below.
+- [ ] Sensitive or regulated data uses a BFF or same-domain session.
+- Reason:
+
+## Flow
+
+- [ ] Authorization code flow with PKCE `S256`; implicit and password grants
+      are not configured at the provider.
+- [ ] `state` and `nonce` are generated per attempt and verified.
+- [ ] Redirect URIs are exact; no wildcards.
+- [ ] Callback removes code and state from the URL and history.
+- [ ] Post-login `returnTo` accepts only same-origin relative paths.
+- [ ] Issuer is verified on callback when the provider returns `iss`.
+
+## Tokens and session
+
+- [ ] Storage: HTTP-only cookie (BFF) or in memory. No tokens in
+      `localStorage`, `sessionStorage`, IndexedDB, URLs, or logs.
+- [ ] Access token lifetime: <!-- minutes -->; refresh tokens rotate with
+      reuse detection, or the BFF renews server-side.
+- [ ] Sender-constrained tokens (DPoP) considered: <!-- yes/no, why -->
+- [ ] Renewal is single-flight and coordinated across tabs.
+- [ ] Renewal failure shows a signed-out state without redirect loops.
+
+## Cookies and CSRF
+
+- [ ] Session cookie: `Secure`, `HttpOnly`, `SameSite=Lax` or `Strict`,
+      `__Host-` prefix, no `Domain` attribute.
+- [ ] Unsafe methods require a CSRF token or custom header checked server-side.
+- [ ] CORS allows exact origins only; credentials never sent to other origins.
+
+## Authorization and errors
+
+- [ ] Every API route authorizes server-side; UI role checks are display only.
+- [ ] 401: one renewal, one retry, then expired-session state.
+- [ ] 403: access message, session kept, no retry.
+- [ ] Guards run before render (loaders); no protected content flash.
+
+## Logout
+
+- [ ] Clears in-memory tokens, query caches, and user-scoped storage.
+- [ ] Ends the server session (POST with CSRF protection).
+- [ ] Calls the provider end-session endpoint when single sign-out is required.
+- [ ] Propagates to other tabs.
+
+## Script injection defenses
+
+- [ ] Content Security Policy without `unsafe-inline` or `unsafe-eval`.
+- [ ] No untrusted HTML rendering; dependencies reviewed.
+
+## Evidence
+
+| Scenario | Fake provider test | Real non-production tenant | Result |
+| --- | --- | --- | --- |
+| Sign-in and callback | | | |
+| Callback error or tampered state | | | |
+| Concurrent 401 renewal | | | |
+| 403 handling | | | |
+| Logout in another tab | | | |
+| Open redirect attempt | | | |
+
+Checks not run and why:

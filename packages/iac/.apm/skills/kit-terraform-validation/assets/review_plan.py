@@ -154,7 +154,7 @@ def analyze_plan(value: object) -> dict[str, list[str]]:
 
     Raises:
         ValueError: A required field is missing or a plan value is unsupported.
-        TypeError: The document or a present field has the wrong Python type.
+        PlanInputTypeError: The document or a present field has the wrong type.
     """
     if not isinstance(value, dict):
         raise PlanInputTypeError(PlanInputIssue.OBJECT_REQUIRED)
@@ -221,7 +221,11 @@ def _read_object(value: object) -> object:
 
 
 def self_test() -> None:
-    """Exercise ordinary, risky, unsupported, incomplete and duplicate inputs."""
+    """Exercise ordinary, risky, unsupported, incomplete and duplicate inputs.
+
+    Raises:
+        SelfTestError: A plan is misclassified or wrongly accepted.
+    """
     for actions, kind in _ACTIONS.items():
         groups = analyze_plan(
             {

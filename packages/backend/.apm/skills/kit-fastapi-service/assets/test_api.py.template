@@ -1,0 +1,178 @@
+"""HTTP tests through the real app factory with fake adapters.
+
+Copy into ``tests/api/test_api.py``. ``TestClient`` used as a context manager
+runs the lifespan; the async test uses ``httpx.ASGITransport``, which does not,
+so it overrides ``get_container`` instead. Requires ``httpx`` and the AnyIO
+pytest plugin that ships with ``anyio``.
+"""
+
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from shop.api.app import create_app
+from shop.api.dependencies import Container, get_container
+from shop.api.rate_limit import InMemoryRateLimitStore
+from shop.api.settings import HttpSettings
+from shop.application.ports import Item
+from shop.core.exceptions import NotFoundError
+
+PROBLEM = "application/problem+json"
+ITEM = Item(item_id="sku-1", name="Lamp", price_cents=1999)
+
+
+class FakeCatalog:
+    async def get(self, item_id: str, /) -> Item:
+        if item_id == ITEM.item_id:
+            return ITEM
+        raise NotFoundError(f"item {item_id!r} does not exist")
+
+
+class StaticCheck:
+    def __init__(self, name: str, *, ready: bool) -> None:
+        self._name = name
+        self._ready = ready
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def check(self) -> bool:
+        return self._ready
+
+
+def build(container: Container, **overrides: object) -> FastAPI:
+    settings = HttpSettings.model_validate(
+        {
+            "trusted_hosts": ["testserver"],
+            "docs_enabled": True,
+            "max_body_bytes": 64,
+            "rate_limit_requests": 5,
+            "cors_origins": ["https://app.example.test"],
+        }
+        | overrides
+    )
+
+    @asynccontextmanager
+    async def factory() -> AsyncIterator[Container]:
+        yield container
+
+    return create_app(
+        settings=settings,
+        container_factory=factory,
+        rate_limit_store=InMemoryRateLimitStore(),
+    )
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    container = Container(
+        catalog=FakeCatalog(), readiness_checks=(StaticCheck("db", ready=True),)
+    )
+    with TestClient(build(container)) as test_client:
+        yield test_client
+
+
+def test_get_item_returns_public_schema(client: TestClient) -> None:
+    response = client.get("/api/v1/items/sku-1")
+    assert response.status_code == 200
+    assert response.json() == {"id": "sku-1", "name": "Lamp", "price_cents": 1999}
+
+
+def test_missing_item_is_problem_with_request_instance(client: TestClient) -> None:
+    response = client.get(
+        "/api/v1/items/nope", headers={"X-Request-ID": "req-12345678"}
+    )
+    assert response.status_code == 404
+    assert response.headers["content-type"] == PROBLEM
+    body = response.json()
+    assert body["code"] == "not_found"
+    assert body["instance"] == "urn:request:req-12345678"
+    assert response.headers["X-Request-ID"] == "req-12345678"
+
+
+def test_unknown_route_and_validation_use_problem_details(client: TestClient) -> None:
+    assert client.get("/nowhere").headers["content-type"] == PROBLEM
+    response = client.get("/api/v1/items/" + "x" * 65)
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["pointer"] == "/path/item_id"
+
+
+def test_liveness_and_readiness(client: TestClient) -> None:
+    assert client.get("/health/live").json() == {"status": "ok"}
+    assert client.get("/health/ready").json()["status"] == "ready"
+
+
+def test_readiness_is_503_when_a_dependency_fails() -> None:
+    container = Container(
+        catalog=FakeCatalog(), readiness_checks=(StaticCheck("db", ready=False),)
+    )
+    with TestClient(build(container)) as test_client:
+        response = test_client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"] == [{"name": "db", "ready": False}]
+
+
+def test_oversized_body_is_rejected_before_routing(client: TestClient) -> None:
+    response = client.post("/api/v1/items/sku-1", content=b"x" * 65)
+    assert response.status_code == 413
+    assert response.headers["content-type"] == PROBLEM
+
+
+def test_untrusted_host_is_rejected() -> None:
+    container = Container(catalog=FakeCatalog())
+    with TestClient(build(container), base_url="http://evil.example") as test_client:
+        assert test_client.get("/health/live").status_code == 400
+
+
+def test_rate_limit_returns_429_with_retry_after(client: TestClient) -> None:
+    statuses = [client.get("/api/v1/items/sku-1").status_code for _ in range(6)]
+    assert statuses[-1] == 429
+    limited = client.get("/api/v1/items/sku-1")
+    assert int(limited.headers["Retry-After"]) >= 1
+    assert client.get("/health/live").status_code == 200
+
+
+def test_security_headers_and_cors_preflight(client: TestClient) -> None:
+    response = client.get("/health/live")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "default-src 'none'" in response.headers["Content-Security-Policy"]
+    preflight = client.options(
+        "/api/v1/items/sku-1",
+        headers={
+            "Origin": "https://app.example.test",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert (
+        preflight.headers["access-control-allow-origin"] == "https://app.example.test"
+    )
+    denied = client.options(
+        "/api/v1/items/sku-1",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert "access-control-allow-origin" not in denied.headers
+
+
+@pytest.mark.anyio
+async def test_async_client_with_dependency_override() -> None:
+    app = build(Container(catalog=FakeCatalog()))
+    override = Container(catalog=FakeCatalog())
+
+    async def fake_container() -> Container:
+        return override
+
+    app.dependency_overrides[get_container] = fake_container
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as http:
+        response = await http.get("/api/v1/items/sku-1")
+    assert response.status_code == 200

@@ -1,0 +1,133 @@
+"""Async engine and session factory, built once by the composition root.
+
+Copy to ``shop/infrastructure/persistence/database.py``. PostgreSQL uses
+``asyncpg`` with server-side timeouts; SQLite uses ``aiosqlite`` with pragmas
+applied to every new connection. Dispose of the engine at shutdown.
+"""
+
+from dataclasses import dataclass
+import logging
+
+from sqlalchemy import event
+from sqlalchemy.engine.interfaces import DBAPIConnection
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import ConnectionPoolEntry
+
+logger = logging.getLogger(__name__)
+
+_POOL_SIZE = 10
+_MAX_OVERFLOW = 5
+_POOL_TIMEOUT_SECONDS = 5.0
+_POOL_RECYCLE_SECONDS = 1800
+_STATEMENT_TIMEOUT_MS = 5000
+_LOCK_TIMEOUT_MS = 2000
+_IDLE_IN_TRANSACTION_TIMEOUT_MS = 10000
+_SQLITE_LOCK_WAIT_SECONDS = 5.0
+_SQLITE_PRAGMAS = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA busy_timeout = 5000",
+)
+_SQLITE_SCHEME = "sqlite"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DatabaseSettings:
+    """Connection settings validated by the application's settings loader.
+
+    Attributes:
+        url: SQLAlchemy URL such as ``postgresql+asyncpg://...`` or
+            ``sqlite+aiosqlite:///app.db``; never logged because it may hold a password.
+        application_name: Name reported to the server for diagnostics.
+        pool_size: Persistent connections per process.
+        max_overflow: Extra connections allowed above ``pool_size`` under load.
+        pool_timeout_seconds: Wait for a free connection before failing.
+        statement_timeout_ms: Server-side cap on one statement.
+        lock_timeout_ms: Server-side cap on waiting for a lock.
+    """
+
+    url: str
+    application_name: str
+    pool_size: int = _POOL_SIZE
+    max_overflow: int = _MAX_OVERFLOW
+    pool_timeout_seconds: float = _POOL_TIMEOUT_SECONDS
+    statement_timeout_ms: int = _STATEMENT_TIMEOUT_MS
+    lock_timeout_ms: int = _LOCK_TIMEOUT_MS
+
+
+def create_engine_for(settings: DatabaseSettings) -> AsyncEngine:
+    """Create the process-wide engine for the configured database.
+
+    Args:
+        settings: Validated connection settings.
+
+    Returns:
+        An engine whose pool the caller disposes of at shutdown.
+    """
+    if settings.url.startswith(_SQLITE_SCHEME):
+        return _sqlite_engine(settings)
+    return _postgres_engine(settings)
+
+
+def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """Create the session factory injected into units of work.
+
+    Args:
+        engine: Process-wide engine.
+
+    Returns:
+        A factory whose sessions keep loaded attributes readable after commit.
+    """
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+def _postgres_engine(settings: DatabaseSettings) -> AsyncEngine:
+    """Create a pooled ``asyncpg`` engine with server-side timeouts."""
+    server_settings = {
+        "application_name": settings.application_name,
+        "statement_timeout": str(settings.statement_timeout_ms),
+        "lock_timeout": str(settings.lock_timeout_ms),
+        "idle_in_transaction_session_timeout": str(_IDLE_IN_TRANSACTION_TIMEOUT_MS),
+    }
+    logger.info(
+        "creating database engine pool_size=%d max_overflow=%d",
+        settings.pool_size,
+        settings.max_overflow,
+    )
+    return create_async_engine(
+        settings.url,
+        pool_size=settings.pool_size,
+        max_overflow=settings.max_overflow,
+        pool_timeout=settings.pool_timeout_seconds,
+        pool_recycle=_POOL_RECYCLE_SECONDS,
+        pool_pre_ping=True,
+        connect_args={"server_settings": server_settings},
+    )
+
+
+def _sqlite_engine(settings: DatabaseSettings) -> AsyncEngine:
+    """Create an ``aiosqlite`` engine that applies pragmas on every connection."""
+    engine = create_async_engine(
+        settings.url, connect_args={"timeout": _SQLITE_LOCK_WAIT_SECONDS}
+    )
+    event.listen(engine.sync_engine, "connect", _configure_sqlite)
+    return engine
+
+
+def _configure_sqlite(
+    dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
+) -> None:
+    """Enable foreign keys, WAL, and lock waits; SQLite resets them per connection."""
+    del connection_record
+    cursor = dbapi_connection.cursor()
+    try:
+        for pragma in _SQLITE_PRAGMAS:
+            cursor.execute(pragma)
+    finally:
+        cursor.close()

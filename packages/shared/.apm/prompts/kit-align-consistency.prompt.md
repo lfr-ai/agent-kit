@@ -21,6 +21,9 @@ single canonical source.
    contract matrix and naming checkers.
 2. Find the canonical definition. If two places both claim it, stop and report
    the conflict with both locations before editing.
+   Choose ownership by shared meaning and lifecycle, not matching spelling;
+   use the [centralization/layout guide](../skills/kit-consistency/references/module-layout.md)
+   for helper placement, filenames, grouping and subfolder decisions.
 3. Search every use: symbol references plus string lookups in serializers,
    configuration, fixtures, migrations, docs, and generated files.
 4. Fill one matrix row per boundary: spelling, type, nullability, units, time

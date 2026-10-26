@@ -1,0 +1,55 @@
+"""Test the MCP server's tools directly and through an in-memory client.
+
+Copy next to the server's tests and adjust the import. The in-memory
+``Client(server)`` form needs no transport or subprocess (v2 Python SDK).
+"""
+
+from pathlib import Path
+
+import pytest
+
+from mcp import Client
+from PACKAGE import mcp_server
+
+
+@pytest.fixture
+def notes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    (tmp_path / "setup.md").write_text("Install with uv\nRun the gate\n", encoding="utf-8")
+    (tmp_path / "release.md").write_text("Tag after the gate passes\n", encoding="utf-8")
+    monkeypatch.setenv(mcp_server.NOTES_DIRECTORY_VARIABLE, str(tmp_path))
+    return tmp_path
+
+
+def test_search_notes_returns_matching_lines_in_name_order(notes: Path) -> None:
+    matches = mcp_server.search_notes("gate", limit=5)
+    assert [(match.name, match.line) for match in matches] == [
+        ("release.md", 1),
+        ("setup.md", 2),
+    ]
+
+
+def test_read_note_rejects_names_outside_the_notes_directory(notes: Path) -> None:
+    with pytest.raises(mcp_server.ToolInputError, match="search_notes"):
+        mcp_server.read_note("../secrets.md")
+
+
+def test_tools_require_a_configured_notes_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(mcp_server.NOTES_DIRECTORY_VARIABLE, raising=False)
+    with pytest.raises(mcp_server.ToolInputError, match="PROJECT_TOOLS_NOTES_DIR"):
+        mcp_server.search_notes("gate")
+
+
+@pytest.mark.anyio
+async def test_client_lists_exactly_the_reviewed_tools(notes: Path) -> None:
+    async with Client(mcp_server.server) as client:
+        listed = await client.list_tools()
+    assert sorted(tool.name for tool in listed.tools) == ["read_note", "search_notes"]
+
+
+@pytest.mark.anyio
+async def test_client_receives_an_error_result_for_an_unknown_note(notes: Path) -> None:
+    async with Client(mcp_server.server) as client:
+        result = await client.call_tool("read_note", {"name": "missing.md"})
+    assert result.is_error

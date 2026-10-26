@@ -21,11 +21,18 @@ Do not add another Task target for every executable or repeat a tool's defaults.
 | Real APM delivery | `task apm:smoke` |
 | Capability source archive | `task capabilities:build -- --profile fullstack` |
 
-Run `uv run --locked python scripts/verify.py --help` to list gate names.
+Run `uv run --locked --no-sync python scripts/verify.py --help` to list gate names.
 Use `uv run --locked python -m scripts.check_resources --json` for the resource
 census, `uv run --locked python -m scripts.render_native --write` for an
 approved native-role refresh, and the release guide for publication commands.
 These are explicit operations, not additional aliases in Task or the editor.
+
+The verifier never synchronizes dependencies, including when selecting the
+network audit. Provision the reviewed environment separately through bootstrap.
+The full gate first runs `uv lock --check`, since suppressing environment
+synchronization must not silently waive lock consistency. A stale lock fails
+before code checks run; a missing tool remains an error rather than triggering
+an installation. CI uses the same non-syncing command after explicit provisioning.
 
 `task test` runs every tier. Select a fast subset with
 `task test -- -m "not integration and not slow"`. Coverage remains enforced by
@@ -145,9 +152,11 @@ composition. This does not exempt unexpected files in composed output.
 APM subprocess output is handled without locale-dependent pipe decoding:
 the private adapter discards it, while smoke failures render captured bytes
 as UTF-8 with visible escapes for invalid bytes. Nonzero exits and timeouts
-still fail. The adapter allows at most 300 seconds per APM command so cold
-full-profile replays can finish on slower filesystems; the outer smoke-command
-bound remains 600 seconds. No audit, drift or integrity check is skipped.
+still fail. The adapter defaults to 300 seconds per APM command so cold
+full-profile replays can finish on slower filesystems; explicitly supplied
+timeouts must be finite and positive. The outer smoke-command bound remains
+600 seconds. Both paths use the pinned environment's recorded APM launcher,
+not an unrelated `PATH` entry. No audit, drift or integrity check is skipped.
 
 ## Scanner configuration discovery
 

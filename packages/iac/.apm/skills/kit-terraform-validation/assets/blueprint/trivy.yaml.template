@@ -1,5 +1,6 @@
-# Trivy misconfiguration and secret scan for Terraform. Copy to infra/trivy.yaml.
+# Trivy misconfiguration scan for Terraform. Copy to infra/trivy.yaml.
 # Use: trivy config --config trivy.yaml .
+# Keep credential checks in the repository's existing secret scanner.
 # Record accepted risks in .trivyignore with an owner, reason, and expiry.
 severity:
   - HIGH
@@ -10,7 +11,6 @@ ignorefile: .trivyignore
 scan:
   scanners:
     - misconfig
-    - secret
   skip-dirs:
     - .terraform
 

@@ -1,0 +1,31 @@
+# Ruff selection for modernization batches.
+# Copy the [lint] keys into the project's Ruff configuration on a modernization
+# branch, or save this file as modernize-ruff.toml and run one family at a time:
+#   ruff check --config modernize-ruff.toml --select UP006,UP035 --fix src tests
+#   ruff check --config modernize-ruff.toml --select UP007,UP045 --fix src tests
+#   ruff check --config modernize-ruff.toml --select UP040,UP046,UP047 --diff src
+# Review every --unsafe-fixes change by hand. Set target-version to the new
+# minimum Python; Ruff only proposes rewrites valid for that version.
+
+target-version = "py313"
+
+[lint]
+select = [
+  "UP",   # pyupgrade: syntax that the target version makes obsolete
+  "FA",   # future annotations: only fires while the target is below 3.10
+  "PTH",  # os.path to pathlib, when pathlib is the project policy
+  "DTZ",  # naive datetimes; pairs with UP017 datetime.UTC
+]
+# Batches that stay manual: rewrites that change runtime behavior for code that
+# introspects annotations or enum string output.
+unfixable = [
+  "UP042", # str-mixin Enum to StrEnum changes str() output
+  "UP046", # Generic[T] class to PEP 695 makes module-level TypeVars class-scoped
+  "UP047", # TypeVar function to PEP 695 makes module-level TypeVars function-scoped
+]
+
+[lint.pyupgrade]
+# Keep typing.Optional/Union and List spellings in files that import
+# "from __future__ import annotations" while targeting Python below 3.10,
+# because Pydantic or FastAPI evaluate those annotations at runtime.
+keep-runtime-typing = false

@@ -1,0 +1,237 @@
+"""Copy to ``experiment_config.py`` for bounded, public LLM evaluation manifests.
+
+Compares models, prompt versions, temperatures and seeds against a fixed
+evaluation dataset. Stdlib-only; no Hydra imports, interpolation, targets,
+model calls, or job execution.
+Use ``parse_experiment`` before planning. Filesystem roots are trusted
+composition-root inputs, not fields in untrusted experiment documents.
+"""
+
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
+from itertools import product
+import json
+from pathlib import Path
+import re
+from typing import final
+
+DEFAULT_SEED: int = 0
+DEFAULT_TEMPERATURE: float = 1.0
+CONFIG_VERSION: str = "v1"
+MAX_JOBS: int = 16
+MAX_SEED: int = 4_294_967_295
+MAX_TEMPERATURE: float = 2.0
+_JOB_INDEX_DIGITS = 3
+_JSON_INDENT = 2
+_PUBLIC_LABEL = re.compile(r"[a-z][a-z0-9-]{0,47}")
+_MODEL_LABEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_FIELDS = frozenset(
+    {
+        "run_id",
+        "seed",
+        "eval_dataset_version",
+        "model",
+        "prompt_version",
+        "config_version",
+        "temperature",
+    }
+)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExperimentConfig:
+    """Validated public configuration; not a secret-bearing settings object.
+
+    Args:
+        run_id (str): Public, unique launch label starting with ``run-``.
+        seed (int): Sampling seed; providers may treat it as best effort only.
+        eval_dataset_version (str): Public immutable evaluation dataset label.
+        model (str): Public provider model or deployment identifier.
+        prompt_version (str): Public immutable prompt version or label.
+        config_version (str): Supported document schema version.
+        temperature (float): Finite sampling temperature in ``[0, 2]``.
+    """
+
+    run_id: str
+    seed: int
+    eval_dataset_version: str
+    model: str
+    prompt_version: str
+    config_version: str
+    temperature: float
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlannedRun:
+    """One independent job, with locations fixed before any working-dir change.
+
+    Args:
+        config (ExperimentConfig): Validated public values for this job.
+        job_index (int): Stable zero-based index in seed-major product order.
+        launch_directory (Path): Absolute original working directory.
+        output_directory (Path): Absolute exclusive output location.
+    """
+
+    config: ExperimentConfig
+    job_index: int
+    launch_directory: Path
+    output_directory: Path
+
+
+def _integer(value: object, *, field: str, upper: int) -> int:
+    if type(value) is not int or not 0 <= value <= upper:
+        message = f"{field}: expected bounded integer"
+        raise ValueError(message)
+    return value
+
+
+def _temperature(value: object) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not 0 <= value <= MAX_TEMPERATURE
+    ):
+        message = "temperature: expected finite number in [0, 2]"
+        raise ValueError(message)
+    return float(value)
+
+
+def _label(
+    value: object, *, field: str, pattern: re.Pattern[str] = _PUBLIC_LABEL
+) -> str:
+    if not isinstance(value, str) or pattern.fullmatch(value) is None:
+        message = f"{field}: expected public lowercase revision label"
+        raise ValueError(message)
+    return value
+
+
+def parse_experiment(
+    *, document: Mapping[str, object], overrides: Mapping[str, object]
+) -> ExperimentConfig:
+    """Validate defaults < document < explicit overrides, without environment reads.
+
+    Args:
+        document (Mapping[str, object]): Public fields only; unknown keys fail.
+        overrides (Mapping[str, object]): Highest-priority explicit public values.
+
+    Returns:
+        ExperimentConfig: Immutable, validated final values.
+
+    Raises:
+        ValueError: Invalid keys, types, labels, version, or numeric bounds.
+    """
+    if set(document) - _FIELDS or set(overrides) - _FIELDS:
+        message = "unknown experiment field"
+        raise ValueError(message)
+    values: dict[str, object] = {
+        "seed": DEFAULT_SEED,
+        "temperature": DEFAULT_TEMPERATURE,
+        "config_version": CONFIG_VERSION,
+        **document,
+        **overrides,
+    }
+    run_id = _label(values.get("run_id"), field="run_id")
+    if not run_id.startswith("run-"):
+        message = "run_id: expected run- prefix"
+        raise ValueError(message)
+    if values["config_version"] != CONFIG_VERSION:
+        message = "config_version: unsupported schema"
+        raise ValueError(message)
+    return ExperimentConfig(
+        run_id=run_id,
+        seed=_integer(values["seed"], field="seed", upper=MAX_SEED),
+        eval_dataset_version=_label(
+            values.get("eval_dataset_version"), field="eval_dataset_version"
+        ),
+        model=_label(values.get("model"), field="model", pattern=_MODEL_LABEL),
+        prompt_version=_label(values.get("prompt_version"), field="prompt_version"),
+        config_version=CONFIG_VERSION,
+        temperature=_temperature(values["temperature"]),
+    )
+
+
+def plan_runs(
+    *,
+    config: ExperimentConfig,
+    seeds: tuple[int, ...],
+    temperatures: tuple[float, ...],
+    max_jobs: int,
+    launch_directory: Path,
+    output_root: Path,
+) -> tuple[PlannedRun, ...]:
+    """Preflight a finite Cartesian sweep without launching jobs or writing files.
+
+    Args:
+        config (ExperimentConfig): Result of ``parse_experiment``.
+        seeds (tuple[int, ...]): Explicit nonempty, unique seed axis.
+        temperatures (tuple[float, ...]): Explicit nonempty, unique temperature axis.
+        max_jobs (int): Consumer budget, at most ``MAX_JOBS``.
+        launch_directory (Path): Trusted absolute original working directory.
+        output_root (Path): Trusted root, relative to launch directory or absolute.
+
+    Returns:
+        tuple[PlannedRun, ...]: Independent immutable job records.
+
+    Raises:
+        ValueError: Empty, repeated, invalid, oversized axes or invalid launch path.
+    """
+    budget = _integer(max_jobs, field="max_jobs", upper=MAX_JOBS)
+    count = len(seeds) * len(temperatures)
+    if not count or not budget or count > budget:
+        message = "sweep: job count must fit positive max_jobs budget"
+        raise ValueError(message)
+    valid_seeds = tuple(_integer(seed, field="seed", upper=MAX_SEED) for seed in seeds)
+    valid_temperatures = tuple(_temperature(value) for value in temperatures)
+    if len(set(valid_seeds)) != len(seeds) or len(set(valid_temperatures)) != len(
+        temperatures
+    ):
+        message = "sweep: axes must contain unique values"
+        raise ValueError(message)
+    if not launch_directory.is_absolute():
+        message = "launch_directory: expected absolute path"
+        raise ValueError(message)
+    launch = launch_directory.resolve()
+    root = (launch / output_root).resolve()
+    return tuple(
+        PlannedRun(
+            config=replace(config, seed=seed, temperature=temperature),
+            job_index=index,
+            launch_directory=launch,
+            output_directory=root
+            / config.run_id
+            / f"job-{index:0{_JOB_INDEX_DIGITS}d}",
+        )
+        for index, (seed, temperature) in enumerate(
+            product(valid_seeds, valid_temperatures)
+        )
+    )
+
+
+def write_manifest(*, run: PlannedRun) -> Path:
+    """Reserve a job directory exclusively and write only public provenance.
+
+    Args:
+        run (PlannedRun): Trusted planner result beneath a consumer-controlled root.
+
+    Returns:
+        Path: Manifest location; never changes the process working directory.
+
+    Raises:
+        FileExistsError: Job directory already exists; never overwrite or resume.
+        OSError: Reservation or write failed; inspect incomplete output explicitly.
+    """
+    payload = {
+        "config": asdict(run.config),
+        "job_index": run.job_index,
+        "launch_directory": str(run.launch_directory),
+        "output_directory": str(run.output_directory),
+        "working_directory_policy": "unchanged",
+    }
+    text = json.dumps(payload, indent=_JSON_INDENT, allow_nan=False) + "\n"
+    run.output_directory.mkdir(parents=True, exist_ok=False)
+    manifest = run.output_directory / "manifest.json"
+    with manifest.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+    return manifest

@@ -2,7 +2,6 @@
 name: kit-docs-writer
 description: "Update one approved documentation scope using verified facts."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
-model: "haiku"
 ---
 # Update one documentation scope
 

@@ -8,6 +8,7 @@
 | RED and USE, instrument choice, histogram buckets, cardinality | [Metrics design](metrics-design.md) |
 | SLIs, SLOs, error budgets, burn-rate alerts, alert hygiene | [SLOs and alerts](slos-and-alerts.md) |
 | Collector pipelines, sampling, privacy, cost | [Pipeline](pipeline.md) |
+| Liveness, readiness, startup probes; metric naming; dashboards as code | [Probes and naming](probes-and-naming.md) |
 
 ## Quality gates
 
@@ -64,11 +65,20 @@
 ## Templates
 
 - [Collector configuration](../assets/templates/otel-collector.yaml.template)
+- [Collector local override](../assets/templates/otel-collector.local.yaml.template)
 - [Python instrumentation](../assets/templates/telemetry.py.template)
 - [Alert rules](../assets/templates/alert-rules.yaml.template)
+- [RED and USE rules](../assets/templates/red-use-rules.yaml.template)
+- [Grafana dashboard](../assets/templates/grafana-dashboard.json.template)
+- [Grafana data source](../assets/templates/grafana-datasources.yaml.template)
+- [Grafana dashboard provider](../assets/templates/grafana-dashboards.yaml.template)
+- [Prometheus configuration](../assets/templates/prometheus.yaml.template)
+- [Local observability stack](../assets/templates/observability-compose.yaml.template)
 - [Telemetry evidence record](../assets/templates/telemetry-evidence-template.md)
 
 ## Sources
 
 - <https://opentelemetry.io/docs/>
+- <https://opentelemetry.io/docs/collector/configuration/>
+- <https://prometheus.io/docs/guides/opentelemetry/>
 - <https://sre.google/workbook/alerting-on-slos/>

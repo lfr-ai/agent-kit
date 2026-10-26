@@ -701,7 +701,7 @@ def test_cli_does_not_swallow_programmer_type_errors(
         _EVIDENCE,
         _HOOK,
         "shared/.apm/skills/kit-context-onboarding/assets/check_context.py",
-        "shared/.apm/skills/kit-context-onboarding/assets/check_memory_freshness.py",
+        "shared/.apm/skills/kit-project-memory/assets/check_memory_files.py",
         _TASKS,
         "shared/.apm/skills/kit-parallel-work/assets/new_worktree.py",
         _REPORT,

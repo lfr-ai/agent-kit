@@ -1,0 +1,264 @@
+"""Copy to ``evals/adapters/langfuse_experiment.py``; tested with a fake facade.
+
+Runs the harness scorers through a consumer-owned Langfuse SDK facade so each
+experiment run is linked to an exact prompt version, model alias and dataset
+version. The facade owns the SDK import, credentials, tracing setup, flushing
+and exception types; this module imports no SDK and sends nothing on its own.
+"""
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Protocol, final
+
+from evals.harness import EvalCase, Scorer, validate_score
+
+
+class ExportNotApprovedError(PermissionError):
+    """Hosted export of evaluation data was not explicitly approved."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExperimentIdentity:
+    """Public provenance attached to every experiment run.
+
+    Args:
+        run_id (str): kit-config ``run_id`` of the planned job.
+        dataset_version (str): Immutable dataset label.
+        dataset_fingerprint (str): Content digest from the harness.
+        prompt_name (str): Managed prompt name.
+        prompt_version (int): Exact resolved prompt version, never a label.
+        model_alias (str): Job-named model alias.
+        temperature (float): Sampling temperature of the candidate.
+        seed (int): Best-effort sampling seed.
+    """
+
+    run_id: str
+    dataset_version: str
+    dataset_fingerprint: str
+    prompt_name: str
+    prompt_version: int
+    model_alias: str
+    temperature: float
+    seed: int
+
+    def metadata(self) -> dict[str, str]:
+        """Return allow-listed, string-valued run metadata.
+
+        Returns:
+            dict[str, str]: Metadata without inputs, outputs or secrets.
+        """
+        return {
+            "run_id": self.run_id,
+            "dataset_version": self.dataset_version,
+            "dataset_fingerprint": self.dataset_fingerprint,
+            "prompt_name": self.prompt_name,
+            "prompt_version": str(self.prompt_version),
+            "model_alias": self.model_alias,
+            "temperature": repr(self.temperature),
+            "seed": str(self.seed),
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ScoreRecord:
+    """Score projection the facade converts into an SDK evaluation object.
+
+    Args:
+        name (str): Metric name, identical to the harness scorer name.
+        value (float): Score in ``[0, 1]``.
+    """
+
+    name: str
+    value: float
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExperimentSummary:
+    """Facade projection of the SDK experiment result.
+
+    Args:
+        run_name (str): Run name recorded by the service.
+        item_count (int): Items attempted.
+        failed_items (int): Items whose task or evaluator raised.
+    """
+
+    run_name: str
+    item_count: int
+    failed_items: int
+
+
+type ItemTask = Callable[[Mapping[str, object]], str]
+type ItemEvaluator = Callable[[Mapping[str, object], str], ScoreRecord]
+
+
+class ExperimentSdk(Protocol):
+    """Narrow facade over the consumer's pinned Langfuse SDK experiment runner."""
+
+    def run_experiment(
+        self,
+        *,
+        name: str,
+        description: str,
+        data: Sequence[Mapping[str, object]],
+        task: ItemTask,
+        evaluators: Sequence[ItemEvaluator],
+        metadata: Mapping[str, str],
+        max_concurrency: int,
+    ) -> ExperimentSummary:
+        """Run the task over items, attach scores and return a projection.
+
+        Args:
+            name (str): Experiment run name.
+            description (str): Human-readable description without data.
+            data (Sequence[Mapping[str, object]]): Items with ``input``,
+                ``expected_output`` and ``metadata``.
+            task (ItemTask): Candidate system call for one item.
+            evaluators (Sequence[ItemEvaluator]): Item-level scorers.
+            metadata (Mapping[str, str]): Run-level provenance.
+            max_concurrency (int): Upper bound on concurrent items.
+
+        Returns:
+            ExperimentSummary: Projection of the SDK result.
+        """
+        ...
+
+
+def _case_from_item(item: Mapping[str, object]) -> EvalCase:
+    metadata = item.get("metadata")
+    case_id = metadata.get("case_id") if isinstance(metadata, Mapping) else None
+    text = item.get("input")
+    expected = item.get("expected_output")
+    if not (
+        isinstance(case_id, str) and isinstance(text, str) and isinstance(expected, str)
+    ):
+        message = "experiment item is missing case_id, input or expected_output"
+        raise TypeError(message)
+    source, tags = _case_provenance(metadata)
+    return EvalCase(
+        case_id=case_id, input=text, expected=expected, source=source, tags=tags
+    )
+
+
+def _case_provenance(metadata: object) -> tuple[str, tuple[str, ...]]:
+    if not isinstance(metadata, Mapping):
+        message = "experiment item metadata must be an object"
+        raise TypeError(message)
+    source = metadata.get("source", "synthetic")
+    tags = metadata.get("tags", [])
+    if not isinstance(source, str) or not source:
+        message = "experiment item source must be non-empty text"
+        raise TypeError(message)
+    if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        message = "experiment item tags must be a list of strings"
+        raise TypeError(message)
+    return source, tuple(str(tag) for tag in tags)
+
+
+def scorer_evaluator(scorer: Scorer) -> ItemEvaluator:
+    """Adapt a harness scorer so online and offline scores share one definition.
+
+    Args:
+        scorer (Scorer): Deterministic harness scorer.
+
+    Returns:
+        ItemEvaluator: Evaluator returning a ``ScoreRecord`` per item.
+
+    Raises:
+        TypeError: The returned evaluator receives a malformed item or provenance.
+        EvalInputError: The scorer returns a boolean, nonnumeric, non-finite
+            value or a value outside ``[0, 1]``.
+
+    Scorer exceptions propagate unchanged from the returned evaluator.
+    """
+
+    def evaluate(item: Mapping[str, object], output: str) -> ScoreRecord:
+        value = validate_score(
+            name=scorer.name,
+            value=scorer.score(case=_case_from_item(item), output=output),
+        )
+        return ScoreRecord(name=scorer.name, value=value)
+
+    return evaluate
+
+
+@final
+class LangfuseExperimentRunner:
+    """Submit an approved offline experiment through the injected facade."""
+
+    def __init__(self, *, sdk: ExperimentSdk, export_approved: bool) -> None:
+        """Configure the runner.
+
+        Args:
+            sdk (ExperimentSdk): Consumer facade around the pinned SDK.
+            export_approved (bool): Explicit approval to send dataset items,
+                outputs and scores to the configured Langfuse project.
+        """
+        self._sdk = sdk
+        self._export_approved = export_approved
+
+    def run(
+        self,
+        *,
+        identity: ExperimentIdentity,
+        cases: Sequence[EvalCase],
+        task: Callable[[EvalCase], str],
+        scorers: Sequence[Scorer],
+        max_concurrency: int,
+    ) -> ExperimentSummary:
+        """Run one experiment linked to an exact prompt version.
+
+        Args:
+            identity (ExperimentIdentity): Provenance of this run.
+            cases (Sequence[EvalCase]): Approved, versioned cases.
+            task (Callable[[EvalCase], str]): Candidate behind the model port.
+            scorers (Sequence[Scorer]): Same scorers as the offline gate.
+            max_concurrency (int): Positive concurrency bound.
+
+        Returns:
+            ExperimentSummary: Facade projection of the result.
+
+        Raises:
+            ExportNotApprovedError: Export was not approved.
+            ValueError: ``max_concurrency`` is not positive.
+            EvalInputError: An evaluator receives an invalid scorer result.
+
+        Facade, task and scorer exceptions propagate unchanged without retry.
+        The facade must surface item failures rather than silently report success.
+        """
+        if not self._export_approved:
+            message = "hosted evaluation export requires explicit approval"
+            raise ExportNotApprovedError(message)
+        if max_concurrency < 1:
+            message = "max_concurrency must be positive"
+            raise ValueError(message)
+        data = [
+            {
+                "input": case.input,
+                "expected_output": case.expected,
+                "metadata": {
+                    "case_id": case.case_id,
+                    "source": case.source,
+                    "tags": list(case.tags),
+                },
+            }
+            for case in cases
+        ]
+
+        def item_task(item: Mapping[str, object]) -> str:
+            return task(_case_from_item(item))
+
+        return self._sdk.run_experiment(
+            name=identity.run_id,
+            description=(
+                f"{identity.prompt_name} v{identity.prompt_version} on "
+                f"{identity.model_alias} against {identity.dataset_version}"
+            ),
+            data=data,
+            task=item_task,
+            evaluators=[scorer_evaluator(scorer) for scorer in scorers],
+            metadata=identity.metadata(),
+            max_concurrency=max_concurrency,
+        )

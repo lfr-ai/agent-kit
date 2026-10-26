@@ -1,0 +1,22 @@
+// .storybook/main.ts
+// Storybook for a React + Vite project. Stories live next to components; the
+// Vitest addon runs every story (play functions and axe checks) as a test.
+import type { StorybookConfig } from "@storybook/react-vite";
+
+const config: StorybookConfig = {
+  framework: { name: "@storybook/react-vite", options: {} },
+  stories: ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
+  addons: ["@storybook/addon-docs", "@storybook/addon-a11y", "@storybook/addon-vitest"],
+  // Static assets such as fonts used by the theme; keep secrets out of this folder.
+  staticDirs: ["../public"],
+  core: {
+    // No usage telemetry from CI or developer machines.
+    disableTelemetry: true,
+  },
+  typescript: {
+    // Prop tables for autodocs come from the component types.
+    reactDocgen: "react-docgen-typescript",
+  },
+};
+
+export default config;

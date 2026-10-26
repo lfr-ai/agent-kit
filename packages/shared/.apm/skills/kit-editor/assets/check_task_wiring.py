@@ -322,8 +322,8 @@ def _task_entries(text: str) -> list[object]:
     """Return the ``tasks`` list of a ``tasks.json`` document.
 
     Raises:
-        ValueError: The document has no ``tasks`` key.
-        TypeError: The document or its ``tasks`` value has the wrong type.
+        TaskInputError: The document has no ``tasks`` key.
+        TaskInputTypeError: The document or its ``tasks`` value has the wrong type.
     """
     document = json.loads(strip_jsonc(text))
     if not isinstance(document, dict):
@@ -449,7 +449,7 @@ def self_test() -> None:
     """Exercise parsing and checking with in-memory synthetic inputs.
 
     Raises:
-        AssertionError: A synthetic case produced an unexpected result.
+        SelfTestError: A synthetic case produced an unexpected result.
     """
     taskfile = parse_taskfile(
         'version: "3"\n'

@@ -33,7 +33,9 @@ _LOCAL_ROOTS = frozenset(
 _COMPANIONS = {"kit-test-first": ("kit-hexagonal-architecture",)}
 # Consumer-owned modules that templates import but deliberately do not ship.
 _CONSUMER_MODULES = frozenset({"shop.infrastructure.database"})
-_DESTINATION = re.compile(r"Copy (?:to|into|as)\s+'([^']+)\.py'")
+_DESTINATION = re.compile(
+    r"Copy (?:to|into|as)\s+(?P<quote>'|``)(?P<path>[^'`\n]+)\.py(?P=quote)"
+)
 _TERRAFORM_BLUEPRINT = (
     _PACKAGES / "iac/.apm/skills/kit-terraform-validation/assets/blueprint"
 )
@@ -138,7 +140,9 @@ def _unresolved_imports(skill: Path, companions: tuple[Path, ...]) -> list[str]:
             text = template.read_text(encoding="utf-8")
             provided |= _defined_names(ast.parse(text))
             provided.add(template.name.removesuffix(_PY_SUFFIX))
-            provided.update(Path(match).name for match in _DESTINATION.findall(text))
+            provided.update(
+                Path(match.group("path")).name for match in _DESTINATION.finditer(text)
+            )
     findings: list[str] = []
     for template in _python_templates(skill):
         tree = ast.parse(template.read_text(encoding="utf-8"))

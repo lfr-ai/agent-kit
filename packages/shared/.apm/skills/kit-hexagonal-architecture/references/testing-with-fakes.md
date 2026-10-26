@@ -62,7 +62,7 @@ proves shape. It parses source (no imports, no execution) and for every
 Protocol under `--ports` reports, per implementation:
 
 - members the port declares but the class lacks;
-- a synchronous method where the port is `async` (or the reverse);
+- incompatible coroutine, async-generator or synchronous callable contracts;
 - parameter name, order or kind differences (positional-only, keyword-only,
   `*args`, `**kwargs`);
 - a default the port declares but the implementation drops, an extra default,
@@ -74,8 +74,12 @@ Protocol under `--ports` reports, per implementation:
 Implementations are classes that name the port as a base, plus any class that
 structurally defines every port member (disable with `--explicit-only`). Base
 classes found in the scanned paths are followed, so an adapter inheriting a
-shared base is checked against its effective members. Return types are
-deliberately left to a type checker.
+shared base is checked against its effective members. A coroutine must match a
+coroutine, not an async generator. A normal `def` port returning `AsyncIterator`
+may be implemented by an async generator; this narrow exception recognizes the
+bare or qualified annotation name, optionally subscripted. Ordinary functions
+and synchronous generators remain compatible as before. Parameter and default
+checks still apply to the async-generator implementation.
 
 ```text
 python check_ports_adapters.py src tests --ports src/app/application/ports
@@ -86,6 +90,13 @@ python check_ports_adapters.py --self-test
 Limitations: classes are matched by simple name, so two ports with the same
 name in different modules are ambiguous; dynamically created classes and
 members added by decorators or metaclasses are invisible to static parsing.
+Yield detection walks only the enclosing function body, skipping nested
+function, class and lambda definitions (including their headers). The
+`AsyncIterator` exception is syntactic: imports, aliases, string annotations,
+shadowing, element types and general return-type equivalence are not resolved.
+An `async def` without its own yield remains a coroutine even if its return
+annotation is `AsyncIterator`. Use a type checker for full type compatibility;
+the checker does not establish runtime or behavioral equivalence.
 
 ## Sources
 

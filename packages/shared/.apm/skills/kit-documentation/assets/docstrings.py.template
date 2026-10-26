@@ -1,0 +1,117 @@
+"""Split and summarize invoices for the billing reports.
+
+Entry points are ``split_amount`` for equal installments and
+``overdue_invoices`` for the daily reminder job. The module performs no I/O at
+import time.
+"""
+
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from datetime import date
+from decimal import ROUND_DOWN, Decimal
+
+CENT = Decimal("0.01")
+
+
+class InvoiceStateError(ValueError):
+    """Raised when an operation is not allowed in the invoice's current state."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Invoice:
+    """An issued invoice as seen by reporting.
+
+    Attributes:
+        number: Human-readable invoice number, unique per customer.
+        total: Amount due in the invoice currency, two decimal places.
+        due: Last day on which payment is on time.
+        paid: Whether the invoice has been settled in full.
+    """
+
+    number: str
+    total: Decimal
+    due: date
+    paid: bool
+
+
+def split_amount(total: Decimal, *, parts: int) -> list[Decimal]:
+    """Split an amount into equal installments that add up exactly.
+
+    Rounding differences go to the last installment, so the sum of the result
+    always equals ``total``.
+
+    Args:
+        total: Amount to split, in the currency's major unit.
+        parts: Number of installments; at least 1.
+
+    Returns:
+        Installments in payment order.
+
+    Raises:
+        ValueError: If ``parts`` is less than 1 or ``total`` is negative.
+
+    Example:
+        >>> split_amount(Decimal("100.00"), parts=3)
+        [Decimal('33.33'), Decimal('33.33'), Decimal('33.34')]
+    """
+    if parts < 1 or total < 0:
+        message = "parts must be at least 1 and total must not be negative"
+        raise ValueError(message)
+    share = (total / parts).quantize(CENT, rounding=ROUND_DOWN)
+    return [share] * (parts - 1) + [total - share * (parts - 1)]
+
+
+def overdue_invoices(invoices: Iterable[Invoice], *, today: date) -> Iterator[Invoice]:
+    """Yield unpaid invoices whose due date has passed.
+
+    Args:
+        invoices: Invoices to inspect; consumed once.
+        today: The reporting date; injected so callers control time.
+
+    Yields:
+        Each overdue invoice, in input order. Iteration ends when the input
+        is exhausted.
+    """
+    for invoice in invoices:
+        if not invoice.paid and invoice.due < today:
+            yield invoice
+
+
+class ReminderPolicy:
+    """Decides whether an overdue invoice gets a reminder today.
+
+    Args:
+        quiet_days: Minimum days between two reminders for one invoice.
+    """
+
+    def __init__(self, *, quiet_days: int) -> None:
+        """Store the policy; see the class docstring for arguments."""
+        if quiet_days < 0:
+            message = "quiet_days must not be negative"
+            raise ValueError(message)
+        self._quiet_days = quiet_days
+
+    @property
+    def quiet_days(self) -> int:
+        """Minimum days between two reminders for one invoice."""
+        return self._quiet_days
+
+    def should_remind(self, invoice: Invoice, *, last_sent: date | None, today: date) -> bool:
+        """Return whether to send a reminder for an invoice today.
+
+        Args:
+            invoice: The invoice to consider.
+            last_sent: Date of the previous reminder, or None if none was sent.
+            today: The reporting date.
+
+        Returns:
+            True when the invoice is overdue and outside the quiet period.
+
+        Raises:
+            InvoiceStateError: If the invoice is already paid.
+        """
+        if invoice.paid:
+            message = f"invoice {invoice.number} is paid; no reminder applies"
+            raise InvoiceStateError(message)
+        quiet = last_sent is not None and (today - last_sent).days < self._quiet_days
+        return invoice.due < today and not quiet

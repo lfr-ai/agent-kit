@@ -4,12 +4,12 @@ import argparse
 import ast
 import json
 from pathlib import Path
-import re
 import sys
 from urllib.parse import unquote
 
+from agent_kit.core.text import markdown_link_targets
+
 _ROOT = Path(__file__).resolve().parents[1]
-_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
 
 def _skills(root: Path) -> list[Path]:
@@ -79,8 +79,7 @@ def _reachable(skill: Path) -> set[Path]:
 def _linked_files(path: Path, home: Path) -> list[Path]:
     """Return local files linked from one document that stay inside ``home``."""
     linked: list[Path] = []
-    for match in _LINK.findall(path.read_text(encoding="utf-8")):
-        target = match.strip().strip("<>").split(" ", 1)[0]
+    for target in markdown_link_targets(path.read_text(encoding="utf-8")):
         if target.startswith(("https://", "http://", "mailto:", "#")):
             continue
         resolved = (path.parent / unquote(target.partition("#")[0])).resolve()

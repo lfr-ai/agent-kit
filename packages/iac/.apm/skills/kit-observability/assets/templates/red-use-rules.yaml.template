@@ -1,0 +1,102 @@
+# Prometheus recording and alerting rules for RED (request) and USE (resource)
+# signals. Copy to rules/orders-api.red-use.rules.yaml and check with:
+#   promtool check rules rules/orders-api.red-use.rules.yaml
+#   promtool test rules rules/orders-api.red-use.rules.test.yaml
+# SLO burn-rate pages live in alert-rules.yaml.template; these rules feed
+# dashboards and cause-level tickets. Record names follow level:metric:operations.
+# Source names assume OpenTelemetry metrics ingested by Prometheus 3 with
+# unit suffixes: http.server.request.duration -> http_server_request_duration_seconds,
+# db.client.connection.count -> db_client_connection_count. Confirm the real
+# series names in your backend before adopting.
+groups:
+  - name: orders-api-red
+    interval: 30s
+    rules:
+      # Rate: requests per second per route.
+      - record: job_route:http_server_requests:rate5m
+        expr: |
+          sum by (job, http_route) (
+            rate(http_server_request_duration_seconds_count{job="orders-api"}[5m])
+          )
+      # Errors: server errors per second and as a ratio of all requests.
+      - record: job_route:http_server_errors:rate5m
+        expr: |
+          sum by (job, http_route) (
+            rate(http_server_request_duration_seconds_count{job="orders-api",http_response_status_code=~"5.."}[5m])
+          )
+      - record: job_route:http_server_errors:ratio_rate5m
+        expr: |
+          job_route:http_server_errors:rate5m
+          /
+          job_route:http_server_requests:rate5m
+      # Duration: latency percentiles from histogram buckets (aggregatable).
+      - record: job_route:http_server_request_duration_seconds:p95_rate5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (job, http_route, le) (
+              rate(http_server_request_duration_seconds_bucket{job="orders-api"}[5m])
+            )
+          )
+      - record: job_route:http_server_request_duration_seconds:p99_rate5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (job, http_route, le) (
+              rate(http_server_request_duration_seconds_bucket{job="orders-api"}[5m])
+            )
+          )
+
+  - name: orders-api-use
+    interval: 30s
+    rules:
+      # Utilization: fraction of the connection pool in use.
+      - record: job_pool:db_client_connection:utilization
+        expr: |
+          sum by (job, db_client_connection_pool_name) (
+            db_client_connection_count{job="orders-api",db_client_connection_state="used"}
+          )
+          /
+          sum by (job, db_client_connection_pool_name) (
+            db_client_connection_max{job="orders-api"}
+          )
+      # Saturation: requests waiting for a connection.
+      - record: job_pool:db_client_connection_pending_requests:max
+        expr: |
+          max by (job, db_client_connection_pool_name) (
+            db_client_connection_pending_requests{job="orders-api"}
+          )
+      # Utilization: CPU seconds used per second, per instance.
+      - record: instance:process_cpu_time_seconds:rate5m
+        expr: |
+          sum by (job, instance) (
+            rate(process_cpu_time_seconds_total{job="orders-api"}[5m])
+          )
+
+  - name: orders-api-use-alerts
+    rules:
+      - alert: OrdersApiConnectionPoolSaturated
+        expr: |
+          job_pool:db_client_connection:utilization{job="orders-api"} > 0.9
+          and
+          job_pool:db_client_connection_pending_requests:max{job="orders-api"} > 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "orders-api connection pool {{ $labels.db_client_connection_pool_name }} is saturated"
+          description: "Pool use is {{ $value | humanizePercentage }} with requests waiting."
+          runbook_url: https://runbooks.example.invalid/orders-api/connection-pool
+
+      - alert: OrdersApiRouteErrorRatioHigh
+        expr: |
+          job_route:http_server_errors:ratio_rate5m{job="orders-api"} > 0.05
+          and
+          job_route:http_server_requests:rate5m{job="orders-api"} > 1
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "orders-api route {{ $labels.http_route }} returns over 5% server errors"
+          description: "Cause-level signal for diagnosis; paging comes from SLO burn-rate alerts."
+          runbook_url: https://runbooks.example.invalid/orders-api/route-errors

@@ -175,8 +175,10 @@ def check(path: Path, *, allow_bodies: bool = False) -> list[str]:
         Findings in entry order; empty when the archive looks safe to share.
 
     Raises:
-        ValueError: If the file is not a HAR document.
-        TypeError: If a present HAR container has the wrong Python type.
+        ValueError: If the file is not valid JSON.
+        HarInputTypeError: If the document or a present HAR container has the
+            wrong type.
+        HarInputError: If the archive has no ``log.entries``.
     """
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
@@ -234,7 +236,7 @@ def self_test() -> None:
     """Exercise clean, header, query, body and invalid archives in a temp dir.
 
     Raises:
-        AssertionError: If any synthetic expectation does not hold.
+        SelfTestError: If any synthetic expectation does not hold.
     """
     clean: dict[str, object] = {
         "request": {

@@ -1,0 +1,57 @@
+// vite.config.ts
+// Production build settings for a React SPA on Vite 8 (Rolldown). Vite 7 and
+// earlier use build.rollupOptions and output.manualChunks instead of
+// build.rolldownOptions and output.codeSplitting.
+import { fileURLToPath, URL } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+const DEV_PORT = 5173;
+const PREVIEW_PORT = 4173;
+// Warn only; the enforced limits live in the CI budget check.
+const CHUNK_WARNING_KB = 250;
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  // Only these prefixes reach import.meta.env in client code; every value is public.
+  envPrefix: ["VITE_"],
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
+  server: {
+    port: DEV_PORT,
+    strictPort: true,
+    // Development only: one origin in the browser, no backend URL in the bundle.
+    proxy: {
+      "/api": { target: "http://localhost:8000", changeOrigin: false },
+    },
+  },
+  preview: { port: PREVIEW_PORT, strictPort: true },
+  build: {
+    // Default baseline target; set explicit targets only from the support matrix.
+    target: "baseline-widely-available",
+    // Hidden maps for error tracking upload; delete them from dist before deploy.
+    // The dev server always serves maps; this setting affects builds only.
+    sourcemap: "hidden",
+    chunkSizeWarningLimit: CHUNK_WARNING_KB,
+    // A manifest lets the server or CDN set long cache headers per hashed file.
+    manifest: true,
+    rolldownOptions: {
+      output: {
+        // One stable vendor group for repeat-visit caching. Route chunks stay
+        // automatic through lazy imports. Measure before adding groups.
+        codeSplitting: {
+          groups: [
+            {
+              name: "framework",
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
+});

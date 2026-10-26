@@ -60,8 +60,9 @@ options should stay disabled by default.
 
 ## Prompt versioning
 
-- Keep prompts in code as `PromptTemplate` values with a name and an explicit
-  version; bump the version for any wording change.
+- By default keep prompts in code as `PromptTemplate` values with a name and an
+  explicit version; bump the version for any wording change. For independently
+  approved managed versions, use [prompt-management.md](prompt-management.md).
 - The template fingerprint (a hash of the text) catches edits made without a
   version bump; assert it in a test that pins the expected fingerprint.
 - Placeholders are explicit; rendering fails on missing or extra variables.

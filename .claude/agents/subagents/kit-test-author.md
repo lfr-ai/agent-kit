@@ -2,7 +2,6 @@
 name: kit-test-author
 description: "Author focused behavioral and negative regressions for one bounded task."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
-model: "haiku"
 ---
 # Author focused regressions
 

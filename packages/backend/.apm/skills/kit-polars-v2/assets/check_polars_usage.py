@@ -239,7 +239,7 @@ def self_test() -> None:
     """Exercise each rule, waivers, and clean lazy pipelines.
 
     Raises:
-        AssertionError: A regression was detected.
+        SelfTestError: A regression was detected.
     """
     risky = {
         "import polars as pl\npl.col('a').map_elements(str.upper)\n": "map_elements",

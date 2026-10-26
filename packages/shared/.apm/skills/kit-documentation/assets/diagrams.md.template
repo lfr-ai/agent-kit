@@ -1,0 +1,130 @@
+# Diagram templates for a synthetic invoicing system
+
+Copy one block, keep the sentence that states its question, and rename nodes
+to match the code. Each diagram stays under about 30 nodes.
+
+## Context: what the system talks to
+
+The invoicing service sits between customers, the payment provider and the
+accounting team.
+
+```mermaid
+flowchart LR
+    accTitle: Invoicing system context
+    accDescr: Customers and accountants use the invoicing service, which charges through a payment provider and sends e-mail.
+    customer(["Customer"])
+    accountant(["Accountant"])
+    invoicing["Invoicing service"]
+    payments[("Payment provider")]
+    email[("E-mail provider")]
+    customer -- "views and pays invoices (HTTPS)" --> invoicing
+    accountant -- "issues invoices (HTTPS)" --> invoicing
+    invoicing -- "charges cards (HTTPS API)" --> payments
+    invoicing -- "sends receipts (SMTP)" --> email
+```
+
+## Container: deployable parts and protocols
+
+```mermaid
+flowchart LR
+    accTitle: Invoicing containers
+    accDescr: A web app calls the API; the API stores invoices and publishes events consumed by a worker.
+    user(["Customer browser"])
+    subgraph platform["Invoicing platform (trust boundary)"]
+        web["Web app"]
+        api["API service"]
+        worker["Notification worker"]
+        db[("Invoice database")]
+        queue[["Event queue"]]
+    end
+    provider[("Payment provider")]
+    user -- "HTTPS" --> web
+    web -- "HTTPS JSON" --> api
+    api -- "SQL" --> db
+    api -- "publishes InvoicePaid" --> queue
+    queue -- "delivers InvoicePaid" --> worker
+    api -- "HTTPS API" --> provider
+```
+
+## Sequence: one payment request
+
+```mermaid
+sequenceDiagram
+    accTitle: Paying an invoice
+    accDescr: The API reserves the invoice, charges the provider with an idempotency key, then records the payment.
+    actor Customer
+    participant API as API service
+    participant DB as Invoice database
+    participant Provider as Payment provider
+    Customer->>API: POST /invoices/{id}/payments (Idempotency-Key)
+    API->>DB: load invoice, check state is issued
+    alt invoice already paid
+        API-->>Customer: 409 problem details
+    else invoice issued
+        API->>Provider: charge amount (same idempotency key)
+        Provider-->>API: charge succeeded
+        API->>DB: mark paid, store charge id
+        API-->>Customer: 201 payment
+    end
+```
+
+## Flow: deciding whether to send a reminder
+
+```mermaid
+flowchart TD
+    accTitle: Reminder decision
+    accDescr: Overdue unpaid invoices get a reminder unless one was sent in the last seven days.
+    start(["Daily job"]) --> overdue{"Invoice overdue?"}
+    overdue -- "no" --> skip(["Skip"])
+    overdue -- "yes" --> paid{"Paid?"}
+    paid -- "yes" --> skip
+    paid -- "no" --> recent{"Reminder in last 7 days?"}
+    recent -- "yes" --> skip
+    recent -- "no" --> send(["Send reminder"])
+```
+
+## State: invoice lifecycle
+
+```mermaid
+stateDiagram-v2
+    accTitle: Invoice states
+    accDescr: Drafts are issued, issued invoices are paid or voided, paid invoices can be refunded.
+    [*] --> Draft
+    Draft --> Issued: issue
+    Issued --> Paid: payment succeeded
+    Issued --> Voided: void
+    Paid --> Refunded: refund
+    Voided --> [*]
+    Refunded --> [*]
+```
+
+## Entity relationship: stored data
+
+```mermaid
+erDiagram
+    accTitle: Invoice data model
+    accDescr: A customer has many invoices; an invoice has lines and payments.
+    CUSTOMER ||--o{ INVOICE : "is billed by"
+    INVOICE ||--|{ INVOICE_LINE : contains
+    INVOICE ||--o{ PAYMENT : "is settled by"
+    CUSTOMER {
+        uuid id PK
+        string display_name
+    }
+    INVOICE {
+        uuid id PK
+        uuid customer_id FK
+        string state
+        date due_date
+    }
+    INVOICE_LINE {
+        uuid id PK
+        uuid invoice_id FK
+        decimal amount
+    }
+    PAYMENT {
+        uuid id PK
+        uuid invoice_id FK
+        string provider_charge_id
+    }
+```

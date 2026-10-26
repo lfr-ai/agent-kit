@@ -140,7 +140,7 @@ def analyze_whatif(value: object) -> dict[str, list[str]]:
 
     Raises:
         ValueError: A required field is missing or a change value is unsupported.
-        TypeError: The document or a present field has the wrong Python type.
+        WhatIfInputTypeError: The document or a present field has the wrong type.
     """
     groups: dict[str, list[str]] = {kind: [] for kind in _KINDS.values()}
     seen: set[str] = set()
@@ -202,7 +202,11 @@ def _read_object(value: object) -> object:
 
 
 def self_test() -> None:
-    """Exercise supported, risky, malformed and incomplete preview inputs."""
+    """Exercise supported, risky, malformed and incomplete preview inputs.
+
+    Raises:
+        SelfTestError: A preview is misclassified or wrongly accepted.
+    """
     for action, kind in _KINDS.items():
         groups = analyze_whatif(
             {"changes": [{"resourceId": "/example", "changeType": action}]}

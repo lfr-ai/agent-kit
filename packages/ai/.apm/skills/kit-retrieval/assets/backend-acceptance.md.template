@@ -1,0 +1,40 @@
+# Retrieval backend acceptance
+
+Copy into the consumer's reviewed design record. Replace every open item with
+evidence or an explicit blocker; this worksheet does not install a backend.
+
+## Decision
+
+- Required behavior and current baseline:
+- Selected backend, exact dependency versions and license/audit evidence:
+- Existing capability being reused or replaced:
+- Why stdlib, SQL or the existing adapter is insufficient:
+- Data/model/parser/index versions:
+
+## Before and after
+
+| Measure | Baseline | Candidate | Required threshold | Evidence |
+| --- | --- | --- | --- | --- |
+| Recall and no-answer accuracy | | | | |
+| Latency distribution | | | | |
+| Peak memory and concurrency | | | | |
+| Ingestion and per-query cost | | | | |
+
+## Contract gates
+
+- [ ] Tenant and principal filtering before ranking/model use.
+- [ ] No sensitive content in traces, logs or cache keys.
+- [ ] Source and derived graph/multimodal evidence retain attribution.
+- [ ] Access revocation and deletion propagate to every derived store.
+- [ ] Corrupt or mismatched index manifests fail explicitly.
+- [ ] Parser limits, cancellation, repeated work and backend outages are tested.
+- [ ] Restore and atomic replacement do not resurrect deleted evidence.
+
+## Verification and operation
+
+- Exact unit/fake-contract commands and results:
+- Exact isolated backend integration commands and results:
+- Versioned evaluation dataset and report:
+- Remaining unsupported behavior or unavailable checks:
+- Rollback trigger, previous index/config identity and owner:
+- Removal and credential-revocation steps:

@@ -520,6 +520,7 @@ def self_test() -> None:
 
     Raises:
         AssertionError: A rule does not behave as documented.
+        MissingFindingError: An expected finding is missing.
     """
     with TemporaryDirectory(prefix="spec-change-") as raw:
         change = Path(raw) / "add-invoice-export"

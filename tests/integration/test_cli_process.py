@@ -26,7 +26,7 @@ def test_apm_output_is_independent_of_the_windows_console_encoding(
         "sys.stderr.buffer.write(payload); sys.stderr.buffer.flush(); "
         f"sys.exit({returncode})"
     )
-    monkeypatch.setattr(apm_module, "_pinned_executable", lambda: sys.executable)
+    monkeypatch.setattr(apm_module, "pinned_apm_executable", lambda: sys.executable)
     monkeypatch.setattr(
         apm_module,
         "_commands",

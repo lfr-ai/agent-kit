@@ -1,0 +1,60 @@
+# Audit plan: <repository or area>
+
+Auditor: <handle>
+Date: <YYYY-MM-DD>
+Commit: <full commit id>
+Goal: <question the audit answers, for example "where is change risk highest before the Q3 rewrite">
+Time box: <hours or days>
+
+## Scope
+
+| Included | Excluded | Reason for exclusion |
+| --- | --- | --- |
+| `src/` | `src/shop/generated/` | generated from the OpenAPI document |
+| `tests/` | `vendor/` | third-party code, not maintained here |
+| `<path>` | `<path>` | `<reason>` |
+
+## Baseline
+
+| Gate | Command | Result before the audit |
+| --- | --- | --- |
+| Tests | `<command>` | `<pass, fail count, skipped count>` |
+| Lint | `<command>` | `<result>` |
+| Types | `<command>` | `<result>` |
+| Architecture | `<command>` | `<result>` |
+
+## Inventory
+
+- Languages and file counts: `<python: N, typescript: N, ...>`
+- Entry points: `<console scripts, __main__ modules, app factories, workers>`
+- Packages and layers: `<package -> layer>`
+- Test tiers: `<unit, integration, end-to-end; locations and markers>`
+- CI gates: `<workflow and job names>`
+- Existing tool configuration: `<ruff, type checker, import contracts, ...>`
+
+## Tools
+
+| Concern | Tool | Version | Already configured | Judgment (recency, maintainers, downloads, license) | Output file |
+| --- | --- | --- | --- | --- | --- |
+| Lint and complexity | Ruff | `<x.y.z>` | yes / no | `<evidence and date>` | `audit/ruff.json` |
+| Types | `<ty, mypy, pyright>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.json` |
+| Import contracts | import-linter | `<version>` | yes / no | `<evidence>` | `audit/lint-imports.txt` |
+| Dead code | vulture | `<version>` | yes / no | `<evidence>` | `audit/vulture.txt` |
+| Dependencies | deptry | `<version>` | yes / no | `<evidence>` | `audit/deptry.json` |
+| Duplication | jscpd | `<version>` | yes / no | `<evidence>` | `audit/jscpd-report.json` |
+| Vulnerabilities | `<pip-audit or osv-scanner>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.<json or sarif>` |
+| Spelling | cspell | `<version>` | yes / no | `<evidence>` | `audit/cspell.txt` |
+
+## Manual review sample
+
+| Selection rule | Files |
+| --- | --- |
+| Top churn times complexity | `<paths>` |
+| Entry points | `<paths>` |
+| One module per layer | `<paths>` |
+
+## Out of scope and known blind spots
+
+- `<area, reason>`
+- Runtime behavior, deployed configuration and other repositories are not
+  observed by static tools.

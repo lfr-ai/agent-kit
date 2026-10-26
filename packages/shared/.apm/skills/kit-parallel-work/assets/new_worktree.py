@@ -261,7 +261,11 @@ def self_test() -> None:
 
 
 def _self_test_ref_names() -> None:
-    """Check accepted and rejected branch and base names."""
+    """Check accepted and rejected branch and base names.
+
+    Raises:
+        SelfTestError: A branch or base name is misjudged.
+    """
     for good in ("agent/docs-update", "feature/orders-42", "fix_invoice.total"):
         if ref_problems(good, label="branch"):
             raise SelfTestError(SelfTestIssue.VALID_BRANCH_REJECTED, good=good)
@@ -273,7 +277,11 @@ def _self_test_ref_names() -> None:
 
 
 def _self_test_plan() -> Plan:
-    """Check default paths, option separation and in-repository rejection."""
+    """Check default paths, option separation and in-repository rejection.
+
+    Raises:
+        SelfTestError: Planning returns an unexpected result.
+    """
     repository = Path.cwd()
     plan = build_plan(
         repository=repository, branch="agent/docs", base="HEAD", path=None
@@ -291,7 +299,11 @@ def _self_test_plan() -> Plan:
 
 
 def _self_test_execute(plan: Plan) -> None:
-    """Check that execution stops at the first failing command."""
+    """Check that execution stops at the first failing command.
+
+    Raises:
+        SelfTestError: Execution continues after a failure.
+    """
     calls: list[Sequence[str]] = []
 
     def failing(command: Sequence[str]) -> int:

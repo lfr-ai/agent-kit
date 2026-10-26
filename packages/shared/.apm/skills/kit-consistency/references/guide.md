@@ -31,7 +31,7 @@ silent defaults. Restore the prior wire contract if rollout validation fails.
 ## Deeper references
 
 - [Naming conventions across files, classes, modules and tests](naming-conventions.md)
-- [Module layout, one-class-per-module rules and private exports](module-layout.md)
+- [Centralization, subfolder decisions, class/file alignment and exports](module-layout.md)
 - [Contract matrices](contract-matrices.md)
 
 ## Sources

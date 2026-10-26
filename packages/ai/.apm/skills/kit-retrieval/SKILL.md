@@ -16,7 +16,9 @@ license: MIT
    before choosing any framework.
 3. Keep frameworks and drivers in `retrieval.adapters`; enforce it with
    [importlinter.ini.template](assets/importlinter.ini.template). Read
-   [framework-adapters.md](references/framework-adapters.md).
+   [framework-adapters.md](references/framework-adapters.md) and
+   [storage and multimodal selection](references/storage-and-multimodal.md)
+   before adopting graph, multimodal or local-model integrations.
 4. Chunk normalized, versioned sources with exact offsets, deterministic ids,
    section paths, and the source access list
    ([chunking.md](references/chunking.md),

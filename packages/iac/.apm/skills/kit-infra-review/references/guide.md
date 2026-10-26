@@ -7,6 +7,7 @@
 | Full staged procedure, artifact table, risk classes | [Review procedure](review-procedure.md) |
 | Gate matrix per layer and decision outcomes | [Acceptance gates](acceptance-gates.md) |
 | Reversibility, restore points, rollback ownership | [Rollback and recovery](rollback-and-recovery.md) |
+| Drift, blast radius, rollback questions, cost delta | [Drift, blast radius, and cost](drift-blast-radius-cost.md) |
 
 Specialist skills in the same package carry the per-layer detail:
 `kit-terraform-validation` (plan JSON and Terraform configuration),
@@ -65,6 +66,7 @@ Specialist skills in the same package carry the per-layer detail:
 
 - [Evidence record](../assets/templates/infrastructure-evidence-template.md)
 - [Review report](../assets/templates/review-report.md.template)
+- [Change-type worksheets](../assets/templates/change-type-worksheets.md.template)
 
 ## Sources
 

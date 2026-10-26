@@ -1,0 +1,74 @@
+"""Typed dependency container and the FastAPI dependencies that expose it.
+
+Copy into ``src/shop/api/dependencies.py``. The lifespan in ``app.py`` yields the
+container as lifespan state; handlers receive narrow collaborators through
+``Annotated`` aliases. Tests replace ``get_container`` with
+``app.dependency_overrides`` instead of patching modules.
+"""
+
+from dataclasses import dataclass
+from typing import Annotated
+
+from fastapi import Depends, Request
+
+from shop.application.ports import ItemCatalog, ReadinessCheck
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Container:
+    """Services built once per process by the composition root.
+
+    Attributes:
+        catalog: Item read port.
+        readiness_checks: Probes run by the readiness endpoint.
+    """
+
+    catalog: ItemCatalog
+    readiness_checks: tuple[ReadinessCheck, ...] = ()
+
+
+class ContainerMissingError(RuntimeError):
+    """The application ran without the lifespan that provides the container."""
+
+
+async def get_container(request: Request) -> Container:
+    """Return the container from lifespan state.
+
+    Non-blocking dependencies are ``async def`` so FastAPI does not hop to the
+    thread pool for them.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        The process-wide container.
+
+    Raises:
+        ContainerMissingError: Lifespan did not run; override this dependency in
+            tests that use a transport without lifespan support.
+    """
+    container = getattr(request.state, "container", None)
+    if not isinstance(container, Container):
+        msg = (
+            "no container in lifespan state; enable lifespan or override get_container"
+        )
+        raise ContainerMissingError(msg)
+    return container
+
+
+ContainerDep = Annotated[Container, Depends(get_container)]
+
+
+async def get_catalog(container: ContainerDep) -> ItemCatalog:
+    """Expose only the catalog port to item handlers.
+
+    Args:
+        container: Process-wide container.
+
+    Returns:
+        The catalog port.
+    """
+    return container.catalog
+
+
+CatalogDep = Annotated[ItemCatalog, Depends(get_catalog)]

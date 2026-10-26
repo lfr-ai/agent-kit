@@ -1,0 +1,40 @@
+# Gate plan: REPOSITORY_NAME
+
+- Date: YYYY-MM-DD
+- Owner: ROLE_NAME
+- Single gate entry point: GATE_COMMAND (CI calls the same command)
+- Report: GATE_COMMAND --keep-going --report gate-report.json
+
+## Adopted gates
+
+| # | Gate | Exact command (check-only) | Fix command (explicit) | Scope | Pre-commit stage | CI trigger | Threshold source |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Lockfile current | `uv lock --check` | `uv lock` | project | pre-commit | every push | n/a |
+| 2 | Format | `uv run --locked ruff format --check` | `uv run --locked ruff format` | changed files | pre-commit | every push | ruff.toml |
+| 3 | Lint | `uv run --locked ruff check` | `uv run --locked ruff check --fix` (reviewed) | changed files | pre-commit | every push | ruff.toml |
+| 4 | Types | TYPE_CHECK_COMMAND | none | project | pre-push | every push | type checker config |
+| 5 | Import contracts | `uv run --locked lint-imports` | none | project | pre-commit | every push | .importlinter |
+| 6 | Docs and spelling | SPELL_AND_MARKDOWN_COMMANDS | markdownlint `--fix` | changed files | pre-commit | every push | cspell.json, .markdownlint-cli2.yaml |
+| 7 | Secrets | `detect-secrets-hook --baseline .secrets.baseline` | audit the baseline | changed files | pre-commit | every push | .secrets.baseline |
+| 8 | Unit and property tests | `uv run --locked pytest -m "unit or property"` | none | tests | pre-push | every push | pytest.ini |
+| 9 | Coverage | `uv run --locked pytest --cov` | none | full suite | manual | every push | coverage `fail_under` |
+| 10 | Integration tests | `uv run --locked pytest -m integration` | none | integration tier | manual | pre-merge | pytest.ini |
+| 11 | Dependency audit | AUDIT_COMMAND | update via the dependency bot | lockfiles | manual | push and weekly | n/a |
+| 12 | Licenses | LICENSE_CHECK_COMMAND | none | lockfiles | manual | every push | license allow-list |
+
+## Not adopted
+
+| Gate | Reason | Revisit when |
+| --- | --- | --- |
+| | | |
+
+## Budgets
+
+- Default pre-commit stage on a typical change: under SECONDS s (measured YYYY-MM-DD).
+- Full local gate: under MINUTES min.
+
+## Parity check (last run YYYY-MM-DD)
+
+- [ ] A deliberate formatting error fails the hook, the local gate and CI at row 2.
+- [ ] A deliberate failing test fails the local gate and CI at row 8.
+- [ ] CI uploads the gate report with every row's status.

@@ -30,7 +30,7 @@ tasks:
   verify:
     desc: Read-only local and CI quality gate; pass one gate after --
     cmds:
-      - uv run --locked python scripts/verify.py {{.CLI_ARGS}}
+      - uv run --locked --no-sync python scripts/verify.py {{.CLI_ARGS}}
   precommit:
     desc: Operator-initialized repository pre-commit checks
     cmds:

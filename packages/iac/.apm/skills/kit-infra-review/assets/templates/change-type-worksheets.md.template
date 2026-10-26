@@ -1,0 +1,74 @@
+# Change-type review worksheets
+
+Copy the section for each change type present in the pull request into the
+change record, alongside the [review report](review-report.md.template).
+Answer every question with evidence (artifact line, command output, or link);
+write "not applicable" with a reason instead of deleting a question.
+
+## Network and edge
+
+- Change: <listeners, routes, firewall or security group rules, DNS, certificates, proxy config>
+- [ ] New or widened inbound rules list source, port, and owner; none open to the internet without approval.
+- [ ] Private endpoints or service tags used instead of public addresses where available.
+- [ ] TLS profile, certificate renewal, and HSTS reviewed (`kit-edge-networking` worksheet attached).
+- [ ] DNS changes have a TTL lowered in advance and a rollback record.
+- [ ] Blast radius: which services and clients share this listener, rule, or zone?
+- [ ] Rollback: previous rule set or config reloadable within minutes.
+
+## Identity and access
+
+- Change: <role assignments, policies, federated credentials, keys, SSH access>
+- [ ] Each new grant names principal, scope, role, and justification; scope is the narrowest that works.
+- [ ] No owner, contributor, or wildcard grants to pipeline identities without security owner approval.
+- [ ] Federated credentials restrict subject (repository, branch or environment).
+- [ ] Long-lived secrets replaced by managed or workload identity, or have rotation and expiry.
+- [ ] Remote access follows `kit-remote-access`; temporary grants expire.
+- [ ] Rollback: removing the grant does not lock out the operator performing the rollback.
+
+## Data-bearing resources
+
+- Change: <databases, storage accounts, buckets, queues, key stores>
+- [ ] Plan or what-if shows no replace or delete, or the owner approved it.
+- [ ] Backup, soft delete, or point-in-time restore enabled and last restore test date recorded.
+- [ ] Encryption, public access, and network rules unchanged or tightened.
+- [ ] Schema or data migrations are backward compatible (expand, migrate, contract).
+- [ ] Restore point recorded before apply.
+- [ ] Rollback named as reversible, reversible with restore, or irreversible (owner accepted).
+
+## Compute and scaling
+
+- Change: <instance sizes, replicas, autoscale rules, node pools, functions plans, container apps>
+- [ ] Capacity covers peak plus one failed zone or instance.
+- [ ] Autoscale bounds (minimum and maximum) and cooldowns are explicit.
+- [ ] Probes and graceful shutdown match the platform grace period.
+- [ ] Image pinned by digest; previous digest recorded for rollback.
+- [ ] Cost delta estimated for minimum, typical, and maximum scale.
+- [ ] Rollout is progressive (one environment, ring, or region at a time).
+
+## Pipeline and supply chain
+
+- Change: <workflows, actions, modules, providers, base images, tool versions>
+- [ ] `check_workflow_permissions.py` passes on changed workflows.
+- [ ] New actions, modules, providers, and images pinned to SHA, digest, or exact version; changelog read.
+- [ ] Deploy jobs run behind protected environments with OIDC.
+- [ ] Privilege changes are in a separate pull request from the infrastructure they enable.
+- [ ] Rollback: previous pipeline definition and artifact versions recorded.
+
+## Observability and alerting
+
+- Change: <collector config, alert rules, dashboards, sampling, retention>
+- [ ] New resources emit telemetry and are covered by alerts from day one.
+- [ ] `promtool check rules` and collector validation pass.
+- [ ] Sampling and retention changes have the service owner's acknowledgment.
+- [ ] A broken pipeline is detectable (missing-telemetry alert).
+- [ ] Rollback: previous collector config and rules deployable.
+
+## Cost and drift summary
+
+| Item | Value |
+| --- | --- |
+| Monthly cost delta (estimate and method) | |
+| Drift detected before plan (resources changed outside code) | |
+| Drift resolution (import, revert, or codify) | |
+| Largest blast radius in this change | |
+| Irreversible changes and owner acceptance | |

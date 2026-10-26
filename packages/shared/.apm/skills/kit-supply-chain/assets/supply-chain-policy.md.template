@@ -1,0 +1,82 @@
+# Supply-chain policy
+
+Owner: `<team or handle>`. Last reviewed: `<YYYY-MM-DD>`. Review at least every
+`<six>` months and after every supply-chain incident. Replace every
+`<placeholder>`; delete rows that do not apply and say why.
+
+## Scope
+
+This policy covers every third-party package, GitHub Action, reusable workflow,
+container image, pre-commit hook, build backend and CI tool installer used to
+build, test or ship `<project>`.
+
+## Admission
+
+- A new runtime dependency needs a completed adoption review approved by
+  `<role>` before the manifest changes.
+- Prefer the standard library and existing dependencies.
+- Package names are verified against the project's own documentation and the
+  intended index; internal names resolve only from `<private index>`.
+
+## Constraints and locks
+
+| Surface | Rule | Enforced by |
+| --- | --- | --- |
+| Application dependencies | locked with hashes in `<uv.lock>` | `<lock freshness check, uv sync --locked>` |
+| Published library metadata | bounded ranges; tested build locked | `<pin checker>` |
+| Development and CI tools | exact versions in dependency groups | `<pin checker>` |
+| GitHub Actions | full commit SHA with version comment | `<zizmor, governance check>` |
+| Container images | digest | `<pin checker>` |
+| Hooks | frozen commit SHA | `<pin checker>` |
+
+## Audit
+
+- Changed locks are audited before installation with `<pip-audit, OSV-Scanner,
+  bun audit>`; the whole lock is audited on a `<daily>` schedule.
+- Choose one primary scanner per risk and target. Reuse secret scanning in CI;
+  keep workflow security and built-image vulnerability checks separate. Add an
+  overlapping scanner only for a documented coverage difference.
+- Pull requests run dependency review that fails on `<low>` severity and on
+  licenses outside the allow-list.
+- Accepted vulnerabilities need an advisory identifier, reachability notes, an
+  owner, a tracked issue and an expiry date. Current exceptions:
+
+| Advisory | Package | Reason | Owner | Expires |
+| --- | --- | --- | --- | --- |
+| `<ID>` | `<name==version>` | `<not reachable because ...>` | `<handle>` | `<YYYY-MM-DD>` |
+
+## Licenses
+
+- Allowed SPDX identifiers live in `<license allow-list file>`; the same list
+  configures dependency review.
+- Exceptions match the exact observed metadata, record the reviewed license
+  file, and expire.
+
+## Updates
+
+- One update bot (`<Dependabot or Renovate>`) owns each manifest.
+- Version updates wait `<14>` days after release; security updates do not wait.
+- Major upgrades are reviewed one package at a time.
+
+## Build, release and provenance
+
+- Artifacts are built in CI from the lock, never on a workstation.
+- Each published artifact has a build provenance attestation bound to its digest.
+- SBOM generation is `<required or deferred>` because `<consumer, compliance,
+  release-inventory requirement, or deferral reason>`. When required, generate
+  `<CycloneDX or SPDX>` and attest it to the released digest. Record whether it
+  describes installed contents or a resolved dependency set; a library lock is
+  not evidence of dependencies bundled in its wheel.
+- Publishing uses `<trusted publishing / OIDC>`; no long-lived upload tokens.
+
+## Incidents
+
+- Report suspected compromise to `<contact>`.
+- Follow the incident procedure: freeze, scope, contain, purge, rotate,
+  rebuild, notify, learn.
+- Credential rotation and public advisories are performed by `<role>`.
+
+## Removal
+
+- Unused dependencies are detected with `<deptry or equivalent>` on
+  `<schedule>` and removed after manual confirmation.

@@ -1,13 +1,18 @@
 """Containment, collision, and no-replace guarantees of composed output writes."""
 
 from pathlib import Path
+import string
 import sys
 
 import pytest
 
 from agent_kit.core.models import CompositionPlan, PlannedFile
 import agent_kit.infrastructure.output_adapter as output_module
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.infrastructure.output_adapter import (
+    OutputAdapter,
+    OutputPathError,
+    OutputPathIssue,
+)
 
 
 def _plan(
@@ -67,6 +72,111 @@ def test_unsafe_planned_paths_are_rejected_before_writing(
         OutputAdapter().write(plan, tmp_path / "out")
 
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "docs/report.",
+        "docs/report ",
+        "docs./report.md",
+        "docs /report.md",
+        "docs/report:metadata",
+        "docs:metadata/report.md",
+        "docs/CON",
+        "docs/con.txt",
+        "docs/PRN.log",
+        "docs/AUX",
+        "docs/NUL.txt",
+        "docs/COM1.md",
+        "docs/LPT9.md",
+        "docs/COM¹.md",
+        "docs/LPT².md",
+        "docs/CONIN$",
+        "docs/CONOUT$",
+        "NUL/report.md",
+        *[f"docs/report{character}.md" for character in '<>"|?*'],
+        *[f"docs/report{chr(code)}.md" for code in range(32)],
+    ],
+)
+def test_nonportable_planned_paths_are_rejected_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    """Reject Windows normalization, devices, streams, and forbidden characters."""
+    plan = _plan(
+        tmp_path / "source",
+        PlannedFile(content=b"valid", relative_path="docs/valid.md"),
+        PlannedFile(content=b"unsafe", relative_path=relative),
+    )
+
+    def no_staging(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unsafe plans must fail before creating a staging directory")
+
+    monkeypatch.setattr(output_module.tempfile, "TemporaryDirectory", no_staging)
+    with pytest.raises(OutputPathError, match="unsafe path") as error:
+        OutputAdapter().write(plan, tmp_path / "new-parent" / "out")
+
+    assert error.value.issue is OutputPathIssue.UNSAFE_PLAN
+    assert sorted(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("letter", list(string.ascii_letters))
+def test_single_letter_alternate_stream_is_rejected_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, letter: str
+) -> None:
+    """A drive-like component cannot hide an alternate stream of a planned file."""
+    plan = _plan(
+        tmp_path / "source",
+        PlannedFile(content=b"ordinary file", relative_path=f"docs/{letter}"),
+        PlannedFile(
+            content=b"alternate-stream bytes",
+            relative_path=f"docs/{letter}:metadata",
+        ),
+    )
+
+    def no_writes(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unsafe plans must fail before any filesystem writes")
+
+    with monkeypatch.context() as filesystem:
+        filesystem.setattr(Path, "mkdir", no_writes)
+        with pytest.raises(OutputPathError, match="unsafe path") as error:
+            OutputAdapter().write(plan, tmp_path / "new-parent" / "out")
+
+    assert error.value.issue is OutputPathIssue.UNSAFE_PLAN
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "docs/a",
+        "docs/Z",
+        "docs/report.md",
+        "docs/report metadata.md",
+        "docs/report.v1.txt",
+        ".apm/skills/report/assets/data.bin",
+        "docs/COM10.md",
+        "docs/LPT0.md",
+        "docs/console.md",
+        "docs/résumé.md",
+    ],
+)
+def test_portable_planned_paths_preserve_their_names_and_bytes(
+    tmp_path: Path, relative: str
+) -> None:
+    plan = _plan(
+        tmp_path / "source",
+        PlannedFile(content=b"exact bytes\n", relative_path=relative),
+    )
+
+    output = OutputAdapter().write(plan, tmp_path / "out")
+
+    assert (output / relative).read_bytes() == b"exact bytes\n"
+    assert [
+        path.relative_to(output).as_posix()
+        for path in output.rglob("*")
+        if path.is_file()
+    ] == [relative]
 
 
 def test_case_insensitive_collisions_are_rejected(tmp_path: Path) -> None:

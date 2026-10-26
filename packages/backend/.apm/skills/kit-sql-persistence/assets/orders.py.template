@@ -1,0 +1,132 @@
+"""Minimal order domain types used by the persistence adapter templates.
+
+Copy to ``shop/core/orders.py`` only when the project has no order model yet.
+This is a persistence-facing snapshot: model behavior, invariants, and events
+with the ``kit-domain-model`` aggregate and value-object templates, keeping these
+field names so the adapter mapping stays unchanged.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from enum import StrEnum, unique
+import uuid
+
+
+class OrderPersistenceError(Exception):
+    """Base class for expected order storage failures."""
+
+    def __init__(self, message: str, *, order_id: uuid.UUID) -> None:
+        """Record which order failed.
+
+        Args:
+            message: Human-readable description of the failure.
+            order_id: Identifier of the affected order.
+        """
+        super().__init__(message)
+        self.order_id = order_id
+
+
+class OrderNotFoundError(OrderPersistenceError, LookupError):
+    """No stored order has the requested identifier."""
+
+    def __init__(self, *, order_id: uuid.UUID) -> None:
+        """Describe the missing order.
+
+        Args:
+            order_id: Identifier that was looked up.
+        """
+        super().__init__(f"order {order_id} was not found", order_id=order_id)
+
+
+class DuplicateOrderError(OrderPersistenceError):
+    """An order with the same identifier is already stored."""
+
+    def __init__(self, *, order_id: uuid.UUID) -> None:
+        """Describe the duplicate identifier.
+
+        Args:
+            order_id: Identifier that already exists.
+        """
+        super().__init__(f"order {order_id} already exists", order_id=order_id)
+
+
+class ConcurrentUpdateError(OrderPersistenceError):
+    """The order changed after the caller loaded it."""
+
+    def __init__(self, *, order_id: uuid.UUID) -> None:
+        """Describe the lost update.
+
+        Args:
+            order_id: Identifier of the order that changed concurrently.
+        """
+        super().__init__(f"order {order_id} changed concurrently", order_id=order_id)
+
+
+@unique
+class OrderStatus(StrEnum):
+    """Lifecycle states persisted by value."""
+
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Money:
+    """Exact amount in one currency."""
+
+    amount: Decimal
+    currency: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OrderLine:
+    """One ordered product and its unit price."""
+
+    sku: str
+    quantity: int
+    unit_price: Money
+
+    def __post_init__(self) -> None:
+        """Reject non-positive quantities.
+
+        Raises:
+            ValueError: If ``quantity`` is not positive.
+        """
+        if self.quantity <= 0:
+            message = f"quantity must be positive, got {self.quantity}"
+            raise ValueError(message)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Order:
+    """Order snapshot exchanged with the repository port.
+
+    Attributes:
+        version: Optimistic concurrency counter assigned by storage; ``0`` before
+            the first save.
+    """
+
+    id: uuid.UUID
+    customer_id: uuid.UUID
+    status: OrderStatus
+    currency: str
+    lines: tuple[OrderLine, ...]
+    created_at: datetime
+    shipped_at: datetime | None
+    version: int
+
+    def __post_init__(self) -> None:
+        """Reject naive timestamps and lines in another currency.
+
+        Raises:
+            ValueError: If a timestamp is naive or a line uses another currency.
+        """
+        if self.created_at.tzinfo is None:
+            message = "created_at must be timezone-aware"
+            raise ValueError(message)
+        if any(line.unit_price.currency != self.currency for line in self.lines):
+            message = f"every line must be priced in {self.currency}"
+            raise ValueError(message)

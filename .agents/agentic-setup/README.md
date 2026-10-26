@@ -17,6 +17,8 @@ It is not another authored copy of skills or runtime configuration.
 - [Migration analysis](../../docs/setup-review.md): Gaps, replacements, and exclusions.
 - [Complete setup walkthrough](../../docs/setup-completeness.md): Acceptance plan,
   resource depth, consumer knowledge/gates and native/MCP adoption.
+- [Capability review](../../docs/capability-review.md): Requested topics mapped
+  to their dedicated owners and the remaining consumer verification.
 - [Hexagonal Architecture](../knowledge-base/architecture.md): Layer and ownership boundaries.
 - [Guard](../guard/verify_agent_config.py): Relocation-safe facade for existing checks.
 

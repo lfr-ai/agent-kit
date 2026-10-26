@@ -338,3 +338,146 @@ def test_compose_keeps_source_assets_and_hashes_generated_adapters(
     assert provenance["files"][".claude/agents/kit-shared-reviewer.md"] == (
         hashlib.sha256(adapter).hexdigest()
     )
+
+
+@pytest.mark.parametrize(
+    ("coordinator_bundle", "worker_bundle"),
+    [("shared", "shared"), ("shared", "frontend"), ("backend", "shared")],
+)
+def test_native_dependencies_must_close_within_each_effective_profile(
+    source_root: Path, coordinator_bundle: str, worker_bundle: str
+) -> None:
+    coordinator = _role(
+        "kit-coordinator",
+        kind="primary",
+        tier="coordinator",
+        workers=["kit-builder"],
+    )
+    worker = _role("kit-builder", tier="implementer")
+    by_bundle = {coordinator_bundle: [coordinator]}
+    by_bundle.setdefault(worker_bundle, []).append(worker)
+    for bundle, roles in by_bundle.items():
+        asset = (
+            source_root
+            / f"packages/{bundle}/.apm/skills/kit-{bundle}/assets/agents.json"
+        )
+        asset.parent.mkdir()
+        asset.write_bytes(json.dumps({"schema_version": 1, "roles": roles}).encode())
+    snapshot = FileCatalogAdapter().load(source_root)
+    service = CatalogService()
+
+    report = service.validate(snapshot)
+
+    if worker_bundle == "frontend":
+        assert {
+            item.path for item in report.findings if item.code == "native.assets"
+        } == {
+            f"catalog.json:profiles:{name}"
+            for name in ("toolkit", "shared", "backend", "iac")
+        }
+        assert all(
+            "required worker 'kit-builder' is unavailable" in item.message
+            for item in report.findings
+        )
+        with pytest.raises(ValueError, match="source validation failed"):
+            service.compose(snapshot, "shared", (), ())
+    else:
+        assert report.valid, report.findings
+        for profile in ("shared", "backend", "fullstack"):
+            plan = service.compose(snapshot, profile, (), ())
+            assert ".github/agents/subagents/kit-builder.agent.md" in {
+                item.relative_path for item in plan.files
+            }
+            if coordinator_bundle == "shared" or profile != "shared":
+                assert ".github/agents/kit-coordinator.agent.md" in {
+                    item.relative_path for item in plan.files
+                }
+
+
+@pytest.mark.parametrize("discoverable", [False, True])
+def test_profile_native_closure_uses_discoverable_skill_assets(
+    source_root: Path, discoverable: bool
+) -> None:
+    shared = source_root / "packages/shared/.apm/skills"
+    coordinator = shared / "kit-shared/assets/agents.json"
+    coordinator.parent.mkdir()
+    coordinator.write_bytes(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "roles": [
+                    _role(
+                        "kit-coordinator",
+                        kind="primary",
+                        tier="coordinator",
+                        workers=["kit-builder"],
+                    )
+                ],
+            }
+        ).encode()
+    )
+    worker = shared / "kit-worker/assets/agents.json"
+    worker.parent.mkdir(parents=True)
+    worker.write_bytes(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "roles": [_role("kit-builder", tier="implementer")],
+            }
+        ).encode()
+    )
+    if discoverable:
+        (shared / "kit-worker/SKILL.md").write_text(
+            "---\nname: kit-worker\ndescription: Build the assigned change.\n"
+            "---\n\nInspect and implement the assigned scope.\n",
+            encoding="utf-8",
+        )
+    snapshot = FileCatalogAdapter().load(source_root)
+    service = CatalogService()
+
+    report = service.validate(snapshot)
+
+    if not discoverable:
+        assert not report.valid
+        assert {item.path for item in report.findings} == {
+            f"catalog.json:profiles:{name}"
+            for name in ("toolkit", "shared", "backend", "frontend", "fullstack", "iac")
+        }
+        assert all(
+            item.code == "native.assets"
+            and "required worker 'kit-builder' is unavailable" in item.message
+            for item in report.findings
+        )
+        with pytest.raises(ValueError, match="source validation failed"):
+            service.compose(snapshot, "shared", (), ())
+    else:
+        assert report.valid, report.findings
+        plan = service.compose(snapshot, "shared", (), ())
+        assert plan.bundles == ("shared",)
+        paths = {item.relative_path for item in plan.files}
+        assert {
+            ".apm/skills/kit-worker/SKILL.md",
+            ".apm/skills/kit-worker/assets/agents.json",
+            ".github/agents/kit-coordinator.agent.md",
+            ".github/agents/subagents/kit-builder.agent.md",
+            ".claude/agents/kit-coordinator.md",
+            ".claude/agents/subagents/kit-builder.md",
+        } <= paths
+
+
+def test_catalog_validation_still_checks_omitted_native_assets(
+    source_root: Path,
+) -> None:
+    asset = source_root / "packages/shared/.apm/skills/kit-worker/assets/agents.json"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(json.dumps({"schema_version": 1, "roles": "not-a-list"}).encode())
+
+    report = CatalogService().validate(FileCatalogAdapter().load(source_root))
+
+    assert not report.valid
+    assert any(
+        item.code == "native.assets"
+        and item.path == "catalog.json"
+        and "roles must be a list" in item.message
+        for item in report.findings
+    )

@@ -28,7 +28,7 @@ from agent_kit.core.models import (
     ProfileSummary,
     SourceDocument,
 )
-from agent_kit.core.text import visible_text
+from agent_kit.core.text import markdown_link_targets, visible_text
 
 if TYPE_CHECKING:
     from urllib.parse import SplitResult
@@ -61,11 +61,12 @@ _POLICY_FIELDS = {
 _SKILL_NAME = re.compile(r"kit-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _MAX_SKILL_NAME_CHARS = 64
 _SKILL_PATH_DEPTH = 3  # skills/<name>/SKILL.md
+_SKILL_MEMBER_MIN_DEPTH = 2  # skills/<name>
+_RESOURCE_ROOTS = frozenset({"skills", "instructions", "prompts"})
 _PROMPT_PATH_DEPTH = 2  # prompts/<name>.prompt.md
 _PROMPT_FIELDS = frozenset({"description", "argument-hint", "agent"})
 _CATALOG_NAME = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\Z")
-_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<(?P<angled>[^>]+)>|(?P<bare>[^\s)]+))")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _JSON_INDENT = 2
 _DEFAULT_POLICY_LINES = 120
@@ -408,11 +409,9 @@ def _resolved_link(raw_path: str, document_path: str) -> str | None:
 
 
 def _link_exists(target: str, available_paths: set[str]) -> bool:
-    """Match a resolved target to a file or directory case-insensitively."""
-    folded = target.casefold()
-    candidates = {item.casefold() for item in available_paths}
-    return folded in candidates or (
-        bool(target) and any(item.startswith(f"{folded}/") for item in candidates)
+    """Match exact file and directory spelling for case-sensitive relocation."""
+    return target in available_paths or (
+        bool(target) and any(item.startswith(f"{target}/") for item in available_paths)
     )
 
 
@@ -471,16 +470,14 @@ def _check_links(
     markdown = PurePosixPath(name).suffix in {".md", ".markdown"} or name == "llms.txt"
     if text is None or not markdown or ".template." in name:
         return
-    for match in _LINK.finditer(text):
-        link = match.group("angled") or match.group("bare")
-        if link is not None:
-            _link_target(
-                link,
-                document.relative_path,
-                available_paths,
-                findings,
-                base_is_bundle=base_is_bundle,
-            )
+    for link in markdown_link_targets(text):
+        _link_target(
+            link,
+            document.relative_path,
+            available_paths,
+            findings,
+            base_is_bundle=base_is_bundle,
+        )
 
 
 def _policy_value_finding(findings: list[Finding], key: str, path: str) -> None:
@@ -803,7 +800,11 @@ def _include_profile(
     selected: list[str],
     visited: set[str],
 ) -> None:
-    """Append a profile's inherited and direct bundles in first-seen order."""
+    """Append a profile's inherited and direct bundles in first-seen order.
+
+    Raises:
+        UnknownProfileError: The profile is not in the catalog.
+    """
     profile = profiles.get(name)
     if profile is None:
         raise UnknownProfileError(name)
@@ -1001,6 +1002,14 @@ def _usable_document(
     if document.is_symlink:
         _finding(
             findings, "source.symlink", "source bundle contains a symlink", location
+        )
+        return False
+    if document.relative_path in _RESOURCE_ROOTS and not document.is_directory:
+        _finding(
+            findings,
+            "source.root",
+            "resource root must be a directory",
+            location,
         )
         return False
     if document.parse_error:
@@ -1433,29 +1442,72 @@ def _check_root_documentation(
         _check_links(document, root_available, findings, base_is_bundle=False)
 
 
-def _native_assets(snapshot: CatalogSnapshot) -> dict[str, bytes]:
-    """Map every bundle file to its source-root-relative ``.apm`` path."""
+def _native_assets(
+    bundles: tuple[BundleSource, ...], *, selection: _SkillSelection | None = None
+) -> dict[str, bytes]:
+    """Map authored files, optionally restricted to a composition's selection."""
     assets: dict[str, bytes] = {}
-    for bundle in snapshot.bundles:
+    for bundle in bundles:
         prefix = "" if bundle.path == "." else f"{bundle.path}/"
         for document in bundle.files:
-            if not document.is_directory:
+            if not document.is_directory and (
+                selection is None or _document_selected(document, selection)
+            ):
                 assets[f"{prefix}.apm/{document.relative_path}"] = document.content
     return assets
 
 
-def _check_native_assets(
-    snapshot: CatalogSnapshot, catalog: Catalog, findings: list[Finding]
+def _check_native_selection(
+    assets: dict[str, bytes],
+    runtimes: tuple[str, ...],
+    location: str,
+    findings: list[Finding],
 ) -> None:
-    """Report native role assets that cannot be rendered for supported runtimes."""
+    """Report native roles whose explicit dependencies cannot be rendered."""
     try:
-        validate_native_assets(_native_assets(snapshot), catalog.supported_runtimes)
+        validate_native_assets(assets, runtimes)
     except (ValueError, InputTypeError) as error:
         _finding(
             findings,
             "native.assets",
             f"native role assets are invalid: {error}",
-            "catalog.json",
+            location,
+        )
+
+
+def _check_native_assets(
+    snapshot: CatalogSnapshot,
+    catalog: Catalog,
+    skills: dict[str, _SkillRecord],
+    findings: list[Finding],
+) -> None:
+    """Validate every authored asset and each effective profile's role closure."""
+    _check_native_selection(
+        _native_assets(snapshot.bundles),
+        catalog.supported_runtimes,
+        "catalog.json",
+        findings,
+    )
+    for profile in catalog.profiles:
+        try:
+            selected = _effective_bundles(catalog, (profile.name,))
+        except ValueError:
+            continue
+        bundles = tuple(item for item in snapshot.bundles if item.name in selected)
+        available = {
+            name: record for name, record in skills.items() if record.bundle in selected
+        }
+        selection = _SkillSelection(
+            requested=(),
+            available=available,
+            active=set(available),
+            description_chars=sum(len(item.description) for item in available.values()),
+        )
+        _check_native_selection(
+            _native_assets(bundles, selection=selection),
+            catalog.supported_runtimes,
+            f"catalog.json:profiles:{profile.name}",
+            findings,
         )
 
 
@@ -1510,7 +1562,11 @@ class _Outputs(NamedTuple):
 def _check_profile_selection(
     catalog: Catalog, profile: str, features: tuple[str, ...]
 ) -> None:
-    """Reject an unknown base profile or feature profile."""
+    """Reject an unknown base profile or feature profile.
+
+    Raises:
+        UnknownProfileError: The base or a feature profile is unknown.
+    """
     profile_names = {item.name for item in catalog.profiles}
     if profile not in profile_names:
         raise UnknownProfileError(profile)
@@ -1520,7 +1576,11 @@ def _check_profile_selection(
 
 
 def _selected_runtimes(catalog: Catalog, runtimes: tuple[str, ...]) -> tuple[str, ...]:
-    """Default to every supported runtime and reject invalid selections."""
+    """Default to every supported runtime and reject invalid selections.
+
+    Raises:
+        CompositionError: The selection is empty, repeated, or unsupported.
+    """
     selected = runtimes or catalog.supported_runtimes
     if not selected or len(set(selected)) != len(selected):
         raise CompositionError(CompositionIssue.RUNTIME_SELECTION)
@@ -1535,7 +1595,12 @@ def _skill_selection(
     selected: tuple[str, ...],
     skills: tuple[str, ...],
 ) -> _SkillSelection:
-    """Resolve requested session skills within the selected bundles' budget."""
+    """Resolve requested session skills within the selected bundles' budget.
+
+    Raises:
+        CompositionError: Skills repeat or exceed the description budget.
+        UnavailableSkillsError: A skill is outside the selected bundles.
+    """
     limits = dict(catalog.budgets)
     records = _skill_records(
         snapshot.bundles, [], limits["description_chars"], limits["skill_body_lines"]
@@ -1566,7 +1631,7 @@ def _instruction_name(document: SourceDocument) -> str:
 
 def _is_instruction(document: SourceDocument) -> bool:
     """Check whether a document lives in the ``instructions`` directory."""
-    return PurePosixPath(document.relative_path).parts[0] == "instructions"
+    return document.relative_path.startswith("instructions/")
 
 
 def _document_selected(document: SourceDocument, selection: _SkillSelection) -> bool:
@@ -1574,7 +1639,11 @@ def _document_selected(document: SourceDocument, selection: _SkillSelection) -> 
     if document.is_symlink or document.is_directory:
         return False
     parts = PurePosixPath(document.relative_path).parts
-    if parts[0] == "skills" and parts[1] not in selection.active:
+    if not parts:
+        return False
+    if parts[0] == "skills" and (
+        len(parts) < _SKILL_MEMBER_MIN_DEPTH or parts[1] not in selection.active
+    ):
         return False
     # Prompts are project workflows that may link any selected skill.
     if selection.requested and parts[0] == "prompts":
@@ -1586,7 +1655,11 @@ def _document_selected(document: SourceDocument, selection: _SkillSelection) -> 
 
 
 def _add_output(outputs: _Outputs, relative: str, content: bytes) -> None:
-    """Plan one output file, rejecting case-insensitive destination collisions."""
+    """Plan one output file, rejecting case-insensitive destination collisions.
+
+    Raises:
+        CompositionCollisionError: Two outputs differ only by case.
+    """
     folded = relative.casefold()
     previous = outputs.folded.get(folded)
     if previous is not None:
@@ -1595,13 +1668,31 @@ def _add_output(outputs: _Outputs, relative: str, content: bytes) -> None:
     outputs.files[relative] = content
 
 
+def _retained_includes(
+    included: tuple[str, ...], documents: tuple[SourceDocument, ...]
+) -> set[str]:
+    """Keep only includes backed by retained files, preserving path types."""
+    paths = {item.relative_path for item in documents}
+    retained: set[str] = set()
+    for prefix in included:
+        if prefix in paths:
+            retained.add(f".apm/{prefix}")
+        elif any(path.startswith(f"{prefix}/") for path in paths):
+            retained.add(f".apm/{prefix}/")
+    return retained
+
+
 def _collect_sources(
     snapshot: CatalogSnapshot,
     catalog: Catalog,
     selected: tuple[str, ...],
     selection: _SkillSelection,
 ) -> _Outputs:
-    """Plan every selected bundle file and its manifest include roots."""
+    """Plan every selected bundle file and its manifest include roots.
+
+    Raises:
+        UnavailableBundleError: A selected bundle is not available.
+    """
     source_bundles = {item.name: item for item in snapshot.bundles}
     outputs = _Outputs(files={}, folded={}, include_paths=set(), documents=[])
     for name in selected:
@@ -1611,16 +1702,22 @@ def _collect_sources(
         included = _included_paths(
             source, [], catalog.version, catalog.supported_runtimes
         )
-        outputs.include_paths.update(f".apm/{item}/" for item in included)
-        for document in source.files:
-            if _document_selected(document, selection):
-                _add_output(outputs, f".apm/{document.relative_path}", document.content)
-                outputs.documents.append(document)
+        retained = tuple(
+            item for item in source.files if _document_selected(item, selection)
+        )
+        outputs.include_paths.update(_retained_includes(included, retained))
+        for document in retained:
+            _add_output(outputs, f".apm/{document.relative_path}", document.content)
+            outputs.documents.append(document)
     return outputs
 
 
 def _require_session_resources(outputs: _Outputs) -> None:
-    """Reject a session selection whose links reference omitted resources."""
+    """Reject a session selection whose links reference omitted resources.
+
+    Raises:
+        OmittedResourceError: A link references an omitted resource.
+    """
     available_paths = {name.removeprefix(".apm/") for name in outputs.files}
     missing_links: list[Finding] = []
     for document in outputs.documents:
@@ -1676,7 +1773,11 @@ def _manifest_record(
 
 
 def _policy_content(snapshot: CatalogSnapshot) -> bytes:
-    """Return the readable source policy bytes."""
+    """Return the readable source policy bytes.
+
+    Raises:
+        CompositionError: The source policy is unavailable.
+    """
     policy_document = snapshot.policy_document
     if policy_document is None or policy_document.text is None:
         raise CompositionError(CompositionIssue.POLICY_UNAVAILABLE)
@@ -1684,7 +1785,11 @@ def _policy_content(snapshot: CatalogSnapshot) -> bytes:
 
 
 def _license_content(snapshot: CatalogSnapshot) -> bytes:
-    """Return the root license bytes."""
+    """Return the root license bytes.
+
+    Raises:
+        CompositionError: The root license is missing.
+    """
     license_document = next(
         (item for item in snapshot.root_documents if item.relative_path == "LICENSE"),
         None,
@@ -1750,7 +1855,7 @@ class CatalogService:
         if catalog is not None:
             skill_records = self._validate_bundles(snapshot, catalog, findings)
             self._validate_profile_budgets(catalog, skill_records, findings)
-            _check_native_assets(snapshot, catalog, findings)
+            _check_native_assets(snapshot, catalog, skill_records, findings)
         deduplicated = tuple(
             sorted(
                 set(findings),
@@ -1772,7 +1877,11 @@ class CatalogService:
         *,
         skills: tuple[str, ...] = (),
     ) -> CompositionPlan:
-        """Build a pure, deterministic plan after source validation."""
+        """Build a pure, deterministic plan after source validation.
+
+        Raises:
+            CompositionError: The source or catalog is invalid.
+        """
         report = self.validate(snapshot)
         if not report.valid:
             raise CompositionError(CompositionIssue.SOURCE_INVALID)
@@ -1859,13 +1968,20 @@ class CatalogService:
         skills: dict[str, _SkillRecord],
         findings: list[Finding],
     ) -> None:
-        """Enforce the aggregate description budget for every declared profile."""
+        """Require non-empty effective profiles and bound their descriptions."""
         limit = dict(catalog.budgets)["profile_description_chars"]
         for profile in catalog.profiles:
             try:
                 selected = _effective_bundles(catalog, (profile.name,))
             except ValueError:
                 continue
+            if not selected:
+                _finding(
+                    findings,
+                    "profile.empty",
+                    "effective profile must select at least one source bundle",
+                    f"catalog.json:profiles:{profile.name}",
+                )
             description_chars = sum(
                 len(description)
                 for description, _lines, bundle in skills.values()

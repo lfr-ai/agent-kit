@@ -1,0 +1,75 @@
+# Agent system design: <feature>
+
+Fill in before writing agent code. Every "no" in the first section is a
+reason to prefer a workflow or a single call.
+
+## 1. Is an agent needed?
+
+| Question | Answer |
+| --- | --- |
+| Can a fixed sequence of calls solve it (prompt chain, router, parallel map)? | |
+| Does the number or order of steps depend on intermediate results? | |
+| Is the task valuable enough to pay for several model calls per request? | |
+| Can errors be detected and recovered from inside the loop? | |
+| Is there an evaluation dataset of goals with expected outcomes? | |
+
+Chosen shape: single call / workflow / single agent with tools / supervisor
+with workers / handoffs. Reason:
+
+## 2. Roles
+
+| Role | Responsibility | Model alias | Tools | May delegate to |
+| --- | --- | --- | --- | --- |
+| supervisor | | | | |
+| worker | | | | none |
+
+## 3. Tools
+
+| Tool | Side effect (none/write/external) | Idempotency key | Approval | Timeout | Error codes |
+| --- | --- | --- | --- | --- | --- |
+| | | | | | |
+
+## 4. Context and memory
+
+- Per-step context: system instructions, goal, tool definitions, last
+  observations (truncation rule):
+- Persistent memory (what, where, retention, who can read it):
+- Data never placed in context:
+
+## 5. Guardrails
+
+- Input checks (prompt injection, scope):
+- Output checks (schema, policy, citations):
+- Human approval points:
+- Actions that are never automated:
+
+## 6. Budgets
+
+| Limit | Value | Behavior when reached |
+| --- | --- | --- |
+| Max steps per run | | |
+| Max cost per run | | |
+| Wall-clock deadline | | |
+| Max identical actions | | |
+| Max delegation depth | 1 | workers never delegate |
+
+## 7. Observability
+
+- Trace backend (Langfuse or OpenTelemetry) and span per step:
+- Recorded fields (run id, step, action kind, target, argument digest,
+  cost, outcome); content capture approved: yes / no.
+
+## 8. Evaluation
+
+- Goal dataset version and size:
+- Outcome metric (task success) and gate:
+- Trajectory metrics (tool selection accuracy, steps, redundant calls,
+  policy violations) and gates:
+- Comparison baseline (single call or workflow):
+
+## 9. Framework decision
+
+| Option considered | Why chosen or rejected | Exit cost |
+| --- | --- | --- |
+| Plain code | | |
+| | | |

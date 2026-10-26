@@ -1,0 +1,16 @@
+# Grafana data source provisioning. Copy to
+# grafana/provisioning/datasources/prometheus.yaml (mounted at
+# /etc/grafana/provisioning/datasources). No uid is set: dashboards select the
+# data source through their ${datasource} variable, so they work in every
+# Grafana instance without editing.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 30s
+      httpMethod: POST

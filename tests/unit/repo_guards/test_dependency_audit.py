@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 import runpy
 import subprocess
+import tomllib
 
 import pytest
 import scripts.audit_dependencies as audit
@@ -57,6 +58,60 @@ def test_source_only_registry_packages_are_rejected_before_export(
 
     assert audit.run(tmp_path) == 1
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "lock",
+    [
+        "",
+        "package = []",
+        'package = "not a package list"',
+        'package = ["not a package"]',
+        '[[package]]\nname = "example"\n',
+        '[[package]]\nname = "example"\nversion = "1.0"\nsource = "registry"\n',
+        '[[package]]\nname = "example"\nversion = "1.0"\nsource = {}\n',
+        '[[package]]\nname = "example"\nversion = "1.0"\nsource = { registry = 1 }\n',
+        (
+            '[[package]]\nname = "example"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\nwheels = "not wheels"\n'
+        ),
+        (
+            '[[package]]\nname = "example"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\nwheels = [{}]\n'
+        ),
+    ],
+)
+def test_malformed_lock_metadata_fails_before_audit_tools_are_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    lock: str,
+) -> None:
+    _write_lock(tmp_path, lock)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(audit.subprocess, "run", _recorder(calls))
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+
+    assert audit.run(tmp_path) == 1
+    assert calls == []
+    assert "invalid package metadata" in capsys.readouterr().err
+
+
+def test_registry_package_without_wheel_records_is_not_accepted() -> None:
+    lock = tomllib.loads(
+        '[[package]]\nname = "example"\nversion = "1.0"\n'
+        'source = { registry = "https://pypi.org/simple" }\nwheels = []\n'
+    )
+    assert audit.source_only_packages(lock) == ["example==1.0"]
+
+
+def test_invalid_lock_encoding_fails_with_a_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "uv.lock").write_bytes(b"\xff")
+
+    assert audit.run(tmp_path) == 1
+    assert "cannot read uv.lock" in capsys.readouterr().err
 
 
 def test_lock_is_exported_with_hashes_and_audited_fail_closed(

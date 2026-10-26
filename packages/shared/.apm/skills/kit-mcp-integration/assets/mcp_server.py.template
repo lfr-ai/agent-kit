@@ -1,0 +1,157 @@
+"""Expose read-only project notes to MCP hosts over stdio.
+
+Copy to ``src/PACKAGE/mcp_server.py``, rename the tools for the real domain,
+and pin ``mcp`` to an exact version in the project manifest. Run it with
+``uv run --locked python -m PACKAGE.mcp_server`` and inspect it with the MCP
+Inspector before configuring a host.
+
+Written for the v2 Python SDK (``mcp.server.MCPServer``). The v1 SDK used
+``mcp.server.fastmcp.FastMCP`` with the same decorators; check the pinned
+version's migration guide before copying.
+"""
+
+from dataclasses import dataclass
+import logging
+import os
+from pathlib import Path
+import sys
+from typing import Annotated
+
+from mcp.server import MCPServer
+from pydantic import Field
+
+_LOGGER = logging.getLogger(__name__)
+
+NOTES_DIRECTORY_VARIABLE: str = "PROJECT_TOOLS_NOTES_DIR"
+MAX_QUERY_LENGTH: int = 200
+MAX_RESULTS: int = 20
+DEFAULT_RESULTS: int = 5
+MAX_NOTE_BYTES: int = 64_000
+NOTE_NAME_PATTERN: str = r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$"
+
+server = MCPServer("project-tools")
+
+
+class ToolInputError(ValueError):
+    """Raised with a message the calling model can act on.
+
+    The SDK returns an exception raised by a tool as an error result whose
+    text is the message, so messages name the fix and never contain secrets.
+    """
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class NoteMatch:
+    """One line of a note that matched a search.
+
+    Attributes:
+        name: File name of the note, usable with ``read_note``.
+        line: One-based line number.
+        text: The matching line, stripped.
+    """
+
+    name: str
+    line: int
+    text: str
+
+
+def notes_root() -> Path:
+    """Return the configured notes directory.
+
+    Returns:
+        The resolved directory named by ``PROJECT_TOOLS_NOTES_DIR``.
+
+    Raises:
+        ToolInputError: If the variable is unset or not a directory.
+    """
+    configured = os.environ.get(NOTES_DIRECTORY_VARIABLE, "")
+    root = Path(configured).resolve() if configured else None
+    if root is None or not root.is_dir():
+        message = f"set {NOTES_DIRECTORY_VARIABLE} to an existing notes directory"
+        raise ToolInputError(message)
+    return root
+
+
+@server.tool()
+def search_notes(
+    query: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=MAX_QUERY_LENGTH,
+            description="Case-insensitive text to find in note lines.",
+        ),
+    ],
+    limit: Annotated[
+        int, Field(ge=1, le=MAX_RESULTS, description="Maximum matches to return.")
+    ] = DEFAULT_RESULTS,
+) -> list[NoteMatch]:
+    """Find lines in Markdown notes that contain the query text.
+
+    Args:
+        query: Text to find, compared case-insensitively.
+        limit: Maximum number of matches to return.
+
+    Returns:
+        Matches in file-name order; empty when nothing matches.
+
+    Raises:
+        ToolInputError: If the notes directory is not configured.
+    """
+    needle = query.casefold()
+    matches: list[NoteMatch] = []
+    for path in sorted(notes_root().glob("*.md")):
+        matches.extend(_matches(path, needle))
+        if len(matches) >= limit:
+            break
+    _LOGGER.info("search_notes returned %d matches", min(len(matches), limit))
+    return matches[:limit]
+
+
+@server.tool()
+def read_note(
+    name: Annotated[
+        str,
+        Field(
+            pattern=NOTE_NAME_PATTERN,
+            description="File name returned by search_notes, for example 'setup.md'.",
+        ),
+    ],
+) -> str:
+    """Return the text of one note, truncated to a safe size.
+
+    Args:
+        name: Note file name inside the notes directory.
+
+    Returns:
+        The note text, at most ``MAX_NOTE_BYTES`` bytes.
+
+    Raises:
+        ToolInputError: If no such note exists inside the notes directory.
+    """
+    root = notes_root()
+    candidate = (root / name).resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        message = f"no note named {name!r}; call search_notes to find note names"
+        raise ToolInputError(message)
+    return candidate.read_bytes()[:MAX_NOTE_BYTES].decode("utf-8", errors="replace")
+
+
+def _matches(path: Path, needle: str) -> list[NoteMatch]:
+    """Return the matching lines of one note."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return [
+        NoteMatch(name=path.name, line=number, text=line.strip())
+        for number, line in enumerate(text.splitlines(), start=1)
+        if needle in line.casefold()
+    ]
+
+
+def main() -> None:
+    """Serve over stdio; standard output carries the protocol, so logs go to stderr."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

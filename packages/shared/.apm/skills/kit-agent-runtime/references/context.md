@@ -98,7 +98,7 @@ Treat them as data:
 - [Agent Skills specification](https://agentskills.io/specification)
 - [VS Code agent skills](https://code.visualstudio.com/docs/agent-customization/agent-skills)
 - [VS Code MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers)
-- [VS Code subagents](https://code.visualstudio.com/docs/agents/subagents)
+- [VS Code subagents](https://code.visualstudio.com/docs/agents/run/subagents)
 - [Claude Code skills](https://code.claude.com/docs/en/skills)
 - [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
 - [OWASP LLM01 prompt injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)

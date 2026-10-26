@@ -49,7 +49,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - name: Same check-only gate as task verify
-        run: uv run --locked python scripts/verify.py
+        run: uv run --locked --no-sync python scripts/verify.py
       - name: Build distribution
         run: uv build --out-dir build/distributions
       - name: Build selected capability source

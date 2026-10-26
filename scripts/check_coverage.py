@@ -85,7 +85,11 @@ class _CoverageInputError(ValueError):
 
 
 def _pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Prevent a later duplicate inventory entry hiding an earlier one."""
+    """Prevent a later duplicate inventory entry hiding an earlier one.
+
+    Raises:
+        _CoverageInputError: An inventory key is repeated.
+    """
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:

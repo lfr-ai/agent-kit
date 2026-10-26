@@ -5,7 +5,6 @@ tools: ["read", "search", "edit", "execute"]
 agents: []
 user-invocable: false
 disable-model-invocation: false
-model: ["GPT-5 mini", "Claude Haiku 4.5"]
 ---
 # Mission
 Implement one approved, typed backend capability inside its assigned scope, with regression tests and clear error contracts.

@@ -1,0 +1,47 @@
+# Self-review checklist
+
+Task: <one-line outcome>
+Changed paths: <from the diff, not memory>
+Governing rules re-read: <policy, instructions by glob, skills used>
+
+## 1. Deterministic checks (after the last edit)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Format (check mode) | `<command>` | pass / fail: first line |
+| Lint | `<command>` | |
+| Types | `<command>` | |
+| Conventions / architecture | `<command>` | |
+| Focused tests | `<command>` | |
+
+## 2. Inspection (cite path:line for every finding)
+
+- [ ] Names state meaning and unit; no abbreviations a newcomer must guess.
+- [ ] Numeric literals other than 0 and 1 are named constants.
+- [ ] Public functions, classes and modules have docstrings with arguments,
+      returns and raised errors.
+- [ ] Types are concrete; no `Any`, casts or untyped public signatures.
+- [ ] Code sits in the owning layer; dependencies point inward; I/O at edges.
+- [ ] Errors are specific, chained and actionable; nothing is swallowed.
+- [ ] Failure paths and boundary values have tests, not only the happy path.
+- [ ] Documentation, examples and changelog match the new behavior.
+- [ ] No secrets, personal data, absolute local paths or debug leftovers.
+- [ ] No generated file was edited by hand.
+
+## 3. Acceptance criteria
+
+| Criterion | Status (met / partial / unmet) | Evidence |
+| --- | --- | --- |
+| | | |
+
+## 4. Simpler and current
+
+- Deletable code or options: <none / list>
+- Standard library or locked dependency that replaces custom code: <none / name>
+- Newer official tool or API checked at: <URL and review date, or "not applicable">
+
+## 5. Decision
+
+- Iterate / stop:
+- Reason (rule from the iterate-or-stop table):
+- Remaining findings by severity:

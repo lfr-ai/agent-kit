@@ -4,6 +4,20 @@ The layout below is a default for a typed Python backend that follows
 Hexagonal Architecture (ports and adapters) with a layered core. Adapt the
 folder names to the project; keep the dependency direction.
 
+## Grow the layout only when it earns a boundary
+
+Start from the existing project layout and actual responsibilities, not every
+folder in the example. A small CLI or library may need fewer modules. Keep
+cohesive records and helpers together; split when responsibilities or change
+ownership diverge. Introduce a subpackage for a real cluster of modules with a
+clear public API, not a speculative future layer or an arbitrary class count.
+
+Use the selected `kit-consistency` naming/layout guidance for canonical names
+and centralization decisions. Shared knowledge belongs to its semantic owner;
+similar syntax does not justify a global registry, universal DTO or `common`
+package. Preserve inward imports when extracting shared code. Renames must also
+update entry points, fixtures, resource paths and known public import aliases.
+
 ## Default layout
 
 ```text

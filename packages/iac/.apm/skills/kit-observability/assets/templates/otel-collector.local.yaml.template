@@ -1,0 +1,21 @@
+# Local override for otel-collector.yaml.template. The collector merges
+# configuration files in order, so this file only replaces exporters:
+#   otelcol-contrib --config otel-collector.yaml --config otel-collector.local.yaml
+# Receivers, memory_limiter, scrubbing, resource, and batch processors come
+# from the base file unchanged. Lists are replaced, not appended.
+exporters:
+  # Prometheus 3 OTLP receiver; the exporter appends /v1/metrics.
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    compression: gzip
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug]
+    metrics:
+      exporters: [otlphttp/prometheus]
+    logs:
+      exporters: [debug]

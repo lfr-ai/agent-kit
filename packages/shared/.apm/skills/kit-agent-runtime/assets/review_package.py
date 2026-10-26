@@ -279,7 +279,12 @@ class EvidenceInputTypeError(TypeError):
 
 
 def _text(value: object, label: str, *, required: bool = True) -> str:
-    """Validate a text field."""
+    """Validate a text field.
+
+    Raises:
+        EvidenceInputTypeError: The value is not a string.
+        EvidenceInputError: A required value is blank.
+    """
     if value is None and not required:
         return ""
     if not isinstance(value, str):
@@ -290,14 +295,22 @@ def _text(value: object, label: str, *, required: bool = True) -> str:
 
 
 def _required_text(item: dict[str, object], key: str, label: str) -> str:
-    """Distinguish a missing field from a present value of the wrong type."""
+    """Distinguish a missing field from a present value of the wrong type.
+
+    Raises:
+        EvidenceInputError: The field is missing.
+    """
     if key not in item:
         raise EvidenceInputError(EvidenceInputIssue.TEXT_REQUIRED, label=label)
     return _text(item[key], label)
 
 
 def _items(value: object, label: str) -> list[object]:
-    """Validate an optional list field."""
+    """Validate an optional list field.
+
+    Raises:
+        EvidenceInputTypeError: The value is not a list.
+    """
     if value is None:
         return []
     if not isinstance(value, list):
@@ -306,7 +319,12 @@ def _items(value: object, label: str) -> list[object]:
 
 
 def _closed(value: object, fields: frozenset[str], label: str) -> dict[str, object]:
-    """Require an object with only known fields."""
+    """Require an object with only known fields.
+
+    Raises:
+        EvidenceInputTypeError: The value is not an object.
+        EvidenceInputError: The object has unknown fields.
+    """
     if not isinstance(value, dict):
         raise EvidenceInputTypeError(EvidenceInputIssue.OBJECT_REQUIRED, label=label)
     unknown = sorted(value.keys() - fields)
@@ -318,7 +336,12 @@ def _closed(value: object, fields: frozenset[str], label: str) -> dict[str, obje
 
 
 def _command(raw: object, index: int) -> Command:
-    """Validate one verification command entry."""
+    """Validate one verification command entry.
+
+    Raises:
+        EvidenceInputError: The exit code is missing.
+        EvidenceInputTypeError: The exit code is not an integer.
+    """
     item = _closed(raw, _COMMAND_FIELDS, f"commands[{index}]")
     code = item.get("exit_code")
     if "exit_code" not in item:
@@ -333,7 +356,12 @@ def _command(raw: object, index: int) -> Command:
 
 
 def _criterion(raw: object, index: int) -> Criterion:
-    """Validate one acceptance criterion entry."""
+    """Validate one acceptance criterion entry.
+
+    Raises:
+        EvidenceInputTypeError: The status is not a string.
+        EvidenceInputError: The status is missing or unknown.
+    """
     item = _closed(raw, _ACCEPTANCE_FIELDS, f"acceptance[{index}]")
     status = item.get("status")
     if "status" in item and not isinstance(status, str):
@@ -509,7 +537,11 @@ def render(
 
 
 def _read(path: Path, limit: int) -> str:
-    """Read bounded UTF-8 text."""
+    """Read bounded UTF-8 text.
+
+    Raises:
+        EvidenceInputError: The file exceeds ``limit`` bytes.
+    """
     with path.open("rb") as handle:
         data = handle.read(limit + 1)
     if len(data) > limit:

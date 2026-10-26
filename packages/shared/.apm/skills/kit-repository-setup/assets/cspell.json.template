@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en",
+  "useGitignore": true,
+  "dictionaries": ["softwareTerms", "python", "bash", "misc", "project-terms", "project-names"],
+  "dictionaryDefinitions": [
+    {
+      "name": "project-terms",
+      "path": "./.cspell/project-terms.txt",
+      "description": "Domain and tool vocabulary, one word per line, sorted.",
+      "addWords": true
+    },
+    {
+      "name": "project-names",
+      "path": "./.cspell/project-names.txt",
+      "description": "Product, library and contributor names.",
+      "addWords": false
+    }
+  ],
+  "ignorePaths": [
+    ".cspell/**",
+    ".git/**",
+    ".venv/**",
+    "node_modules/**",
+    "build/**",
+    "dist/**",
+    "*.lock",
+    ".secrets.baseline"
+  ],
+  "ignoreRegExpList": [
+    "/sha256:[0-9a-f]{64}/g",
+    "/\\b[0-9a-f]{40}\\b/g"
+  ]
+}

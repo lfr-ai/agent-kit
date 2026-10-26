@@ -1,0 +1,73 @@
+# Ruff configuration for a one-off codebase audit.
+# Copy to audit-ruff.toml at the repository root (outside the audited paths
+# is fine) and run:
+#   ruff check --config audit-ruff.toml --output-format json --exit-zero . > audit/ruff.json
+# The selection is wider than a typical gate on purpose. Findings that only
+# this file enables are "not enforced today" in the report. Do not commit this
+# file as the project gate; adopt rules one family at a time from a baseline.
+# Set target-version to the project's minimum supported Python.
+
+target-version = "py313"
+line-length = 88
+extend-exclude = [
+  "audit",
+  "build",
+  "dist",
+  "migrations",
+  "vendor",
+  "**/generated/**",
+]
+
+[lint]
+select = [
+  "F",     # pyflakes: undefined names, unused imports and variables
+  "E",     # pycodestyle errors
+  "W",     # pycodestyle warnings
+  "I",     # import order
+  "N",     # naming conventions
+  "D",     # docstrings (convention below)
+  "UP",    # pyupgrade: legacy syntax for the target version
+  "FA",    # future annotations consistency
+  "ANN",   # missing annotations
+  "B",     # bugbear: likely bugs
+  "S",     # bandit-derived security checks
+  "BLE",   # blind except
+  "TRY",   # exception handling practices
+  "EM",    # exception message construction
+  "LOG",   # logging misuse
+  "G",     # logging message formatting
+  "T20",   # print statements
+  "PTH",   # os.path instead of pathlib
+  "DTZ",   # naive datetimes
+  "ERA",   # commented-out code
+  "ARG",   # unused arguments
+  "RET",   # return consistency
+  "SIM",   # simplifiable code
+  "C4",    # comprehensions
+  "C90",   # mccabe cyclomatic complexity
+  "PL",    # pylint-derived checks, including PLR complexity limits
+  "PERF",  # performance anti-patterns
+  "FURB",  # modern idioms
+  "RUF",   # Ruff-specific checks
+]
+
+[lint.mccabe]
+# Review trigger, not a target; the project gate may be stricter.
+max-complexity = 10
+
+[lint.pylint]
+max-args = 6
+max-branches = 12
+max-returns = 6
+max-statements = 50
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/**" = [
+  "S101",    # assert is the pytest idiom
+  "D",       # test names document behavior
+  "PLR2004", # literal expected values are not magic numbers
+  "ANN",     # fixtures and fakes need not be annotated for the audit
+]

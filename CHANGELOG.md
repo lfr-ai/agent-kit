@@ -5,6 +5,33 @@
 ### Added
 
 - Updated transitive GitPython to 3.2.1 in `uv.lock` to resolve CVE-2026-114145.
+- Fail-closed dependency-inventory validation before export, with regression
+  tests for malformed package/wheel metadata and invalid encoding.
+- Task-loaded prompt-management and reproducible experiment resources, plus
+  retrieval backend/multimodal selection and consumer acceptance evidence.
+- A capability coverage/review plan that distinguishes existing resources,
+  measured additions and consumer-owned runtime certification.
+- 25 skills with linked references and assets: backend `kit-fastapi-service`,
+  `kit-auth`, `kit-api-testing`, `kit-cli-tool`, `kit-sql-persistence` and
+  `kit-graph-database`; ai `kit-llm-evaluation`, `kit-llm-gateway` and
+  `kit-agent-systems`; iac `kit-edge-networking` and `kit-remote-access`; shared
+  `kit-project-memory`, `kit-feedback-loop`, `kit-subagent-delivery`,
+  `kit-context-engineering`, `kit-repository-setup`, `kit-secure-code`,
+  `kit-mcp-integration` and `kit-supply-chain`; frontend `kit-design-system`,
+  `kit-frontend-build` and `kit-client-auth`; coordination
+  `kit-naming-registry`; workflows `kit-codebase-audit` and `kit-modernize`.
+- Path-scoped instructions for agent systems, LLM evaluation, auth, Cypher,
+  FastAPI, SQL persistence, the naming registry, design tokens, edge networking,
+  prompt files and repository files; the coordination bundle now delivers
+  instructions.
+- Prompts to run an LLM experiment, add middleware, hand off work, run a
+  feedback loop, audit a codebase and plan a modernization batch.
+- Roles `kit-ai-engineer` and read-only `kit-eval-reviewer` (ai) and read-only
+  `kit-infra-reviewer` (iac), for 27 declared roles.
+- Deeper existing skills: a Python idioms reference and opt-in
+  redundant-default rule, a local observability stack, infrastructure
+  change-type worksheets, a test-layout checker and nox template, Mermaid and
+  docstring templates, and a quality-gate catalog.
 - Dependency supply-chain controls: an audit-first `task bootstrap`, a hashed
   lockfile vulnerability and wheel-only audit, a reviewed license policy, a
   required and scheduled dependency-audit workflow, strict dependency review,
@@ -79,8 +106,29 @@
 
 - Merged duplicate instructions (five into three) and added a per-profile
   always-on context budget test.
+- The APM smoke matrix runs three budget-compliant selections (`fullstack`;
+  `ai` with `iac`; `workflows`) instead of one all-stack selection that
+  exceeded the unchanged profile description budget. The regression composes
+  each selection and requires every declared role in at least one of them.
+- Shortened 16 skill descriptions to keep every catalog budget unchanged.
+- The `kit-config` experiment template models LLM evaluation sweeps (model,
+  prompt version, evaluation dataset version, temperature and seed); Hydra
+  guidance targets LLM experiments, not model training.
+- Coverage maps original capabilities to their new dedicated owners, and three
+  original scripts to portable checkers.
+- Ruff enforces documented `Raises` sections (`DOC501`). `DOC502` stays off:
+  it counts only direct `raise` statements, while the convention also documents
+  exceptions that propagate from called functions.
+- `apm-cli` 0.35.0 (released 2026-10-22) is deferred by the 14-day dependency
+  cooldown; re-evaluate on or after 2026-11-05.
 
 ### Fixed
+
+- The `kit-config` experiment JSON template and its typed loader used different
+  fields, which failed 36 tests; both now share one schema.
+- Role assets no longer pin models. A host rejected an unavailable pinned model
+  instead of falling back, which disabled the role; roles now inherit the
+  caller's model and native role files were re-rendered.
 
 - Windows workspace publication retries bounded transient sharing denials while
   preserving no-overwrite semantics and rechecking path indirection.

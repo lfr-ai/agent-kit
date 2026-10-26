@@ -1,0 +1,191 @@
+{
+  "info": {
+    "name": "Shop API contract checks",
+    "description": "Smoke and negative checks for the Shop API. Values come from the selected environment; this file contains no hosts, tokens, or personal data. Supply accessToken from the CI secret store at run time; never commit it to an environment file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {"key": "token", "value": "{{accessToken}}", "type": "string"}
+    ]
+  },
+  "variable": [
+    {"key": "apiPrefix", "value": "/api/v1", "type": "string"},
+    {"key": "knownItemId", "value": "sku-1", "type": "string"},
+    {"key": "missingItemId", "value": "does-not-exist", "type": "string"}
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('responds within the latency budget', function () {",
+          "  pm.expect(pm.response.responseTime).to.be.below(Number(pm.environment.get('latencyBudgetMs') || 2000));",
+          "});",
+          "pm.test('echoes a request id', function () {",
+          "  pm.response.to.have.header('X-Request-ID');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "url": "{{baseUrl}}/health/live"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('body reports ok', function () { pm.expect(pm.response.json().status).to.eql('ok'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Items",
+      "item": [
+        {
+          "name": "Get item",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Accept", "value": "application/json"}],
+            "url": "{{baseUrl}}{{apiPrefix}}/items/{{knownItemId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('matches the public schema', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('id', 'name', 'price_cents');",
+                  "  pm.expect(body.price_cents).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get missing item returns problem details",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}{{apiPrefix}}/items/{{missingItemId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('problem media type', function () {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  pm.expect(pm.response.json()).to.include.keys('type', 'title', 'status');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative",
+      "item": [
+        {
+          "name": "Missing token is 401 with WWW-Authenticate",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "url": "{{baseUrl}}{{apiPrefix}}/items/{{knownItemId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('bearer challenge', function () { pm.expect(pm.response.headers.get('WWW-Authenticate')).to.match(/^Bearer/); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid path parameter is 422",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}{{apiPrefix}}/items/{{oversizedItemId}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.variables.set('oversizedItemId', 'x'.repeat(65));"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('field pointers', function () { pm.expect(pm.response.json().errors).to.be.an('array').that.is.not.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Oversized body is 413",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{{oversizedBody}}"},
+            "url": "{{baseUrl}}{{apiPrefix}}/items/{{knownItemId}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const limit = Number(pm.environment.get('maxBodyBytes') || 1048576);",
+                  "pm.variables.set('oversizedBody', JSON.stringify({padding: 'x'.repeat(limit + 1)}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('status 413', function () { pm.response.to.have.status(413); });"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+# Local observability stack: OpenTelemetry Collector, Prometheus, Grafana.
+# Copy to observability/compose.yaml with these files beside it:
+#   otel-collector.yaml        from otel-collector.yaml.template
+#   otel-collector.local.yaml  from otel-collector.local.yaml.template
+#   prometheus.yaml            from prometheus.yaml.template
+#   rules/*.yaml               from alert-rules.yaml.template and red-use-rules.yaml.template
+#   grafana/provisioning/datasources/prometheus.yaml  from grafana-datasources.yaml.template
+#   grafana/provisioning/dashboards/services.yaml     from grafana-dashboards.yaml.template
+#   grafana/dashboards/service-red.json                from grafana-dashboard.json.template
+#   secrets/grafana_admin_password.txt  local file, never committed
+# Pin every image to a released version and its digest before use:
+#   docker buildx imagetools inspect prom/prometheus:<version>
+# Run: docker compose up --wait
+# Applications send OTLP to localhost:4317 (gRPC) or localhost:4318 (HTTP).
+# Ports bind to 127.0.0.1 only; this stack is for local development and tests.
+name: observability
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:PIN_VERSION@sha256:PIN_IMAGE_DIGEST
+    command:
+      - --config=/etc/otelcol/otel-collector.yaml
+      - --config=/etc/otelcol/otel-collector.local.yaml
+    environment:
+      DEPLOYMENT_ENVIRONMENT: local
+      # Required by the base file's otlp exporter, which the local override
+      # leaves unused.
+      OTLP_BACKEND_ENDPOINT: localhost:4317
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/otel-collector.yaml:ro
+      - ./otel-collector.local.yaml:/etc/otelcol/otel-collector.local.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:PIN_VERSION@sha256:PIN_IMAGE_DIGEST
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:PIN_VERSION@sha256:PIN_IMAGE_DIGEST
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password # pragma: allowlist secret
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+
+secrets:
+  grafana_admin_password: # pragma: allowlist secret
+    file: ./secrets/grafana_admin_password.txt # pragma: allowlist secret
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,68 @@
+# Judge rubric: <metric name>
+
+Copy beside the judge prompt and version both together. A rubric change is a
+new metric version; scores from different rubric versions are not comparable.
+
+## Identity
+
+| Field | Value |
+| --- | --- |
+| Metric name and rubric version | `<name>-v1` |
+| Judge model alias and served snapshot | `<alias>` / `<recorded per run>` |
+| Judge prompt name and version | `<prompt>` / `<version>` |
+| Output type | Binary pass/fail, or ordinal 1 to 4 (no midpoint) |
+| Owner and review date | `<role>` / `<YYYY-MM-DD>` |
+
+## Question
+
+One sentence the judge answers about one output, for example: "Is every
+factual claim in the answer supported by the provided context?"
+
+## Inputs given to the judge
+
+- Task input: yes / no
+- Candidate output: yes
+- Reference answer: yes / no
+- Retrieved context: yes / no
+- Nothing else: no system prompt of the candidate, no model name, no run label.
+
+## Scale
+
+| Score | Criterion | Anchor example (synthetic) |
+| --- | --- | --- |
+| Pass | All required properties hold | `<short example>` |
+| Fail | Any required property is missing or wrong | `<short example>` |
+
+Required properties (each independently checkable):
+
+1. `<property>`
+2. `<property>`
+
+Automatic fail conditions: `<for example, unsupported claim, unsafe advice>`.
+
+## Output contract
+
+The judge returns JSON validated by a schema: `{"reasoning": str, "verdict":
+"pass" | "fail"}`. Reasoning comes before the verdict. Invalid JSON is a judge
+error, counted and reported, never silently scored.
+
+## Bias controls
+
+- [ ] Pairwise comparisons run in both orders; disagreement counts as a tie.
+- [ ] Length is not a criterion; a length-matched control set is included.
+- [ ] Judge model differs from the candidate model family where possible.
+- [ ] Candidate identity, run label and model name are hidden from the judge.
+
+## Calibration against human labels
+
+| Item | Value |
+| --- | --- |
+| Labelled sample size and sampling method | `<n>`, stratified by `<tags>` |
+| Labellers and instructions version | `<count>` / `<version>` |
+| Inter-annotator agreement (Cohen's kappa) | `<value>` |
+| Judge vs human agreement (kappa, true/false positive rates) | `<value>` |
+| Minimum accepted agreement | `<value>` |
+| Re-calibration trigger | judge, prompt or rubric change; drift in sampled audits |
+
+The judge may gate releases only after it meets the minimum agreement on the
+held-out labelled sample.

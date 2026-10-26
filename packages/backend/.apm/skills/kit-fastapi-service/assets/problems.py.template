@@ -1,0 +1,86 @@
+"""Request correlation context and the RFC 9457 response builder.
+
+Copy into ``src/shop/api/problems.py``. Middleware binds the request identifier;
+exception handlers and middleware rejections build every error body here, so
+the envelope has one owner. The member catalog follows the problem details
+reference of the ``kit-api-contracts`` skill.
+"""
+
+from collections.abc import Mapping
+from contextvars import ContextVar, Token
+from http import HTTPStatus
+
+from starlette.responses import JSONResponse
+
+PROBLEM_MEDIA_TYPE = "application/problem+json"
+REQUEST_ID_HEADER = "X-Request-ID"
+
+_request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
+def bind_request_id(request_id: str) -> Token[str | None]:
+    """Bind a request identifier to the current task.
+
+    Args:
+        request_id: Validated or generated identifier.
+
+    Returns:
+        Token that ``reset_request_id`` uses to restore the previous value.
+    """
+    return _request_id.set(request_id)
+
+
+def reset_request_id(token: Token[str | None]) -> None:
+    """Restore the identifier that was bound before ``bind_request_id``.
+
+    Args:
+        token: Token returned by ``bind_request_id``.
+    """
+    _request_id.reset(token)
+
+
+def current_request_id() -> str | None:
+    """Return the identifier bound to the current request, if any."""
+    return _request_id.get()
+
+
+def problem_response(
+    *,
+    status: HTTPStatus,
+    title: str,
+    problem_type: str = "about:blank",
+    detail: str | None = None,
+    extensions: Mapping[str, object] | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """Build an ``application/problem+json`` response.
+
+    Args:
+        status: HTTP status; repeated in the ``status`` member.
+        title: Stable summary of the problem type.
+        problem_type: URI identifying the problem type.
+        detail: Occurrence-specific, caller-safe explanation.
+        extensions: Extra members such as ``errors`` or ``code``.
+        headers: Response headers to keep, such as ``WWW-Authenticate``.
+
+    Returns:
+        A JSON response whose ``instance`` names the request identifier.
+    """
+    body: dict[str, object] = {
+        "type": problem_type,
+        "title": title,
+        "status": int(status),
+    }
+    if detail is not None:
+        body["detail"] = detail
+    request_id = current_request_id()
+    if request_id is not None:
+        body["instance"] = f"urn:request:{request_id}"
+    if extensions:
+        body.update(extensions)
+    return JSONResponse(
+        body,
+        status_code=int(status),
+        media_type=PROBLEM_MEDIA_TYPE,
+        headers=dict(headers or {}),
+    )

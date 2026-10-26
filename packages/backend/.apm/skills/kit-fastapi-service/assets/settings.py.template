@@ -1,0 +1,74 @@
+"""HTTP transport settings facet with secure defaults and unsafe-combination checks.
+
+Copy into ``src/shop/api/settings.py``. Nest ``HttpSettings`` in the project's
+settings class (see the ``kit-config`` skill) so environment variables such as
+``SHOP_HTTP__CORS_ORIGINS`` load it once at start-up; the app factory receives
+the validated facet and never reads the environment.
+"""
+
+import re
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+_DEFAULT_MAX_BODY_BYTES = 1_048_576
+_MAX_BODY_BYTES_CEILING = 104_857_600
+_DEFAULT_GZIP_MINIMUM_BYTES = 1_000
+_DEFAULT_RATE_LIMIT_REQUESTS = 120
+_DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
+_ORIGIN = re.compile(r"https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?")
+
+
+class HttpSettings(BaseModel):
+    """Validated HTTP settings consumed by ``create_app``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    title: str = Field(default="Shop API", min_length=1)
+    version: str = Field(default="1.0.0", min_length=1)
+    api_prefix: str = Field(default="/api/v1", pattern=r"^/api/v[0-9]+$")
+    docs_enabled: bool = False
+    problem_base: str = Field(
+        default="https://example.invalid/problems", pattern=r"^https?://\S+$"
+    )
+    cors_origins: tuple[str, ...] = ()
+    cors_allow_credentials: bool = False
+    trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1")
+    max_body_bytes: int = Field(
+        default=_DEFAULT_MAX_BODY_BYTES, ge=1, le=_MAX_BODY_BYTES_CEILING
+    )
+    gzip_minimum_bytes: int = Field(default=_DEFAULT_GZIP_MINIMUM_BYTES, ge=0)
+    rate_limit_requests: int = Field(default=_DEFAULT_RATE_LIMIT_REQUESTS, ge=1)
+    rate_limit_window_seconds: int = Field(
+        default=_DEFAULT_RATE_LIMIT_WINDOW_SECONDS, ge=1
+    )
+    hsts_max_age_seconds: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _reject_unsafe_combinations(self) -> Self:
+        """Reject wildcard hosts and origins that would weaken the defaults.
+
+        Returns:
+            The validated settings.
+
+        Raises:
+            ValueError: An origin or host list is unsafe or malformed.
+        """
+        if not self.trusted_hosts or "*" in self.trusted_hosts:
+            msg = "trusted_hosts must list explicit host names"
+            raise ValueError(msg)
+        if "*" in self.cors_origins:
+            msg = "cors_origins must list explicit origins, not '*'"
+            raise ValueError(msg)
+        malformed = [
+            origin for origin in self.cors_origins if not _matches_origin(origin)
+        ]
+        if malformed:
+            msg = f"cors_origins entries must be scheme://host[:port]: {malformed}"
+            raise ValueError(msg)
+        return self
+
+
+def _matches_origin(origin: str) -> bool:
+    """Return whether an origin has no path, query, or trailing slash."""
+    return _ORIGIN.fullmatch(origin) is not None

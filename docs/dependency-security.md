@@ -20,13 +20,31 @@ and branch rules are the enforcement boundary.
 hash-locked `audit` dependency group, audits `uv.lock` and `bun.lock`, then syncs
 the project, installs the locked JavaScript tools and installs Git hooks.
 
+The `task verify` wrapper uses `uv run --locked --no-sync`, so selecting
+`dependencies` cannot install a changed lock before auditing it. Audit tools must
+already be provisioned; missing tools fail explicitly. The default deterministic
+gate separately checks lock consistency with `uv lock --check`.
+
+## Synthetic secret-scan fixtures
+
+Deliberate negative-test inputs, environment-variable references, and
+documented local-development placeholders use the pinned scanner's explicit
+line annotations. This follows the existing fixture convention and keeps the
+explanation with portable assets instead of requiring a checkout-specific
+baseline entry. Never replace an annotated fixture with live credentials.
+
+No detector or directory scan was disabled, and the baseline is unchanged.
+Unannotated values remain scanned. Review every new finding; do not bulk-update
+the baseline to make a hook pass. The hook deliberately rejects an unstaged
+baseline, and protected-branch checks remain enabled for commits.
+
 ## Controls
 
 | Risk | Control | Where it runs |
 | --- | --- | --- |
 | Known vulnerable package | `pip-audit` on the exported, hashed `uv.lock` and `bun audit` on `bun.lock`, failing closed when a package cannot be audited | Bootstrap, lock-changing commits, required CI job, daily schedule |
 | Tampered lock entry | `--require-hashes` against PyPI validates locked hashes | Same as above |
-| Code execution while installing | Registry packages must have wheels; an sdist-only package fails before installation | Same as above |
+| Source-only registry package | Registry packages must have wheel records; missing, empty or malformed package inventories fail before audit tools run | Same as above |
 | Disallowed or unknown license | [License policy](../license-allowlist.json) evaluated by the shared license guard; unknown metadata fails unless a reviewed, expiring exception matches it | `task verify`, lock-changing commits, required CI job |
 | New vulnerable or unlicensed package in a PR | Dependency review fails on any severity in runtime, development, and unknown scopes, with an SPDX allowlist | Public pull requests |
 | Advisory published after merge | Scheduled dependency audit; Dependabot security updates are grouped and never delayed by cooldowns | GitHub |
@@ -34,6 +52,33 @@ the project, installs the locked JavaScript tools and installs Git hooks.
 | Moved tags | Actions pinned to full SHAs, hook repositories frozen to commits, the link-check image pinned by digest, and same-repository workflows called with `$/` | Governance and hook regressions |
 | Unsafe workflow patterns | zizmor, actionlint, and the governance gate | Pre-commit and CI |
 | Hallucinated or malicious package installed by an agent | Claude Code denies literal installer and package-runner commands; VS Code always asks before them; the shared policy forbids ad-hoc installs | Native agent settings |
+
+## Tool selection without duplicate gates
+
+Keep one primary scanner per risk and target. Different enforcement boundaries
+can reuse the same scanner: local secret checks and required CI are complementary,
+not reasons to introduce another secret-scanning engine.
+
+| Need | Existing choice | Add only when |
+| --- | --- | --- |
+| Committed credentials | detect-secrets with its reviewed baseline | A separate history or hosting-platform check adds coverage |
+| Workflow correctness | actionlint | Another tool proves a different property |
+| Workflow security | zizmor | Generic image or secret scanning does not replace this analysis |
+| Locked package vulnerabilities | pip-audit and Bun audit for their respective ecosystems | Another scanner covers an otherwise unexamined artifact |
+| Dockerfile quality | Hadolint in consumer container review | A built-image scan is needed; lint does not inspect installed packages |
+
+This toolkit does not add a general Trivy hook or duplicate its existing package
+and secret audits. The portable container capability retains an opt-in,
+vulnerability-only Trivy runner for actual built images, including OS packages.
+Infrastructure consumers choose one configuration scanner, such as Trivy or
+Checkov, rather than enabling both by default.
+
+Release SBOM generation is deferred until a consumer, compliance rule, or
+release-inventory system needs it. Lockfiles remain the installation and
+dependency-audit inputs; an SBOM is a standardized release inventory, not another
+scanner or a replacement for those checks. Existing build-provenance attestations
+remain independent. If adopted, bind the SBOM to the released digest and distinguish
+a library's tested dependency set from the versions its consumers install.
 
 ## Version pinning
 
@@ -62,6 +107,11 @@ force conflicts on consumers and stop them from receiving security fixes. The
 interpreter minor version is also deliberate. The build-constraint hashes that
 newer uv releases support are not used until the minimum supported uv is raised;
 uv 0.10 rejects that table form.
+
+Wheel records prove that a binary artifact exists, not that it matches every
+interpreter/platform. The preflight is not an installer sandbox. Consumers that
+require binary-only installation must verify compatible wheels and their
+package-manager version's build controls, including editable first-party builds.
 
 ## Why there is no global resolver cooldown
 

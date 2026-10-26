@@ -3,12 +3,12 @@
 from collections.abc import Iterator
 import os
 from pathlib import Path
-import re
 import sys
 from urllib.parse import unquote
 
+from agent_kit.core.text import markdown_link_targets
+
 _ROOT = Path(__file__).resolve().parents[1]
-_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 _EXCLUDED_PARTS = {
     ".git",
     ".venv",
@@ -79,8 +79,7 @@ def check(root: Path) -> list[str]:
 
 def _local_targets(text: str) -> Iterator[str]:
     """Yield decoded local link targets, skipping web, mail and anchor links."""
-    for raw in _LINK.findall(text):
-        target = raw.split(" ", 1)[0].strip("<>")
+    for target in markdown_link_targets(text):
         if not target.startswith(("https://", "http://", "mailto:", "#")):
             yield unquote(target.partition("#")[0])
 

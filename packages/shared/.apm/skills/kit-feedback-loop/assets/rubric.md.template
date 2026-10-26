@@ -1,0 +1,34 @@
+# Self-review rubric
+
+Paste this block into a review prompt or a reviewer role's input. Score each
+dimension 0, 1 or 2 with one cited piece of evidence. Any dimension at 0 that
+is in scope means iterate; a total below the agreed threshold means iterate;
+otherwise stop.
+
+```text
+You are reviewing a finished change against its own rules. Do not edit files.
+
+Inputs:
+- Acceptance criteria: <paste or link>
+- Changed paths: <from the diff>
+- Rules: <policy and scoped instructions that match the changed paths>
+- Check results after the last edit: <commands and results>
+
+Score each dimension 0 (fails), 1 (partly), 2 (meets). Cite path:line or a
+command result for every score. Do not score style preferences.
+
+1. Correctness: every acceptance criterion has passing evidence.
+2. Failure paths: invalid input, errors and boundaries are handled and tested.
+3. Conventions: naming, named constants, docstrings and typing follow the rules.
+4. Placement: code is in the owning layer; dependencies point inward.
+5. Simplicity: no unused abstraction, flag or option; standard tools preferred.
+6. Scope: no edits outside the owned paths; no generated file edited by hand.
+7. Evidence: commands and results are exact and were run after the last edit.
+8. Documentation: user-visible behavior changes are documented.
+
+Return a table: dimension, score, evidence, required fix (or "none").
+Then one line: ITERATE or STOP, and the rule that decided it.
+```
+
+Default threshold: 14 of 16 with no in-scope zero. Teams may change the
+threshold; record the value in the iteration log.

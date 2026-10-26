@@ -35,9 +35,11 @@ Start with the [review guide](references/guide.md).
 9. Check runtime restrictions in the manifest: read-only root filesystem,
    dropped capabilities, `no-new-privileges`, CPU and memory limits, secrets
    from the platform mechanism.
-10. Run or verify Hadolint, SBOM and provenance generation, and an image scan
-    gate ([supply chain](references/supply-chain.md)). Record suppressions
-    with reasons.
+10. Run Hadolint for Dockerfile quality; for shipped images verify the existing
+    image vulnerability gate or adopt the opt-in
+    [Trivy runner](assets/templates/trivy_image_scan.py.template).
+    Follow [supply chain](references/supply-chain.md) for provenance and
+    requirement-driven SBOMs; do not duplicate secret or workflow scanning.
 11. When proposing a new Dockerfile, adapt the
     [Python](assets/templates/Dockerfile.python.template) or
     [Node.js](assets/templates/Dockerfile.node.template) template, the
@@ -57,7 +59,8 @@ Start with the [review guide](references/guide.md).
 - [ ] Exec-form entrypoint; graceful `SIGTERM` shutdown verified.
 - [ ] Health or orchestrator probes defined and tested.
 - [ ] Read-only filesystem, dropped capabilities, resource limits set.
-- [ ] Hadolint clean; SBOM, provenance, and scan gate in CI.
+- [ ] Hadolint clean; shipped images pass a vulnerability gate and have provenance.
+- [ ] SBOM adoption or deferral follows the release inventory requirement.
 
 ## Out of scope
 

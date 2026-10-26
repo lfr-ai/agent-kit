@@ -199,7 +199,11 @@ class HookInputTypeError(TypeError):
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Reject repeated keys, which different parsers resolve differently."""
+    """Reject repeated keys, which different parsers resolve differently.
+
+    Raises:
+        HookInputError: A key is repeated.
+    """
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -307,7 +311,11 @@ def _walk(
     depth: int,
     found: tuple[list[str], list[str]],
 ) -> None:
-    """Collect command and path strings from known keys in nested tool input."""
+    """Collect command and path strings from known keys in nested tool input.
+
+    Raises:
+        HookInputError: The input nests too deeply.
+    """
     if depth > _MAX_DEPTH:
         raise HookInputError(HookInputIssue.NESTING_DEPTH)
     if isinstance(value, (dict, list)):
@@ -318,7 +326,11 @@ def _walk(
 
 
 def _field(payload: dict[str, object], snake: str, camel: str) -> object:
-    """Read a field present in either spelling, rejecting conflicting values."""
+    """Read a field present in either spelling, rejecting conflicting values.
+
+    Raises:
+        HookInputError: Both spellings hold different values.
+    """
     if snake in payload and camel in payload and payload[snake] != payload[camel]:
         raise HookInputError(HookInputIssue.CONFLICTING_FIELD, snake=snake, camel=camel)
     return payload[snake] if snake in payload else payload.get(camel)
@@ -328,8 +340,8 @@ def _tool_name(payload: dict[str, object]) -> str:
     """Return the non-empty tool name in either spelling.
 
     Raises:
-        ValueError: The name fields conflict, or the name is missing or empty.
-        TypeError: A present tool name is not text.
+        HookInputError: The name fields conflict, or the name is missing or empty.
+        HookInputTypeError: A present tool name is not text.
     """
     name = _field(payload, "tool_name", "toolName")
     if "tool_name" not in payload and "toolName" not in payload:
@@ -440,7 +452,11 @@ def render(decision: Decision, runtime: str) -> str | None:
 
 
 def detect_runtime(payload: dict[str, object], requested: str) -> str:
-    """Use the requested runtime, or infer the output shape from payload keys."""
+    """Use the requested runtime, or infer the output shape from payload keys.
+
+    Raises:
+        HookInputError: The runtime cannot be determined.
+    """
     if requested != "auto":
         return requested
     if "toolName" in payload or "toolArgs" in payload:
@@ -621,7 +637,11 @@ def parse_policy(text: str) -> tuple[Policy | None, list[tuple[int, str]]]:
 
 
 def _read_text(path: Path, limit: int) -> str:
-    """Read bounded UTF-8 text, tolerating a byte-order mark."""
+    """Read bounded UTF-8 text, tolerating a byte-order mark.
+
+    Raises:
+        HookInputError: The file exceeds the size limit.
+    """
     with path.open("rb") as handle:
         data = handle.read(limit + 1)
     if len(data) > limit:
@@ -630,7 +650,11 @@ def _read_text(path: Path, limit: int) -> str:
 
 
 def load_policy(path: Path) -> Policy:
-    """Load and validate a policy file, raising PolicyError on any finding."""
+    """Load and validate a policy file, raising PolicyError on any finding.
+
+    Raises:
+        PolicyError: The policy has findings.
+    """
     policy, findings = parse_policy(_read_text(path, _MAX_POLICY_BYTES))
     if policy is None:
         raise PolicyError(findings)
@@ -638,7 +662,11 @@ def load_policy(path: Path) -> Policy:
 
 
 def read_bounded(stream: BinaryIO, limit: int) -> bytes:
-    """Read at most ``limit`` bytes, rejecting larger input instead of truncating it."""
+    """Read at most ``limit`` bytes, rejecting larger input instead of truncating it.
+
+    Raises:
+        HookInputError: The input exceeds ``limit`` bytes.
+    """
     data = stream.read(limit + 1)
     if len(data) > limit:
         raise HookInputError(HookInputIssue.PAYLOAD_SIZE, limit=limit)
@@ -650,7 +678,7 @@ def parse_payload(raw: bytes) -> dict[str, object]:
 
     Raises:
         ValueError: JSON is malformed or contains duplicate keys.
-        TypeError: The decoded payload is not an object.
+        HookInputTypeError: The decoded payload is not an object.
     """
     value = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_pairs)
     if not isinstance(value, dict):

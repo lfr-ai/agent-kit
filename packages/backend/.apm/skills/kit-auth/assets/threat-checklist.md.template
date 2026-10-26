@@ -1,0 +1,59 @@
+# API authentication and authorization threat checklist
+
+Copy into the change record or security review. Answer every line with
+evidence (test name, configuration key, or link); write "n/a" with a reason
+only when the threat cannot apply.
+
+## Context
+
+- API and audience identifier:
+- Authorization server (issuer) and metadata URL:
+- Grant types in use (authorization code with PKCE, client credentials, other):
+- Token format (JWT access token, opaque with introspection):
+- Reviewer and date:
+
+## Token validation
+
+| Threat | Control | Evidence |
+| --- | --- | --- |
+| Unsigned token (`alg: none`) accepted | Algorithm allow-list excludes `none`; header checked before key lookup | |
+| Algorithm confusion (HS256 signed with the public key) | Allow-list contains only asymmetric algorithms; policy constructor rejects others | |
+| Token for another API replayed here | Exact `aud` check against this API's identifier | |
+| Token from another issuer | Exact `iss` check; keys only from that issuer's `jwks_uri` | |
+| Expired or not-yet-valid token | `exp`, `nbf`, `iat` required and checked with bounded leeway | |
+| ID token used as access token | `typ` header `at+jwt` required, or audience differs from client id | |
+| Key rotation breaks validation | JWKS cached with expiry; unknown `kid` triggers one refetch | |
+| JWKS refetch abused for denial of service | Refetch rate bounded; unknown `kid` rejected without repeated fetches | |
+| Key source spoofed | HTTPS `jwks_uri` from issuer metadata, TLS verification on | |
+
+## Authorization
+
+| Threat | Control | Evidence |
+| --- | --- | --- |
+| Broken object level authorization | Every object access checks ownership or tenant, not only the route permission | |
+| Broken function level authorization | Each route declares a `require(Permission)` dependency; default deny | |
+| Unknown roles or scopes grant access | Closed policy ignores unknown values; tests prove it | |
+| Delegated client exceeds user consent | Scopes narrow role permissions for delegated tokens | |
+| Privilege by client-supplied header or body field | Identity comes only from the verified token | |
+
+## Transport and disclosure
+
+| Threat | Control | Evidence |
+| --- | --- | --- |
+| Token leaks through logs | No header, query, or token logging; test asserts absence | |
+| Token in URL | Only the `Authorization` header is accepted | |
+| Wrong status leaks existence | 401 for missing or invalid tokens, 403 for denied, 404 where existence is secret | |
+| Error detail leaks verification internals | Generic 401 detail; reason logged server-side only | |
+| Credentials reflected cross-origin | CORS lists explicit origins; no wildcard with credentials | |
+
+## Testing
+
+- [ ] Locally generated keys; no shared secrets or real tokens in tests.
+- [ ] Negative tests for each validation row above.
+- [ ] 401 and 403 responses include the correct `WWW-Authenticate` parameters.
+- [ ] Authorization matrix test: every role and scope against every permission.
+
+## Decision
+
+- Residual risks accepted, with owner and review date:
+- Follow-up actions:

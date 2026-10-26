@@ -2,7 +2,6 @@
 name: kit-plan-architect
 description: "Check a proposed plan against boundaries and reusable repository capabilities."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Check a plan against boundaries
 

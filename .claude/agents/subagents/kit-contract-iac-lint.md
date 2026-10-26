@@ -2,7 +2,6 @@
 name: kit-contract-iac-lint
 description: "Classify concrete API and infrastructure static-contract findings."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Mission
 Classify static API and infrastructure contract findings precisely, without changing files or deploying anything.

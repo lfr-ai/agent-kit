@@ -1,0 +1,182 @@
+"""Neo4j adapter for the ``PurchaseGraph`` port using the async driver.
+
+Copy to ``shop/infrastructure/graph/purchases.py``. The composition root creates
+the ``AsyncDriver`` once, verifies connectivity, and closes it at shutdown.
+Writes run in managed transactions whose ``MERGE`` statements are idempotent,
+so the driver may retry them safely; reads route to readers and are bounded.
+Driver records never leave this module.
+"""
+
+from collections.abc import Sequence
+from datetime import datetime
+
+from neo4j import AsyncDriver, AsyncManagedTransaction, RoutingControl, unit_of_work
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
+
+from shop.core.purchases import GraphUnavailableError, ProductAffinity, Purchase
+from shop.infrastructure.graph.queries import (
+    COUNT_BY_KIND,
+    CUSTOMER_PRODUCTS,
+    PRODUCTS_BOUGHT_TOGETHER,
+    RECORD_PURCHASES,
+    NodeKind,
+)
+
+_BATCH_SIZE = 1000
+_DEFAULT_LIMIT = 20
+_MAX_LIMIT = 100
+_WRITE_TIMEOUT_SECONDS = 30.0
+_READ_TIMEOUT_SECONDS = 5.0
+_UNAVAILABLE = (ServiceUnavailable, SessionExpired, TransientError)
+
+type _PurchaseRow = dict[str, str | datetime]
+
+
+class Neo4jPurchaseGraph:
+    """Purchase relationships stored in one Neo4j database."""
+
+    def __init__(self, *, driver: AsyncDriver, database: str) -> None:
+        """Bind the adapter to a shared driver and an explicit database.
+
+        Args:
+            driver: Process-wide async driver owned by the composition root.
+            database: Target database name; passing it avoids a home-database lookup.
+        """
+        self._driver = driver
+        self._database = database
+
+    async def record_purchases(self, purchases: Sequence[Purchase]) -> None:
+        """Merge purchases in batches; recording the same purchases twice is a no-op.
+
+        Args:
+            purchases: Purchases to record; an empty sequence does nothing.
+
+        Raises:
+            GraphUnavailableError: If the database stays unreachable after retries.
+        """
+        rows = [_purchase_row(purchase) for purchase in purchases]
+        try:
+            async with self._driver.session(database=self._database) as session:
+                for start in range(0, len(rows), _BATCH_SIZE):
+                    batch = rows[start : start + _BATCH_SIZE]
+                    await session.execute_write(_merge_purchases, batch)
+        except _UNAVAILABLE as error:
+            raise GraphUnavailableError(operation="record_purchases") from error
+
+    async def products_bought_together(
+        self, sku: str, *, limit: int = _DEFAULT_LIMIT
+    ) -> list[ProductAffinity]:
+        """Return products most often bought by customers who bought ``sku``.
+
+        Args:
+            sku: Product to start from.
+            limit: Maximum number of products to return.
+
+        Returns:
+            Products ordered by shared customers, then by SKU.
+
+        Raises:
+            ValueError: If ``limit`` is outside the supported range.
+            GraphUnavailableError: If the database stays unreachable after retries.
+        """
+        _check_limit(limit)
+        try:
+            async with self._driver.session(database=self._database) as session:
+                return await session.execute_read(_bought_together, sku, limit)
+        except _UNAVAILABLE as error:
+            raise GraphUnavailableError(operation="products_bought_together") from error
+
+    async def customer_products(
+        self,
+        customer_id: str,
+        *,
+        after_sku: str | None = None,
+        limit: int = _DEFAULT_LIMIT,
+    ) -> list[str]:
+        """Return one keyset page of SKUs a customer bought, in SKU order.
+
+        Args:
+            customer_id: Customer whose purchases are listed.
+            after_sku: Last SKU of the previous page; ``None`` starts at the beginning.
+            limit: Maximum number of SKUs to return.
+
+        Returns:
+            SKUs greater than ``after_sku``; fewer than ``limit`` means the last page.
+
+        Raises:
+            ValueError: If ``limit`` is outside the supported range.
+            GraphUnavailableError: If the database stays unreachable after retries.
+        """
+        _check_limit(limit)
+        try:
+            records, _, _ = await self._driver.execute_query(
+                CUSTOMER_PRODUCTS,
+                customer_id=customer_id,
+                after_sku=after_sku,
+                limit=limit,
+                database_=self._database,
+                routing_=RoutingControl.READ,
+            )
+        except _UNAVAILABLE as error:
+            raise GraphUnavailableError(operation="customer_products") from error
+        return [str(record["sku"]) for record in records]
+
+    async def count(self, kind: NodeKind) -> int:
+        """Count nodes of an allow-listed kind.
+
+        Args:
+            kind: Node kind; the enum selects a constant query, never a formatted label.
+
+        Returns:
+            Number of nodes with the kind's label.
+
+        Raises:
+            GraphUnavailableError: If the database stays unreachable after retries.
+        """
+        try:
+            records, _, _ = await self._driver.execute_query(
+                COUNT_BY_KIND[kind],
+                database_=self._database,
+                routing_=RoutingControl.READ,
+            )
+        except _UNAVAILABLE as error:
+            raise GraphUnavailableError(operation="count") from error
+        return int(records[0]["total"])
+
+
+def _purchase_row(purchase: Purchase) -> _PurchaseRow:
+    """Map a domain purchase to the parameter map used by ``RECORD_PURCHASES``."""
+    return {
+        "customerId": purchase.customer_id,
+        "sku": purchase.sku,
+        "orderId": purchase.order_id,
+        "purchasedAt": purchase.purchased_at,
+    }
+
+
+def _check_limit(limit: int) -> None:
+    """Reject page sizes the adapter does not serve."""
+    if not 1 <= limit <= _MAX_LIMIT:
+        message = f"limit must be between 1 and {_MAX_LIMIT}, got {limit}"
+        raise ValueError(message)
+
+
+@unit_of_work(timeout=_WRITE_TIMEOUT_SECONDS)
+async def _merge_purchases(
+    tx: AsyncManagedTransaction, rows: list[_PurchaseRow]
+) -> None:
+    """Merge one batch; safe to retry because every write is a keyed ``MERGE``."""
+    result = await tx.run(RECORD_PURCHASES, rows=rows)
+    await result.consume()
+
+
+@unit_of_work(timeout=_READ_TIMEOUT_SECONDS)
+async def _bought_together(
+    tx: AsyncManagedTransaction, sku: str, limit: int
+) -> list[ProductAffinity]:
+    """Run the co-purchase query and map records to domain values inside the transaction."""
+    result = await tx.run(PRODUCTS_BOUGHT_TOGETHER, sku=sku, limit=limit)
+    return [
+        ProductAffinity(sku=str(record["sku"]), together=int(record["together"]))
+        async for record in result
+    ]

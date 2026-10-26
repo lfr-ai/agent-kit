@@ -1,0 +1,40 @@
+# Session handoff
+
+<!-- In-flight state for the next session, agent or host. Write it before you
+stop, compact or switch hosts. Delete it once the work resumes and finishes.
+No transcripts, secrets or personal data. -->
+
+- Written: YYYY-MM-DD
+- Outcome being pursued: one observable result
+- Plan: [plan tracker](plans/topic.md) or "none, single session"
+- Branch or working copy: name only; no remote actions were taken unless listed
+
+## State
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Reproduce the problem | done | `<command>`: failed as expected |
+| Fix the cause | doing | `path/to/file.py` edited, test not yet green |
+| Verify and hand off | todo | |
+
+## Last command and result
+
+- `<exact command>` in `<working directory>`: <exit code and first relevant line>
+
+## Next smallest action
+
+One concrete step, for example "run `<test>` after finishing `<function>`".
+
+## Files touched so far
+
+- `path/to/file`: what changed and why
+
+## Open questions and assumptions
+
+- Assumed: ... (not confirmed with the requester)
+- Unknown: ...
+
+## Durable residue
+
+- Lessons to record: none yet / link to the entry once written
+- Decisions to record: none yet / link to the record once written

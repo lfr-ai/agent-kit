@@ -1,0 +1,153 @@
+"""Rate limiting middleware with a pluggable counter store.
+
+Copy into ``src/shop/api/rate_limit.py``. The in-memory store counts per process,
+so several workers or replicas each allow the full limit; implement
+``RateLimitStore`` over a shared store (for example Redis) before relying on the
+limit for abuse protection. Behind a proxy, configure the server to trust only
+the proxy's forwarded headers so the client address is real.
+"""
+
+import math
+import time
+from collections.abc import Callable, Collection
+from dataclasses import dataclass
+from http import HTTPStatus
+from typing import Protocol
+
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from shop.api.problems import problem_response
+
+_MAX_TRACKED_KEYS = 10_000
+_HEALTH_PATHS = frozenset({"/health/live", "/health/ready"})
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RateDecision:
+    """Outcome of counting one request.
+
+    Attributes:
+        allowed: Whether the request is within the limit.
+        remaining: Requests left in the current window.
+        retry_after_seconds: Seconds until the window resets.
+    """
+
+    allowed: bool
+    remaining: int
+    retry_after_seconds: int
+
+
+class RateLimitStore(Protocol):
+    """Counter backend shared by every worker that enforces one limit."""
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> RateDecision:
+        """Count one request for a key and decide whether it is allowed.
+
+        Args:
+            key: Caller identity, such as a client address or subject.
+            limit: Requests allowed per window.
+            window_seconds: Window length.
+
+        Returns:
+            The decision for this request.
+
+        Raises:
+            OSError: The shared store is unreachable.
+        """
+        ...
+
+
+class InMemoryRateLimitStore:
+    """Fixed-window counters for a single process and event loop."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        """Create an empty store.
+
+        Args:
+            clock: Monotonic seconds source; tests pass a fake.
+        """
+        self._clock = clock
+        self._windows: dict[str, tuple[int, int]] = {}
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> RateDecision:
+        """Count one request; no ``await`` inside keeps the update atomic."""
+        now = self._clock()
+        window = int(now // window_seconds)
+        if len(self._windows) >= _MAX_TRACKED_KEYS:
+            self._windows = {
+                stored: value
+                for stored, value in self._windows.items()
+                if value[0] == window
+            }
+        stored_window, count = self._windows.get(key, (window, 0))
+        count = count + 1 if stored_window == window else 1
+        self._windows[key] = (window, count)
+        reset_in = max(1, math.ceil((window + 1) * window_seconds - now))
+        return RateDecision(
+            allowed=count <= limit,
+            remaining=max(0, limit - count),
+            retry_after_seconds=reset_in,
+        )
+
+
+def client_address_key(scope: Scope) -> str:
+    """Return the client address the server resolved, or a shared bucket.
+
+    Args:
+        scope: ASGI connection scope.
+
+    Returns:
+        A key such as ``ip:203.0.113.7``.
+    """
+    client = scope.get("client")
+    return f"ip:{client[0]}" if client else "ip:unknown"
+
+
+class RateLimitMiddleware:
+    """Return 429 problem details with ``Retry-After`` once a key exceeds its limit."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        store: RateLimitStore,
+        limit: int,
+        window_seconds: int,
+        key_func: Callable[[Scope], str] = client_address_key,
+        exempt_paths: Collection[str] = _HEALTH_PATHS,
+    ) -> None:
+        """Wrap an ASGI application.
+
+        Args:
+            app: Next application in the chain.
+            store: Counter backend.
+            limit: Requests allowed per window and key.
+            window_seconds: Window length.
+            key_func: Derives the caller key from the scope.
+            exempt_paths: Paths never counted, such as health probes.
+        """
+        self._app = app
+        self._store = store
+        self._limit = limit
+        self._window = window_seconds
+        self._key_func = key_func
+        self._exempt = frozenset(exempt_paths)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Count the request and short-circuit when the limit is exceeded."""
+        if scope["type"] != "http" or scope["path"] in self._exempt:
+            await self._app(scope, receive, send)
+            return
+        decision = await self._store.hit(
+            self._key_func(scope), limit=self._limit, window_seconds=self._window
+        )
+        if decision.allowed:
+            await self._app(scope, receive, send)
+            return
+        response = problem_response(
+            status=HTTPStatus.TOO_MANY_REQUESTS,
+            title=HTTPStatus.TOO_MANY_REQUESTS.phrase,
+            detail="Request rate limit exceeded.",
+            headers={"Retry-After": str(decision.retry_after_seconds)},
+        )
+        await response(scope, receive, send)

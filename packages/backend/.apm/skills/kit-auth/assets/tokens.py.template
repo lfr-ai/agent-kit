@@ -1,0 +1,288 @@
+"""Bearer token verification port and a PyJWT adapter with cached JWKS.
+
+Copy into ``src/shop/auth/tokens.py``. Requires ``PyJWT[crypto]``. The adapter
+accepts only the asymmetric algorithms configured in ``JwtPolicy``, checks the
+header before fetching keys, and validates issuer, audience, lifetime, and
+required claims. Key fetching is blocking, so call ``verify`` from a sync
+dependency (FastAPI runs it in a worker thread).
+"""
+
+import threading
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol, runtime_checkable
+
+import jwt
+from jwt import PyJWK, PyJWKClient
+from jwt.exceptions import (
+    ExpiredSignatureError,
+    ImmatureSignatureError,
+    InvalidAudienceError,
+    InvalidIssuerError,
+    InvalidSignatureError,
+    InvalidTokenError,
+    MissingRequiredClaimError,
+    PyJWKClientConnectionError,
+    PyJWKClientError,
+)
+
+from shop.auth.policy import ClaimsError, Principal, principal_from_claims
+
+ASYMMETRIC_ALGORITHMS = frozenset(
+    {
+        "RS256",
+        "RS384",
+        "RS512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "EdDSA",
+    }
+)
+_MAX_LEEWAY_SECONDS = 120
+_DEFAULT_LEEWAY_SECONDS = 30
+_DEFAULT_JWKS_LIFESPAN_SECONDS = 300
+_DEFAULT_JWKS_TIMEOUT_SECONDS = 5
+_MIN_REFRESH_INTERVAL_SECONDS = 60.0
+_REQUIRED_CLAIMS = ("exp", "iat", "iss", "aud", "sub")
+
+
+class RejectionReason(StrEnum):
+    """Why a token was rejected; safe to log, never shown with the token."""
+
+    MALFORMED = "malformed"
+    UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
+    WRONG_TYPE = "wrong_type"
+    UNKNOWN_KEY = "unknown_key"
+    BAD_SIGNATURE = "bad_signature"
+    EXPIRED = "expired"
+    NOT_YET_VALID = "not_yet_valid"
+    WRONG_ISSUER = "wrong_issuer"
+    WRONG_AUDIENCE = "wrong_audience"
+    MISSING_CLAIM = "missing_claim"
+    KEYS_UNAVAILABLE = "keys_unavailable"
+
+
+class TokenRejectedError(Exception):
+    """A bearer token failed verification."""
+
+    def __init__(self, reason: RejectionReason) -> None:
+        """Record the reason without any token content.
+
+        Args:
+            reason: Classified rejection reason.
+        """
+        super().__init__(f"token rejected: {reason}")
+        self.reason = reason
+
+
+class PolicyError(ValueError):
+    """The verification policy itself is unsafe or incomplete."""
+
+
+@runtime_checkable
+class TokenVerifier(Protocol):
+    """Port: turn a raw bearer token into a verified principal."""
+
+    def verify(self, token: str) -> Principal:
+        """Verify a token.
+
+        Args:
+            token: Raw bearer token.
+
+        Returns:
+            The verified principal.
+
+        Raises:
+            TokenRejectedError: The token is invalid for this API.
+        """
+        ...
+
+
+class SigningKeyResolver(Protocol):
+    """Port: find the public key that signed a token."""
+
+    def key_for(self, token: str) -> PyJWK:
+        """Return the signing key named by the token's ``kid``.
+
+        Args:
+            token: Raw token whose header names the key.
+
+        Returns:
+            The matching public key.
+
+        Raises:
+            PyJWKClientError: No key matches, or keys cannot be fetched.
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class JwtPolicy:
+    """What this API accepts, configured next to the key source.
+
+    Attributes:
+        issuer: Exact expected ``iss``.
+        audience: Expected ``aud`` value identifying this API.
+        algorithms: Allowed asymmetric ``alg`` values.
+        leeway_seconds: Clock skew tolerated for ``exp``, ``nbf``, and ``iat``.
+        token_type: Expected ``typ`` header such as ``at+jwt`` (RFC 9068), or
+            ``None`` when the issuer does not set it.
+        required_claims: Claims that must be present.
+    """
+
+    issuer: str
+    audience: str
+    algorithms: frozenset[str]
+    leeway_seconds: int = _DEFAULT_LEEWAY_SECONDS
+    token_type: str | None = "at+jwt"
+    required_claims: tuple[str, ...] = _REQUIRED_CLAIMS
+
+    def __post_init__(self) -> None:
+        """Reject policies that enable algorithm confusion or unbounded skew.
+
+        Raises:
+            PolicyError: The policy is unsafe.
+        """
+        if not self.algorithms or not self.algorithms <= ASYMMETRIC_ALGORITHMS:
+            msg = f"algorithms must be a non-empty subset of {sorted(ASYMMETRIC_ALGORITHMS)}"
+            raise PolicyError(msg)
+        if not 0 <= self.leeway_seconds <= _MAX_LEEWAY_SECONDS:
+            msg = f"leeway_seconds must be between 0 and {_MAX_LEEWAY_SECONDS}"
+            raise PolicyError(msg)
+        if not self.issuer or not self.audience:
+            msg = "issuer and audience are required"
+            raise PolicyError(msg)
+
+
+class JwksKeyResolver:
+    """Cache the issuer's JWKS and bound refetches triggered by unknown ``kid`` values."""
+
+    def __init__(
+        self,
+        jwks_url: str,
+        *,
+        cache_seconds: int = _DEFAULT_JWKS_LIFESPAN_SECONDS,
+        timeout_seconds: int = _DEFAULT_JWKS_TIMEOUT_SECONDS,
+        min_refresh_seconds: float = _MIN_REFRESH_INTERVAL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Create a resolver for one issuer.
+
+        Args:
+            jwks_url: HTTPS ``jwks_uri`` from the issuer's metadata.
+            cache_seconds: How long a fetched key set is reused.
+            timeout_seconds: Network timeout for one fetch.
+            min_refresh_seconds: Shortest interval between forced refetches,
+                so random ``kid`` values cannot flood the issuer.
+            clock: Monotonic seconds source; tests pass a fake.
+        """
+        self._client = PyJWKClient(
+            jwks_url,
+            cache_jwk_set=True,
+            lifespan=cache_seconds,
+            timeout=timeout_seconds,
+        )
+        self._min_refresh = min_refresh_seconds
+        self._clock = clock
+        self._last_refresh = -min_refresh_seconds
+        self._lock = threading.Lock()
+
+    def key_for(self, token: str) -> PyJWK:
+        """Return the key for the token's ``kid``, refetching at most once per interval."""
+        kid = jwt.get_unverified_header(token).get("kid")
+        if not isinstance(kid, str):
+            msg = "token header has no kid"
+            raise PyJWKClientError(msg)
+        key = self._find(kid, refresh=False)
+        if key is None:
+            with self._lock:
+                now = self._clock()
+                if now - self._last_refresh >= self._min_refresh:
+                    self._last_refresh = now
+                    key = self._find(kid, refresh=True)
+        if key is None:
+            msg = "no signing key matches the token kid"
+            raise PyJWKClientError(msg)
+        return key
+
+    def _find(self, kid: str, *, refresh: bool) -> PyJWK | None:
+        """Look up a signing key in the cached or refreshed key set."""
+        keys = self._client.get_signing_keys(refresh=refresh)
+        return next((key for key in keys if key.key_id == kid), None)
+
+
+class PyJwtVerifier:
+    """``TokenVerifier`` adapter for RFC 9068 style JWT access tokens."""
+
+    def __init__(self, *, policy: JwtPolicy, keys: SigningKeyResolver) -> None:
+        """Bind a policy to a key source.
+
+        Args:
+            policy: Accepted issuer, audience, algorithms, and claims.
+            keys: Public key resolver for the issuer.
+        """
+        self._policy = policy
+        self._keys = keys
+
+    def verify(self, token: str) -> Principal:
+        """Verify header, signature, and claims, then build the principal."""
+        self._check_header(token)
+        try:
+            key = self._keys.key_for(token)
+        except PyJWKClientConnectionError as error:
+            raise TokenRejectedError(RejectionReason.KEYS_UNAVAILABLE) from error
+        except (PyJWKClientError, InvalidTokenError) as error:
+            raise TokenRejectedError(RejectionReason.UNKNOWN_KEY) from error
+        claims = self._decode(token, key)
+        try:
+            return principal_from_claims(claims)
+        except ClaimsError as error:
+            raise TokenRejectedError(RejectionReason.MISSING_CLAIM) from error
+
+    def _check_header(self, token: str) -> None:
+        """Reject tokens whose ``alg`` or ``typ`` is not allowed, before key lookup."""
+        try:
+            header = jwt.get_unverified_header(token)
+        except InvalidTokenError as error:
+            raise TokenRejectedError(RejectionReason.MALFORMED) from error
+        if header.get("alg") not in self._policy.algorithms:
+            raise TokenRejectedError(RejectionReason.UNSUPPORTED_ALGORITHM)
+        expected = self._policy.token_type
+        if expected is not None and str(header.get("typ", "")).lower() not in {
+            expected,
+            f"application/{expected}",
+        }:
+            raise TokenRejectedError(RejectionReason.WRONG_TYPE)
+
+    def _decode(self, token: str, key: PyJWK) -> Mapping[str, object]:
+        """Verify the signature and registered claims with the fixed policy."""
+        try:
+            return jwt.decode(
+                token,
+                key=key,
+                algorithms=sorted(self._policy.algorithms),
+                audience=self._policy.audience,
+                issuer=self._policy.issuer,
+                leeway=self._policy.leeway_seconds,
+                options={"require": list(self._policy.required_claims)},
+            )
+        except ExpiredSignatureError as error:
+            raise TokenRejectedError(RejectionReason.EXPIRED) from error
+        except ImmatureSignatureError as error:
+            raise TokenRejectedError(RejectionReason.NOT_YET_VALID) from error
+        except InvalidAudienceError as error:
+            raise TokenRejectedError(RejectionReason.WRONG_AUDIENCE) from error
+        except InvalidIssuerError as error:
+            raise TokenRejectedError(RejectionReason.WRONG_ISSUER) from error
+        except MissingRequiredClaimError as error:
+            raise TokenRejectedError(RejectionReason.MISSING_CLAIM) from error
+        except InvalidSignatureError as error:
+            raise TokenRejectedError(RejectionReason.BAD_SIGNATURE) from error
+        except InvalidTokenError as error:
+            raise TokenRejectedError(RejectionReason.MALFORMED) from error

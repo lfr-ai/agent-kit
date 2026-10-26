@@ -236,6 +236,16 @@ def test_worktree_execution_stops_at_first_failure(tmp_path: Path) -> None:
     assert all(isinstance(command, tuple) for command in calls)
 
 
+def _freshness_main() -> Callable[[list[str]], int]:
+    """Return the canonical memory checker in its lenient freshness mode."""
+    main = _main(_load("kit-project-memory", "check_memory_files.py"))
+
+    def invoke(arguments: list[str]) -> int:
+        return main([*arguments, "--freshness-only"])
+
+    return invoke
+
+
 def test_memory_freshness_flags_stale_future_and_broken_links(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -249,7 +259,7 @@ def test_memory_freshness_flags_stale_future_and_broken_links(
         "## 2023-01-01 Retired\n\n- Status: superseded\n\n"
         "## 2026-12-31 Future lesson\n\n[outside](../../elsewhere.md)\n",
     )
-    main = _main(_load("kit-context-onboarding", "check_memory_freshness.py"))
+    main = _freshness_main()
     args = [str(memory), "--root", str(tmp_path), "--today", "2026-02-01"]
     assert main([*args, "--max-age-days", "90"]) == 1
     lines = capsys.readouterr().out.splitlines()
@@ -268,7 +278,7 @@ def test_memory_freshness_flags_stale_future_and_broken_links(
 def test_memory_freshness_passes_fresh_directory(tmp_path: Path) -> None:
     _write(tmp_path / "memories/a.md", "## 2026-01-20 Recent\n\nNo links.\n")
     _write(tmp_path / "memories/nested/b.md", "# Notes without dates\n")
-    main = _main(_load("kit-context-onboarding", "check_memory_freshness.py"))
+    main = _freshness_main()
     args = [
         str(tmp_path / "memories"),
         "--root",
@@ -281,7 +291,7 @@ def test_memory_freshness_passes_fresh_directory(tmp_path: Path) -> None:
 
 
 def test_memory_freshness_missing_path_is_an_error(tmp_path: Path) -> None:
-    main = _main(_load("kit-context-onboarding", "check_memory_freshness.py"))
+    main = _freshness_main()
     assert main([str(tmp_path / "absent"), "--today", "2026-02-01"]) == 2
 
 

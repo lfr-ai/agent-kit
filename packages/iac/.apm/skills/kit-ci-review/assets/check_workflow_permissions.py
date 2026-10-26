@@ -259,7 +259,7 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
         Sorted, de-duplicated file list.
 
     Raises:
-        ValueError: If a path does not exist.
+        WorkflowInputError: If a path does not exist.
     """
     files: set[Path] = set()
     for path in paths:
@@ -298,7 +298,11 @@ class SelfTestError(AssertionError):
 
 
 def self_test() -> None:
-    """Exercise passing and failing synthetic workflows without touching disk."""
+    """Exercise passing and failing synthetic workflows without touching disk.
+
+    Raises:
+        SelfTestError: A synthetic workflow is misjudged.
+    """
     options = Options(
         trusted_owners=frozenset({"trusted-org"}),
         allowed_expressions=("runner.",),

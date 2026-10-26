@@ -1,0 +1,17 @@
+# Grafana dashboard provider. Copy to
+# grafana/provisioning/dashboards/services.yaml (mounted at
+# /etc/grafana/provisioning/dashboards) and put dashboard JSON files from
+# version control in grafana/dashboards. UI edits are refused so the files
+# stay the single source; change a dashboard through review.
+apiVersion: 1
+providers:
+  - name: service-dashboards
+    orgId: 1
+    folder: Services
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

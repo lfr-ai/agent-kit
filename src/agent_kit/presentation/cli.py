@@ -130,7 +130,7 @@ def _context(actions: CliActions) -> int:
             "additionalContext": text,
         },
     }
-    print(json.dumps(response, ensure_ascii=False))
+    print(json.dumps(response, ensure_ascii=True))
     return 0
 
 
@@ -138,7 +138,7 @@ def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
     """Validate the source catalog and print a text or JSON report."""
     report = actions.check(arguments.root or actions.default_root())
     if arguments.json:
-        print(json.dumps(_report_dict(report), indent=_JSON_INDENT, ensure_ascii=False))
+        print(json.dumps(_report_dict(report), indent=_JSON_INDENT, ensure_ascii=True))
     elif report.valid:
         print(f"source catalog valid: {report.version}")
     else:

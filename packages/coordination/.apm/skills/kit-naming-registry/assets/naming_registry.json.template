@@ -1,0 +1,72 @@
+{
+  "$schema": "./naming_registry.schema.json",
+  "version": "1.1.0",
+  "groups": [
+    {
+      "name": "Route",
+      "kind": "route",
+      "description": "API paths shared by the server router and the client.",
+      "entries": [
+        { "name": "ORDERS", "value": "/api/v1/orders" },
+        { "name": "ORDER_DETAIL", "value": "/api/v1/orders/{order_id}" }
+      ]
+    },
+    {
+      "name": "QueryKey",
+      "kind": "query_key",
+      "description": "Root keys for client-side server-state caches.",
+      "entries": [
+        { "name": "ORDERS_LIST", "value": "orders.list" },
+        { "name": "ORDER_DETAIL", "value": "orders.detail" }
+      ]
+    },
+    {
+      "name": "EventName",
+      "kind": "event",
+      "description": "Domain and realtime event names as entity.past_tense_verb.",
+      "entries": [
+        { "name": "ORDER_CREATED", "value": "order.created" },
+        { "name": "ORDER_CANCELLED", "value": "order.cancelled" }
+      ]
+    },
+    {
+      "name": "OrderStatus",
+      "kind": "enum",
+      "description": "Lifecycle status of an order.",
+      "entries": [
+        { "name": "PENDING", "value": "pending" },
+        { "name": "PAID", "value": "paid" },
+        { "name": "CANCELLED", "value": "cancelled" },
+        {
+          "name": "VOIDED",
+          "value": "voided",
+          "description": "Former name for a cancelled order.",
+          "deprecated": {
+            "since": "1.1.0",
+            "replacement": "CANCELLED",
+            "reason": "Merged into cancelled.",
+            "remove_after": "2.0.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ErrorCode",
+      "kind": "error_code",
+      "description": "Stable problem-detail codes the client maps to messages.",
+      "entries": [
+        { "name": "ORDER_NOT_FOUND", "value": "order_not_found" },
+        { "name": "ORDER_ALREADY_PAID", "value": "order_already_paid" }
+      ]
+    },
+    {
+      "name": "OrderField",
+      "kind": "field",
+      "description": "Wire field names used in filters, sorting, and error pointers.",
+      "entries": [
+        { "name": "CREATED_AT", "value": "created_at" },
+        { "name": "TOTAL_AMOUNT", "value": "total_amount" }
+      ]
+    }
+  ]
+}

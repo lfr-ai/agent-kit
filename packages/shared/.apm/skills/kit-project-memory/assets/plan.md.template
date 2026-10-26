@@ -1,0 +1,37 @@
+# Plan: short goal title
+
+- Status: active
+- Started: YYYY-MM-DD
+- Design: [change plan](../path/to/change-plan.md) (slices, risks and rollback live there)
+- Owner role: coordinator or team role, not a person's contact details
+- Last updated: YYYY-MM-DD
+
+## Goal and acceptance checks
+
+1. Observable result, proved by `<exact command or test name>`.
+2. Failure path, proved by `<exact command or test name>`.
+
+## Tasks
+
+| Id | Task | Status | Owner role | Depends on | Evidence when done |
+| --- | --- | --- | --- | --- | --- |
+| T1 | Tracer slice end to end | todo | implementer | none | `<command>`: result |
+| T2 | Next slice by risk | todo | implementer | T1 | |
+
+Status values: todo, doing, blocked, done, dropped. A blocked task names its
+blocker below; a dropped task names why.
+
+## Blockers and open questions
+
+- T?: what blocks it, what evidence shows it, who can unblock it (role).
+
+## Decisions taken while executing
+
+- YYYY-MM-DD: short decision; move it to a decision record if it is costly to
+  reverse or affects other components.
+
+## Close-out
+
+- [ ] Every acceptance check passed after the last change.
+- [ ] Durable decisions moved to records; lessons moved to the lessons file.
+- [ ] Session handoff deleted; this plan marked `Status: done` or archived.

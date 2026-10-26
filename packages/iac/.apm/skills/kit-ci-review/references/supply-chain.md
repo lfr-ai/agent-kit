@@ -53,8 +53,9 @@ and runner that produced it, signed with a short-lived Sigstore certificate.
   (or `--owner`), optionally constraining the signer workflow.
 - Attestations prove where and how an artifact was built. They do not prove
   the source was safe; combine them with review and dependency scanning.
-- For SBOMs, generate the document during the build and attest it with the
-  SBOM attestation action so the SBOM is bound to the same digest.
+- Adopt SBOM generation only for an explicit inventory requirement, following
+  `kit-supply-chain`. When adopted, generate it during the build and attest it
+  to the same released digest; build provenance remains a separate control.
 
 ## Dependency review and audits
 

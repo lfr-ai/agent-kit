@@ -1,0 +1,56 @@
+# Assignment package: <task id> <one-line outcome>
+
+<!-- Self-contained: the worker may not see the coordinator's conversation.
+Link files instead of pasting them. Workers never start other workers. -->
+
+## Outcome
+
+<One observable result and why it matters, in two sentences.>
+
+## Read first (do not edit)
+
+- `<path>`: <why it matters>
+- Skills to load: `<skill id>`; do not load: `<skill ids that look related but are not needed>`
+
+## Owned paths
+
+- `<path or folder>`
+- Test file: `<path>`
+
+Everything else is read-only. Request changes to shared files from the
+coordinator in the handoff instead of editing them.
+
+## Forbidden actions
+
+- Editing paths outside the owned list, generated outputs, lockfiles or registries.
+- Remote, publication, deployment, credential or user-global changes.
+- Installing or upgrading dependencies; network access in tests.
+- Weakening checks, thresholds or assertions to pass.
+- Starting other workers or relaunching this assignment.
+
+## Acceptance checks
+
+1. <Behavior>, proved by `<exact command>`.
+2. <Failure path>, proved by `<exact command>`.
+3. Lint and format of owned files: `<exact command>`.
+
+## Context budget
+
+- Read at most the files above plus the ones they link that the task needs.
+- Return a handoff under <N> lines; no transcripts or full logs.
+
+## Stop condition
+
+Stop when every acceptance check passes after your last edit and the handoff
+is written, or when blocked: then stop and report the blocker with evidence.
+
+## Handoff format
+
+Return Markdown with these headings, in this order (validated by
+`check_handoff.py`):
+
+1. `## Changed paths`: every created, modified or deleted path, from the diff.
+2. `## Evidence`: each command in backticks with its result on the same line.
+3. `## Limitations`: what was not verified, assumptions, follow-ups.
+
+Optional: `## Requests for the coordinator` for shared-file changes.

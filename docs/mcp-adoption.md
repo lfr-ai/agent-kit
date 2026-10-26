@@ -56,4 +56,4 @@ provider OAuth grant through that provider's account settings.
 - [GitHub remote MCP configuration and read-only headers](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md)
 - [Context7 client configuration and OAuth](https://context7.com/docs/resources/all-clients)
 - [Microsoft Learn MCP server](https://github.com/MicrosoftDocs/mcp)
-- [APM MCP dependencies](https://github.com/microsoft/apm/blob/v0.33.0/docs/src/content/docs/producer/author-primitives/mcp-as-primitive.md)
+- [APM MCP dependencies](https://microsoft.github.io/apm/producer/author-primitives/mcp-as-primitive/)

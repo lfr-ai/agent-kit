@@ -1,0 +1,245 @@
+"""Token verification and authorization tests with locally generated keys.
+
+Copy into ``tests/auth/test_auth.py``. Requires ``PyJWT[crypto]``, ``httpx``,
+and ``fastapi``. Keys are generated per test session and never leave memory;
+no network, issuer, or real token is involved.
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import time
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+
+import jwt
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+from jwt import PyJWK, PyJWKClientError
+from jwt.algorithms import RSAAlgorithm
+from typing import Annotated
+
+from shop.auth.policy import (
+    Permission,
+    Principal,
+    Role,
+    is_allowed,
+    principal_from_claims,
+)
+from shop.auth.security import require
+from shop.auth.tokens import (
+    JwtPolicy,
+    PolicyError,
+    PyJwtVerifier,
+    RejectionReason,
+    TokenRejectedError,
+)
+
+ISSUER = "https://issuer.example.test"
+AUDIENCE = "https://api.example.test"
+KID = "test-key-1"
+
+
+@pytest.fixture(scope="session")
+def private_key() -> rsa.RSAPrivateKey:
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class StaticKeys:
+    def __init__(self, keys: dict[str, PyJWK]) -> None:
+        self._keys = keys
+
+    def key_for(self, token: str) -> PyJWK:
+        kid = jwt.get_unverified_header(token).get("kid")
+        if kid not in self._keys:
+            raise PyJWKClientError(f"no key for kid {kid!r}")
+        return self._keys[kid]
+
+
+@pytest.fixture
+def verifier(private_key: rsa.RSAPrivateKey) -> PyJwtVerifier:
+    public_jwk = RSAAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
+    public_jwk |= {"kid": KID, "alg": "RS256", "use": "sig"}
+    policy = JwtPolicy(
+        issuer=ISSUER, audience=AUDIENCE, algorithms=frozenset({"RS256"})
+    )
+    return PyJwtVerifier(
+        policy=policy, keys=StaticKeys({KID: PyJWK.from_dict(public_jwk)})
+    )
+
+
+def claims(**overrides: object) -> dict[str, object]:
+    now = int(time.time())
+    base: dict[str, object] = {
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "sub": "user-123",
+        "iat": now,
+        "exp": now + 300,
+        "roles": ["viewer"],
+        "scope": "items.read",
+    }
+    return {
+        key: value for key, value in (base | overrides).items() if value is not None
+    }
+
+
+def sign(
+    private_key: rsa.RSAPrivateKey, payload: dict[str, object], **header: str
+) -> str:
+    headers = {"kid": KID, "typ": "at+jwt"} | header
+    return jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
+
+
+def b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def test_valid_token_yields_principal(
+    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+) -> None:
+    principal = verifier.verify(sign(private_key, claims()))
+    assert principal.subject == "user-123"
+    assert principal.roles == frozenset({Role.VIEWER})
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"exp": int(time.time()) - 120}, RejectionReason.EXPIRED),
+        ({"nbf": int(time.time()) + 600}, RejectionReason.NOT_YET_VALID),
+        ({"aud": "https://other.example.test"}, RejectionReason.WRONG_AUDIENCE),
+        ({"iss": "https://evil.example.test"}, RejectionReason.WRONG_ISSUER),
+        ({"exp": None}, RejectionReason.MISSING_CLAIM),
+    ],
+)
+def test_registered_claims_are_enforced(
+    private_key: rsa.RSAPrivateKey,
+    verifier: PyJwtVerifier,
+    overrides: dict[str, object],
+    reason: RejectionReason,
+) -> None:
+    with pytest.raises(TokenRejectedError) as error:
+        verifier.verify(sign(private_key, claims(**overrides)))
+    assert error.value.reason is reason
+
+
+def test_leeway_accepts_small_clock_skew(
+    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+) -> None:
+    token = sign(private_key, claims(exp=int(time.time()) - 5))
+    assert verifier.verify(token).subject == "user-123"
+
+
+def test_alg_none_is_rejected(verifier: PyJwtVerifier) -> None:
+    unsigned = ".".join(
+        [
+            b64(json.dumps({"alg": "none", "typ": "at+jwt"}).encode()),
+            b64(json.dumps(claims()).encode()),
+            "",
+        ]
+    )
+    with pytest.raises(TokenRejectedError) as error:
+        verifier.verify(unsigned)
+    assert error.value.reason is RejectionReason.UNSUPPORTED_ALGORITHM
+
+
+def test_hmac_signed_with_public_key_is_rejected(
+    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+) -> None:
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    signing_input = ".".join(
+        [
+            b64(json.dumps({"alg": "HS256", "kid": KID, "typ": "at+jwt"}).encode()),
+            b64(json.dumps(claims()).encode()),
+        ]
+    )
+    signature = hmac.new(public_pem, signing_input.encode(), hashlib.sha256).digest()
+    with pytest.raises(TokenRejectedError) as error:
+        verifier.verify(f"{signing_input}.{b64(signature)}")
+    assert error.value.reason is RejectionReason.UNSUPPORTED_ALGORITHM
+
+
+def test_unknown_kid_and_tampered_signature(
+    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+) -> None:
+    with pytest.raises(TokenRejectedError) as unknown:
+        verifier.verify(sign(private_key, claims(), kid="rotated-away"))
+    assert unknown.value.reason is RejectionReason.UNKNOWN_KEY
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    with pytest.raises(TokenRejectedError) as forged:
+        verifier.verify(sign(other, claims()))
+    assert forged.value.reason is RejectionReason.BAD_SIGNATURE
+
+
+def test_wrong_token_type_is_rejected(
+    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+) -> None:
+    with pytest.raises(TokenRejectedError) as error:
+        verifier.verify(sign(private_key, claims(), typ="JWT"))
+    assert error.value.reason is RejectionReason.WRONG_TYPE
+
+
+@pytest.mark.parametrize(
+    "algorithms", [frozenset(), frozenset({"HS256"}), frozenset({"none"})]
+)
+def test_policy_rejects_unsafe_algorithms(algorithms: frozenset[str]) -> None:
+    with pytest.raises(PolicyError):
+        JwtPolicy(issuer=ISSUER, audience=AUDIENCE, algorithms=algorithms)
+
+
+def test_scopes_narrow_roles_and_unknown_values_grant_nothing() -> None:
+    editor = principal_from_claims(
+        {"sub": "u", "roles": ["editor", "root"], "scope": "items.read"}
+    )
+    assert is_allowed(editor, Permission.ITEMS_READ)
+    assert not is_allowed(editor, Permission.ITEMS_WRITE)
+    service = principal_from_claims({"sub": "svc", "roles": ["editor"]})
+    assert is_allowed(service, Permission.ITEMS_WRITE)
+    assert not is_allowed(principal_from_claims({"sub": "u"}), Permission.ITEMS_READ)
+
+
+@pytest.fixture
+def client(verifier: PyJwtVerifier) -> Iterator[TestClient]:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, PyJwtVerifier]]:
+        yield {"token_verifier": verifier}
+
+    app = FastAPI(lifespan=lifespan)
+    Writer = Annotated[Principal, Depends(require(Permission.ITEMS_WRITE))]
+
+    @app.post("/items")
+    async def create(principal: Writer) -> dict[str, str]:
+        return {"by": principal.subject}
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_http_semantics_401_and_403(
+    private_key: rsa.RSAPrivateKey, client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    missing = client.post("/items")
+    assert missing.status_code == 401
+    assert missing.headers["WWW-Authenticate"].startswith("Bearer")
+    invalid = client.post("/items", headers={"Authorization": "Bearer not-a-jwt"})
+    assert invalid.status_code == 401
+    assert 'error="invalid_token"' in invalid.headers["WWW-Authenticate"]
+    reader = sign(private_key, claims())
+    forbidden = client.post("/items", headers={"Authorization": f"Bearer {reader}"})
+    assert forbidden.status_code == 403
+    assert 'error="insufficient_scope"' in forbidden.headers["WWW-Authenticate"]
+    writer = sign(private_key, claims(roles=["editor"], scope="items.write"))
+    assert (
+        client.post("/items", headers={"Authorization": f"Bearer {writer}"}).status_code
+        == 200
+    )
+    assert reader not in caplog.text and "not-a-jwt" not in caplog.text

@@ -2,7 +2,6 @@
 name: kit-solid-review
 description: "Identify concrete coupling and dependency-direction defects."
 tools: "Read, Grep, Glob"
-model: "haiku"
 ---
 # Review coupling and dependency direction
 

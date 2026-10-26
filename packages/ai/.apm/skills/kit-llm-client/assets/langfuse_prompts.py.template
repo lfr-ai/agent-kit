@@ -1,0 +1,154 @@
+"""Restricted Langfuse adapter. Copy to ``llm/adapters/langfuse_prompts.py``.
+
+The injected SDK facade exposes only chat retrieval. Store a static system
+message and a dollar-style user template; native Langfuse interpolation,
+references, tools, and message placeholders are intentionally unsupported.
+"""
+
+from dataclasses import dataclass
+import string
+from typing import Literal, Protocol, final
+
+from llm.managed_prompts import (
+    ManagedPromptError,
+    ManagedPromptUnavailable,
+    PromptSelection,
+)
+from llm.port import PromptTemplate
+
+_SUPPORTED_MESSAGE_COUNT = 2
+_MESSAGE_KEYS = {"role", "content"}
+_UNSUPPORTED_NATIVE_MARKERS = ("{{", "}}", "@@@langfusePrompt:")
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SdkChatPrompt:
+    """SDK projection returned by the consumer's thin facade.
+
+    Attributes:
+        name (str): SDK prompt name.
+        version (int): Actual SDK prompt version.
+        prompt (list[dict[str, str]]): Raw chat messages, not compiled output.
+    """
+
+    name: str
+    version: int
+    prompt: list[dict[str, str]]
+
+
+class PromptSdk(Protocol):
+    """Narrow facade; SDK imports and error classes belong in the adapter."""
+
+    def get_prompt(
+        self,
+        name: str,
+        *,
+        version: int | None,
+        label: str | None,
+        type: Literal["chat"],
+        cache_ttl_seconds: int,
+    ) -> SdkChatPrompt:
+        """Project SDK fields after chat retrieval, without SDK fallback.
+
+        Args:
+            name (str): Reviewed prompt identifier.
+            version (int | None): Exact version, exclusive with label.
+            label (str | None): Explicit rollout pointer, exclusive with version.
+            type (Literal["chat"]): Only chat prompts are supported.
+            cache_ttl_seconds (int): SDK cache TTL; zero disables the cache.
+
+        Returns:
+            SdkChatPrompt: Projection of name, version, and raw chat prompt.
+        """
+        ...
+
+
+@final
+class LangfusePromptSource:
+    """Fetch prompts without leaking SDK exception bodies or adding retries."""
+
+    def __init__(
+        self,
+        *,
+        sdk: PromptSdk,
+        fetch_errors: tuple[type[Exception], ...],
+        cache_ttl_seconds: int,
+    ) -> None:
+        """Configure the adapter explicitly.
+
+        Args:
+            sdk (PromptSdk): Consumer facade around its pinned SDK client.
+            fetch_errors (tuple[type[Exception], ...]): Concrete SDK fetch failures;
+                do not supply broad base exception classes.
+            cache_ttl_seconds (int): Required consumer-owned cache TTL in seconds;
+                must be a nonnegative integer, not a boolean.
+        """
+        if (
+            type(cache_ttl_seconds) is not int
+            or cache_ttl_seconds < 0
+            or not fetch_errors
+            or Exception in fetch_errors
+            or BaseException in fetch_errors
+        ):
+            raise ManagedPromptError("managed prompt adapter configuration is invalid")
+        self._sdk = sdk
+        self._fetch_errors = fetch_errors
+        self._cache_ttl_seconds = cache_ttl_seconds
+
+    def fetch(self, selection: PromptSelection) -> PromptTemplate:
+        """Resolve the selector through the SDK and validate the supported shape.
+
+        Args:
+            selection (PromptSelection): Reviewed version or label selector.
+
+        Returns:
+            PromptTemplate: Existing port template with resolved numeric version.
+
+        Raises:
+            ManagedPromptError: Unsupported prompt or a normalized fetch failure.
+        """
+        try:
+            prompt = self._sdk.get_prompt(
+                selection.name,
+                version=selection.version,
+                label=selection.label,
+                type="chat",
+                cache_ttl_seconds=self._cache_ttl_seconds,
+            )
+        except self._fetch_errors:
+            # Suppress SDK context in formatted tracebacks; never export locals.
+            raise ManagedPromptUnavailable("managed prompt fetch failed") from None
+        return _project_template(prompt)
+
+
+def _project_template(prompt: SdkChatPrompt) -> PromptTemplate:
+    if len(prompt.prompt) != _SUPPORTED_MESSAGE_COUNT:
+        raise ManagedPromptError("managed prompt shape is unsupported")
+    system, user = prompt.prompt
+    if (
+        set(system) != _MESSAGE_KEYS
+        or set(user) != _MESSAGE_KEYS
+        or system["role"] != "system"
+        or user["role"] != "user"
+    ):
+        raise ManagedPromptError("managed prompt shape is unsupported")
+    contents = (system["content"], user["content"])
+    if any(
+        marker in text for text in contents for marker in _UNSUPPORTED_NATIVE_MARKERS
+    ):
+        raise ManagedPromptError("native prompt interpolation is unsupported")
+    if not string.Template(user["content"]).is_valid():
+        raise ManagedPromptError("managed prompt variables are invalid")
+    return PromptTemplate(
+        name=prompt.name,
+        version=_version_string(prompt.version),
+        system=system["content"],
+        user=user["content"],
+    )
+
+
+def _version_string(version: object) -> str:
+    if type(version) is not int or version <= 0:
+        raise ManagedPromptError("managed prompt identity is invalid")
+    return str(version)

@@ -1,0 +1,69 @@
+"""Adapt an approved DSPy-style question/answer program to the local harness.
+
+Copy beside the harness in ``evals/dspy_task.py``. SDK initialization, model
+credentials, optimization and artifact loading remain consumer-owned.
+"""
+
+from dataclasses import dataclass
+from typing import Protocol, final
+
+from evals.harness import EvalCase
+
+
+class AnswerPrediction(Protocol):
+    """Prediction boundary exposing an answer that must be validated."""
+
+    @property
+    def answer(self) -> object:
+        """Return the program's untrusted answer field."""
+        ...
+
+
+class AnswerProgram(Protocol):
+    """Program accepting only the case input, never its reference answer."""
+
+    def __call__(self, *, question: str) -> AnswerPrediction:
+        """Predict an answer for the public question.
+
+        Args:
+            question: Approved input text, without evaluation labels.
+        """
+        ...
+
+
+class InvalidPredictionError(ValueError):
+    """A program returned a missing or non-text answer."""
+
+    def __init__(self) -> None:
+        """Describe the prediction contract without disclosing model output."""
+        super().__init__("prediction requires a text answer")
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DspyTask:
+    """Evaluate a question/answer program without exposing scoring labels.
+
+    Args:
+        program: Already initialized, approved candidate program.
+    """
+
+    program: AnswerProgram
+
+    def __call__(self, case: EvalCase) -> str:
+        """Return a validated answer while preserving candidate failures.
+
+        Args:
+            case: Harness-owned input, labels and provenance.
+
+        Raises:
+            InvalidPredictionError: The prediction has no text answer.
+        """
+        prediction = self.program(question=case.input)
+        try:
+            answer = prediction.answer
+        except AttributeError as error:
+            raise InvalidPredictionError from error
+        if not isinstance(answer, str):
+            raise InvalidPredictionError
+        return answer

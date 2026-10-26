@@ -1,0 +1,83 @@
+// src/shared/api/auth-fetch.ts
+// fetch wrapper that adds CSRF protection and credentials only for trusted API
+// origins, renews the session once for concurrent 401 responses, and retries
+// each request at most once. Pass the result as fetchImpl to createHttpClient
+// from kit-state-data; that client already maps 403 and other errors to typed
+// ApiError values, so 403 is returned unchanged here and never signs anyone out.
+
+export type AuthFetchOptions = Readonly<{
+  /** Origins that may receive cookies, CSRF headers, or tokens, e.g. "https://app.example.test". */
+  allowedOrigins: readonly string[];
+  /**
+   * Renews the session (BFF refresh endpoint) or access token (OIDC library).
+   * Resolves false when the user must sign in again.
+   */
+  renew: () => Promise<boolean>;
+  /** Called once per expiry, for example AuthContextValue.markExpired. */
+  onSessionExpired: () => void;
+  /** Browser-based OIDC clients only: in-memory access token. Omit with a BFF. */
+  getAccessToken?: () => string | null;
+  /** Header the server requires on unsafe methods. */
+  csrfHeader?: string;
+  fetchImpl?: typeof fetch;
+}>;
+
+const HTTP_UNAUTHORIZED = 401;
+const UNSAFE_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+export function createAuthFetch(options: AuthFetchOptions): typeof fetch {
+  // Resolve the global per call so MSW and test stubs installed later still apply.
+  const baseFetch: typeof fetch = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+  const csrfHeader = options.csrfHeader ?? "X-CSRF";
+  let renewal: Promise<boolean> | null = null;
+  let expiryReported = false;
+
+  function isTrusted(request: Request): boolean {
+    return options.allowedOrigins.includes(new URL(request.url).origin);
+  }
+
+  // Single flight: every 401 that arrives during a renewal waits for the same promise.
+  function renewOnce(): Promise<boolean> {
+    renewal ??= options
+      .renew()
+      .catch(() => false)
+      .finally(() => {
+        renewal = null;
+      });
+    return renewal;
+  }
+
+  function send(request: Request): Promise<Response> {
+    const trusted = isTrusted(request);
+    const headers = new Headers(request.headers);
+    if (trusted && UNSAFE_METHODS.has(request.method)) {
+      headers.set(csrfHeader, "1");
+    }
+    const token = trusted ? options.getAccessToken?.() : null;
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    // Untrusted origins never receive cookies or tokens.
+    return baseFetch(new Request(request, { headers, credentials: trusted ? "include" : "omit" }));
+  }
+
+  return async (input, init) => {
+    const request = new Request(input, init);
+    // A request body can be read once; keep a copy for the single retry.
+    const retry = request.clone();
+    const response = await send(request);
+    if (response.status !== HTTP_UNAUTHORIZED || !isTrusted(request)) {
+      return response;
+    }
+    if (await renewOnce()) {
+      expiryReported = false;
+      // A second 401 is returned to the caller; no retry loop.
+      return send(retry);
+    }
+    if (!expiryReported) {
+      expiryReported = true;
+      options.onSessionExpired();
+    }
+    return response;
+  };
+}

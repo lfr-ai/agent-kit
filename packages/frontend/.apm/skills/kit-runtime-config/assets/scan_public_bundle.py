@@ -127,7 +127,8 @@ def scan(
         Findings ordered by path and line; empty when nothing matched.
 
     Raises:
-        ValueError: If root is not a directory or a pattern is invalid.
+        BundleInputError: If root is not a directory.
+        re.error: If a pattern is invalid.
     """
     if not root.is_dir():
         raise BundleInputError(root=root)
@@ -193,7 +194,7 @@ def self_test() -> None:
     """Exercise clean, secret, denied, allowed and source-map cases in a temp dir.
 
     Raises:
-        AssertionError: If any synthetic expectation does not hold.
+        SelfTestError: If any synthetic expectation does not hold.
     """
     with TemporaryDirectory(prefix="agent-kit-bundle-scan-") as directory:
         root = Path(directory)

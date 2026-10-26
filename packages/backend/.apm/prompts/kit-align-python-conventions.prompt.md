@@ -36,9 +36,13 @@ changing its observable behavior.
    composition root constructs adapters.
 9. Add or correct docstrings for public members, including `Args:`,
    `Returns:`, and `Raises:`.
-10. Make each fix a small step and re-run the focused tests between groups.
+10. Review filenames, module/subfolder cohesion and central ownership. Choose
+    functions, partials and decorators with the
+    [callable decision guide](../skills/kit-python-service/references/callables-and-decorators.md);
+    test binding, metadata, errors and async behavior where they apply.
+11. Make each fix a small step and re-run the focused tests between groups.
     Leave behavior changes for a separate, approved change.
-11. Run the checkers, linter, type checker, and the declared completion gate.
+12. Run the checkers, linter, type checker, and the declared completion gate.
 
 ## Acceptance gates
 

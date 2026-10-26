@@ -55,9 +55,23 @@ python check_port_adapter_binding.py --core src/shop/core \
     --adapters src/shop/infrastructure --adapters tests/fakes --ignore "^Clock$"
 ```
 
-Matching is structural (method names and sync or async kind), so adapters need
+Matching is structural (method names and invocation kind), so adapters need
 not inherit from the Protocol. Base classes defined in the scanned adapter files
 contribute their methods.
+
+A coroutine must match a coroutine; an async generator is not a coroutine.
+A normal `def` port annotated with bare or qualified `AsyncIterator`, optionally
+subscripted, can be bound to an async-generator adapter method. Ordinary
+functions and synchronous generators remain compatible as before. Incompatible
+invocation kinds remain unbound and retain the `async mismatch` diagnostic when
+reported as a closest adapter's missing member.
+
+This is an AST-only shape check, not type equivalence or runtime verification.
+Yield detection skips nested function, class and lambda definitions, including
+their headers. Annotation imports, aliases, strings, shadowing and element types
+are not resolved; other return types and callable-transforming decorators need
+a type checker. An `async def` returning `AsyncIterator` without its own yield
+is still a coroutine and cannot satisfy the synchronous iterator-factory port.
 
 ## Anti-patterns
 

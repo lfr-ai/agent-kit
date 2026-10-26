@@ -1,0 +1,53 @@
+"""Framework-free error hierarchy raised by application services.
+
+Copy into ``src/shop/core/exceptions.py``. Services raise these classes; only the
+HTTP layer (``errors.py``) maps them to status codes and problem types. Messages
+must be safe to show to the caller: no secrets, SQL, or provider responses.
+"""
+
+from typing import ClassVar
+
+
+class ServiceError(Exception):
+    """Base class for expected failures the caller can act on."""
+
+    code: ClassVar[str] = "service_error"
+
+    def __init__(self, message: str) -> None:
+        """Create an error with a caller-safe message.
+
+        Args:
+            message: Description that may appear in a problem ``detail``.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class NotFoundError(ServiceError):
+    """The addressed resource does not exist or is not visible to the caller."""
+
+    code: ClassVar[str] = "not_found"
+
+
+class ConflictError(ServiceError):
+    """The request conflicts with the current state, for example a stale version."""
+
+    code: ClassVar[str] = "conflict"
+
+
+class RuleViolationError(ServiceError):
+    """Well-formed input violates a business rule."""
+
+    code: ClassVar[str] = "rule_violation"
+
+
+class PermissionDeniedError(ServiceError):
+    """The authenticated caller may not perform this operation."""
+
+    code: ClassVar[str] = "permission_denied"
+
+
+class DependencyUnavailableError(ServiceError):
+    """A required downstream dependency is temporarily unavailable."""
+
+    code: ClassVar[str] = "dependency_unavailable"

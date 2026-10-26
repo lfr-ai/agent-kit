@@ -1,0 +1,95 @@
+# Local model gateway: LiteLLM proxy, Postgres for virtual keys, Redis for
+# shared limits and cache, and an optional Ollama server. Development and
+# integration environments only. Copy to 'compose.gateway.yaml' beside
+# 'litellm_config.yaml'. Every image reference is a required variable that
+# must hold a reviewed tag and digest, for example
+#   LITELLM_IMAGE=ghcr.io/berriai/litellm:<release-tag>@sha256:<digest>
+# Check resolved images without storing the resolved file:
+#   docker compose -f compose.gateway.yaml config --format json \
+#     | python check_gateway_config.py -
+# Ports bind to loopback only. Start: docker compose -f compose.gateway.yaml up -d --wait
+name: model-gateway
+
+services:
+  gateway:
+    image: ${LITELLM_IMAGE:?set a tag-and-digest pinned LiteLLM image}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://gateway:${GATEWAY_DB_PASSWORD:?set GATEWAY_DB_PASSWORD}@gateway-db:5432/gateway
+      REDIS_HOST: gateway-cache
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${GATEWAY_REDIS_PASSWORD:?set GATEWAY_REDIS_PASSWORD}
+      OLLAMA_API_BASE: http://ollama:11434
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      gateway-db:
+        condition: service_healthy
+      gateway-cache:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/readiness', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  gateway-db:
+    image: ${GATEWAY_DB_IMAGE:?set a tag-and-digest pinned postgres image}
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_DB: gateway
+      POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD:?set GATEWAY_DB_PASSWORD}
+    volumes:
+      - gateway-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  gateway-cache:
+    image: ${GATEWAY_CACHE_IMAGE:?set a tag-and-digest pinned redis image}
+    command: ["redis-server", "--requirepass", "${GATEWAY_REDIS_PASSWORD:?set GATEWAY_REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${GATEWAY_REDIS_PASSWORD:?set GATEWAY_REDIS_PASSWORD}
+    restart: unless-stopped
+
+  ollama:
+    image: ${OLLAMA_IMAGE:?set a tag-and-digest pinned ollama image}
+    profiles: ["local-models"]
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "8192"
+      OLLAMA_NUM_PARALLEL: "2"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+      OLLAMA_KEEP_ALIVE: 10m
+      OLLAMA_NO_CLOUD: "1"
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  gateway-db-data:
+  ollama-models:

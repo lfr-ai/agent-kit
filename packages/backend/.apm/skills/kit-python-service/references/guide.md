@@ -20,6 +20,8 @@ from [SKILL.md](../SKILL.md).
 | Area | Question | Reference |
 | --- | --- | --- |
 | Signatures | Are options keyword-only and free of positional booleans? | [signature design](signature-design.md) |
+| Idioms | Are defaults left to the callee, closed sets enums, overrides marked? | [Python idioms](python-idioms.md) |
+| Callables | Are argument binding, wrapper order, metadata and invocation kind explicit? | [Partials and decorators](callables-and-decorators.md) |
 | Records | Frozen, keyword-only, slotted; validated in '__post_init__'? | [dataclasses and enums](dataclasses-enums.md) |
 | Branching | Is a repeated type switch replaced by a port or exhaustive 'match'? | [polymorphism](polymorphism.md) |
 | Special methods | Do equality and hashing match value or identity semantics? | [dunder methods](dunder-methods.md) |

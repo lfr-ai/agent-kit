@@ -1,0 +1,48 @@
+# PROJECT_NAME
+
+One sentence: what PROJECT_NAME does and who it is for.
+
+## Quick start
+
+Prerequisites: RUNTIME VERSION, PACKAGE_MANAGER VERSION.
+
+```sh
+git clone https://example.com/OWNER/PROJECT_NAME.git
+cd PROJECT_NAME
+cp .env.example .env
+INSTALL_FROM_LOCKFILE_COMMAND
+SMOKE_CHECK_COMMAND
+```
+
+Expected result: the one line the reader sees when it works.
+
+## Usage
+
+The smallest realistic example, with synthetic data:
+
+```sh
+EXAMPLE_COMMAND
+```
+
+Configuration is documented in [.env.example](.env.example).
+Longer tasks are in [the documentation](docs/).
+
+## Development
+
+| Task | Command |
+| --- | --- |
+| Set up | `BOOTSTRAP_COMMAND` |
+| Focused tests | `TEST_COMMAND` |
+| Full gate (same as CI) | `GATE_COMMAND` |
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+## Support and security
+
+- Questions: see [SUPPORT.md](SUPPORT.md).
+- Bugs and features: use the issue forms.
+- Vulnerabilities: report privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+LICENSE_NAME. See [LICENSE](LICENSE).
