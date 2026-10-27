@@ -219,16 +219,21 @@ def _smoke_installation(
         scripts = environment / "Scripts"
         site = environment / "Lib/site-packages"
         launcher = "apm.exe"
+        toolkit = "agent-kit.exe"
         record = "../../Scripts/apm.exe"
     else:
         scripts = environment / "bin"
         site = environment / "lib/python3.13/site-packages"
         launcher = "apm"
+        toolkit = "agent-kit"
         record = "../../../bin/apm"
     scripts.mkdir(parents=True)
     executable = scripts / launcher
     executable.write_bytes(b"approved launcher")
     executable.chmod(0o700)
+    toolkit_launcher = scripts / toolkit
+    toolkit_launcher.write_bytes(b"approved toolkit launcher")
+    toolkit_launcher.chmod(0o700)
     metadata = site / "apm_cli-0.33.0.dist-info"
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text(
@@ -292,6 +297,8 @@ def test_smoke_never_invokes_foreign_path_launcher(
     if active_available:
         assert result == 0
         assert len(commands) == 1
+        assert Path(commands[0][0]).parent == approved.parent
+        assert Path(commands[0][0]).parent != foreign
         assert profiles == ["backend"]
         assert captured.out == (
             "Released APM smoke passed; no live agent session is certified.\n"
@@ -315,10 +322,6 @@ def test_smoke_uses_shared_approved_launcher_resolver(
         calls.append("resolve")
         return approved
 
-    def which(name: str) -> str:
-        assert name == "agent-kit"
-        return "toolkit"
-
     def smoke(
         _profile: str, _features: tuple[str, ...], *, apm: str, **_kwargs: object
     ) -> int:
@@ -328,7 +331,7 @@ def test_smoke_uses_shared_approved_launcher_resolver(
 
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", resolve)
-    monkeypatch.setattr(apm_smoke.shutil, "which", which)
+    monkeypatch.setattr(apm_smoke, "_toolkit_executable", lambda: "toolkit")
     monkeypatch.setattr(apm_smoke, "run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(apm_smoke, "smoke_profile", smoke)
 
@@ -362,9 +365,9 @@ def test_smoke_launcher_availability_errors_preserve_cli_diagnostics(
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", unavailable)
     monkeypatch.setattr(
-        apm_smoke.shutil,
-        "which",
-        lambda _name: pytest.fail("tool lookup must follow approved APM discovery"),
+        apm_smoke,
+        "_toolkit_executable",
+        lambda: pytest.fail("tool lookup must follow approved APM discovery"),
     )
     monkeypatch.setattr(
         apm_smoke, "run", lambda *_args, **_kwargs: pytest.fail("must not run")
@@ -381,7 +384,7 @@ def test_smoke_missing_toolkit_retains_locked_environment_diagnostic(
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", lambda: "approved")
-    monkeypatch.setattr(apm_smoke.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(apm_smoke, "_toolkit_executable", lambda: None)
     monkeypatch.setattr(
         apm_smoke, "run", lambda *_args, **_kwargs: pytest.fail("must not run")
     )
@@ -523,3 +526,33 @@ def test_bounded_smoke_matrix_covers_every_portable_bundle() -> None:
     assert selected == {
         bundle.name for bundle in snapshot.bundles if bundle.kind == "portable"
     }
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_smoke_refuses_a_path_only_toolkit_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    platform: str,
+) -> None:
+    """A toolkit found only on PATH is foreign; the smoke stops before running it."""
+    approved = _smoke_installation(tmp_path, monkeypatch, platform=platform)
+    toolkit = "agent-kit.exe" if platform == "win32" else "agent-kit"
+    (approved.parent / toolkit).unlink()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    (foreign / toolkit).write_bytes(b"foreign launcher")
+    (foreign / toolkit).chmod(0o700)
+    monkeypatch.setenv("PATH", str(foreign))
+    monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        apm_smoke, "run", lambda command, **_kwargs: commands.append(command)
+    )
+    with monkeypatch.context() as platform_patch:
+        platform_patch.setattr(sys, "platform", platform)
+        result = apm_smoke.main()
+
+    assert result == 1
+    assert commands == []
+    assert capsys.readouterr().err == "Use the locked toolkit environment.\n"

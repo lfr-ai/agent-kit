@@ -21,7 +21,7 @@ points. They do not replace the CLI completion gate.
    workspace interpreter selection.
 5. Use **Run Build Task** for `task verify`, or **Run Test Task** for all test
    tiers. The other editor tasks cover bootstrap, types, lint, formatting,
-   pre-commit and APM smoke. Use `task verify -- <gate>` or the owning CLI for
+   pre-commit, APM smoke and an interactive Conventional Commit prompt. Use `task verify -- <gate>` or the owning CLI for
    focused checks; editor tasks do not duplicate the complete gate inventory.
 
 ## Workspace contract

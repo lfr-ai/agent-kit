@@ -22,6 +22,8 @@ updates:
       prefix-development: build
       include: scope
     labels: [dependencies]
+    ignore:
+      - dependency-name: hatchling
     groups:
       # Any security fix arrives as one PR, immediately.
       python-security:

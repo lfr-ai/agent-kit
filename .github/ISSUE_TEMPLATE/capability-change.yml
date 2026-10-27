@@ -1,0 +1,42 @@
+name: Capability change
+description: Propose a lasting fix or addition to a skill, instruction, prompt, role or template using a synthetic example.
+title: "Capability: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a synthetic example. Never include code, names, paths, hosts or
+        secrets from a private project. Report security problems through the
+        private advisory link instead of this form.
+  - type: dropdown
+    id: change-class
+    attributes:
+      label: Change class
+      options:
+        - Trivial (typo, link, wording)
+        - Behavior (wrong steps, missing step, broken template)
+        - Contract (rename, remove, widen tools or policy)
+    validations:
+      required: true
+  - type: input
+    id: capability
+    attributes:
+      label: Package and capability
+      description: For example `shared` / `kit-release`.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Prompt, observed result and expected result
+      description: The smallest invented example that shows the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: reusable
+    attributes:
+      label: Why this is reusable
+      description: Why every project that installs the package benefits.
+    validations:
+      required: true

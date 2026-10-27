@@ -51,6 +51,8 @@ cannot override parent/global skills, plugins or tool exposure.
 - [Catalog](catalog.json) owns selection. Skills and resources live in APM bundles.
 - [Policy](docs/policy.md) explains explicit enforcement and its limits.
 - [Migration](docs/migration.md) covers adoption and rollback.
+- [Improve the kit](docs/feedback.md) covers installing once per machine and fixing
+  capabilities from any project through approved pull requests.
 - [Compatibility](docs/compatibility.md) separates tested CLI contracts from live sessions.
 - [Hexagonal Architecture](.agents/knowledge-base/architecture.md) covers source boundaries.
 - [Sources](docs/sources.md) records research and licensing provenance.

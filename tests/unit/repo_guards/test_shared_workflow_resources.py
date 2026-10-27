@@ -156,16 +156,10 @@ def test_task_wiring_unreadable_input_is_an_error(tmp_path: Path) -> None:
     )
 
 
-def test_task_wiring_accepts_the_shipped_tasks_template(tmp_path: Path) -> None:
+def test_task_wiring_accepts_the_shipped_tasks_template() -> None:
+    """The shipped editor tasks call only targets the shipped Taskfile declares."""
     assets = _SKILLS / "kit-editor/assets"
-    taskfile = _write(
-        tmp_path / "Taskfile.yml",
-        'version: "3"\ntasks:\n'
-        + "".join(
-            f"  {name}:\n    cmds: [echo {name}]\n"
-            for name in ("verify", "test", "lint", "format", "build", "docs")
-        ),
-    )
+    taskfile = _SKILLS / "kit-verify-change/assets/Taskfile.yml.template"
     main = _main(_load("kit-editor", "check_task_wiring.py"))
     for name in ("tasks.json.template", "user-tasks.json.template"):
         assert (
@@ -344,3 +338,37 @@ def test_owned_skill_files_are_lf_utf8_with_final_newline(skill: str) -> None:
         assert not data.startswith(b"\xef\xbb\xbf"), path
         assert b"\r\n" not in data, path
         assert data.endswith(b"\n"), path
+
+
+def test_taskfile_template_is_a_thin_locked_gate_wrapper() -> None:
+    """The portable Taskfile follows Task's conventions and adds no second gate."""
+    path = _SKILLS / "kit-verify-change/assets/Taskfile.yml.template"
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(
+        "# yaml-language-server: $schema=https://taskfile.dev/schema.json\n"
+    )
+    taskfile = yaml.safe_load(text)
+    tasks = taskfile["tasks"]
+    assert taskfile["version"] == "3"
+    assert {"default", "verify", "test", "lint", "typecheck", "format"} <= set(tasks)
+    assert tasks["default"]["cmds"] == ["{{.TASK_EXE}} --list"]
+    assert all(task.get("desc") for task in tasks.values())
+    commands = [
+        command
+        for task in tasks.values()
+        for command in task["cmds"]
+        if command.startswith("uv ")
+    ]
+    assert commands
+    assert all(
+        command.startswith("uv sync --locked") or "--locked --no-sync" in command
+        for command in commands
+    )
+    assert not re.search(r"\b(uvx|npx|bunx|pipx)\b", text)
+    gate = runpy.run_path(
+        str(_SKILLS / "kit-verify-change/assets/run_gate.py.template")
+    )
+    steps = {step.name for step in gate["STEPS"]}
+    selected = re.findall(r"--only (\S+)", text)
+    assert selected
+    assert set(selected) <= steps

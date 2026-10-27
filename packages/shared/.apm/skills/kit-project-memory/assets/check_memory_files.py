@@ -60,7 +60,9 @@ _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _FRONT_MATTER_FENCE = "---"
 _COMMENT_OPEN = "<!--"
-_COMMENT_CLOSE = "-->"
+# HTML ends a comment at "-->" and also at the "--!>" error-recovery form.
+_COMMENT = re.compile(r"<!--.*?--!?>", re.DOTALL)
+_COMMENT_CLOSE = re.compile(r"--!?>")
 _MARKDOWN_LINK = "]("
 _EXIT_FINDINGS = 1
 _EXIT_USAGE = 2
@@ -188,9 +190,9 @@ def content_lines(text: str) -> list[tuple[int, str]]:
         elif fence is not None:
             fence = None if raw.strip().startswith(fence) else fence
         elif in_comment:
-            in_comment = _COMMENT_CLOSE not in raw
+            in_comment = _COMMENT_CLOSE.search(raw) is None
         else:
-            line = re.sub(r"<!--.*?-->", "", raw)
+            line = _COMMENT.sub("", raw)
             in_comment = _COMMENT_OPEN in line
             kept.append((number, line.split(_COMMENT_OPEN, 1)[0]))
     return kept

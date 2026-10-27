@@ -37,6 +37,9 @@ import sys
 _HEADING = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
 _NUMBERED = re.compile(r"^(?P<number>\d+)[.)]\s+(?P<title>.+)$")
 _FENCE = re.compile(r"^\s*(```|~~~)")
+# HTML ends a comment at "-->" and also at the "--!>" error-recovery form.
+_COMMENT = re.compile(r"<!--.*?--!?>", re.DOTALL)
+_COMMENT_CLOSE = re.compile(r"--!?>")
 _INLINE_CODE = re.compile(r"`[^`\n]+`")
 _PATH_TOKEN = re.compile(r"[\w.-]+/[\w./-]*|\b[\w-]+\.[A-Za-z][\w]{0,9}\b")
 _NONE = re.compile(r"\bnone\b", re.IGNORECASE)
@@ -137,9 +140,9 @@ def content_lines(text: str) -> list[tuple[int, str]]:
         elif fence is not None:
             fence = None if raw.strip().startswith(fence) else fence
         elif in_comment:
-            in_comment = "-->" not in raw
+            in_comment = _COMMENT_CLOSE.search(raw) is None
         else:
-            line = re.sub(r"<!--.*?-->", "", raw)
+            line = _COMMENT.sub("", raw)
             in_comment = "<!--" in line
             kept.append((number, line.split("<!--", 1)[0]))
     return kept

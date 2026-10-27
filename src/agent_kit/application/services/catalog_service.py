@@ -31,6 +31,8 @@ from agent_kit.core.models import (
 from agent_kit.core.text import markdown_link_targets, visible_text
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from collections.abc import Set as AbstractSet
     from urllib.parse import SplitResult
 
 _CATALOG_FIELDS = {
@@ -408,15 +410,25 @@ def _resolved_link(raw_path: str, document_path: str) -> str | None:
     return "/".join(stack)
 
 
-def _link_exists(target: str, available_paths: set[str]) -> bool:
+def _link_index(available_paths: Iterable[str]) -> frozenset[str]:
+    """Index every source path and ancestor directory once for link lookups."""
+    index: set[str] = set()
+    for path in available_paths:
+        index.add(path)
+        parent, separator, _ = path.rpartition("/")
+        while separator and parent and parent not in index:
+            index.add(parent)
+            parent, separator, _ = parent.rpartition("/")
+    return frozenset(index)
+
+
+def _link_exists(target: str, link_index: AbstractSet[str]) -> bool:
     """Match exact file and directory spelling for case-sensitive relocation."""
-    return target in available_paths or (
-        bool(target) and any(item.startswith(f"{target}/") for item in available_paths)
-    )
+    return target in link_index
 
 
 def _local_link_issue(
-    raw_path: str, document_path: str, available_paths: set[str]
+    raw_path: str, document_path: str, link_index: AbstractSet[str]
 ) -> tuple[str, str] | None:
     """Return the finding code and message for an invalid local link."""
     if "\\" in raw_path:
@@ -424,7 +436,7 @@ def _local_link_issue(
     target = None if _is_absolute(raw_path) else _resolved_link(raw_path, document_path)
     if target is None:
         return "links.escape", "resource link escapes its source root"
-    if _link_exists(target, available_paths):
+    if _link_exists(target, link_index):
         return None
     return "links.missing", f"resource link target does not exist: {raw_path}"
 
@@ -432,7 +444,7 @@ def _local_link_issue(
 def _link_target(
     link: str,
     document_path: str,
-    available_paths: set[str],
+    link_index: AbstractSet[str],
     findings: list[Finding],
     *,
     base_is_bundle: bool,
@@ -451,7 +463,7 @@ def _link_target(
     raw_path = unquote(parsed.path)
     if not raw_path:
         return
-    issue = _local_link_issue(raw_path, document_path, available_paths)
+    issue = _local_link_issue(raw_path, document_path, link_index)
     if issue is not None:
         code, message = issue
         _finding(findings, code, message, document_path)
@@ -459,7 +471,7 @@ def _link_target(
 
 def _check_links(
     document: SourceDocument,
-    available_paths: set[str],
+    link_index: AbstractSet[str],
     findings: list[Finding],
     *,
     base_is_bundle: bool,
@@ -474,7 +486,7 @@ def _check_links(
         _link_target(
             link,
             document.relative_path,
-            available_paths,
+            link_index,
             findings,
             base_is_bundle=base_is_bundle,
         )
@@ -1069,7 +1081,9 @@ def _skill_records(
     records: dict[str, _SkillRecord] = {}
     prompts: set[str] = set()
     for bundle in bundles:
-        paths = {item.relative_path for item in bundle.files if not item.is_directory}
+        link_index = _link_index(
+            item.relative_path for item in bundle.files if not item.is_directory
+        )
         for document in bundle.files:
             if not _usable_document(document, bundle, findings):
                 continue
@@ -1083,7 +1097,7 @@ def _skill_records(
                 body_limit,
             )
             if _is_markdown_source(document.relative_path):
-                _check_links(document, paths, findings, base_is_bundle=True)
+                _check_links(document, link_index, findings, base_is_bundle=True)
     return records
 
 
@@ -1417,11 +1431,16 @@ def _check_root_documentation(
     findings: list[Finding],
 ) -> None:
     """Require readable, link-safe, non-symlink root documentation."""
-    root_available = set(snapshot.root_paths) | set(root_documents)
-    root_available.update(
-        f"{bundle.path}/.apm/{source.relative_path}"
-        for bundle in snapshot.bundles
-        for source in bundle.files
+    root_available = _link_index(
+        (
+            *snapshot.root_paths,
+            *root_documents,
+            *(
+                f"{bundle.path}/.apm/{source.relative_path}"
+                for bundle in snapshot.bundles
+                for source in bundle.files
+            ),
+        )
     )
     for document in snapshot.root_documents:
         if document.is_symlink:
@@ -1718,10 +1737,10 @@ def _require_session_resources(outputs: _Outputs) -> None:
     Raises:
         OmittedResourceError: A link references an omitted resource.
     """
-    available_paths = {name.removeprefix(".apm/") for name in outputs.files}
+    link_index = _link_index(name.removeprefix(".apm/") for name in outputs.files)
     missing_links: list[Finding] = []
     for document in outputs.documents:
-        _check_links(document, available_paths, missing_links, base_is_bundle=True)
+        _check_links(document, link_index, missing_links, base_is_bundle=True)
     if missing_links:
         raise OmittedResourceError(missing_links[0])
 

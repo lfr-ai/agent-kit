@@ -25,8 +25,11 @@ Every committed editor task that runs repository tooling should:
    task, so **Run Build Task** and **Run Test Task** are unambiguous.
 
 The [workspace tasks template](../assets/tasks.json.template) follows this
-contract for `verify`, `test`, `lint` and `format`. Rename or remove entries so
-each label names a target the consumer's Taskfile declares.
+contract for `verify`, `test`, `lint`, `typecheck`, `format` and `bootstrap`.
+Rename or remove entries so each label names a target the consumer's Taskfile
+declares. Add `"detail"` so the Run Task picker explains each entry, and give an
+interactive target (a commit prompt, for example) `"focus": true` so the
+terminal accepts input.
 
 ```json
 {
@@ -84,6 +87,25 @@ Problems panel when it runs as an editor task:
   "pattern": {"regexp": "^(.*):(\\d+):\\s+(.*)$", "file": 1, "line": 2, "message": 3}
 }
 ```
+
+## Taskfile conventions
+
+The editor is only as reliable as the Taskfile behind it. The Taskfile template
+in `kit-verify-change` applies these conventions:
+
+- Start with `# yaml-language-server: $schema=https://taskfile.dev/schema.json`
+  so editors validate and complete the file.
+- Follow the [Task style guide](https://taskfile.dev/docs/styleguide): main
+  sections in order (`version`, `includes`, configuration, `vars`, `env`,
+  `tasks`), blank lines between tasks, kebab-case names and `:` namespaces.
+- Give every public target a `desc`, and add a `default` target that runs
+  `{{.TASK_EXE}} --list`, so a bare `task` explains itself.
+- Keep one command per check and forward arguments with `{{.CLI_ARGS}}` after
+  `--`; prefer a script over a multi-line command.
+- Fail early with `preconditions` and a `msg` when a required tool is missing.
+  Use `prompt` for destructive targets and `interactive: true` for targets
+  that read from the terminal.
+- Mark helpers `internal: true` instead of exposing them in `task --list`.
 
 ## User-level tasks
 
@@ -163,3 +185,5 @@ variables: `${workspaceFolder}`, `${file}`, `${relativeFile}`,
 - [Debugging configuration](https://code.visualstudio.com/docs/debugtest/debugging-configuration)
 - [Python debugging](https://code.visualstudio.com/docs/python/debugging)
 - [Task usage](https://taskfile.dev/docs/guide)
+- [Task style guide](https://taskfile.dev/docs/styleguide)
+- [Taskfile schema](https://taskfile.dev/docs/reference/schema)

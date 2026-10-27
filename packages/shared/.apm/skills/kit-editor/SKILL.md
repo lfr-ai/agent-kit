@@ -20,6 +20,7 @@ license: MIT
    [tasks and launch](references/tasks-and-launch.md). Start from the
    [workspace tasks template](assets/tasks.json.template); keep personal
    cross-repository shortcuts in [user tasks](assets/user-tasks.json.template).
+   Without a Taskfile, use the Taskfile template from `kit-verify-change`.
 4. Run the [task wiring checker](assets/check_task_wiring.py) with `--tasks`
    and `--taskfile`; fix every finding before continuing.
 5. Add debug entry points from the [launch template](assets/launch.json.template)

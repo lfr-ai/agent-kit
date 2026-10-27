@@ -124,7 +124,7 @@ def _metadata(raw: str) -> dict[str, str]:
 
 def _clean_reason(text: str) -> str:
     """Strip trailing block-comment closers from a reason."""
-    return re.sub(r"\s*(?:\*/|-->)\s*$", "", text).strip()
+    return re.sub(r"\s*(?:\*/|--!?>)\s*$", "", text).strip()
 
 
 def scan_text(path: Path, text: str, markers: tuple[str, ...]) -> list[Entry]:

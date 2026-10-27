@@ -1,6 +1,20 @@
 {
   "permissions": {
     "defaultMode": "default",
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git * push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git rebase *)",
+      "Bash(git branch -D *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr close *)",
+      "Bash(gh pr edit *)",
+      "Bash(gh issue create *)",
+      "Bash(gh api *)"
+    ],
     "deny": [
       "Read(.env)",
       "Read(.env.*)",
@@ -23,7 +37,25 @@
       "Bash(yarn add *)",
       "Bash(yarn dlx *)",
       "Bash(bun add *)",
-      "Bash(bunx *)"
+      "Bash(bunx *)",
+      "Bash(*git*push*--force*)",
+      "Bash(*git*push* -f*)",
+      "Bash(*git*push*--delete*)",
+      "Bash(*git*push*--mirror*)",
+      "Bash(*git*push*--tags*)",
+      "Bash(*git*push* +*)",
+      "Bash(*git*push* :*)",
+      "Bash(*gh*pr merge*--admin*)",
+      "Bash(git tag *)",
+      "Bash(git config --global *)",
+      "Bash(git config --system *)",
+      "Bash(gh release *)",
+      "Bash(gh repo edit *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh repo rename *)",
+      "Bash(gh secret *)",
+      "Bash(gh variable *)",
+      "Bash(gh auth *)"
     ]
   },
   "hooks": {

@@ -35,9 +35,11 @@ _EXCLUDED_ROOT_DIRECTORIES = frozenset(
         "__pycache__",
         ".pytest_cache",
         ".ruff_cache",
-        ".importlinter_cache",
+        ".import_linter_cache",
         ".hypothesis",
+        ".tox",
         ".ty",
+        "htmlcov",
         "apm_modules",
         "node_modules",
     }

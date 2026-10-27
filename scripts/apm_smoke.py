@@ -5,9 +5,9 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
+import sysconfig
 from tempfile import TemporaryDirectory
 
 from agent_kit.infrastructure import apm_adapter
@@ -298,6 +298,15 @@ def _smoke_apm_executable() -> str | None:
         return None
 
 
+def _toolkit_executable() -> str | None:
+    """Resolve the toolkit launcher beside this interpreter, never from ``PATH``."""
+    launcher = "agent-kit.exe" if sys.platform == "win32" else "agent-kit"
+    executable = Path(sysconfig.get_path("scripts")) / launcher
+    if executable.is_file() and os.access(executable, os.X_OK):
+        return str(executable)
+    return None
+
+
 def main() -> int:
     """Verify the portable library in bounded packages, or one narrow session."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -323,7 +332,7 @@ def main() -> int:
     apm = _smoke_apm_executable()
     if apm is None:
         return 1
-    toolkit = shutil.which("agent-kit")
+    toolkit = _toolkit_executable()
     if toolkit is None:
         print("Use the locked toolkit environment.", file=sys.stderr)
         return 1

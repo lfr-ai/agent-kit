@@ -13,8 +13,9 @@ license: MIT
    type checker, test, spelling, Markdown, link and secrets configuration); see
    [toolchain metafiles](references/toolchain-metafiles.md). If no single gate exists,
    choose its rows from the [quality gate catalog](references/quality-gate-catalog.md),
-   record them in a [gate plan](assets/gate-plan.md.template), and start from the
-   [gate script template](assets/run_gate.py.template).
+   record them in a [gate plan](assets/gate-plan.md.template), start from the
+   [gate script template](assets/run_gate.py.template), and expose it through the
+   [Taskfile template](assets/Taskfile.yml.template).
 3. Check types, lint, formatting, architecture, and owning contracts in fast-to-slow order
    ([gate ordering](references/gate-ordering.md)).
 4. Keep checks read-only. Formatting and other fixers are an explicit separate action

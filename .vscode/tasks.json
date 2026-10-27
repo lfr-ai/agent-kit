@@ -2,70 +2,96 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Bootstrap locked environment",
-      "type": "process",
-      "command": "task",
-      "args": ["bootstrap"],
-      "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
-    },
-    {
       "label": "Verify toolkit",
+      "detail": "Read-only local and CI quality gate (task verify).",
       "type": "process",
       "command": "task",
       "args": ["verify"],
       "options": {"cwd": "${workspaceFolder}"},
       "problemMatcher": [],
-      "group": {"kind": "build", "isDefault": true}
+      "group": {"kind": "build", "isDefault": true},
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
     },
     {
       "label": "Test",
+      "detail": "All test tiers in parallel (task test).",
       "type": "process",
       "command": "task",
       "args": ["test"],
       "options": {"cwd": "${workspaceFolder}"},
       "problemMatcher": [],
-      "group": {"kind": "test", "isDefault": true}
+      "group": {"kind": "test", "isDefault": true},
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
     },
     {
       "label": "Lint",
+      "detail": "Ruff lint, read-only (task lint).",
       "type": "process",
       "command": "task",
       "args": ["lint"],
       "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
     },
     {
       "label": "Format",
+      "detail": "Apply Ruff formatting and safe fixes; writes files (task format).",
       "type": "process",
       "command": "task",
       "args": ["format"],
       "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
     },
     {
       "label": "Type check",
+      "detail": "ty over every Python root in ty.toml (task typecheck).",
       "type": "process",
       "command": "task",
       "args": ["typecheck"],
       "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
     },
     {
       "label": "Pre-commit (all files)",
+      "detail": "Every pre-commit-stage hook on all files (task precommit).",
       "type": "process",
       "command": "task",
       "args": ["precommit"],
       "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
     },
     {
       "label": "APM smoke",
+      "detail": "Released APM CLI in disposable packages (task apm:smoke).",
       "type": "process",
       "command": "task",
       "args": ["apm:smoke"],
       "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Bootstrap locked environment",
+      "detail": "Audit the locks, install locked environments and hooks (task bootstrap).",
+      "type": "process",
+      "command": "task",
+      "args": ["bootstrap"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+    },
+    {
+      "label": "Commit (Conventional Commits)",
+      "detail": "Interactive commitizen prompt for the staged changes (task commit).",
+      "type": "process",
+      "command": "task",
+      "args": ["commit"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "focus": true, "panel": "dedicated", "clear": true}
     }
   ]
 }

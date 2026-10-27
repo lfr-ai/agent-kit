@@ -24,8 +24,14 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - Change dependencies only through `pyproject.toml` and `uv.lock`: run
   `uv add --no-sync`, then `task verify -- dependencies` before syncing. Never run
   ad-hoc installers or package runners such as `pip install`, `npx`, or `uvx`.
-- Version-control operations, remote publication, user-global setup changes,
-  resource deployment, and production data belong to approved operator workflows.
+- In this repository only: read-only git is always allowed. Create a branch and
+  commit only for a change the user requested in this session. Push a
+  non-default branch, open a pull request, or enable auto-merge only after the
+  user approves the exact command. Never push or merge to the default branch,
+  force-push, rewrite pushed history, tag, release, or change repository settings.
+- Version control in any other repository, remote publication, user-global setup
+  changes, resource deployment, and production data belong to approved operator
+  workflows.
 - The session hook is advisory context, not authorization or a sandbox.
 
 ## Code and boundaries

@@ -8,6 +8,7 @@ Do not add another Task target for every executable or repeat a tool's defaults.
 
 | Need | Command |
 | --- | --- |
+| List the targets and their descriptions | `task` |
 | Audit the lock, then install the Python environment and Git hooks | `task bootstrap` |
 | Full read-only repository gate, including coverage | `task verify` |
 | One gate, such as source, drift, roles or docs | `task verify -- source` |
@@ -26,6 +27,13 @@ Use `uv run --locked python -m scripts.check_resources --json` for the resource
 census, `uv run --locked python -m scripts.render_native --write` for an
 approved native-role refresh, and the release guide for publication commands.
 These are explicit operations, not additional aliases in Task or the editor.
+
+The [Taskfile](../Taskfile.yml) follows the
+[Task style guide](https://taskfile.dev/docs/styleguide): a schema comment for
+editor validation, a `desc` on every target, a `default` target that lists them,
+and `bootstrap` preconditions that name a missing uv or Bun instead of failing
+mid-install. Editor tasks wrap these targets one to one; consumers start from
+the portable Taskfile template in `kit-verify-change`.
 
 The verifier never synchronizes dependencies, including when selecting the
 network audit. Provision the reviewed environment separately through bootstrap.

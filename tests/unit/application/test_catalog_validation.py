@@ -22,6 +22,7 @@ from agent_kit.application.services.catalog_service import (
     _effective_bundles,
     _exact_mapping,
     _included_paths,
+    _link_index,
     _link_target,
     _parse_bundles,
     _parse_profiles,
@@ -681,3 +682,26 @@ def test_policy_mapping_rejects_non_mapping() -> None:
     findings: list[Finding] = []
     assert not _policy_mapping(1, "apm-policy.yml", findings)
     assert any(f.code == "schema.mapping" for f in findings)
+
+
+def test_link_index_contains_files_and_every_ancestor_directory() -> None:
+    """A link may name a file or any directory above a source file."""
+    index = _link_index(["skills/a/SKILL.md", "skills/a/assets/x.md", "llms.txt"])
+
+    assert index == {
+        "skills",
+        "skills/a",
+        "skills/a/assets",
+        "skills/a/SKILL.md",
+        "skills/a/assets/x.md",
+        "llms.txt",
+    }
+
+
+def test_link_index_never_matches_an_empty_or_partial_name() -> None:
+    """Only whole path segments match; the empty target is never present."""
+    index = _link_index(["skills/abc/SKILL.md"])
+
+    assert "" not in index
+    assert "skills/ab" not in index
+    assert "skills/abc" in index

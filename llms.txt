@@ -17,6 +17,7 @@
 - [Policy](docs/policy.md): Explicit governance and trust boundaries.
 - [Dependency security](docs/dependency-security.md): Audits, licenses, and agent install limits.
 - [Migration](docs/migration.md): Adoption, audit ordering, and rollback.
+- [Improve the kit](docs/feedback.md): User-level install, the change loop, and approval boundaries.
 - [Sources](docs/sources.md): Research and provenance.
 - [Governance](GOVERNANCE.md): Approved ownership and contribution authority.
 - [Releasing](docs/releasing.md): Artifact and protected-publication contracts.

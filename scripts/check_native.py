@@ -33,6 +33,43 @@ _PACKAGE_INSTALL_DENY = [
     "Bash(bun add *)",
     "Bash(bunx *)",
 ]
+# Publishing is human-approved. Pushes and pull requests prompt; force, tags, releases,
+# repository settings and credentials are refused. Rules match the usual command
+# spelling only: the ruleset and repository-scoped token are the real boundary.
+_VERSION_CONTROL_ASK = [
+    "Bash(git push *)",
+    "Bash(git * push *)",
+    "Bash(git reset --hard *)",
+    "Bash(git clean *)",
+    "Bash(git rebase *)",
+    "Bash(git branch -D *)",
+    "Bash(gh pr create *)",
+    "Bash(gh pr merge *)",
+    "Bash(gh pr close *)",
+    "Bash(gh pr edit *)",
+    "Bash(gh issue create *)",
+    "Bash(gh api *)",
+]
+_VERSION_CONTROL_DENY = [
+    "Bash(*git*push*--force*)",
+    "Bash(*git*push* -f*)",
+    "Bash(*git*push*--delete*)",
+    "Bash(*git*push*--mirror*)",
+    "Bash(*git*push*--tags*)",
+    "Bash(*git*push* +*)",
+    "Bash(*git*push* :*)",
+    "Bash(*gh*pr merge*--admin*)",
+    "Bash(git tag *)",
+    "Bash(git config --global *)",
+    "Bash(git config --system *)",
+    "Bash(gh release *)",
+    "Bash(gh repo edit *)",
+    "Bash(gh repo delete *)",
+    "Bash(gh repo rename *)",
+    "Bash(gh secret *)",
+    "Bash(gh variable *)",
+    "Bash(gh auth *)",
+]
 # VS Code false rules always require approval; they are not a sandbox.
 _PACKAGE_INSTALL_APPROVAL = {
     "/^(pip|pip3|pipx|uvx|npx|bunx)(\\s|$)/": False,
@@ -40,6 +77,12 @@ _PACKAGE_INSTALL_APPROVAL = {
     "/^uv\\s+(add|pip\\s+install|tool\\s+(install|run))\\b/": False,
     "/^(npm|pnpm|yarn|bun)\\s+(add|i|install|exec|dlx|x)\\b/": False,
 }
+_VERSION_CONTROL_APPROVAL = {
+    "/^git\\b.*\\bpush\\b/": False,
+    "/^git\\s+(tag|rebase|clean|reset\\s+--hard|branch\\s+-D|config\\s+--(global|system))\\b/": False,
+    "/^gh\\s+(pr\\s+(create|merge|close|edit|ready)|issue\\s+(create|edit|close)|release|repo|api|auth|secret|variable)\\b/": False,
+}
+_TERMINAL_APPROVAL = {**_PACKAGE_INSTALL_APPROVAL, **_VERSION_CONTROL_APPROVAL}
 _COPILOT_FIELDS = {
     "name",
     "description",
@@ -65,7 +108,7 @@ _VSCODE_TOOLCHAIN = {
     "chat.useAgentsMdFile": True,
     "chat.useClaudeMdFile": False,
     "chat.mcp.autostart": "never",
-    "chat.tools.terminal.autoApprove": _PACKAGE_INSTALL_APPROVAL,
+    "chat.tools.terminal.autoApprove": _TERMINAL_APPROVAL,
 }
 
 
@@ -160,7 +203,13 @@ def _claude_settings_failures(root: Path) -> list[str]:
         failures.append("Claude hook contract changed without a contract review.")
     if settings.get("permissions") != {
         "defaultMode": "default",
-        "deny": ["Read(.env)", "Read(.env.*)", *_PACKAGE_INSTALL_DENY],
+        "ask": _VERSION_CONTROL_ASK,
+        "deny": [
+            "Read(.env)",
+            "Read(.env.*)",
+            *_PACKAGE_INSTALL_DENY,
+            *_VERSION_CONTROL_DENY,
+        ],
     }:
         failures.append("Claude native permission defaults changed.")
     return failures

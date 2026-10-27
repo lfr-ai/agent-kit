@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Copy to `Taskfile.yml`. Thin entry points over the repository gate
+# (`scripts/run_gate.py`, from the gate script template), so CI, pre-commit and
+# editor tasks agree on what "passing" means. Keep the target names: editor
+# tasks and agents call `verify`, `test`, `lint`, `format` and `typecheck`.
+# Replace the uv commands with the project's package manager; never add a
+# second definition of a check here. Pass extra arguments after `--`.
+version: "3"
+
+tasks:
+  default:
+    desc: List the available targets
+    silent: true
+    cmds:
+      - "{{.TASK_EXE}} --list"
+
+  bootstrap:
+    desc: Install the locked toolchain and the Git hooks
+    preconditions:
+      - sh: uv --version
+        msg: Install uv (https://docs.astral.sh/uv/), then rerun `task bootstrap`.
+    cmds:
+      - uv sync --locked
+      - uv run --locked --no-sync pre-commit install --install-hooks
+
+  verify:
+    desc: Read-only completion gate; pass gate options after --
+    cmds:
+      - uv run --locked --no-sync python scripts/run_gate.py {{.CLI_ARGS}}
+
+  test:
+    desc: Run the tests; pass pytest paths, markers or options after --
+    cmds:
+      - uv run --locked --no-sync pytest {{.CLI_ARGS}}
+
+  lint:
+    desc: Lint without changing files
+    cmds:
+      - uv run --locked --no-sync python scripts/run_gate.py --only lint
+
+  typecheck:
+    desc: Type-check the source package
+    cmds:
+      - uv run --locked --no-sync python scripts/run_gate.py --only types
+
+  format:
+    desc: Apply formatters and safe lint fixes (writes files)
+    cmds:
+      - uv run --locked --no-sync python scripts/run_gate.py --fix --only format --only lint
+
+  precommit:
+    desc: Run every pre-commit-stage hook on all files
+    cmds:
+      - uv run --locked --no-sync pre-commit run --all-files

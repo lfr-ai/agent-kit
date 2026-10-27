@@ -107,3 +107,24 @@
 - Render shared role bodies with native permissions rather than copying one
   provider's frontmatter to another.
 - Evidence: [setup review](../docs/setup-review.md) and its coverage/native tests.
+
+## 2026-10-26: One kit, installed once, improved at its source
+
+- Reusable guidance lives only in this repository. Projects install it at user
+  scope and never keep local copies or workarounds; a fix is a reviewed pull
+  request here, then `apm update -g`.
+- No write-capable MCP server and no paid agentic workflow: the agent's own file
+  and `gh` tools already do the work, and a server would bypass the checks.
+- Git is allowed here only: commit on request; push, pull request and auto-merge
+  after approval of the exact command. Prefix rules and terminal approvals are
+  speed bumps; the boundary is hosted.
+- The agent uses a write-role machine account (classic `public_repo` token,
+  no `workflow` scope; fine-grained tokens cannot act as a collaborator on a
+  personal repository). The `main` ruleset keeps code-owner and last-push
+  approval, so the owner's review is the human gate. The only bypass is the
+  admin role in `pull_request` mode, so the owner can merge their own pull
+  requests and nobody can push directly.
+- Package manifests keep `dependencies: {}`; consumers name `shared` and each
+  profile package, because declaring siblings would relax a strict gate.
+- Evidence: [improvement loop](../docs/feedback.md), the native-rule behavior
+  tests, and a user-scope install in a throwaway profile.

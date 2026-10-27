@@ -256,6 +256,7 @@ def test_ty_uses_the_same_configuration_in_hook_and_verifier() -> None:
 def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
     tasks = yaml.safe_load((_ROOT / "Taskfile.yml").read_text())["tasks"]
     assert set(tasks) == {
+        "default",
         "bootstrap",
         "lint",
         "format",
@@ -268,6 +269,12 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
         "apm:smoke",
     }
     assert "{{.CLI_ARGS}}" in tasks["verify"]["cmds"][0]
+    assert tasks["default"]["cmds"] == ["{{.TASK_EXE}} --list"]
+    assert all(task.get("desc") for task in tasks.values())
+    assert [check["sh"] for check in tasks["bootstrap"]["preconditions"]] == [
+        "uv --version",
+        "bun --version",
+    ]
     bootstrap = tasks["bootstrap"]["cmds"]
     assert bootstrap.index(
         "uv run --locked --no-sync python scripts/audit_dependencies.py"

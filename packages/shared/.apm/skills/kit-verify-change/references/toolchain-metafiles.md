@@ -23,7 +23,7 @@ explicit, versioned and owned.
 | CI | `.github/workflows/*.yml` | calls the same gate script |
 | Editors | `.editorconfig`, `.vscode/settings.json` | line endings, indentation, final newline |
 | Git attributes | `.gitattributes` | `* text=auto eol=lf` to stop line-ending churn |
-| Task runner | `Taskfile.yml`, `Makefile`, `noxfile.py` | thin wrappers around the gate, not a second definition |
+| Task runner | `Taskfile.yml`, `Makefile`, `noxfile.py` | thin wrappers around the gate, not a second definition; start from the [Taskfile template](../assets/Taskfile.yml.template) |
 
 ## Rules
 

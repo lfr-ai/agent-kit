@@ -1,0 +1,24 @@
+## Problem
+
+<!-- One sentence: what the capability does wrong, or what is missing. -->
+
+## Observed
+
+<!-- A synthetic description. No private code, names, paths, hosts or secrets. -->
+
+| Prompt or situation | Observed | Expected |
+| --- | --- | --- |
+|  |  |  |
+
+## Change
+
+- Owning source: `packages/<package>/.apm/<path>`
+- Change class: trivial | behavior | contract | security
+- Why this is reusable for every project that installs the package:
+
+## Verification
+
+- [ ] The installed copy was not edited; only the owning source changed.
+- [ ] `task verify` passed in the checkout (paste the final summary line).
+- [ ] No budget was raised; the change is as small as the fix allows.
+- [ ] No private material from a consuming project is included.

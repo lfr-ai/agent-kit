@@ -96,7 +96,10 @@ adapters, layered core) are defined in [architecture](architecture.md).
 
 ## Ownership
 
-- **Operator action**: Version control, remote publication, release creation, global setup and
-  credential changes. Performed by an approved person, not by toolkit commands.
+- **Operator action**: Release creation, tags, repository settings, default-branch merges,
+  global setup and credential changes, and version control in any other repository.
+  Performed by an approved person, not by toolkit commands. In this repository an agent
+  may branch and commit on request and push a branch or open a pull request only after
+  the user approves the exact command.
 - **Consumer**: A repository that adopts a composed package. It owns its facts, knowledge,
   memory, secrets, MCP enablement and application checks.

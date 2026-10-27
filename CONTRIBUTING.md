@@ -19,7 +19,7 @@ Generated projections and lockfiles are changed through their owning tools.
 - Keep source changes and related tests/documentation together.
 - Write [Conventional Commits](https://www.conventionalcommits.org/); `task commit`
   prompts for one and the `commit-msg` hook runs `cz check`.
-- After operator-owned `git init`, run `task bootstrap` to audit and install the
+- After cloning, run `task bootstrap` to audit and install the
   locked Python and JavaScript environments and the Git hooks; `task precommit`
   checks every file. Install uv, Bun, Node.js and Docker before running all hooks.
   Alternatively, open the repository in the [dev container](.devcontainer/devcontainer.json),

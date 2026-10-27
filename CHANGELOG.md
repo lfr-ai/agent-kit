@@ -4,6 +4,27 @@
 
 ### Added
 
+- A portable `Taskfile.yml` template in `kit-verify-change` that wraps the gate
+  script with `default`, `bootstrap`, `verify`, `test`, `lint`, `typecheck`,
+  `format` and `precommit` targets; the shipped editor task templates are now
+  checked against it. The editor tasks template adds type-check and bootstrap
+  entries, and the editor reference documents Taskfile conventions.
+- The repository Taskfile gains a schema comment, a `default` target that lists
+  targets, and `bootstrap` preconditions for uv and Bun; every VS Code task now
+  has a `detail` and presentation, plus an interactive commit task.
+- The `kit-improve` skill and prompt (shared) to fix a misbehaving capability at
+  its source repository from any project, with change classes, synthetic-example
+  guidance and pull-request and issue templates; [docs/feedback.md](docs/feedback.md)
+  documents the one-time user-level install, what APM delivers at user scope, the
+  change loop, approval boundaries and rollback; a *Capability change* issue form.
+- Claude Code `ask`/`deny` rules and VS Code approval rules for `git push`,
+  pull requests, force pushes, tags, releases, repository settings and `gh auth`,
+  enforced by `check_native.py` with behavioral tests of the rule patterns.
+- Unit and property tests for the shared text checks (`visible_text`, Markdown
+  link scanning) and the link index.
+- An agent-access section in the GitHub setup guide: a write-role machine
+  account, a narrowly scoped token, the exact ruleset and auto-merge commands,
+  and a boundary test.
 - Updated transitive GitPython to 3.2.1 in `uv.lock` to resolve CVE-2026-114145.
 - Fail-closed dependency-inventory validation before export, with regression
   tests for malformed package/wheel metadata and invalid encoding.
@@ -100,6 +121,20 @@
 
 ### Changed
 
+- The `main` ruleset allows one bypass: the repository admin role, through pull
+  requests only, so a solo owner can merge their own pull requests while agent
+  changes still require the owner's approval. `check_governance.py` rejects any
+  other bypass actor or mode.
+- The APM smoke resolves `agent-kit` beside the running interpreter instead of
+  searching `PATH`, so a foreign launcher earlier on `PATH` is never executed.
+  This also fixes the Ubuntu CI failure where a simulated Windows platform made
+  `shutil.which` call Windows-only APIs.
+- Dependabot no longer proposes `hatchling` bumps: it updates `pyproject.toml`
+  but not the build constraint in `uv.lock`, so every such pull request failed
+  `--locked`. The build backend stays a manual, reviewed update.
+- Portable Markdown checkers (`check_memory_files.py`, `check_handoff.py`) and
+  the debt-marker collector treat `--!>` as an HTML comment end, as browsers do,
+  so text after it is no longer hidden; this resolves three CodeQL alerts.
 - Composed APM manifests exclude on-demand skill trees from application placement
   scans; real smoke checks all portable bundles, original resource bytes and native
   rosters in a temporary home before and after frozen installation.

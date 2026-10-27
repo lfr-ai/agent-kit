@@ -13,6 +13,8 @@ import agent_kit.infrastructure.apm_adapter as apm_module
 from agent_kit.infrastructure.apm_adapter import ApmCliAdapter, ApmExitError
 
 _ROOT = Path(__file__).resolve().parents[2]
+# Cold Windows runners and synced folders need minutes, not seconds, to compose.
+_PROCESS_TIMEOUT_SECONDS = 300
 
 
 @pytest.mark.parametrize("returncode", [0, 9])
@@ -58,7 +60,7 @@ def _run(*arguments: str, cwd: Path = _ROOT) -> subprocess.CompletedProcess[str]
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=120,
+        timeout=_PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
 
@@ -103,7 +105,7 @@ def test_session_hook_reads_stdin_and_emits_advisory_json(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        timeout=_PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
 

@@ -383,3 +383,18 @@ def test_budget_checker_rejects_bad_arguments(tmp_path: Path) -> None:
     assert _BUDGET_CHECK["main"]([f"--root={tmp_path}", "--max-file-chars=0"]) == 2
     extra = f"--extra={tmp_path / 'missing.md'}"
     assert _BUDGET_CHECK["main"]([f"--root={tmp_path}", extra]) == 2
+
+
+@pytest.mark.parametrize("check", [_MEMORY_CHECK, _HANDOFF_CHECK])
+@pytest.mark.parametrize("closer", ["-->", "--!>"])
+def test_markdown_comments_end_at_either_html_closer(
+    check: dict[str, object], closer: str
+) -> None:
+    """Text after an HTML comment closer is content, never silently hidden."""
+    content_lines = check["content_lines"]
+    assert callable(content_lines)
+    single = content_lines(f"keep <!-- hidden {closer} after\n")
+    multi = content_lines(f"<!--\nhidden\n{closer}\nvisible\n")
+
+    assert single == [(1, "keep  after")]
+    assert multi == [(1, ""), (4, "visible")]

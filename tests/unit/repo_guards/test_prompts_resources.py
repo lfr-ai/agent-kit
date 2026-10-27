@@ -29,6 +29,7 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-write-docs",
             "kit-hand-off",
             "kit-run-feedback-loop",
+            "kit-improve",
         }
     ),
     "backend": frozenset(

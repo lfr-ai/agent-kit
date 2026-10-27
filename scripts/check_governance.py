@@ -70,6 +70,19 @@ _RULESET_RULES = {
     ),
 }
 _REQUIRED_CHECK = "Required toolkit checks"
+# Repository administrators may merge their own pull requests without a second
+# reviewer, but never push directly; agents use a write-role identity instead.
+_ADMIN_ROLE_ID = 5
+_BYPASS_ACTORS = {
+    "main.json": [
+        {
+            "actor_id": _ADMIN_ROLE_ID,
+            "actor_type": "RepositoryRole",
+            "bypass_mode": "pull_request",
+        }
+    ],
+    "release-tags.json": [],
+}
 _DEPENDABOT_VERSION = 2
 _DEPENDABOT_ECOSYSTEMS = frozenset(
     {"uv", "github-actions", "pre-commit", "devcontainers"}
@@ -633,7 +646,7 @@ def _ruleset(root: Path, name: str) -> list[str]:
 def _ruleset_scope_findings(
     name: str, raw: dict[str, object], expected: _RulesetContract
 ) -> list[str]:
-    """Require the fixed target, scope, enforcement, and no bypass actors."""
+    """Require the fixed target, scope, enforcement, and reviewed bypass actors."""
     findings: list[str] = []
     conditions = raw.get("conditions")
     ref_name = conditions.get("ref_name") if _mapping(conditions) else None
@@ -644,7 +657,7 @@ def _ruleset_scope_findings(
         or ref_name.get("include") != expected["include"]
     ):
         findings.append(f"rulesets/{name}: target, scope, and enforcement are fixed")
-    if raw.get("bypass_actors") != []:
+    if raw.get("bypass_actors") != _BYPASS_ACTORS[name]:
         findings.append(f"rulesets/{name}: bypass actors require explicit review")
     return findings
 

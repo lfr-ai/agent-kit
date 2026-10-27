@@ -1,0 +1,25 @@
+# Capability change: <short title>
+
+Use this when no kit checkout is available. Paste it into a new issue; do not
+attach files from the consuming project.
+
+- Package and capability: `<package>` / `<kit-name>`
+- Installed version or commit: `<from apm.lock.yaml>`
+- Change class: trivial | behavior | contract | security (security: do not file
+  publicly; use the repository's private advisory route)
+
+## What went wrong
+
+<!-- One or two sentences. -->
+
+## Synthetic reproduction
+
+<!-- The smallest invented example that shows the problem. -->
+
+## Expected behavior
+
+<!-- One sentence a reviewer can check. -->
+
+## Suggested change
+
+<!-- Optional: the sentence, step or file to change, without private context. -->

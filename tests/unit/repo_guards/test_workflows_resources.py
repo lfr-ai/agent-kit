@@ -480,3 +480,11 @@ def test_fullstack_role_keeps_schema_and_has_procedure_body() -> None:
 def test_self_tests_pass(script: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert _main(script, ["--self-test"]) == 0
     assert "self-test passed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("closer", ["-->", "--!>", "*/"])
+def test_debt_reason_strips_trailing_comment_closers(closer: str) -> None:
+    """Reasons written inside HTML or block comments do not keep the closer."""
+    clean = runpy.run_path(str(_DEBT))["_clean_reason"]
+
+    assert clean(f"per-process cache {closer}") == "per-process cache"

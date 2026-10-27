@@ -14,7 +14,7 @@
     },
     {
       "label": "Test",
-      "detail": "Run the fast test tier (task test).",
+      "detail": "Run the tests (task test).",
       "type": "process",
       "command": "task",
       "args": ["test"],
@@ -34,6 +34,16 @@
       "presentation": {"reveal": "silent", "panel": "shared"}
     },
     {
+      "label": "Type check",
+      "detail": "Type-check the source package (task typecheck).",
+      "type": "process",
+      "command": "task",
+      "args": ["typecheck"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "shared"}
+    },
+    {
       "label": "Format",
       "detail": "Apply the repository formatter (task format); writes files.",
       "type": "process",
@@ -42,6 +52,16 @@
       "options": {"cwd": "${workspaceFolder}"},
       "problemMatcher": [],
       "presentation": {"reveal": "silent", "panel": "shared"}
+    },
+    {
+      "label": "Bootstrap",
+      "detail": "Install the locked toolchain and Git hooks (task bootstrap).",
+      "type": "process",
+      "command": "task",
+      "args": ["bootstrap"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
     }
   ]
 }

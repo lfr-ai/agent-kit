@@ -1,27 +1,43 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
 version: "3"
 
 tasks:
+  default:
+    desc: List the available targets
+    silent: true
+    cmds:
+      - "{{.TASK_EXE}} --list"
+
   bootstrap:
     desc: Audit the locks, then install the locked environments and repository hooks
+    preconditions:
+      - sh: uv --version
+        msg: Install uv (see CONTRIBUTING.md), then rerun `task bootstrap`.
+      - sh: bun --version
+        msg: Install Bun (see CONTRIBUTING.md), then rerun `task bootstrap`.
     cmds:
       - uv sync --locked --inexact --only-group audit
       - uv run --locked --no-sync python scripts/audit_dependencies.py
       - uv sync --locked
       - bun install --frozen-lockfile
       - uv run --locked pre-commit install --install-hooks
+
   lint:
     desc: Ruff lint (read-only)
     cmds:
       - uv run --locked python scripts/verify.py lint
+
   format:
     desc: Explicit authoring formatter (writes files)
     cmds:
       - uv run --locked ruff format
       - uv run --locked ruff check --fix
+
   typecheck:
     desc: ty over every Python root declared in ty.toml
     cmds:
       - uv run --locked python scripts/verify.py types
+
   test:
     desc: All test tiers; pass pytest paths, markers, or options after --
     cmds:
@@ -31,19 +47,23 @@ tasks:
     desc: Read-only local and CI quality gate; pass one gate after --
     cmds:
       - uv run --locked --no-sync python scripts/verify.py {{.CLI_ARGS}}
+
   precommit:
-    desc: Operator-initialized repository pre-commit checks
+    desc: Pre-commit-stage hooks on every file
     cmds:
       - uv run --locked pre-commit run --all-files
+
   commit:
     desc: Write a Conventional Commit interactively
     interactive: true
     cmds:
       - uv run --locked cz commit
+
   capabilities:build:
     desc: Create a new licensed APM source archive without replacing an existing artifact
     cmds:
       - uv run --locked python scripts/build_capabilities.py {{.CLI_ARGS}}
+
   apm:smoke:
     desc: Exercise the released APM CLI in disposable selected packages
     cmds:

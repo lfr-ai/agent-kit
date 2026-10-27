@@ -90,7 +90,7 @@ is the shared [check_pins.py](../packages/shared/.apm/skills/kit-verify-change/a
 | --- | --- | --- |
 | Development and audit tools | `==` in `pyproject.toml` dependency groups, hashed in `uv.lock` | Dependabot `uv` |
 | Published dependency (PyYAML) | Bounded range for consumers; `uv.lock` pins the tested build | Dependabot `uv` |
-| Build backend | `hatchling==1.27.0` plus `build-constraint-dependencies` for its closure | Manual review |
+| Build backend | `hatchling==1.27.0` plus `build-constraint-dependencies` for its closure | Manual review: edit both pins, run `uv lock`. Dependabot ignores it because it cannot update the lock's build constraint |
 | tox provisioning | `==` matching the lock | Manual with the lock |
 | JavaScript tooling | Exact `package.json` version and integrity-hashed `bun.lock`; scripts disabled | Dependabot `bun` |
 | GitHub Actions | Full commit SHA with version comment; same-repository calls use `$/` | Dependabot `github-actions` |

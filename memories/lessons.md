@@ -137,3 +137,38 @@ available"; the host did not fall back to the next list entry. Role assets now
 omit `models`, so roles inherit the caller's model. Hosts cache role definitions
 for the session, so the fix applies to new sessions. Evidence: the failed
 `kit-plan-architect` delegation and the re-rendered native ownership check.
+
+## The file-creation tool writes CRLF into Markdown and YAML
+
+Files made with the `create` tool had CRLF endings, which fail the mixed
+line-ending hook and prompt frontmatter parsing (`split("---\n")`). Ruff
+normalizes Python but not Markdown, templates or YAML. After creating such a
+file, rewrite it with LF. Evidence: `test_prompts_resources` failed on a new
+prompt until its endings were normalized.
+
+## `uv run` costs tens of seconds on a synced folder; measure the venv
+
+On this OneDrive checkout `uv run --locked python -c pass` took 37s while the
+venv interpreter started in 1s, and file opens took about 8 ms each. Time the
+code with `.venv\Scripts\python.exe` before blaming it, and move the checkout out
+of the synced folder. Evidence: provenance took 5s directly and 56-77s through
+`uv run`.
+
+## User-scope APM install delivers instructions and prompts but not agent roles
+
+`apm install -g lfr-ai/agent-kit/packages/shared --target claude,copilot`
+(APM 0.33.0) wrote skills to `~/.agents/skills` and `~/.claude/skills`,
+instructions to `~/.claude/rules` and `~/.copilot/instructions`, and prompts to
+`~/.claude/commands` and `~/.copilot/prompts`. Native agent roles were not
+delivered; Claude drops the `agent:` prompt field with a warning. Evidence: a
+throwaway `USERPROFILE` install.
+
+## Reproduce the Ubuntu CI leg in a container before pushing
+
+A test that faked `sys.platform = "win32"` passed on Windows and failed on
+Ubuntu CI, because `shutil.which` then called Windows-only `_winapi`. Run the
+whole gate in `ghcr.io/astral-sh/uv:<pinned>-python3.13-trixie-slim` from a
+tarball of `git ls-files -co --exclude-standard`, copied with `docker cp`:
+PowerShell re-encodes bytes piped to a native command, and a OneDrive bind
+mount is too slow to copy. The Linux gate ran in about 4 minutes. Evidence:
+CI run 40330605897 and the container verify that reproduced and then cleared it.

@@ -57,7 +57,6 @@ task apm:smoke
 - `compose --skill`: explicit task procedures; `.apm/selection.json` records the
   delivered roster and character footprint without token/cost claims.
 - `task format`: explicit authoring formatter; never part of the read-only audit.
-- `task precommit`: checks all files after an operator initializes the repository.
 - `task verify -- governance`: community, ownership consistency, and workflow safety.
 - `uv run --locked python scripts/check_governance.py --publication`: enforce
   personal ownership/private-contact consistency.
@@ -77,7 +76,8 @@ task apm:smoke
   named numeric values and double-backtick docstrings across the toolkit,
   portable assets, and production Python templates; the same script runs in
   the always-on pre-commit hook.
-- Task exposes ten recurring workflows, not aliases for every executable.
+- Task exposes ten recurring workflows plus a `default` target that lists them,
+  not aliases for every executable.
   `task verify -- <gate>` selects a named gate; one-off tools use their own CLI.
   See [developer tooling](docs/devtools.md) for defaults, hooks and template guidance.
 
