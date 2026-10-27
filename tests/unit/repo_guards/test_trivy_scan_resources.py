@@ -94,8 +94,8 @@ def test_runner_is_linked_and_skill_body_does_not_grow() -> None:
     assert "[Trivy runner](assets/templates/trivy_image_scan.py.template)" in skill
     assert len(skill.splitlines()) <= 70
     assert (
-        "description: Use when reviewing container images, Dockerfiles, or runtime "
-        "settings to ensure reproducible builds, isolation, and safe shutdown."
+        "description: Use when writing or reviewing Dockerfiles, container images, "
+        "Compose files, or container runtime settings."
     ) in skill
     reference = (_SKILL / "references/supply-chain.md").read_text(encoding="utf-8")
     assert "../assets/templates/trivy_image_scan.py.template" in reference
@@ -112,7 +112,7 @@ def test_runner_is_linked_and_skill_body_does_not_grow() -> None:
 def test_terraform_scanner_is_misconfiguration_only() -> None:
     template = (
         _ROOT
-        / "packages/iac/.apm/skills/kit-terraform-validation"
+        / "packages/terraform/.apm/skills/kit-terraform-validation"
         / "assets/blueprint/trivy.yaml.template"
     )
     configuration = yaml.safe_load(template.read_text(encoding="utf-8"))

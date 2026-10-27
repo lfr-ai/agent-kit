@@ -1,0 +1,70 @@
+<!--
+  API-scope policy for a model API ("assistant") routed through API Management's
+  AI gateway policies. Copy to apim/policies/assistant-api.xml.
+  Model choice, prompt handling, and client fallbacks belong to the model
+  gateway design (kit-llm-gateway); this file only governs access and spend.
+  Named values ({{...}}) are created by apim.bicep and api.bicep.
+-->
+<policies>
+  <inbound>
+    <base />
+    <validate-jwt header-name="Authorization" require-scheme="Bearer"
+      failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"
+      require-expiration-time="true" require-signed-tokens="true" clock-skew="60"
+      output-token-variable-name="jwt">
+      <openid-config url="{{jwt-openid-config-url}}" />
+      <audiences>
+        <audience>{{assistant-api-audience}}</audience>
+      </audiences>
+      <issuers>
+        <issuer>{{jwt-issuer}}</issuer>
+      </issuers>
+    </validate-jwt>
+    <!--
+      Token rate and monthly token quota per subscription. Counts are per
+      gateway and can briefly overshoot under concurrency or streaming.
+    -->
+    <llm-token-limit
+      counter-key='@("assistant:" + context.Subscription.Id)'
+      tokens-per-minute="20000"
+      token-quota="5000000" token-quota-period="Monthly"
+      estimate-prompt-tokens="false"
+      retry-after-variable-name="retryAfter"
+      remaining-tokens-header-name="RateLimit-Remaining-Tokens" />
+    <!-- Up to five custom dimensions; each must have few distinct values. -->
+    <llm-emit-token-metric namespace="assistant-gateway">
+      <dimension name="API ID" />
+      <dimension name="Subscription ID" />
+      <dimension name="Operation ID" />
+    </llm-emit-token-metric>
+    <!--
+      Optional semantic cache (needs an external Redis-compatible cache with
+      vector search and an embeddings backend). Partition by subscription so
+      one consumer never receives another's answer; similarity can return a
+      wrong or stale answer, so enable only after evaluation.
+      <llm-semantic-cache-lookup score-threshold="0.05"
+        embeddings-backend-id="embeddings-backend" embeddings-backend-auth="system-assigned">
+        <vary-by>@(context.Subscription.Id)</vary-by>
+      </llm-semantic-cache-lookup>
+    -->
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+    <set-header name="Authorization" exists-action="delete" />
+    <!-- Pool of model deployments, each with a circuit breaker that honors Retry-After. -->
+    <set-backend-service backend-id="assistant-pool" />
+    <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+    <!--
+      Pair with the lookup above when semantic caching is enabled.
+      <llm-semantic-cache-store duration="300" />
+    -->
+  </outbound>
+  <on-error>
+    <!-- Token-limit responses keep their 429 or 403; global renders problem+json. -->
+    <base />
+  </on-error>
+</policies>

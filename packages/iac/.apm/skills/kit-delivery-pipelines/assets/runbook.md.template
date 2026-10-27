@@ -1,0 +1,60 @@
+# Runbook: roll back or roll forward <service>
+
+Owner: <team>. Last exercised: <date, environment>. Review after every use.
+
+## When to use this runbook
+
+Use it when a deployment is the likely cause of user impact: an SLO burn-rate
+page fires within the bake window of a release, the canary gate fails, smoke
+checks fail after promotion, or support reports a regression tied to the
+release.
+
+## 1. Decide in five minutes
+
+| Question | If yes |
+| --- | --- |
+| Did impact start with or after the latest deploy? | Prefer rollback |
+| Is the previous revision, slot content, or digest still available and healthy? | Roll back by traffic switch |
+| Did the release run a contract (destructive) migration or a one-way data change? | Do not roll back the app alone; roll forward with a fix or restore data per the migration plan |
+| Is the fix a one-line, low-risk change that can pass the pipeline faster than recovery by rollback? | Roll forward through the normal pipeline |
+| Is the cause a configuration or flag change? | Revert the configuration or turn the flag off first |
+
+Write the decision and time in the incident channel before acting.
+
+## 2. Roll back
+
+- Container Apps: run the `rollback` workflow with the environment and an
+  empty revision (uses the `previous` label), or a named revision, or an older
+  attested digest when the revision was purged.
+- App Service slots: swap the staging slot back into production; the staging
+  slot holds the previous production content after a swap.
+- Kubernetes progressive delivery: abort the rollout (for example
+  `kubectl argo rollouts abort <name>`), then revert the desired state in Git
+  so the controller does not redeploy the failed version.
+- Feature flag: turn the flag off for everyone; record the flag change.
+
+Never rebuild an old commit to roll back; redeploy the digest that already ran.
+
+## 3. Verify recovery
+
+- Production smoke check passes.
+- Error ratio and latency return to baseline on the dashboard.
+- The burn-rate alert resolves; record `restored_at` for delivery metrics.
+
+## 4. Hand off
+
+- Incident record: timeline, decision, commands run, revision or digest
+  before and after, and who approved.
+- Mark the deployment as a change failure in the deployment export
+  (`caused_incident: true`, `restored_at`).
+- Block re-promotion of the failed digest until a fix is merged.
+- Schedule the post-incident review; add a regression test or a new gate.
+
+## Contacts and access
+
+| Role | Who | How |
+| --- | --- | --- |
+| Incident commander | | |
+| Service owner | | |
+| Environment approver | | |
+| Database owner | | |

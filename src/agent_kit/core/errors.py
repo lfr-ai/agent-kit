@@ -16,6 +16,21 @@ class InputTypeError(TypeError):
         super().__init__(f"{location} must be {expected}")
 
 
+class UnreadableDocumentError(ValueError):
+    """A requested document is missing, linked, oversized, or not valid JSON."""
+
+    def __init__(self, *, name: str, reason: str) -> None:
+        """Describe the failure without including document content.
+
+        Args:
+            name (str): Safe document file name.
+            reason (str): Safe description of the failed rule.
+        """
+        self.name = name
+        self.reason = reason
+        super().__init__(f"{name} {reason}")
+
+
 class DuplicateJsonFieldError(ValueError):
     """A JSON object repeats a field instead of defining it unambiguously."""
 

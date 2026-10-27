@@ -1,0 +1,276 @@
+// API Management instance with system-assigned identity, hardened protocols,
+// Application Insights logger (managed identity), request diagnostics, Azure
+// Monitor resource logs, Key Vault read access for named values, instance-wide
+// named values, and the global policy.
+// Copy to apim/modules/apim.bicep. Requires apim/policies/global.xml.
+// Review the tier against the current feature matrix before choosing it.
+
+metadata description = 'API Management service, observability, and global policy.'
+
+@description('API Management service name (globally unique, 1-50 characters).')
+@minLength(1)
+@maxLength(50)
+param name string
+
+@description('Azure region.')
+param location string = resourceGroup().location
+
+@description('Pricing tier. v2 tiers need API version 2024-05-01 or later.')
+@allowed([
+  'Developer'
+  'Basic'
+  'Standard'
+  'Premium'
+  'BasicV2'
+  'StandardV2'
+  'PremiumV2'
+])
+param skuName string = 'StandardV2'
+
+@description('Scale units for the tier.')
+@minValue(1)
+param skuCapacity int = 1
+
+@description('Publisher contact shown in notifications and the developer portal.')
+param publisherEmail string
+
+@description('Publisher organization name.')
+param publisherName string
+
+@description('Allow inbound traffic from the public internet. Disable only with a private endpoint or VNet injection in place.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
+@description('Existing Application Insights component in this resource group.')
+param appInsightsName string
+
+@description('Existing Log Analytics workspace resource ID for resource logs.')
+param logAnalyticsWorkspaceId string
+
+@description('Existing Key Vault in this resource group that holds named-value secrets.')
+param keyVaultName string
+
+@description('Percentage of requests sent to Application Insights (1-100).')
+@minValue(1)
+@maxValue(100)
+param samplingPercentage int = 25
+
+@description('Token issuer, for example https://login.example.com/tenant/v2.0.')
+param jwtIssuer string
+
+@description('OpenID Connect metadata URL of the token issuer.')
+param jwtOpenIdConfigUrl string
+
+@description('Global per-client call backstop per minute.')
+@minValue(1)
+param globalCallsPerMinute int = 600
+
+param tags object = {}
+
+var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+var protocolSettings = {
+  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'False'
+  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'False'
+  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10': 'False'
+  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11': 'False'
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: appInsightsName
+}
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource service 'Microsoft.ApiManagement/service@2024-05-01' = {
+  name: name
+  location: location
+  tags: tags
+  sku: {
+    name: skuName
+    capacity: skuCapacity
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    publisherEmail: publisherEmail
+    publisherName: publisherName
+    publicNetworkAccess: publicNetworkAccess
+    // Reject management calls from old API versions that ignore newer safeguards.
+    apiVersionConstraint: {
+      minApiVersion: '2021-08-01'
+    }
+    customProperties: protocolSettings
+  }
+}
+
+// The logger authenticates to Application Insights with the service identity.
+resource metricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appInsights.id, service.id, monitoringMetricsPublisherRoleId)
+  scope: appInsights
+  properties: {
+    principalId: service.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      monitoringMetricsPublisherRoleId
+    )
+  }
+}
+
+// Key Vault-backed named values are read with the service identity.
+resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, service.id, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    principalId: service.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsUserRoleId
+    )
+  }
+}
+
+resource logger 'Microsoft.ApiManagement/service/loggers@2024-05-01' = {
+  parent: service
+  name: 'appinsights'
+  properties: {
+    loggerType: 'applicationInsights'
+    description: 'Application Insights with managed identity'
+    resourceId: appInsights.id
+    credentials: {
+      connectionString: appInsights.properties.ConnectionString
+      identityClientId: 'SystemAssigned'
+    }
+  }
+  dependsOn: [
+    metricsPublisher
+  ]
+}
+
+// Instance-wide request telemetry. Headers and bodies are not logged: they can
+// carry tokens, keys, and personal data. Add named headers only after review.
+resource requestDiagnostics 'Microsoft.ApiManagement/service/diagnostics@2024-05-01' = {
+  parent: service
+  name: 'applicationinsights'
+  properties: {
+    loggerId: logger.id
+    alwaysLog: 'allErrors'
+    httpCorrelationProtocol: 'W3C'
+    verbosity: 'information'
+    logClientIp: false
+    metrics: true
+    sampling: {
+      samplingType: 'fixed'
+      percentage: samplingPercentage
+    }
+    frontend: {
+      request: {
+        headers: []
+        body: {
+          bytes: 0
+        }
+      }
+      response: {
+        headers: []
+        body: {
+          bytes: 0
+        }
+      }
+    }
+    backend: {
+      request: {
+        headers: []
+        body: {
+          bytes: 0
+        }
+      }
+      response: {
+        headers: []
+        body: {
+          bytes: 0
+        }
+      }
+    }
+  }
+}
+
+// Gateway resource logs and platform metrics for dashboards and alerts.
+resource monitorSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'to-log-analytics'
+  scope: service
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logAnalyticsDestinationType: 'Dedicated'
+    logs: [
+      {
+        categoryGroup: 'allLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
+}
+
+resource issuerValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: service
+  name: 'jwt-issuer'
+  properties: {
+    displayName: 'jwt-issuer'
+    value: jwtIssuer
+    secret: false
+  }
+}
+
+resource openIdConfigValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: service
+  name: 'jwt-openid-config-url'
+  properties: {
+    displayName: 'jwt-openid-config-url'
+    value: jwtOpenIdConfigUrl
+    secret: false
+  }
+}
+
+resource globalCallsValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: service
+  name: 'global-calls-per-minute'
+  properties: {
+    displayName: 'global-calls-per-minute'
+    value: string(globalCallsPerMinute)
+    secret: false
+  }
+}
+
+resource globalPolicy 'Microsoft.ApiManagement/service/policies@2024-05-01' = {
+  parent: service
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: loadTextContent('../policies/global.xml')
+  }
+  dependsOn: [
+    globalCallsValue
+  ]
+}
+
+@description('Service name for child deployments.')
+output name string = service.name
+
+@description('Principal ID of the system-assigned identity; grant it backend roles.')
+output principalId string = service.identity.principalId
+
+@description('Gateway base URL.')
+output gatewayUrl string = service.properties.gatewayUrl

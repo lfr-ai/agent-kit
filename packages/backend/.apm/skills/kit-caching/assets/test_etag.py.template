@@ -1,0 +1,163 @@
+"""HTTP tests for conditional GET handling and Cache-Control safety.
+
+Copy into ``tests/unit/api/test_etag.py``. Uses a minimal Starlette app so the
+helper is tested through real request parsing; in the service, prefer the
+app factory with fakes (see the ``kit-fastapi-service`` skill).
+"""
+
+from datetime import UTC, datetime
+from email.utils import format_datetime
+
+import pytest
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+from starlette.testclient import TestClient
+
+from shop.api.etag import (
+    PRIVATE_REVALIDATE,
+    conditional_response,
+    etag_matches,
+    shared_policy,
+    strong_etag,
+)
+
+BODY = b'{"id":981,"name":"lamp"}'
+MODIFIED = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+TAG = strong_etag(BODY)
+
+
+async def product(request: Request) -> Response:
+    return conditional_response(
+        request,
+        body=BODY,
+        media_type="application/json",
+        cache_control=shared_policy(max_age_seconds=60, shared_max_age_seconds=300),
+        public=True,
+        last_modified=MODIFIED,
+    )
+
+
+async def account(request: Request) -> Response:
+    return conditional_response(
+        request,
+        body=b'{"user":"u-1"}',
+        media_type="application/json",
+        cache_control=PRIVATE_REVALIDATE,
+    )
+
+
+@pytest.fixture
+def client() -> TestClient:
+    app = Starlette(
+        routes=[
+            Route("/products/981", product, methods=["GET", "HEAD", "POST"]),
+            Route("/me", account),
+        ]
+    )
+    return TestClient(app)
+
+
+def test_ok_response_carries_validators_and_policy(client: TestClient) -> None:
+    response = client.get("/products/981")
+
+    assert response.status_code == 200
+    assert response.content == BODY
+    assert response.headers["etag"] == TAG
+    assert response.headers["cache-control"] == "public, max-age=60, s-maxage=300"
+    assert response.headers["vary"] == "Accept-Encoding"
+    assert response.headers["last-modified"] == format_datetime(MODIFIED, usegmt=True)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [TAG, f"W/{TAG}", '"other", ' + TAG, "*"],
+    ids=["strong", "weak", "list", "star"],
+)
+def test_matching_if_none_match_returns_304_without_body(
+    client: TestClient, header: str
+) -> None:
+    response = client.get("/products/981", headers={"If-None-Match": header})
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response.headers["etag"] == TAG
+    assert response.headers["cache-control"].startswith("public")
+    assert response.headers["vary"] == "Accept-Encoding"
+
+
+def test_changed_representation_returns_200(client: TestClient) -> None:
+    response = client.get("/products/981", headers={"If-None-Match": '"stale"'})
+
+    assert response.status_code == 200
+    assert response.content == BODY
+
+
+def test_if_modified_since_applies_only_without_if_none_match(
+    client: TestClient,
+) -> None:
+    since = format_datetime(MODIFIED, usegmt=True)
+
+    unchanged = client.get("/products/981", headers={"If-Modified-Since": since})
+    overridden = client.get(
+        "/products/981",
+        headers={"If-Modified-Since": since, "If-None-Match": '"stale"'},
+    )
+
+    assert unchanged.status_code == 304
+    assert overridden.status_code == 200
+
+
+def test_invalid_if_modified_since_is_ignored(client: TestClient) -> None:
+    response = client.get("/products/981", headers={"If-Modified-Since": "yesterday"})
+
+    assert response.status_code == 200
+
+
+def test_head_returns_the_same_validators(client: TestClient) -> None:
+    response = client.head("/products/981")
+
+    assert response.headers["etag"] == TAG
+
+
+def test_unsafe_method_never_returns_304(client: TestClient) -> None:
+    response = client.post("/products/981", headers={"If-None-Match": TAG})
+
+    assert response.status_code == 200
+
+
+def test_per_user_response_is_private(client: TestClient) -> None:
+    response = client.get("/me", headers={"Authorization": "Bearer test-token"})
+
+    assert response.headers["cache-control"] == "private, no-cache"
+
+
+def test_shared_policy_on_credentialed_request_is_refused() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/me",
+            "headers": [(b"cookie", b"session=abc")],
+            "query_string": b"",
+        }
+    )
+
+    with pytest.raises(ValueError, match="credentialed"):
+        conditional_response(
+            request,
+            body=b"{}",
+            media_type="application/json",
+            cache_control=shared_policy(max_age_seconds=60),
+        )
+
+
+def test_weak_comparison_ignores_the_weak_prefix() -> None:
+    assert etag_matches('W/"abc"', '"abc"')
+    assert not etag_matches('"abd"', '"abc"')
+
+
+def test_negative_durations_are_rejected() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        shared_policy(max_age_seconds=-1)

@@ -2,7 +2,7 @@
 name: kit-orchestrator
 description: "Coordinate a broad change through bounded workers and review."
 tools: ["read", "search", "edit", "execute", "agent"]
-agents: ["kit-planner", "kit-plan-architect", "kit-codebase-researcher", "kit-devops-implementer", "kit-docs-writer", "kit-test-author", "kit-code-reviewer", "kit-solid-review", "kit-security-reviewer"]
+agents: ["kit-planner", "kit-plan-architect", "kit-codebase-researcher", "kit-devops-implementer", "kit-docs-writer", "kit-test-author", "kit-code-reviewer", "kit-solid-review", "kit-security-reviewer", "kit-backend-implementer", "kit-contract-iac-lint"]
 user-invocable: true
 disable-model-invocation: true
 ---

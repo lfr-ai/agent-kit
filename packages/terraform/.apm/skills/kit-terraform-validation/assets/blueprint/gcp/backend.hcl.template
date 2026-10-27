@@ -1,0 +1,13 @@
+# GCS backend settings for one environment. Copy to
+# infra/gcp/environments/<env>/backend.hcl and run:
+#   terraform init -backend-config=environments/<env>/backend.hcl
+# Identifiers only; credentials come from the environment (Workload Identity
+# Federation in CI). The state bucket is created by a separate bootstrap stack
+# with object versioning, uniform bucket-level access, and public access
+# prevention. Locking is native to the GCS backend.
+bucket = "orders-tfstate-dev-example-project"
+prefix = "orders/dev"
+
+# Optional: encrypt state objects with a Cloud KMS key; grant the Cloud Storage
+# service agent the CryptoKey Encrypter/Decrypter role on the key first.
+# kms_encryption_key = "projects/example-project/locations/europe-west1/keyRings/tfstate/cryptoKeys/state"

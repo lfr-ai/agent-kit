@@ -1,0 +1,125 @@
+"""Cache settings facet with bounded timeouts, TTLs, and safe connection rules.
+
+Copy into ``src/shop/cache/settings.py``. Nest ``CacheSettings`` in the
+project's settings class (see the ``kit-config`` skill) so variables such as
+``SHOP_CACHE__URL`` and ``SHOP_CACHE__PASSWORD`` load once at start-up. The
+URL carries no credentials; the password arrives through the secret channel
+and is never logged.
+"""
+
+from typing import Self
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 0.5
+_DEFAULT_SOCKET_TIMEOUT_SECONDS = 0.1
+_DEFAULT_OPERATION_TIMEOUT_SECONDS = 0.25
+_MAX_TIMEOUT_SECONDS = 5.0
+_DEFAULT_RETRY_ATTEMPTS = 1
+_MAX_RETRY_ATTEMPTS = 3
+_DEFAULT_BACKOFF_BASE_SECONDS = 0.01
+_DEFAULT_BACKOFF_CAP_SECONDS = 0.05
+_DEFAULT_MAX_CONNECTIONS = 50
+_DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 5
+_DEFAULT_TTL_SECONDS = 300.0
+_DEFAULT_NEGATIVE_TTL_SECONDS = 30.0
+_DEFAULT_JITTER_RATIO = 0.1
+_MAX_JITTER_RATIO = 0.5
+_DEFAULT_LOCK_TTL_SECONDS = 10.0
+_DEFAULT_LOCK_WAIT_SECONDS = 2.0
+_DEFAULT_LOCK_POLL_SECONDS = 0.05
+_TLS_SCHEME = "rediss"
+_PLAINTEXT_SCHEME = "redis"
+
+
+class CacheSettings(BaseModel):
+    """Validated configuration for the shared cache and the cache-aside loader."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    url: str = Field(
+        min_length=1, description="rediss://host:port/db without credentials"
+    )
+    allow_plaintext: bool = Field(
+        default=False, description="Permit redis:// for local development only"
+    )
+    username: str | None = None
+    password: SecretStr | None = None
+    key_prefix: str = Field(default="shop", pattern=r"^[a-z][a-z0-9-]{0,31}$")
+    client_name: str = Field(default="shop-api", pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    connect_timeout_seconds: float = Field(
+        default=_DEFAULT_CONNECT_TIMEOUT_SECONDS, gt=0, le=_MAX_TIMEOUT_SECONDS
+    )
+    socket_timeout_seconds: float = Field(
+        default=_DEFAULT_SOCKET_TIMEOUT_SECONDS, gt=0, le=_MAX_TIMEOUT_SECONDS
+    )
+    operation_timeout_seconds: float = Field(
+        default=_DEFAULT_OPERATION_TIMEOUT_SECONDS, gt=0, le=_MAX_TIMEOUT_SECONDS
+    )
+    retry_attempts: int = Field(
+        default=_DEFAULT_RETRY_ATTEMPTS, ge=0, le=_MAX_RETRY_ATTEMPTS
+    )
+    retry_backoff_base_seconds: float = Field(
+        default=_DEFAULT_BACKOFF_BASE_SECONDS, gt=0
+    )
+    retry_backoff_cap_seconds: float = Field(default=_DEFAULT_BACKOFF_CAP_SECONDS, gt=0)
+    max_connections: int = Field(default=_DEFAULT_MAX_CONNECTIONS, ge=1)
+    health_check_interval_seconds: int = Field(
+        default=_DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS, ge=0
+    )
+    default_ttl_seconds: float = Field(default=_DEFAULT_TTL_SECONDS, gt=0)
+    negative_ttl_seconds: float = Field(default=_DEFAULT_NEGATIVE_TTL_SECONDS, gt=0)
+    jitter_ratio: float = Field(
+        default=_DEFAULT_JITTER_RATIO, ge=0, le=_MAX_JITTER_RATIO
+    )
+    lock_ttl_seconds: float = Field(default=_DEFAULT_LOCK_TTL_SECONDS, gt=0)
+    lock_wait_seconds: float = Field(default=_DEFAULT_LOCK_WAIT_SECONDS, ge=0)
+    lock_poll_seconds: float = Field(default=_DEFAULT_LOCK_POLL_SECONDS, gt=0)
+
+    @model_validator(mode="after")
+    def _reject_unsafe_url(self) -> Self:
+        """Reject credentials in the URL and plaintext transport outside development.
+
+        Returns:
+            The validated settings.
+
+        Raises:
+            ValueError: The URL scheme is not allowed or the URL embeds credentials.
+        """
+        parts = urlsplit(self.url)
+        allowed = (
+            {_TLS_SCHEME, _PLAINTEXT_SCHEME} if self.allow_plaintext else {_TLS_SCHEME}
+        )
+        if parts.scheme not in allowed:
+            msg = f"cache url scheme must be one of {sorted(allowed)}"
+            raise ValueError(msg)
+        if parts.username or parts.password:
+            msg = "cache url must not contain credentials; use username and password"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _reject_inverted_budgets(self) -> Self:
+        """Reject timeout, TTL, lock, and backoff values that contradict each other.
+
+        Returns:
+            The validated settings.
+
+        Raises:
+            ValueError: A pair of related durations is inverted.
+        """
+        if self.operation_timeout_seconds < self.socket_timeout_seconds:
+            msg = "operation_timeout_seconds must cover at least one socket timeout"
+            raise ValueError(msg)
+        if self.negative_ttl_seconds > self.default_ttl_seconds:
+            msg = "negative_ttl_seconds must not exceed default_ttl_seconds"
+            raise ValueError(msg)
+        if self.lock_wait_seconds >= self.lock_ttl_seconds:
+            msg = "lock_wait_seconds must be shorter than lock_ttl_seconds"
+            raise ValueError(msg)
+        if self.retry_backoff_base_seconds > self.retry_backoff_cap_seconds:
+            msg = "retry_backoff_base_seconds must not exceed the cap"
+            raise ValueError(msg)
+        return self

@@ -1,0 +1,51 @@
+# Deploy gate checklist: <service> <release or digest>
+
+Fill one copy per production promotion. Every "no" needs a named owner's
+written exception before the promotion continues.
+
+## Artifact
+
+| Check | Answer | Evidence |
+| --- | --- | --- |
+| The candidate is one immutable digest (`registry/name@sha256:...`) | yes / no | |
+| The digest was built once by CI from a reviewed commit on the trunk | yes / no | CI run link |
+| `gh attestation verify` passed for the digest and the CI workflow | yes / no | command output |
+| The same digest already ran in every earlier environment | yes / no | deployment links |
+| Vulnerability and license gates passed for this digest (`kit-supply-chain`) | yes / no | |
+
+## Pipeline
+
+| Check | Answer | Evidence |
+| --- | --- | --- |
+| Required checks passed on the merge commit; none skipped by path filters | yes / no | |
+| The deploy workflow passed `check_delivery_workflow.py` | yes / no | output |
+| Workflow security review is current (`kit-ci-review`) | yes / no | |
+| The deploy job uses OIDC with an environment-scoped subject | yes / no | |
+| Deploy concurrency queues; it never cancels an in-progress deploy | yes / no | |
+
+## Change content
+
+| Check | Answer | Evidence |
+| --- | --- | --- |
+| Schema changes are expand-only, or contract runs after all readers moved (`kit-database-migrations`) | yes / no / n/a | |
+| New behavior ships dark behind a flag with an owner and removal date | yes / no / n/a | |
+| Configuration changes are versioned with the release and reversible | yes / no / n/a | |
+| Breaking API or event changes have a published migration path | yes / no / n/a | |
+
+## Rollout
+
+| Check | Answer | Evidence |
+| --- | --- | --- |
+| Strategy chosen and recorded (canary, blue-green, slot swap, rolling) | | |
+| Canary steps, bake time, and abort thresholds are written down | yes / no | |
+| Abort signals: error ratio, latency, saturation, burn rate (`kit-observability`) | yes / no | dashboard link |
+| The rollback target (revision, slot, or digest) exists and is healthy | yes / no | |
+| The rollback has been exercised in a lower environment this quarter | yes / no | date |
+| An on-call owner is reachable for the bake period | yes / no | name |
+
+## Decision
+
+- Approver (not the author of the change):
+- Time window:
+- Decision: promote / hold / reject
+- Notes:

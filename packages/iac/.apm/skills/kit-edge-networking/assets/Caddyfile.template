@@ -37,8 +37,9 @@
 	}
 
 	header {
-		# Start with a short max-age; raise it once every path serves HTTPS.
-		Strict-Transport-Security "max-age=63072000"
+		# HSTS starts at 300 seconds; raise it to 604800, 2592000, then
+		# 63072000 once every path serves HTTPS.
+		Strict-Transport-Security "max-age=300"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Frame-Options "DENY"

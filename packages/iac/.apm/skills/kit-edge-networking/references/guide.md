@@ -11,10 +11,16 @@ deploy.
 | Protocols, ciphers, certificates, ACME, HSTS, revocation | [TLS and certificates](tls-and-certificates.md) |
 | Forwarded headers, trusted proxies, timeouts, body limits, WebSocket, SSE, health routing, sticky sessions, reloads | [Proxying](proxying.md) |
 | Rate limiting, security headers, disclosure, admin surfaces | [Edge hardening](edge-hardening.md) |
+| Layer 4 or 7, algorithms, health checks, outlier detection, draining, affinity, upstream keep-alive, proxy retries, Azure global and regional balancers | [Load balancing](load-balancing.md) |
+| Gateway API, Ingress, ingress-nginx retirement and migration, HTTPRoute timeouts and retries, cert-manager | [Kubernetes ingress](kubernetes-ingress.md) |
+| Proxy and CDN caches, authenticated responses, purge and cache busting | [CDN and proxy caching](cdn-and-proxy-caching.md) |
 
 Streaming-specific application behavior (heartbeats, reconnects, event IDs)
 belongs to the `kit-server-streaming` skill; container runtime settings
-belong to `kit-containers`; deployment review belongs to `kit-infra-review`.
+belong to `kit-containers`; deployment review belongs to `kit-infra-review`;
+deployment strategies belong to `kit-delivery-pipelines`; API management
+belongs to `kit-api-gateway`; application caching semantics belong to
+`kit-caching`.
 
 ## Choose the edge component
 
@@ -26,6 +32,8 @@ belong to `kit-containers`; deployment review belongs to `kit-infra-review`.
 | Global users, DDoS and WAF needs, multiple regions on Azure | Azure Front Door | Anycast edge, managed certificates, WAF, health-based origin routing | Origin must accept only Front Door (check `X-Azure-FDID` and service tag) |
 | Regional Azure application behind a virtual network | Azure Application Gateway | Layer 7 load balancing, WAF, private backends | Probe paths, request timeout, body size limits per SKU |
 | Plain TCP or TLS passthrough | Layer 4 load balancer | Lowest overhead | No HTTP headers; use PROXY protocol for client address |
+| Service-to-service or advanced traffic policy (outlier detection, retry budgets) | Envoy, directly or through an Envoy-based Gateway API implementation | Richest balancing and resilience controls | Large configuration surface; validate with `envoy --mode validate` |
+| Kubernetes cluster ingress | A conformant Gateway API implementation | Role-separated, portable routing | Experimental-channel fields; community ingress-nginx is retired |
 
 A managed edge in front of a self-managed proxy is common; review every hop,
 because each hop has its own timeouts, limits, and trusted-proxy list.
@@ -59,6 +67,10 @@ because each hop has its own timeouts, limits, and trusted-proxy list.
 | 502 bursts during deploys | Instances stopped before leaving rotation; no readiness drain |
 | Headers vanish on one route | A location-level `add_header` or `proxy_set_header` replaced the inherited list |
 | Site unreachable for months after a mistake | HSTS preload or long max-age on a host that cannot serve HTTPS |
+| Intermittent 502s on idle upstream connections | Proxy upstream keep-alive outlives the application server's keep-alive |
+| One user sees another user's page | Shared cache stored a response to an authenticated request |
+| Outage amplified during an incident | Retries stacked at several layers, or retries of non-idempotent requests |
+| All instances ejected at once | Outlier detection without a maximum ejection percentage |
 
 ## Anti-patterns
 

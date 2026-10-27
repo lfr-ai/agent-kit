@@ -1,0 +1,8 @@
+name: agent-kit-bicep
+version: "0.1.0"
+license: MIT
+description: Optional Bicep authoring and Azure what-if review.
+targets: [copilot, claude]
+includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
+dependencies: {}
+executables: {}

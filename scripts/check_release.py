@@ -24,7 +24,18 @@ from scripts.check_governance import publication_blockers
 
 _ROOT = Path(__file__).resolve().parents[1]
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
-_BUNDLES = ("shared", "backend", "frontend", "iac", "workflows", "ai", "coordination")
+_BUNDLES = (
+    "shared",
+    "backend",
+    "frontend",
+    "iac",
+    "workflows",
+    "ai",
+    "coordination",
+    "terraform",
+    "bicep",
+    "remote-access",
+)
 
 
 class _ReleaseIssue(Enum):

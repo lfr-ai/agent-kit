@@ -1,0 +1,152 @@
+"""Contract tests for every ``RateLimitStore`` plus Redis-specific checks.
+
+Copy into ``tests/integration/test_redis_rate_limit.py``. Redis cases run
+against a real Redis-compatible server named by ``SHOP_TEST_REDIS_URL`` (for
+example a disposable ``redis:7`` or ``valkey/valkey:8`` container, or a
+Testcontainers fixture) and are skipped when the variable is unset. Each test
+uses a unique key prefix and deletes its keys, so no database is flushed.
+Requires ``redis`` and the AnyIO pytest plugin that ships with ``anyio``.
+"""
+
+import asyncio
+import os
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import pytest
+from redis.asyncio import Redis
+
+from shop.api.rate_limit import (
+    InMemoryRateLimitStore,
+    RateLimitStore,
+    RateLimitStoreError,
+)
+from shop.api.redis_rate_limit import RedisRateLimitStore
+
+REDIS_URL = os.environ.get("SHOP_TEST_REDIS_URL")
+requires_redis = pytest.mark.skipif(
+    REDIS_URL is None, reason="SHOP_TEST_REDIS_URL is not set"
+)
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@asynccontextmanager
+async def redis_store(
+    *, timeout_seconds: float = 2.0
+) -> AsyncIterator[tuple[Redis, RedisRateLimitStore]]:
+    assert REDIS_URL is not None
+    prefix = f"test:rl:{uuid.uuid4().hex}:"
+    store = RedisRateLimitStore(
+        key_prefix=prefix, command_timeout_seconds=timeout_seconds
+    )
+    async with Redis.from_url(REDIS_URL) as client, store.bind(client):
+        try:
+            yield client, store
+        finally:
+            keys = [key async for key in client.scan_iter(match=f"{prefix}*")]
+            if keys:
+                await client.delete(*keys)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=requires_redis)])
+async def store(request: pytest.FixtureRequest) -> AsyncIterator[RateLimitStore]:
+    if request.param == "memory":
+        yield InMemoryRateLimitStore()
+        return
+    async with redis_store() as (_, shared):
+        yield shared
+
+
+# Contract: every store behaves the same for these cases.
+
+
+async def test_burst_up_to_the_limit_then_denies(store: RateLimitStore) -> None:
+    decisions = [
+        await store.hit("default:ip:a", limit=3, window_seconds=60) for _ in range(4)
+    ]
+    assert [item.allowed for item in decisions] == [True, True, True, False]
+    assert [item.remaining for item in decisions[:3]] == [2, 1, 0]
+    denied = decisions[-1]
+    assert 1 <= denied.retry_after_seconds <= 60
+    assert denied.reset_seconds is not None
+    assert 1 <= denied.reset_seconds <= 60
+
+
+async def test_keys_are_counted_independently(store: RateLimitStore) -> None:
+    await store.hit("default:ip:a", limit=1, window_seconds=60)
+    assert not (await store.hit("default:ip:a", limit=1, window_seconds=60)).allowed
+    assert (await store.hit("default:ip:b", limit=1, window_seconds=60)).allowed
+
+
+async def test_concurrent_hits_never_exceed_the_limit(store: RateLimitStore) -> None:
+    # Warm up: the first call loads the script into the server cache.
+    await store.hit("default:ip:warm", limit=1, window_seconds=60)
+    decisions = await asyncio.gather(
+        *(store.hit("default:ip:c", limit=10, window_seconds=60) for _ in range(25))
+    )
+    assert sum(item.allowed for item in decisions) == 10
+
+
+# In-memory store with a fake clock.
+
+
+async def test_memory_window_resets_on_the_fake_clock() -> None:
+    now = [120.0]
+    memory = InMemoryRateLimitStore(clock=lambda: now[0])
+    assert (await memory.hit("k", limit=1, window_seconds=60)).allowed
+    denied = await memory.hit("k", limit=1, window_seconds=60)
+    assert (denied.allowed, denied.retry_after_seconds) == (False, 60)
+    now[0] = 180.0
+    assert (await memory.hit("k", limit=1, window_seconds=60)).allowed
+
+
+# Redis-specific behavior.
+
+
+@requires_redis
+async def test_redis_keys_are_hashed_prefixed_and_expire() -> None:
+    async with redis_store() as (client, store):
+        await store.hit("default:sub:user-42", limit=5, window_seconds=60)
+        expected = store.storage_key("default:sub:user-42").encode()
+        keys = [key async for key in client.scan_iter(match="test:rl:*")]
+        own = [key for key in keys if key == expected]
+        assert len(own) == 1
+        assert b"user-42" not in own[0]
+        assert 0 < await client.pttl(own[0]) <= 60_000
+
+
+@requires_redis
+async def test_gcra_refills_one_request_per_interval() -> None:
+    async with redis_store() as (_, store):
+        for _ in range(2):
+            await store.hit("default:ip:d", limit=2, window_seconds=1)
+        denied = await store.hit("default:ip:d", limit=2, window_seconds=1)
+        assert not denied.allowed
+        await asyncio.sleep(0.6)
+        assert (await store.hit("default:ip:d", limit=2, window_seconds=1)).allowed
+
+
+@requires_redis
+async def test_command_timeout_is_a_store_error() -> None:
+    async with redis_store(timeout_seconds=0) as (_, store):
+        with pytest.raises(RateLimitStoreError):
+            await store.hit("default:ip:e", limit=5, window_seconds=60)
+
+
+async def test_unbound_store_is_a_store_error() -> None:
+    with pytest.raises(RateLimitStoreError, match="not bound"):
+        await RedisRateLimitStore().hit("default:ip:f", limit=5, window_seconds=60)
+
+
+async def test_unreachable_server_is_a_store_error() -> None:
+    store = RedisRateLimitStore(command_timeout_seconds=2.0)
+    unreachable = Redis.from_url("redis://127.0.0.1:1/0", socket_connect_timeout=0.5)
+    async with unreachable, store.bind(unreachable):
+        with pytest.raises(RateLimitStoreError):
+            await store.hit("default:ip:g", limit=5, window_seconds=60)

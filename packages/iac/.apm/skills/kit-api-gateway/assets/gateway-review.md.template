@@ -1,0 +1,89 @@
+# API gateway review: <api or gateway name>
+
+Reviewer: <name> | Date: <YYYY-MM-DD> | Change: <pull request or ticket>
+
+Fill every field with evidence (file path, command output, or link). Write
+"n/a" with a reason instead of leaving a field blank.
+
+## 1. Need and placement
+
+- Consumers and why a gateway is needed (keys, quotas, products, portal,
+  central policy, protocol mediation):
+- Request path, hop by hop (client, edge/WAF, gateway, service), and each
+  hop's owner:
+- Responsibilities kept at the edge (`kit-edge-networking`), at the gateway,
+  and in the service (`kit-fastapi-service`, `kit-auth`):
+- Product and tier or implementation, with the feature-matrix check date:
+
+## 2. Contract and versions
+
+- OpenAPI source and owner (`kit-api-contracts`); imported, not hand-edited:
+- Breaking-change gate result against the released description:
+- Version scheme (segment, header, or query) and current version:
+- Revision used for non-breaking change, and how it is made current:
+- Deprecation and sunset dates announced to consumers:
+
+## 3. Consumers, products, and limits
+
+| Product | Approval | Rate limit (key, window) | Quota (key, period) | Who gets it |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+- Counter keys identify the consumer, not a shared edge address:
+- Limit headers and `Retry-After` reach the caller:
+- Expected peak per consumer and headroom:
+
+## 4. Authentication and authorization
+
+- Gateway check (validate-jwt, Entra token, client certificate, or key only):
+- Issuer, audience, required scopes or roles, signed and unexpired tokens:
+- Service re-validates the token and authorizes each object (defense in depth):
+- Gateway-to-service identity (managed identity, mTLS, or network only):
+- Subscription key and caller token removed before forwarding:
+
+## 5. Policies
+
+- `check_apim_policy.py` command and result:
+- `<base />` present in every section below global scope:
+- CORS origins are explicit and match the browser clients:
+- Request validation against the contract (parameters, content, size):
+- Backend entity, timeout, and circuit breaker settings:
+- `on-error` produces `application/problem+json` with a correlation id and no
+  internal detail:
+- Policy fragments used and their owners:
+
+## 6. Secrets and configuration
+
+- Every secret is a Key Vault-backed named value; none in XML, parameters, or
+  pipeline variables:
+- Rotation path and who is alerted on Key Vault access failure:
+- Environment differences live only in parameter files:
+
+## 7. Network and edge
+
+- Inbound exposure (public, private endpoint, VNet injection) and why:
+- WAF and DDoS protection in front, owned by:
+- Backends reachable only from the gateway (private network or service auth):
+- TLS: minimum version, client certificate requirements, certificate source:
+
+## 8. Observability and operations
+
+- Logger, sampling percentage, and fields excluded from logs:
+- Dashboards and alerts: 5xx rate, 429 rate, latency percentiles, capacity:
+- SLO for the gateway hop and its error budget owner:
+- Scale units or replicas, autoscale rule, and load-test evidence:
+- Disaster recovery: regions, zones, restore or redeploy time, last drill:
+- Monthly cost estimate and the meter that drives it:
+
+## 9. Delivery
+
+- Pipeline run: lint, policy gate, breaking-change gate, what-if per environment:
+- Approver for production and the what-if artifact they reviewed:
+- Rollback: previous commit redeploy or revision switch, tested on:
+- Portal or manual changes found by drift check (must be none):
+
+## Decision
+
+- [ ] Approved
+- [ ] Approved with follow-ups: <list with owners and dates>
+- [ ] Rejected: <reason>

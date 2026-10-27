@@ -1,0 +1,109 @@
+"""Unit tests for the in-memory cache: expiry, bounds, and lock ownership.
+
+Copy into ``tests/unit/cache/test_memory_cache.py``. Uses a fake clock; no
+sleeps. Requires an async test plugin (AnyIO shown).
+"""
+
+import pytest
+
+from shop.cache.memory import InMemoryCache
+
+pytestmark = pytest.mark.anyio
+
+
+class FakeClock:
+    """Manually advanced monotonic clock."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def cache(clock: FakeClock) -> InMemoryCache:
+    return InMemoryCache(clock=clock, max_entries=3)
+
+
+async def test_value_is_returned_until_its_ttl_elapses(
+    cache: InMemoryCache, clock: FakeClock
+) -> None:
+    await cache.set("k", b"v", ttl_seconds=10)
+
+    clock.advance(9.999)
+    assert await cache.get("k") == b"v"
+    clock.advance(0.001)
+    assert await cache.get("k") is None
+
+
+async def test_non_positive_ttl_deletes_instead_of_storing(
+    cache: InMemoryCache,
+) -> None:
+    await cache.set("k", b"v", ttl_seconds=10)
+    await cache.set("k", b"w", ttl_seconds=0)
+
+    assert await cache.get("k") is None
+
+
+async def test_get_many_preserves_request_order_and_misses(
+    cache: InMemoryCache,
+) -> None:
+    await cache.set("a", b"1", ttl_seconds=10)
+    await cache.set("c", b"3", ttl_seconds=10)
+
+    assert await cache.get_many(["c", "b", "a"]) == [b"3", None, b"1"]
+
+
+async def test_least_recently_used_entry_is_evicted_at_capacity(
+    cache: InMemoryCache,
+) -> None:
+    for key in ("a", "b", "c"):
+        await cache.set(key, key.encode(), ttl_seconds=10)
+    await cache.get("a")
+
+    await cache.set("d", b"d", ttl_seconds=10)
+
+    assert await cache.get("b") is None
+    assert await cache.get_many(["a", "c", "d"]) == [b"a", b"c", b"d"]
+
+
+async def test_delete_counts_only_live_keys(
+    cache: InMemoryCache, clock: FakeClock
+) -> None:
+    await cache.set("live", b"1", ttl_seconds=10)
+    await cache.set("old", b"2", ttl_seconds=1)
+    clock.advance(2)
+
+    assert await cache.delete("live", "old", "missing", "live") == 1
+
+
+async def test_lock_is_exclusive_and_released_only_by_its_owner(
+    cache: InMemoryCache, clock: FakeClock
+) -> None:
+    assert await cache.acquire("lock", "t1", ttl_seconds=5)
+    assert not await cache.acquire("lock", "t2", ttl_seconds=5)
+    assert not await cache.release("lock", "t2")
+    assert await cache.release("lock", "t1")
+    assert await cache.acquire("lock", "t2", ttl_seconds=5)
+
+    clock.advance(5)
+    assert await cache.acquire("lock", "t3", ttl_seconds=5)
+
+
+def test_capacity_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        InMemoryCache(max_entries=0)

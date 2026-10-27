@@ -8,7 +8,13 @@ import sys
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[3] / "packages/iac/.apm/skills"
+_PACKAGES = Path(__file__).resolve().parents[3] / "packages"
+_OWNERS = {"kit-terraform-validation": "terraform", "kit-azure-validation": "bicep"}
+
+
+def _asset(skill: str, filename: str) -> Path:
+    """Locate a reviewer script in the feature bundle that owns its skill."""
+    return _PACKAGES / _OWNERS[skill] / ".apm/skills" / skill / "assets" / filename
 
 
 @pytest.mark.parametrize(
@@ -93,7 +99,7 @@ def test_incomplete_preview_is_rejected(
     message: str,
     error_type: type[Exception],
 ) -> None:
-    namespace = runpy.run_path(str(_ROOT / skill / "assets" / filename))
+    namespace = runpy.run_path(str(_asset(skill, filename)))
     analyze = namespace[function]
     assert callable(analyze)
     with pytest.raises(error_type, match=message):
@@ -180,7 +186,7 @@ def test_preview_cli_reports_risk_and_exact_summary(
     path = tmp_path / "preview.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     result = subprocess.run(  # noqa: S603 - fixed first-party reviewer, synthetic file
-        [sys.executable, str(_ROOT / skill / "assets" / filename), "--file", str(path)],
+        [sys.executable, str(_asset(skill, filename)), "--file", str(path)],
         capture_output=True,
         text=True,
         check=False,
@@ -208,7 +214,7 @@ def test_malformed_preview_cli_is_not_a_success_shaped_summary(
     path = tmp_path / "preview.json"
     path.write_text("{}", encoding="utf-8")
     result = subprocess.run(  # noqa: S603 - fixed first-party reviewer, synthetic file
-        [sys.executable, str(_ROOT / skill / "assets" / filename), "--file", str(path)],
+        [sys.executable, str(_asset(skill, filename)), "--file", str(path)],
         capture_output=True,
         text=True,
         check=False,

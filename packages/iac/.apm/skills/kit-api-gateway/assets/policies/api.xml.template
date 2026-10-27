@@ -1,0 +1,123 @@
+<!--
+  API-scope policy for the "orders" API. Copy to apim/policies/orders-api.xml.
+  Every section keeps <base /> so global and product policies still run.
+  Named values ({{...}}) are created by api.bicep and apim.bicep; secrets come
+  from Key Vault-backed named values, never from literals in this file.
+  The OpenAPI document owned by the API contract drives validate-content and
+  validate-parameters; import it before this policy (see api.bicep).
+-->
+<policies>
+  <inbound>
+    <base />
+    <!-- Browser callers only: list exact origins, never "*". -->
+    <cors allow-credentials="false" terminate-unmatched-request="true">
+      <allowed-origins>
+        <origin>https://shop.example.com</origin>
+      </allowed-origins>
+      <allowed-methods preflight-result-max-age="600">
+        <method>GET</method>
+        <method>POST</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>Authorization</header>
+        <header>Content-Type</header>
+        <header>Idempotency-Key</header>
+        <header>X-Correlation-Id</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>X-Correlation-Id</header>
+        <header>Retry-After</header>
+      </expose-headers>
+    </cors>
+    <!-- Coarse token checks at the edge of the API; the service still authorizes each object. -->
+    <validate-jwt header-name="Authorization" require-scheme="Bearer"
+      failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"
+      require-expiration-time="true" require-signed-tokens="true" clock-skew="60"
+      output-token-variable-name="jwt">
+      <openid-config url="{{jwt-openid-config-url}}" />
+      <audiences>
+        <audience>{{orders-api-audience}}</audience>
+      </audiences>
+      <issuers>
+        <issuer>{{jwt-issuer}}</issuer>
+      </issuers>
+      <required-claims>
+        <claim name="scp" match="any" separator=" ">
+          <value>orders.read</value>
+          <value>orders.write</value>
+        </claim>
+      </required-claims>
+    </validate-jwt>
+    <!--
+      Short-window spike protection per consumer: the subscription when one is
+      present, otherwise the token subject. Counters are per gateway and
+      approximate; see the policies reference.
+    -->
+    <rate-limit-by-key calls="120" renewal-period="60"
+      counter-key='@("orders:" + (context.Subscription != null ? context.Subscription.Id : ((Jwt)context.Variables["jwt"]).Subject))'
+      retry-after-variable-name="retryAfter"
+      remaining-calls-header-name="RateLimit-Remaining" />
+    <!-- Long-window business allowance per subscription (product contract). -->
+    <quota-by-key calls="100000" renewal-period="2592000"
+      counter-key='@("orders-quota:" + (context.Subscription != null ? context.Subscription.Id : "anonymous"))' />
+    <!-- Reject requests that do not match the imported OpenAPI description. -->
+    <validate-parameters specified-parameter-action="prevent"
+      unspecified-parameter-action="prevent" errors-variable-name="parameterErrors" />
+    <validate-content unspecified-content-type-action="prevent" max-size="102400"
+      size-exceeded-action="prevent" errors-variable-name="contentErrors">
+      <content type="application/json" validate-as="json" action="prevent"
+        allow-additional-properties="false" />
+    </validate-content>
+    <!-- The caller's key and token are for the gateway; do not forward them. -->
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+    <set-header name="Authorization" exists-action="delete" />
+    <!-- Backend entity with a circuit breaker, defined in api.bicep. -->
+    <set-backend-service backend-id="orders-backend" />
+    <!-- Gateway-to-service identity: managed identity token for the service's Entra app. -->
+    <authentication-managed-identity resource="{{orders-backend-app-id}}" />
+    <!--
+      Only for a backend that cannot accept Entra tokens: send a Key Vault-backed
+      named value created by api.bicep when backendKeySecretUri is set.
+      <set-header name="X-Api-Key" exists-action="override">
+        <value>{{orders-backend-key}}</value>
+      </set-header>
+    -->
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+    <set-header name="Server" exists-action="delete" />
+  </outbound>
+  <on-error>
+    <!-- Choose the status here; <base /> (global) then renders problem+json. -->
+    <choose>
+      <when condition='@(context.LastError.Source == "validate-jwt" &amp;&amp; (context.LastError.Reason == "TokenClaimNotFound" || context.LastError.Reason == "TokenClaimValueNotAllowed"))'>
+        <set-status code="403" reason="Forbidden" />
+      </when>
+      <when condition='@(context.LastError.Source == "validate-jwt")'>
+        <set-status code="401" reason="Unauthorized" />
+        <set-header name="WWW-Authenticate" exists-action="override">
+          <value>Bearer</value>
+        </set-header>
+      </when>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded")'>
+        <set-status code="429" reason="Too Many Requests" />
+      </when>
+      <when condition='@(context.LastError.Reason == "QuotaExceeded")'>
+        <set-status code="403" reason="Quota Exceeded" />
+      </when>
+      <when condition='@(context.LastError.Source == "validate-content" || context.LastError.Source == "validate-parameters")'>
+        <set-status code="400" reason="Bad Request" />
+      </when>
+      <when condition='@(context.LastError.Reason == "Timeout")'>
+        <set-status code="504" reason="Gateway Timeout" />
+      </when>
+      <when condition='@(context.LastError.Reason == "BackendConnectionFailure")'>
+        <set-status code="502" reason="Bad Gateway" />
+      </when>
+    </choose>
+    <base />
+  </on-error>
+</policies>

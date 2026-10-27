@@ -8,15 +8,24 @@ pytest plugin that ships with ``anyio``.
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.testclient import TestClient
 
 from shop.api.app import create_app
 from shop.api.dependencies import Container, get_container
-from shop.api.rate_limit import InMemoryRateLimitStore
+from shop.api.rate_limit import (
+    FailureMode,
+    InMemoryRateLimitStore,
+    RateDecision,
+    RateLimitStore,
+    RateLimitStoreError,
+    RatePolicy,
+    SubjectRateLimit,
+)
 from shop.api.settings import HttpSettings
 from shop.application.ports import Item
 from shop.core.exceptions import NotFoundError
@@ -32,6 +41,11 @@ class FakeCatalog:
         raise NotFoundError(f"item {item_id!r} does not exist")
 
 
+class FailingStore:
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> RateDecision:
+        raise RateLimitStoreError("store down")
+
+
 class StaticCheck:
     def __init__(self, name: str, *, ready: bool) -> None:
         self._name = name
@@ -45,7 +59,12 @@ class StaticCheck:
         return self._ready
 
 
-def build(container: Container, **overrides: object) -> FastAPI:
+def build(
+    container: Container,
+    *,
+    store: RateLimitStore | None = None,
+    **overrides: object,
+) -> FastAPI:
     settings = HttpSettings.model_validate(
         {
             "trusted_hosts": ["testserver"],
@@ -64,7 +83,7 @@ def build(container: Container, **overrides: object) -> FastAPI:
     return create_app(
         settings=settings,
         container_factory=factory,
-        rate_limit_store=InMemoryRateLimitStore(),
+        rate_limit_store=store or InMemoryRateLimitStore(),
     )
 
 
@@ -134,7 +153,82 @@ def test_rate_limit_returns_429_with_retry_after(client: TestClient) -> None:
     assert statuses[-1] == 429
     limited = client.get("/api/v1/items/sku-1")
     assert int(limited.headers["Retry-After"]) >= 1
+    assert limited.headers["content-type"] == PROBLEM
+    assert limited.json()["code"] == "rate_limited"
     assert client.get("/health/live").status_code == 200
+
+
+def test_route_policy_overrides_the_default_by_prefix() -> None:
+    route = {
+        "name": "items",
+        "path_prefix": "/api/v1/items",
+        "methods": ["GET"],
+        "requests": 2,
+        "window_seconds": 60,
+    }
+    app = build(Container(catalog=FakeCatalog()), rate_limit_routes=[route])
+    with TestClient(app) as test_client:
+        statuses = [
+            test_client.get("/api/v1/items/sku-1").status_code for _ in range(3)
+        ]
+    assert statuses == [200, 200, 429]
+
+
+def test_draft_ratelimit_headers_only_when_enabled(client: TestClient) -> None:
+    assert "RateLimit" not in client.get("/api/v1/items/sku-1").headers
+    app = build(Container(catalog=FakeCatalog()), rate_limit_headers=True)
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/items/sku-1")
+    assert response.headers["RateLimit-Policy"] == '"default";q=5;w=60'
+    assert response.headers["RateLimit"].startswith('"default";r=4;t=')
+
+
+@pytest.mark.parametrize(("mode", "status"), [("open", 200), ("closed", 503)])
+def test_store_failure_follows_the_configured_mode(mode: str, status: int) -> None:
+    app = build(
+        Container(catalog=FakeCatalog()),
+        store=FailingStore(),
+        rate_limit_failure_mode=mode,
+    )
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/items/sku-1")
+    assert response.status_code == status
+    if status == 503:
+        assert response.headers["content-type"] == PROBLEM
+        assert int(response.headers["Retry-After"]) >= 1
+
+
+def test_subject_limit_keys_by_the_verified_subject() -> None:
+    writes = SubjectRateLimit(
+        policy=RatePolicy(name="writes", limit=1, window_seconds=60),
+        failure_mode=FailureMode.CLOSED,
+    )
+
+    # Stands in for the authentication dependency of the kit-auth skill.
+    async def limit_subject(
+        request: Request,
+        response: Response,
+        subject: Annotated[str, Header(alias="X-Test-Subject")],
+    ) -> None:
+        await writes.enforce(request, response, subject=subject)
+
+    app = build(Container(catalog=FakeCatalog()))
+
+    @app.get("/api/v1/whoami", dependencies=[Depends(limit_subject)])
+    async def whoami() -> dict[str, str]:
+        return {"status": "ok"}
+
+    with TestClient(app) as test_client:
+        first = test_client.get("/api/v1/whoami", headers={"X-Test-Subject": "u-1"})
+        second = test_client.get("/api/v1/whoami", headers={"X-Test-Subject": "u-1"})
+        other = test_client.get("/api/v1/whoami", headers={"X-Test-Subject": "u-2"})
+    assert (first.status_code, second.status_code, other.status_code) == (
+        200,
+        429,
+        200,
+    )
+    assert second.headers["content-type"] == PROBLEM
+    assert int(second.headers["Retry-After"]) >= 1
 
 
 def test_security_headers_and_cors_preflight(client: TestClient) -> None:

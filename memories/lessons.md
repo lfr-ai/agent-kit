@@ -172,3 +172,28 @@ tarball of `git ls-files -co --exclude-standard`, copied with `docker cp`:
 PowerShell re-encodes bytes piped to a native command, and a OneDrive bind
 mount is too slow to copy. The Linux gate ran in about 4 minutes. Evidence:
 CI run 40330605897 and the container verify that reproduced and then cleared it.
+
+## Workers may not reach for package runners
+
+Delegated workers ran `npx`, `uv run --with` and ad hoc containers to lint
+files, which bypasses the pinned toolchain. Lint changed files through the
+pinned hooks instead: `uv run --locked pre-commit run <hook> --files ...`.
+Worker briefs must name this rule explicitly. Evidence: three workers in the
+delivery-platform round, corrected in the worker brief.
+
+## Refresh native roles with the render script after editing agents.json
+
+There is no Task target for role projections. After changing
+`kit-agent-runtime/assets/agents.json`, diff `scripts.render_native.expected`
+against the checked-in files, then run
+`uv run --locked python -m scripts.render_native --write`; the write refuses to
+overwrite a hand-edited projection. Evidence: the `optional_workers` change
+drifted only the two `kit-orchestrator` files, and `task verify -- roles` then passed.
+
+## Exact applyTo comparison misses overlapping globs
+
+`test_context_budget.py` counted identical scope strings, so `**/*.py` and
+`**/test_*.py` from different bundles stacked unnoticed. Match representative
+paths with `PurePosixPath.full_match` and bound the instruction count and
+characters per path. Evidence: a Python test file loads 7 instructions,
+about 10.8k characters, with every bundle installed.

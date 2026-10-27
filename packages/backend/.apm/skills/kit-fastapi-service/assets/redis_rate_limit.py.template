@@ -1,0 +1,183 @@
+"""Redis-compatible ``RateLimitStore`` using an atomic GCRA Lua script.
+
+Copy into ``src/shop/api/redis_rate_limit.py``. Requires ``redis`` (redis-py
+with ``redis.asyncio``) and a server that runs Lua with script effects
+replication: Redis 7 or later, or Valkey. The algorithm is the generic cell
+rate algorithm (GCRA): one key per caller stores the theoretical arrival time
+(TAT), so memory is constant per key and bursts are smoothed. ``limit``
+requests may arrive at once; after that one request is admitted every
+``window_seconds / limit`` seconds.
+
+The script reads the server clock with ``TIME``, so application replicas with
+skewed clocks agree. Keys are hashed (no raw address or subject is stored),
+prefixed, and expire as soon as the caller's quota is fully restored.
+
+Create the client in the lifespan, never at import, and bind it::
+
+    store = RedisRateLimitStore(key_prefix="shop:rl:")
+
+
+    @asynccontextmanager
+    async def open_container() -> AsyncIterator[Container]:
+        client = Redis.from_url(
+            settings.redis_url.get_secret_value(),
+            socket_connect_timeout=1.0,
+            socket_timeout=0.25,
+        )
+        async with client, store.bind(client):
+            yield Container(...)
+
+
+    app = create_app(..., rate_limit_store=store)
+"""
+
+import asyncio
+import hashlib
+import math
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from redis.asyncio import Redis
+from redis.commands.core import AsyncScript
+from redis.exceptions import RedisError
+
+from shop.api.rate_limit import RateDecision, RateLimitStoreError
+
+_MILLISECONDS_PER_SECOND = 1000
+_DEFAULT_COMMAND_TIMEOUT_SECONDS = 0.25
+_KEY_DIGEST_BYTES = 16
+_REPLY_LENGTH = 4
+
+# KEYS[1]: hashed caller key. ARGV[1]: window in milliseconds. ARGV[2]: limit.
+# The emission interval is window / limit; the burst tolerance is window minus
+# one interval, so ``limit`` requests fit in an empty bucket.
+# Returns {allowed (0 or 1), remaining, retry_after_ms, reset_ms}.
+GCRA_SCRIPT = """
+local key = KEYS[1]
+local window = tonumber(ARGV[1])
+local interval = window / tonumber(ARGV[2])
+local tolerance = window - interval
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local tat = now
+local stored = redis.call('GET', key)
+if stored then
+  tat = math.max(tonumber(stored), now)
+end
+local allow_at = tat - tolerance
+if now < allow_at then
+  return {0, 0, math.ceil(allow_at - now), math.ceil(tat - now)}
+end
+local new_tat = tat + interval
+local reset = new_tat - now
+redis.call('SET', key, string.format('%.3f', new_tat), 'PX', math.max(1, math.ceil(reset)))
+local remaining = math.floor((tolerance + interval - reset) / interval + 0.001)
+return {1, math.max(0, remaining), 0, math.ceil(reset)}
+"""
+
+
+class RedisRateLimitStore:
+    """GCRA counters in Redis or Valkey, shared by every worker and replica."""
+
+    def __init__(
+        self,
+        *,
+        key_prefix: str = "shop:rl:",
+        command_timeout_seconds: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    ) -> None:
+        """Create an unbound store; ``bind`` attaches the lifespan's client.
+
+        Args:
+            key_prefix: Namespace for every key; keep it unique per service
+                and environment when a server is shared.
+            command_timeout_seconds: Upper bound for one decision, including
+                a script reload; exceeding it is a store failure.
+        """
+        self._key_prefix = key_prefix
+        self._timeout = command_timeout_seconds
+        self._script: AsyncScript | None = None
+
+    @asynccontextmanager
+    async def bind(self, client: Redis) -> AsyncIterator[None]:
+        """Use a client for the duration of the lifespan.
+
+        The client is owned and closed by the caller. Until a client is bound,
+        and after the block exits, ``hit`` raises ``RateLimitStoreError`` so
+        the middleware applies its failure mode.
+
+        Args:
+            client: Connected or lazily connecting ``redis.asyncio`` client.
+
+        Yields:
+            Nothing; the store is usable inside the block.
+        """
+        self._script = client.register_script(GCRA_SCRIPT)
+        try:
+            yield
+        finally:
+            self._script = None
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> RateDecision:
+        """Count one request atomically on the server.
+
+        Args:
+            key: Policy-qualified caller key.
+            limit: Burst size, also the requests per window.
+            window_seconds: Window length.
+
+        Returns:
+            The decision for this request.
+
+        Raises:
+            RateLimitStoreError: No client is bound, the server failed or
+                timed out, or the reply has an unexpected shape.
+        """
+        script = self._script
+        if script is None:
+            msg = "rate limit store is not bound to a client"
+            raise RateLimitStoreError(msg)
+        try:
+            async with asyncio.timeout(self._timeout):
+                reply = await script(
+                    keys=[self.storage_key(key)],
+                    args=[window_seconds * _MILLISECONDS_PER_SECOND, limit],
+                )
+        except (RedisError, TimeoutError) as error:
+            msg = f"rate limit store failed: {type(error).__name__}"
+            raise RateLimitStoreError(msg) from error
+        return _decision_from(reply)
+
+    def storage_key(self, key: str) -> str:
+        """Return the prefixed, hashed key stored on the server.
+
+        Args:
+            key: Policy-qualified caller key.
+
+        Returns:
+            ``<prefix><hex digest>``; the raw key never reaches the server.
+        """
+        digest = hashlib.blake2b(key.encode(), digest_size=_KEY_DIGEST_BYTES)
+        return f"{self._key_prefix}{digest.hexdigest()}"
+
+
+def _decision_from(reply: object) -> RateDecision:
+    """Validate the script reply and convert milliseconds to whole seconds.
+
+    Raises:
+        RateLimitStoreError: The reply is not four integers.
+    """
+    values = (
+        tuple(item for item in reply if isinstance(item, int))
+        if isinstance(reply, list)
+        else ()
+    )
+    if len(values) != _REPLY_LENGTH:
+        msg = "rate limit store returned an unexpected reply"
+        raise RateLimitStoreError(msg)
+    allowed, remaining, retry_after_ms, reset_ms = values
+    return RateDecision(
+        allowed=allowed == 1,
+        remaining=remaining,
+        retry_after_seconds=math.ceil(retry_after_ms / _MILLISECONDS_PER_SECOND),
+        reset_seconds=math.ceil(reset_ms / _MILLISECONDS_PER_SECOND),
+    )

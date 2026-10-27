@@ -27,7 +27,8 @@
         "kit-devops-implementer",
         "kit-docs-writer",
         "kit-code-reviewer"
-      ]
+      ],
+      "optional_workers": ["kit-infra-reviewer"]
     },
     {
       "id": "kit-modernization",
@@ -53,6 +54,13 @@
         "kit-code-reviewer",
         "kit-solid-review",
         "kit-security-reviewer"
+      ],
+      "optional_workers": [
+        "kit-backend-implementer",
+        "kit-frontend-implementer",
+        "kit-contract-iac-lint",
+        "kit-infra-reviewer",
+        "kit-eval-reviewer"
       ]
     },
     {

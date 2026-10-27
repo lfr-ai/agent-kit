@@ -38,6 +38,9 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "workflows",
         "ai",
         "coordination",
+        "terraform",
+        "bicep",
+        "remote-access",
     ):
         bundle = root / "packages" / name
         bundle.mkdir(parents=True)

@@ -79,6 +79,8 @@ covered by the `kit-server-streaming` skill.
   Gateway have active probes.
 - Probe endpoints are cheap, unauthenticated, rate-limit exempt, excluded
   from access logs and traces, and reveal no internals.
+- Algorithms, outlier detection, slow start, draining, and proxy retries
+  are covered in [load balancing](load-balancing.md).
 
 ## Sticky sessions
 

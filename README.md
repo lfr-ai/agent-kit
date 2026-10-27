@@ -23,13 +23,26 @@ package and never overwrites a consumer repository or personal settings.
 | backend | Shared plus Python domain, API, persistence, configuration, Pydantic v2, Polars 2, and packaging |
 | frontend | Shared plus accessible React, state, routing, forms, and browser testing |
 | fullstack | Deduplicated backend/frontend union |
-| iac | Shared plus infrastructure, containers, CI, and observability |
+| iac | Shared plus infrastructure, containers, CI, edge, API gateways, delivery, and observability |
+| terraform | IaC plus Terraform/OpenTofu plan review on any cloud |
+| bicep | IaC plus Bicep/ARM what-if review (Azure-native) |
+| remote-access | IaC plus SSH, `sshd_config` hardening, and bastions |
 | workflows | Optional specification, graph, duplication, and simplification workflows |
 | ai | Optional retrieval, model client, workflow, queue, and streaming procedures |
 | toolkit | This repository's APM governance and shared kernel |
 
+Add a profile as `--feature` to extend another. Choose the IaC tool, not the
+cloud: provider-specific detail lives in templates that load only when used.
+
 ```powershell
-uv run agent-kit compose fullstack --feature iac --runtime copilot --runtime claude --output build/fullstack
+uv run agent-kit compose fullstack --feature terraform --runtime copilot --runtime claude --output build/fullstack
+```
+
+Generators and CI can declare the same choice in a versioned file instead of
+flags; see [consumer templates](docs/consumer-templates.md):
+
+```powershell
+uv run agent-kit compose --selection agent-kit.json --output build/agent-kit
 ```
 
 For a narrow backend session, explicitly select its procedures:

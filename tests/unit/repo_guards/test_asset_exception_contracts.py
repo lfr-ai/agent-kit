@@ -12,8 +12,8 @@ from typing import NoReturn
 import pytest
 
 _PACKAGES = Path(__file__).resolve().parents[3] / "packages"
-_PLAN = "iac/.apm/skills/kit-terraform-validation/assets/review_plan.py"
-_WHATIF = "iac/.apm/skills/kit-azure-validation/assets/review_whatif.py"
+_PLAN = "terraform/.apm/skills/kit-terraform-validation/assets/review_plan.py"
+_WHATIF = "bicep/.apm/skills/kit-azure-validation/assets/review_whatif.py"
 _LICENSE = "shared/.apm/skills/kit-agent-runtime/assets/license_guard.py"
 _EVIDENCE = "shared/.apm/skills/kit-agent-runtime/assets/review_package.py"
 _HOOK = "shared/.apm/skills/kit-agent-runtime/assets/tool_guard.py"

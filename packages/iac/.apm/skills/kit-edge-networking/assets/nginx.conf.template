@@ -1,6 +1,6 @@
 # Reverse proxy template: one HTTPS application behind nginx 1.25.1 or newer.
 # Render only the named placeholders so nginx runtime variables survive:
-#   envsubst '${SERVER_NAME} ${UPSTREAM_ADDR} ${TRUSTED_PROXY_CIDR}' \
+#   envsubst '${SERVER_NAME} ${UPSTREAM_ADDR} ${UPSTREAM_ADDR_2} ${TRUSTED_PROXY_CIDR}' \
 #     < nginx.conf.template > nginx.conf
 # Validate before any reload, then reload gracefully (no restart):
 #   nginx -t -c "$PWD/nginx.conf"
@@ -51,16 +51,34 @@ http {
         ''      '';
     }
 
-    # Coarse per-client limit at the edge; the application keeps per-user and
-    # per-tenant quotas, which the edge cannot see.
+    # Coarse per-client limits at the edge; the application keeps per-user and
+    # per-tenant quotas, which the edge cannot see. 10m holds about 80,000
+    # client states on 64-bit platforms.
     limit_req_zone $binary_remote_addr zone=per_client:10m rate=20r/s;
     limit_req_status 429;
+    limit_conn_zone $binary_remote_addr zone=conn_per_client:10m;
+    limit_conn_status 429;
+
+    # Shared cache for public static content only (see location /assets/).
+    proxy_cache_path /var/cache/nginx/edge levels=1:2 keys_zone=edge_cache:10m
+                     max_size=1g inactive=60m use_temp_path=off;
 
     upstream app {
-        # Passive health: take a server out after repeated failures. Open-source
-        # nginx has no active checks; let the platform remove unready instances.
+        # least_conn suits mixed request durations. With many nginx replicas
+        # prefer "random two least_conn" (power of two choices).
+        least_conn;
+        # Passive health: max_fails failures within fail_timeout take a server
+        # out for fail_timeout; ignored when the group has a single server.
+        # Open-source nginx has no active checks or slow_start; let the
+        # platform remove unready instances through readiness.
         server ${UPSTREAM_ADDR} max_fails=3 fail_timeout=10s;
+        server ${UPSTREAM_ADDR_2} max_fails=3 fail_timeout=10s;
+        # Reuse upstream connections (implicit default only from nginx 1.29.7).
+        # Keep keepalive_timeout below the application server's keep-alive
+        # timeout (uvicorn defaults to 5s), or raise both together.
         keepalive 32;
+        keepalive_requests 1000;
+        keepalive_timeout 4s;
     }
 
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -116,10 +134,11 @@ http {
         client_max_body_size 10m;
 
         # add_header follows the same rule as proxy_set_header: a location that
-        # adds any header loses all of these. Start HSTS with a short max-age,
-        # add includeSubDomains only when every subdomain serves HTTPS, and
-        # treat preload as irreversible.
-        add_header Strict-Transport-Security "max-age=63072000" always;
+        # adds any header loses all of these. HSTS starts at 300 seconds; raise
+        # it to 604800, 2592000, then 63072000 once every path serves HTTPS. Add
+        # includeSubDomains only when every subdomain serves HTTPS, and treat
+        # preload as irreversible.
+        add_header Strict-Transport-Security "max-age=300" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header X-Frame-Options "DENY" always;
@@ -136,6 +155,14 @@ http {
         proxy_connect_timeout 5s;
         proxy_send_timeout 30s;
         proxy_read_timeout 30s;
+        # Try another server only after connection errors or timeouts; nginx
+        # does not pass non-idempotent requests (POST, PATCH, LOCK) to another
+        # server once they were sent.
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_tries 2;
+        proxy_next_upstream_timeout 10s;
+
+        limit_conn conn_per_client 50;
 
         # Load balancer probe: forwards to application readiness so a draining
         # or unready instance leaves rotation.
@@ -147,6 +174,24 @@ http {
         location / {
             limit_req zone=per_client burst=40 nodelay;
             proxy_pass http://app;
+        }
+
+        # Public, fingerprinted static assets cached at the edge. Requests
+        # with credentials bypass the cache and are never stored.
+        location /assets/ {
+            limit_req zone=per_client burst=40 nodelay;
+            proxy_pass http://app;
+            proxy_cache edge_cache;
+            proxy_cache_key $scheme$host$request_uri;
+            proxy_cache_lock on;
+            proxy_cache_lock_timeout 5s;
+            proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+            proxy_cache_background_update on;
+            proxy_cache_revalidate on;
+            # Fallback lifetime only when the origin sends no caching headers.
+            proxy_cache_valid 200 301 10m;
+            proxy_no_cache $http_authorization $cookie_session;
+            proxy_cache_bypass $http_authorization $cookie_session;
         }
 
         location /ws/ {

@@ -1,0 +1,528 @@
+"""Async resilience primitives: deadlines, retries, budgets, breakers, bulkheads.
+
+Copy into ``src/shop/infrastructure/resilience.py``. Adapters wrap one remote
+call with these primitives and translate the final failure into the port's
+documented error; the application layer never sees them. Every time source
+(clock, sleeper, jitter) is injected so tests run without waiting.
+
+Retry only operations that are idempotent or carry an idempotency key, and only
+for transient failures. Per-attempt timeouts never extend the caller's deadline.
+"""
+
+import asyncio
+import random
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Self
+
+type Clock = Callable[[], float]
+type Sleeper = Callable[[float], Awaitable[None]]
+type Jitter = Callable[[float], float]
+type RetryAfterHint = Callable[[Exception], float | None]
+
+_DEFAULT_ATTEMPTS = 3
+_DEFAULT_BASE_DELAY_SECONDS = 0.1
+_DEFAULT_MAX_DELAY_SECONDS = 2.0
+_BACKOFF_MULTIPLIER = 2
+_DEFAULT_BUDGET_TOKENS = 10.0
+_DEFAULT_BUDGET_TOKEN_RATIO = 0.1
+_BUDGET_THRESHOLD_FRACTION = 0.5
+_DEFAULT_FAILURE_THRESHOLD = 5
+_DEFAULT_RESET_TIMEOUT_SECONDS = 30.0
+_TRANSIENT_ERRORS: tuple[type[Exception], ...] = (TimeoutError, ConnectionError)
+
+
+class DeadlineExceededError(TimeoutError):
+    """The caller's overall deadline expired; no further attempt is made."""
+
+
+class CircuitOpenError(Exception):
+    """The circuit is open; the call was rejected without reaching the dependency."""
+
+    def __init__(self, *, retry_after_seconds: float) -> None:
+        """Record when a probe may be allowed.
+
+        Args:
+            retry_after_seconds: Seconds until the circuit admits a probe.
+        """
+        super().__init__(f"circuit open; retry after {retry_after_seconds:.1f}s")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class BulkheadFullError(Exception):
+    """Every slot of the bulkhead is busy; the call was shed."""
+
+
+def full_jitter(upper: float) -> float:
+    """Return a uniformly random delay in ``[0, upper]`` (not for security use)."""
+    return random.uniform(0.0, upper)  # noqa: S311 - jitter, not cryptography
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Deadline:
+    """Absolute expiry on a monotonic clock.
+
+    Attributes:
+        expires_at: Clock reading at which the deadline expires.
+        clock: Monotonic seconds source shared by every deadline in a process.
+    """
+
+    expires_at: float
+    clock: Clock = time.monotonic
+
+    @classmethod
+    def after(cls, seconds: float, *, clock: Clock = time.monotonic) -> Self:
+        """Create a deadline ``seconds`` from now.
+
+        Args:
+            seconds: Budget for the whole operation, retries included.
+            clock: Monotonic seconds source.
+
+        Returns:
+            The new deadline.
+        """
+        return cls(expires_at=clock() + seconds, clock=clock)
+
+    def remaining(self) -> float:
+        """Return the seconds left, never negative."""
+        return max(0.0, self.expires_at - self.clock())
+
+    @property
+    def expired(self) -> bool:
+        """Return whether no time is left."""
+        return self.remaining() <= 0.0
+
+
+_current_deadline: ContextVar[Deadline | None] = ContextVar(
+    "current_deadline", default=None
+)
+
+
+@contextmanager
+def deadline_scope(
+    seconds: float, *, clock: Clock = time.monotonic
+) -> Iterator[Deadline]:
+    """Bind a deadline for nested calls; an inner scope can only shorten it.
+
+    Args:
+        seconds: Budget requested by this scope.
+        clock: Monotonic seconds source; use one clock per process.
+
+    Yields:
+        The effective deadline, the earlier of this scope and any enclosing one.
+    """
+    requested = Deadline.after(seconds, clock=clock)
+    outer = _current_deadline.get()
+    effective = (
+        outer
+        if outer is not None and outer.expires_at <= requested.expires_at
+        else requested
+    )
+    token = _current_deadline.set(effective)
+    try:
+        yield effective
+    finally:
+        _current_deadline.reset(token)
+
+
+def current_deadline() -> Deadline | None:
+    """Return the deadline bound by the innermost ``deadline_scope``, if any."""
+    return _current_deadline.get()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RetryPolicy:
+    """Capped exponential backoff with full jitter for transient failures.
+
+    Attributes:
+        attempts: Total attempts including the first; 1 disables retries.
+        base_delay_seconds: Ceiling of the first backoff.
+        max_delay_seconds: Cap for every backoff and for a server hint.
+        attempt_timeout_seconds: Timeout per attempt, or ``None`` to rely on
+            the deadline alone.
+        retry_on: Exception types that are transient for this dependency.
+    """
+
+    attempts: int = _DEFAULT_ATTEMPTS
+    base_delay_seconds: float = _DEFAULT_BASE_DELAY_SECONDS
+    max_delay_seconds: float = _DEFAULT_MAX_DELAY_SECONDS
+    attempt_timeout_seconds: float | None = None
+    retry_on: tuple[type[Exception], ...] = _TRANSIENT_ERRORS
+
+    def __post_init__(self) -> None:
+        """Reject policies that cannot terminate or never wait.
+
+        Raises:
+            ValueError: A count or delay is out of range.
+        """
+        if self.attempts < 1:
+            msg = "attempts must be at least 1"
+            raise ValueError(msg)
+        if not 0.0 < self.base_delay_seconds <= self.max_delay_seconds:
+            msg = "delays must satisfy 0 < base_delay_seconds <= max_delay_seconds"
+            raise ValueError(msg)
+
+    def backoff_ceiling(self, retry_number: int) -> float:
+        """Return the jitter upper bound before retry ``retry_number`` (0-based).
+
+        Args:
+            retry_number: Index of the retry about to happen.
+
+        Returns:
+            ``min(max_delay, base_delay * 2 ** retry_number)``.
+        """
+        exponential = self.base_delay_seconds * _BACKOFF_MULTIPLIER**retry_number
+        return min(self.max_delay_seconds, exponential)
+
+
+class RetryBudget:
+    """Token bucket that disables retries while a dependency mostly fails.
+
+    Share one budget per dependency, not per call. Each failure costs one
+    token, each success earns ``token_ratio``; retries are allowed only while
+    more than half of ``max_tokens`` remain. No ``await`` happens inside, so
+    updates are atomic on one event loop.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_tokens: float = _DEFAULT_BUDGET_TOKENS,
+        token_ratio: float = _DEFAULT_BUDGET_TOKEN_RATIO,
+    ) -> None:
+        """Start with a full budget.
+
+        Args:
+            max_tokens: Capacity of the bucket.
+            token_ratio: Tokens earned per successful call.
+        """
+        self._max_tokens = max_tokens
+        self._token_ratio = token_ratio
+        self._tokens = max_tokens
+
+    def record_success(self) -> None:
+        """Earn ``token_ratio`` tokens, up to the capacity."""
+        self._tokens = min(self._max_tokens, self._tokens + self._token_ratio)
+
+    def record_failure(self) -> None:
+        """Spend one token for a transient failure."""
+        self._tokens = max(0.0, self._tokens - 1.0)
+
+    def allows_retry(self) -> bool:
+        """Return whether enough tokens remain to retry."""
+        return self._tokens > self._max_tokens * _BUDGET_THRESHOLD_FRACTION
+
+
+class CircuitState(StrEnum):
+    """Circuit breaker state."""
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class CircuitBreaker:
+    """Stop calling a failing dependency, then probe it before closing again.
+
+    Counted failures (``counts_as_failure``) open the circuit after
+    ``failure_threshold`` consecutive occurrences. Other exceptions prove the
+    dependency answered, so they count as success. Cancellation counts as
+    neither.
+    """
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = _DEFAULT_FAILURE_THRESHOLD,
+        reset_timeout_seconds: float = _DEFAULT_RESET_TIMEOUT_SECONDS,
+        half_open_max_calls: int = 1,
+        counts_as_failure: tuple[type[Exception], ...] = _TRANSIENT_ERRORS,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        """Create a closed circuit.
+
+        Args:
+            failure_threshold: Consecutive counted failures that open it.
+            reset_timeout_seconds: Time open before a probe is admitted.
+            half_open_max_calls: Concurrent probes while half-open.
+            counts_as_failure: Exception types that indicate an unhealthy
+                dependency (timeouts, connection errors, 5xx adapters).
+            clock: Monotonic seconds source.
+        """
+        self._threshold = failure_threshold
+        self._reset_timeout = reset_timeout_seconds
+        self._max_probes = half_open_max_calls
+        self._counts_as_failure = counts_as_failure
+        self._clock = clock
+        self._state = CircuitState.CLOSED
+        self._failures = 0
+        self._opened_at = 0.0
+        self._probes = 0
+
+    @property
+    def state(self) -> CircuitState:
+        """Return the current state, moving from open to half-open when due."""
+        if (
+            self._state is CircuitState.OPEN
+            and self._clock() - self._opened_at >= self._reset_timeout
+        ):
+            self._state = CircuitState.HALF_OPEN
+            self._probes = 0
+        return self._state
+
+    @asynccontextmanager
+    async def guard(self) -> AsyncIterator[None]:
+        """Admit one call or raise ``CircuitOpenError``, then record its outcome.
+
+        Yields:
+            Nothing; run the protected call inside the block.
+
+        Raises:
+            CircuitOpenError: The circuit is open or all probes are in flight.
+        """
+        probing = self._admit()
+        try:
+            yield
+        except asyncio.CancelledError:
+            self._release(probing=probing)
+            raise
+        except self._counts_as_failure:
+            self._record_failure()
+            raise
+        except Exception:
+            self._record_success()
+            raise
+        else:
+            self._record_success()
+
+    def _admit(self) -> bool:
+        """Return whether the admitted call is a half-open probe.
+
+        Raises:
+            CircuitOpenError: The circuit is open or every probe slot is busy.
+        """
+        state = self.state
+        if state is CircuitState.CLOSED:
+            return False
+        if state is CircuitState.OPEN:
+            wait = self._reset_timeout - (self._clock() - self._opened_at)
+            raise CircuitOpenError(retry_after_seconds=max(0.0, wait))
+        if self._probes >= self._max_probes:
+            raise CircuitOpenError(retry_after_seconds=0.0)
+        self._probes += 1
+        return True
+
+    def _record_success(self) -> None:
+        """Close the circuit and clear the failure count."""
+        self._state = CircuitState.CLOSED
+        self._failures = 0
+        self._probes = 0
+
+    def _record_failure(self) -> None:
+        """Count a failure; open on the threshold or on a failed probe."""
+        self._failures += 1
+        if self._state is CircuitState.HALF_OPEN or self._failures >= self._threshold:
+            self._state = CircuitState.OPEN
+            self._opened_at = self._clock()
+            self._probes = 0
+
+    def _release(self, *, probing: bool) -> None:
+        """Free a probe slot without changing the state."""
+        if probing and self._probes > 0:
+            self._probes -= 1
+
+
+class Bulkhead:
+    """Cap concurrent calls to one dependency and shed the excess."""
+
+    def __init__(self, *, max_concurrent: int, max_wait_seconds: float = 0.0) -> None:
+        """Create the bulkhead.
+
+        Args:
+            max_concurrent: Calls allowed in flight at once.
+            max_wait_seconds: Time to queue for a slot; 0 sheds immediately.
+        """
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_wait = max_wait_seconds
+
+    @asynccontextmanager
+    async def slot(self) -> AsyncIterator[None]:
+        """Hold one slot for the duration of the block.
+
+        Yields:
+            Nothing; run the protected call inside the block.
+
+        Raises:
+            BulkheadFullError: No slot became free in time.
+        """
+        if self._max_wait <= 0.0:
+            if self._semaphore.locked():
+                msg = "bulkhead full"
+                raise BulkheadFullError(msg)
+            await self._semaphore.acquire()
+        else:
+            try:
+                async with asyncio.timeout(self._max_wait):
+                    await self._semaphore.acquire()
+            except TimeoutError as error:
+                msg = "bulkhead full"
+                raise BulkheadFullError(msg) from error
+        try:
+            yield
+        finally:
+            self._semaphore.release()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RetryContext:
+    """Collaborators of ``call_with_retry`` that tests replace.
+
+    Attributes:
+        sleep: Awaitable sleeper; tests advance a fake clock instead.
+        jitter: Maps a backoff ceiling to the actual delay.
+        retry_after: Extracts a server delay hint (for example ``Retry-After``)
+            from an error; hints above the policy cap stop retrying.
+    """
+
+    sleep: Sleeper = asyncio.sleep
+    jitter: Jitter = full_jitter
+    retry_after: RetryAfterHint | None = None
+
+
+async def call_with_retry[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    policy: RetryPolicy,
+    deadline: Deadline | None = None,
+    budget: RetryBudget | None = None,
+    breaker: CircuitBreaker | None = None,
+    context: RetryContext | None = None,
+) -> T:
+    """Run an idempotent operation with timeouts, backoff, and optional guards.
+
+    Args:
+        operation: Zero-argument coroutine factory; called once per attempt.
+        policy: Attempts, backoff, per-attempt timeout, and transient errors.
+        deadline: Overall deadline; defaults to the bound ``deadline_scope``.
+        budget: Shared retry budget for the dependency.
+        breaker: Shared circuit breaker for the dependency.
+        context: Sleeper, jitter, and server-hint collaborators.
+
+    Returns:
+        The first successful result.
+
+    Raises:
+        DeadlineExceededError: The deadline expired before or during an attempt.
+        CircuitOpenError: The breaker rejected the call; never retried here.
+        Exception: The last transient error once retries are exhausted, or any
+            non-transient error immediately.
+    """
+    effective = deadline if deadline is not None else current_deadline()
+    collaborators = context if context is not None else RetryContext()
+    retry_number = 0
+    while True:
+        try:
+            result = await _attempt(
+                operation, policy=policy, deadline=effective, breaker=breaker
+            )
+        except policy.retry_on as error:
+            delay = _after_failure(
+                error,
+                retry_number=retry_number,
+                policy=policy,
+                deadline=effective,
+                budget=budget,
+                context=collaborators,
+            )
+            if delay is None:
+                raise
+            retry_number += 1
+            await collaborators.sleep(delay)
+        else:
+            if budget is not None:
+                budget.record_success()
+            return result
+
+
+async def _attempt[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    policy: RetryPolicy,
+    deadline: Deadline | None,
+    breaker: CircuitBreaker | None,
+) -> T:
+    """Run one attempt under the breaker and the tighter of both timeouts.
+
+    Raises:
+        DeadlineExceededError: No time is left for the attempt.
+    """
+    timeout = policy.attempt_timeout_seconds
+    if deadline is not None:
+        remaining = deadline.remaining()
+        if remaining <= 0.0:
+            msg = "deadline expired before the attempt"
+            raise DeadlineExceededError(msg)
+        timeout = remaining if timeout is None else min(timeout, remaining)
+    async with AsyncExitStack() as stack:
+        if breaker is not None:
+            await stack.enter_async_context(breaker.guard())
+        async with asyncio.timeout(timeout):
+            return await operation()
+
+
+def _after_failure(
+    error: Exception,
+    *,
+    retry_number: int,
+    policy: RetryPolicy,
+    deadline: Deadline | None,
+    budget: RetryBudget | None,
+    context: RetryContext,
+) -> float | None:
+    """Record a transient failure and return the next delay, or ``None`` to stop.
+
+    Raises:
+        DeadlineExceededError: The deadline expired during the attempt.
+    """
+    if deadline is not None and deadline.expired:
+        msg = "deadline expired during the attempt"
+        raise DeadlineExceededError(msg) from error
+    if budget is not None:
+        budget.record_failure()
+        if not budget.allows_retry():
+            return None
+    if retry_number + 1 >= policy.attempts:
+        return None
+    return _retry_delay(
+        error,
+        retry_number=retry_number,
+        policy=policy,
+        deadline=deadline,
+        context=context,
+    )
+
+
+def _retry_delay(
+    error: Exception,
+    *,
+    retry_number: int,
+    policy: RetryPolicy,
+    deadline: Deadline | None,
+    context: RetryContext,
+) -> float | None:
+    """Return the server hint or jittered backoff, or ``None`` if it cannot fit."""
+    hint = context.retry_after(error) if context.retry_after is not None else None
+    if hint is not None and hint > policy.max_delay_seconds:
+        return None
+    delay = (
+        hint
+        if hint is not None
+        else context.jitter(policy.backoff_ceiling(retry_number))
+    )
+    if deadline is not None and delay >= deadline.remaining():
+        return None
+    return delay

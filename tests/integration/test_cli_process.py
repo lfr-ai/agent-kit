@@ -36,7 +36,7 @@ def test_apm_output_is_independent_of_the_windows_console_encoding(
     )
     if returncode:
         with pytest.raises(ApmExitError, match="exit code 9"):
-            ApmCliAdapter(timeout_seconds=10).check(tmp_path)
+            ApmCliAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
         with pytest.raises(SystemExit) as error:
             apm_smoke.run(
                 [sys.executable, "-c", program],
@@ -45,7 +45,7 @@ def test_apm_output_is_independent_of_the_windows_console_encoding(
             )
         assert error.value.code == returncode
     else:
-        ApmCliAdapter(timeout_seconds=10).check(tmp_path)
+        ApmCliAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
         apm_smoke.run(
             [sys.executable, "-c", program], cwd=tmp_path, env=os.environ.copy()
         )
@@ -129,3 +129,50 @@ def test_compose_then_provenance_round_trip(tmp_path: Path, profile: str) -> Non
     tampered = _run("provenance", "--root", str(output))
     assert tampered.returncode == 1
     assert "provenance.drift" in tampered.stderr
+
+
+def test_selection_file_composes_the_declared_feature_set(tmp_path: Path) -> None:
+    """A Copier-style selection file is equivalent to the inline arguments."""
+    selection = tmp_path / "agent-kit.json"
+    selection.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "profile": "backend",
+                "features": ["terraform"],
+                "runtimes": ["copilot"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    from_file = tmp_path / "from-file"
+    inline = tmp_path / "inline"
+
+    first = _run(
+        "compose",
+        "--selection",
+        str(selection),
+        "--root",
+        str(_ROOT),
+        "--output",
+        str(from_file),
+    )
+    second = _run(
+        "compose",
+        "backend",
+        "--feature",
+        "terraform",
+        "--runtime",
+        "copilot",
+        "--root",
+        str(_ROOT),
+        "--output",
+        str(inline),
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert (from_file / ".apm" / "selection.json").read_bytes() == (
+        inline / ".apm" / "selection.json"
+    ).read_bytes()
+    assert (from_file / ".apm" / "skills" / "kit-terraform-validation").is_dir()

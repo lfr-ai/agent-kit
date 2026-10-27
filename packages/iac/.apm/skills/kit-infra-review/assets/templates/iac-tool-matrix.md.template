@@ -1,0 +1,32 @@
+# IaC tool matrix: <decision title>
+
+<!-- Copy next to the decision record. Score 0 (fails) to 3 (strong).
+     A 0 on a hard constraint (H) eliminates the option regardless of total.
+     Weights (1-3) reflect this organization's priorities; keep them fixed
+     while scoring so options are compared on the same scale. -->
+
+Facts verified on: <YYYY-MM-DD>
+
+| Criterion | H | Weight | Terraform | OpenTofu | Bicep | CloudFormation or CDK | Pulumi | <other> |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Cloud coverage | H | 3 | | | | | | |
+| Support status | H | 3 | | | | | | |
+| Licensing | H | 3 | | | | | | |
+| Reviewable preview in CI | H | 3 | | | | | | |
+| Team skills | | 2 | | | | | | |
+| State ownership and security | | 2 | | | | | | |
+| Policy integration | | 2 | | | | | | |
+| Module or construct ecosystem | | 2 | | | | | | |
+| Drift reporting or correction | | 1 | | | | | | |
+| New-feature latency | | 1 | | | | | | |
+| Operating cost | | 1 | | | | | | |
+| Exit cost | | 1 | | | | | | |
+| **Weighted total** | | | | | | | | |
+| **Eliminated by** | | | | | | | | |
+
+## Evidence per score
+
+<!-- One line per non-obvious score: criterion, option, score, evidence link
+     or command output, and the date it was checked. -->
+
+- <criterion> / <option> = <score>: <evidence> (<YYYY-MM-DD>)

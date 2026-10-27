@@ -1,0 +1,270 @@
+"""Deterministic tests for the resilience primitives with a fake clock.
+
+Copy into ``tests/unit/test_resilience.py``. The fake sleeper advances the fake
+clock instead of waiting, and the jitter stub returns the ceiling, so every
+delay is exact. Replace 'shop.infrastructure.resilience' with the module that
+holds the copied template.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable
+
+import pytest
+from shop.infrastructure.resilience import (
+    Bulkhead,
+    BulkheadFullError,
+    CircuitBreaker,
+    CircuitOpenError,
+    CircuitState,
+    Deadline,
+    DeadlineExceededError,
+    RetryBudget,
+    RetryContext,
+    RetryPolicy,
+    call_with_retry,
+    current_deadline,
+    deadline_scope,
+    full_jitter,
+)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class Flaky:
+    """Fails with the given errors in order, then returns 'ok'."""
+
+    def __init__(self, *errors: Exception) -> None:
+        self._errors = list(errors)
+        self.calls = 0
+
+    async def __call__(self) -> str:
+        self.calls += 1
+        if self._errors:
+            raise self._errors.pop(0)
+        return "ok"
+
+
+def context(
+    clock: FakeClock, *, retry_after: Callable[[Exception], float | None] | None = None
+) -> RetryContext:
+    return RetryContext(
+        sleep=clock.sleep, jitter=lambda upper: upper, retry_after=retry_after
+    )
+
+
+def run[T](awaitable: Callable[[], Awaitable[T]]) -> T:
+    async def main() -> T:
+        return await awaitable()
+
+    return asyncio.run(main())
+
+
+POLICY = RetryPolicy(attempts=4, base_delay_seconds=0.1, max_delay_seconds=0.3)
+
+
+def test_backoff_is_capped_exponential() -> None:
+    assert [POLICY.backoff_ceiling(n) for n in range(4)] == pytest.approx(
+        [0.1, 0.2, 0.3, 0.3]
+    )
+
+
+def test_full_jitter_stays_within_the_ceiling() -> None:
+    assert all(0.0 <= full_jitter(0.5) <= 0.5 for _ in range(200))
+
+
+def test_transient_failures_are_retried_with_backoff() -> None:
+    clock = FakeClock()
+    flaky = Flaky(ConnectionError("reset"), TimeoutError())
+    result = run(lambda: call_with_retry(flaky, policy=POLICY, context=context(clock)))
+    assert result == "ok"
+    assert flaky.calls == 3
+    assert clock.sleeps == pytest.approx([0.1, 0.2])
+
+
+def test_non_transient_errors_are_not_retried() -> None:
+    clock = FakeClock()
+    flaky = Flaky(ValueError("bad input"))
+    with pytest.raises(ValueError, match="bad input"):
+        run(lambda: call_with_retry(flaky, policy=POLICY, context=context(clock)))
+    assert (flaky.calls, clock.sleeps) == (1, [])
+
+
+def test_last_error_is_raised_when_attempts_are_exhausted() -> None:
+    clock = FakeClock()
+    flaky = Flaky(*(ConnectionError(str(n)) for n in range(5)))
+    with pytest.raises(ConnectionError, match="3"):
+        run(lambda: call_with_retry(flaky, policy=POLICY, context=context(clock)))
+    assert flaky.calls == 4
+
+
+def test_retry_stops_when_the_delay_would_pass_the_deadline() -> None:
+    clock = FakeClock()
+    deadline = Deadline.after(0.25, clock=clock)
+    flaky = Flaky(*(ConnectionError() for _ in range(5)))
+    with pytest.raises(ConnectionError):
+        run(
+            lambda: call_with_retry(
+                flaky, policy=POLICY, deadline=deadline, context=context(clock)
+            )
+        )
+    assert clock.sleeps == pytest.approx([0.1])
+
+
+def test_expired_deadline_makes_no_attempt() -> None:
+    clock = FakeClock()
+    flaky = Flaky()
+    deadline = Deadline.after(0.0, clock=clock)
+    with pytest.raises(DeadlineExceededError):
+        run(lambda: call_with_retry(flaky, policy=POLICY, deadline=deadline))
+    assert flaky.calls == 0
+
+
+def test_attempt_timeout_raises_timeout_error() -> None:
+    async def hang() -> str:
+        await asyncio.Event().wait()
+        return "never"
+
+    clock = FakeClock()
+    policy = RetryPolicy(attempts=2, attempt_timeout_seconds=0.0)
+    with pytest.raises(TimeoutError):
+        run(lambda: call_with_retry(hang, policy=policy, context=context(clock)))
+    assert len(clock.sleeps) == 1
+
+
+def test_server_hint_overrides_backoff_and_too_long_hints_stop() -> None:
+    clock = FakeClock()
+    flaky = Flaky(ConnectionError("0.25"), ConnectionError("9"))
+    hinted = context(clock, retry_after=lambda error: float(str(error)))
+    with pytest.raises(ConnectionError, match="9"):
+        run(lambda: call_with_retry(flaky, policy=POLICY, context=hinted))
+    assert clock.sleeps == [0.25]
+
+
+def test_inner_deadline_scope_cannot_extend_the_outer_one() -> None:
+    clock = FakeClock()
+    with deadline_scope(1.0, clock=clock) as outer:
+        with deadline_scope(5.0, clock=clock) as inner:
+            assert inner is outer
+        with deadline_scope(0.5, clock=clock) as shorter:
+            assert current_deadline() is shorter
+        assert current_deadline() is outer
+    assert current_deadline() is None
+
+
+def test_retry_budget_disables_retries_while_failing() -> None:
+    budget = RetryBudget(max_tokens=4, token_ratio=0.5)
+    budget.record_failure()
+    assert budget.allows_retry()
+    budget.record_failure()
+    assert not budget.allows_retry()
+    budget.record_success()
+    assert budget.allows_retry()
+
+
+def test_budget_exhaustion_stops_retrying() -> None:
+    clock = FakeClock()
+    budget = RetryBudget(max_tokens=2, token_ratio=0.1)
+    flaky = Flaky(*(ConnectionError() for _ in range(5)))
+    with pytest.raises(ConnectionError):
+        run(
+            lambda: call_with_retry(
+                flaky, policy=POLICY, budget=budget, context=context(clock)
+            )
+        )
+    assert flaky.calls == 1
+
+
+def test_circuit_opens_probes_and_closes() -> None:
+    clock = FakeClock()
+    breaker = CircuitBreaker(failure_threshold=2, reset_timeout_seconds=10, clock=clock)
+
+    async def fail() -> None:
+        async with breaker.guard():
+            raise ConnectionError
+
+    async def succeed() -> None:
+        async with breaker.guard():
+            return
+
+    async def scenario() -> list[CircuitState]:
+        states: list[CircuitState] = []
+        for _ in range(2):
+            with pytest.raises(ConnectionError):
+                await fail()
+        states.append(breaker.state)
+        with pytest.raises(CircuitOpenError) as rejected:
+            await succeed()
+        assert rejected.value.retry_after_seconds == pytest.approx(10)
+        clock.now += 10
+        states.append(breaker.state)
+        with pytest.raises(ConnectionError):
+            await fail()
+        states.append(breaker.state)
+        clock.now += 10
+        await succeed()
+        states.append(breaker.state)
+        return states
+
+    assert asyncio.run(scenario()) == [
+        CircuitState.OPEN,
+        CircuitState.HALF_OPEN,
+        CircuitState.OPEN,
+        CircuitState.CLOSED,
+    ]
+
+
+def test_business_errors_do_not_open_the_circuit() -> None:
+    breaker = CircuitBreaker(failure_threshold=1, clock=FakeClock())
+
+    async def not_found() -> None:
+        async with breaker.guard():
+            raise LookupError
+
+    with pytest.raises(LookupError):
+        asyncio.run(not_found())
+    assert breaker.state is CircuitState.CLOSED
+
+
+def test_open_circuit_is_not_retried() -> None:
+    clock = FakeClock()
+    breaker = CircuitBreaker(failure_threshold=1, clock=clock)
+    flaky = Flaky(*(ConnectionError() for _ in range(5)))
+    with pytest.raises(CircuitOpenError):
+        run(
+            lambda: call_with_retry(
+                flaky, policy=POLICY, breaker=breaker, context=context(clock)
+            )
+        )
+    assert flaky.calls == 1
+
+
+def test_bulkhead_sheds_calls_beyond_capacity() -> None:
+    bulkhead = Bulkhead(max_concurrent=1)
+
+    async def scenario() -> None:
+        async with bulkhead.slot():
+            with pytest.raises(BulkheadFullError):
+                async with bulkhead.slot():
+                    pass
+        async with bulkhead.slot():
+            pass
+
+    asyncio.run(scenario())
+
+
+def test_policy_rejects_invalid_values() -> None:
+    with pytest.raises(ValueError, match="attempts"):
+        RetryPolicy(attempts=0)
+    with pytest.raises(ValueError, match="delays"):
+        RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0.5)

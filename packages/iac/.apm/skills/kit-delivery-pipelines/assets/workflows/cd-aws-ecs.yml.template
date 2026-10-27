@@ -1,0 +1,230 @@
+# Continuous delivery to Amazon ECS: promote one digest dev -> test -> production.
+#
+# Copy to .github/workflows/cd-aws-ecs.yml next to ci.yml. Replace every
+# PIN_FULL_COMMIT_SHA with a reviewed full commit SHA. CI must push the image to
+# the ECR repository below (log in with configure-aws-credentials and
+# amazon-ecr-login in ci.yml) and attest it.
+#
+# Shape:
+#   resolve           read-only role: pick the digest for the commit, verify provenance
+#   deploy-dev/test/production
+#                     environment approval, OIDC role per environment, register a
+#                     task definition revision with image@digest, update the
+#                     service, follow the ECS service deployment, smoke check,
+#                     roll back on failure
+#
+# The traffic strategy is part of the ECS service, owned by infrastructure code:
+# deployment controller ECS with strategy CANARY (canaryPercent, canary bake
+# time) or LINEAR or BLUE_GREEN, a load balancer test listener, optional
+# lifecycle hooks, and deployment alarms with rollback enabled. This workflow
+# starts and watches that deployment; it does not reimplement it.
+#
+# Each environment defines these variables: AWS_REGION, AWS_DEPLOY_ROLE_ARN,
+# ECS_CLUSTER, ECS_SERVICE, ECS_CONTAINER, APP_URL. Each deploy role trusts only
+# token.actions.githubusercontent.com:sub = repo:<owner>/<repo>:environment:<name>
+# with aud sts.amazonaws.com. AWS_REGISTRY_READ_ROLE_ARN (repository variable)
+# trusts the trunk ref subject and can only read ECR.
+name: cd-aws-ecs
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Digest already built and attested by ci (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-orders-ecs
+  cancel-in-progress: false
+
+env:
+  REPOSITORY: 111122223333.dkr.ecr.eu-west-1.amazonaws.com/orders
+
+jobs:
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+    outputs:
+      digest: ${{ steps.pick.outputs.digest }}
+    steps:
+      - name: Assume the read-only registry role
+        uses: aws-actions/configure-aws-credentials@PIN_FULL_COMMIT_SHA # v6
+        with:
+          role-to-assume: ${{ vars.AWS_REGISTRY_READ_ROLE_ARN }}
+          aws-region: eu-west-1
+      - name: Log in to ECR for attestation lookups
+        uses: aws-actions/amazon-ecr-login@PIN_FULL_COMMIT_SHA # v2
+      - name: Resolve and verify the digest
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_DIGEST}" ]; then
+            digest="${INPUT_DIGEST}"
+          else
+            digest="$(aws ecr describe-images --repository-name orders \
+              --image-ids "imageTag=sha-${RUN_SHA}" \
+              --query 'imageDetails[0].imageDigest' --output text)"
+          fi
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::could not resolve a digest (got '${digest}')"
+            exit 1
+          fi
+          gh attestation verify "oci://${REPOSITORY}@${digest}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+  deploy-dev:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: dev
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-orders-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: &ecs-env
+      IMAGE_REF: 111122223333.dkr.ecr.eu-west-1.amazonaws.com/orders@${{ needs.resolve.outputs.digest }}
+      CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SERVICE: ${{ vars.ECS_SERVICE }}
+      CONTAINER: ${{ vars.ECS_CONTAINER }}
+      APP_URL: ${{ vars.APP_URL }}
+      HEALTH_PATH: /healthz
+      # Upper bound for the whole ECS deployment, including canary bake time.
+      MAX_POLLS: '160'
+    steps: &ecs-steps
+      - name: Assume the environment deploy role (OIDC)
+        uses: aws-actions/configure-aws-credentials@PIN_FULL_COMMIT_SHA # v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-${{ github.run_id }}
+
+      - name: Register a task definition revision with the digest
+        id: register
+        run: |
+          set -euo pipefail
+          previous="$(aws ecs describe-services --cluster "${CLUSTER}" --services "${SERVICE}" \
+            --query 'services[0].taskDefinition' --output text)"
+          aws ecs describe-task-definition --task-definition "${previous}" \
+            --query taskDefinition > current.json
+          jq --arg image "${IMAGE_REF}" --arg name "${CONTAINER}" '
+            (.containerDefinitions[] | select(.name == $name) | .image) = $image
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)' \
+            current.json > next.json
+          next="$(aws ecs register-task-definition --cli-input-json file://next.json \
+            --query taskDefinition.taskDefinitionArn --output text)"
+          {
+            echo "previous=${previous}"
+            echo "next=${next}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Start the service deployment and follow it
+        id: rollout
+        env:
+          NEXT: ${{ steps.register.outputs.next }}
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "${CLUSTER}" --service "${SERVICE}" \
+            --task-definition "${NEXT}" --output text --query 'service.serviceName' > /dev/null
+          sleep 10
+          deployment="$(aws ecs list-service-deployments --cluster "${CLUSTER}" --service "${SERVICE}" \
+            --query 'sort_by(serviceDeployments, &createdAt)[-1].serviceDeploymentArn' --output text)"
+          echo "deployment=${deployment}" >> "${GITHUB_OUTPUT}"
+          status=""
+          for _ in $(seq 1 "${MAX_POLLS}"); do
+            status="$(aws ecs describe-service-deployments --service-deployment-arns "${deployment}" \
+              --query 'serviceDeployments[0].status' --output text)"
+            case "${status}" in
+              SUCCESSFUL) echo "ECS deployment succeeded"; exit 0 ;;
+              ROLLBACK_SUCCESSFUL|ROLLBACK_FAILED|STOPPED)
+                echo "::error::ECS deployment ended as ${status}"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::ECS deployment still ${status} after the polling budget"
+          exit 1
+
+      - name: Smoke check production traffic
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "${APP_URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Roll back
+        if: failure() && steps.register.outputs.previous != ''
+        env:
+          PREVIOUS: ${{ steps.register.outputs.previous }}
+          DEPLOYMENT: ${{ steps.rollout.outputs.deployment }}
+          ROLLOUT: ${{ steps.rollout.outcome }}
+        run: |
+          set -uo pipefail
+          if [ -n "${DEPLOYMENT}" ] && [ "${ROLLOUT}" != "success" ]; then
+            # Still running or failed mid-way: let ECS return to the blue revision.
+            aws ecs stop-service-deployment --service-deployment-arn "${DEPLOYMENT}" \
+              --stop-type ROLLBACK \
+              || echo "::warning::stop-service-deployment refused; ECS may already be rolling back"
+          else
+            # The deployment completed but the smoke check failed: redeploy the
+            # previous task definition revision, which runs the previous digest.
+            aws ecs update-service --cluster "${CLUSTER}" --service "${SERVICE}" \
+              --task-definition "${PREVIOUS}" --output text --query 'service.serviceName'
+          fi
+          echo "::error::deploy failed; rollback to ${PREVIOUS} requested"
+
+  deploy-test:
+    needs: [resolve, deploy-dev]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment:
+      name: test
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-orders-test
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: *ecs-env
+    steps: *ecs-steps
+
+  deploy-production:
+    needs: [resolve, deploy-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-orders-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: *ecs-env
+    steps: *ecs-steps

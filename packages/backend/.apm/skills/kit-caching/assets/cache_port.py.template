@@ -1,0 +1,115 @@
+"""Cache ports, codec, and the single failure type every adapter raises.
+
+Copy into ``src/shop/cache/port.py``. Application code depends on these
+protocols only; the Redis adapter (``redis_cache.py``) and the in-memory fake
+(``memory.py``) implement them. Values cross the port as ``bytes`` so the
+codec, not the store, owns the serialized shape.
+"""
+
+from collections.abc import Mapping, Sequence
+import json
+from typing import Protocol
+
+
+class CacheUnavailableError(Exception):
+    """The cache could not answer within its budget; callers fall back to the source."""
+
+
+class Cache(Protocol):
+    """Byte-oriented key-value cache with per-entry expiry."""
+
+    async def get(self, key: str) -> bytes | None:
+        """Return the stored bytes for a key, or ``None`` on a miss.
+
+        Raises:
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+    async def get_many(self, keys: Sequence[str]) -> list[bytes | None]:
+        """Return stored bytes for several keys, in the order requested.
+
+        Raises:
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+    async def set(self, key: str, value: bytes, *, ttl_seconds: float) -> None:
+        """Store bytes under a key with a time to live in seconds.
+
+        A non-positive TTL deletes the key instead of storing it.
+
+        Raises:
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+    async def delete(self, *keys: str) -> int:
+        """Delete keys and return how many existed.
+
+        Raises:
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+
+class DistributedLock(Protocol):
+    """Advisory per-key lock used only to reduce duplicate loads."""
+
+    async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
+        """Take the lock if it is free; return whether this caller holds it.
+
+        Raises:
+            ValueError: ``ttl_seconds`` is not positive.
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+    async def release(self, key: str, token: str) -> bool:
+        """Release the lock only if ``token`` still owns it.
+
+        Raises:
+            CacheUnavailableError: The store failed or timed out.
+        """
+        ...
+
+
+class Codec[T](Protocol):
+    """Convert values to and from the bytes stored in the cache."""
+
+    def encode(self, value: T) -> bytes:
+        """Serialize a value."""
+        ...
+
+    def decode(self, data: bytes) -> T:
+        """Deserialize bytes; raise ``ValueError`` when they are not valid."""
+        ...
+
+
+type JsonValue = (
+    str | int | float | bool | Sequence[JsonValue] | Mapping[str, JsonValue] | None
+)
+
+
+class JsonCodec:
+    """Compact UTF-8 JSON codec for plain data; never use pickle for shared stores."""
+
+    def encode(self, value: JsonValue) -> bytes:
+        """Serialize plain data as compact, key-sorted JSON.
+
+        Raises:
+            TypeError: The value contains a type JSON cannot represent.
+        """
+        return json.dumps(
+            value, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+        ).encode()
+
+    def decode(self, data: bytes) -> JsonValue:
+        """Parse JSON bytes.
+
+        Raises:
+            ValueError: The bytes are not valid UTF-8 JSON (``JSONDecodeError``
+                and ``UnicodeDecodeError`` both subclass ``ValueError``).
+        """
+        parsed: JsonValue = json.loads(data)
+        return parsed

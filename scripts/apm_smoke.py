@@ -19,7 +19,7 @@ _RUNTIMES = "copilot,claude"
 # every portable bundle.
 _SMOKE_SELECTIONS = (
     ("fullstack", ()),
-    ("ai", ("iac",)),
+    ("ai", ("terraform", "bicep", "remote-access")),
     ("workflows", ()),
 )
 

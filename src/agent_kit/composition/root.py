@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from agent_kit.application.services.catalog_service import CatalogService
 from agent_kit.application.services.provenance_service import ProvenanceService
+from agent_kit.application.services.selection import parse_selection
 from agent_kit.infrastructure.apm_adapter import ApmCliAdapter
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 from agent_kit.infrastructure.output_adapter import OutputAdapter
@@ -14,7 +15,7 @@ from agent_kit.infrastructure.session_context import session_context
 from agent_kit.presentation.cli import CliActions
 
 if TYPE_CHECKING:
-    from agent_kit.core.models import CheckReport
+    from agent_kit.core.models import CheckReport, Selection
 
 
 def _source_root_from_working_directory() -> Path:
@@ -24,6 +25,11 @@ def _source_root_from_working_directory() -> Path:
         if (candidate / "catalog.json").is_file():
             return candidate
     return current
+
+
+def _load_selection(path: Path) -> Selection:
+    """Read one selection file and validate it against its schema."""
+    return parse_selection(FileCatalogAdapter().load_selection(path))
 
 
 def build_actions() -> CliActions:
@@ -67,5 +73,6 @@ def build_actions() -> CliActions:
         compose=compose,
         default_root=_source_root_from_working_directory,
         context=session_context,
+        load_selection=_load_selection,
         provenance=provenance,
     )

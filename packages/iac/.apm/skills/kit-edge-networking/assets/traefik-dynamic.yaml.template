@@ -1,5 +1,6 @@
 # Traefik v3 dynamic configuration (file provider) for one HTTPS application.
-# Replace app.example.invalid and http://app:8000 before use.
+# Replace app.example.invalid, http://app-1:8000, http://app-2:8000, and
+# http://app-canary:8000 before use. Field names follow Traefik v3.7 (2026-10).
 # The static configuration (traefik.yml) must define:
 #   entryPoints.websecure.address: ":443"
 #   entryPoints.websecure.forwardedHeaders.trustedIPs: [<load balancer CIDR>]
@@ -14,12 +15,15 @@ http:
     app:
       rule: "Host(`app.example.invalid`)"
       entryPoints: [websecure]
-      service: app
-      middlewares: [security-headers, body-limit, rate-limit]
+      # Weighted split between the stable pool and a canary; shift the
+      # weights in steps during a release and back to 100/0 to roll back.
+      service: app-split
+      middlewares: [security-headers, body-limit, in-flight, rate-limit, retry]
       tls:
         certResolver: acme
     app-events:
-      # Streaming route: no buffering middleware, which would hold responses.
+      # Streaming route: no buffering or retry middleware, which would hold
+      # or replay responses.
       rule: "Host(`app.example.invalid`) && PathPrefix(`/events/`)"
       entryPoints: [websecure]
       service: app-streaming
@@ -31,26 +35,73 @@ http:
   middlewares:
     security-headers:
       headers:
-        stsSeconds: 63072000
+        # HSTS starts at 300 seconds; raise it to 604800, 2592000, then
+        # 63072000 once every path serves HTTPS.
+        stsSeconds: 300
         contentTypeNosniff: true
         frameDeny: true
         referrerPolicy: strict-origin-when-cross-origin
     body-limit:
       buffering:
         maxRequestBodyBytes: 10485760
+    # Key per-client limits on the X-Forwarded-For entry appended by the one
+    # trusted load balancer (depth 1, counted from the right). Without a
+    # sourceCriterion every client shares the load balancer's bucket.
     rate-limit:
       rateLimit:
         average: 20
         burst: 40
         period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+    # Concurrent requests per client, like nginx limit_conn. The default
+    # sourceCriterion is the request host, which would cap the whole site.
+    in-flight:
+      inFlightReq:
+        amount: 50
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+    # Retries only network errors before a response; POST, PATCH, and LOCK
+    # are not retried because retryNonIdempotentMethod defaults to false.
+    retry:
+      retry:
+        attempts: 2
+        initialInterval: 100ms
 
   services:
+    app-split:
+      weighted:
+        # Propagates child health so an unhealthy pool gets no traffic.
+        healthCheck: {}
+        services:
+          - name: app
+            weight: 9
+          - name: app-canary
+            weight: 1
     app:
+      loadBalancer:
+        # Power of two choices: pick the less busy of two random servers.
+        strategy: p2c
+        passHostHeader: true
+        serversTransport: app-transport
+        servers:
+          - url: "http://app-1:8000"
+          - url: "http://app-2:8000"
+        healthCheck:
+          path: /readyz
+          interval: 10s
+          timeout: 2s
+        passiveHealthCheck:
+          failureWindow: 10s
+          maxFailedAttempts: 3
+    app-canary:
       loadBalancer:
         passHostHeader: true
         serversTransport: app-transport
         servers:
-          - url: "http://app:8000"
+          - url: "http://app-canary:8000"
         healthCheck:
           path: /readyz
           interval: 10s
@@ -62,14 +113,18 @@ http:
         responseForwarding:
           flushInterval: "-1"
         servers:
-          - url: "http://app:8000"
+          - url: "http://app-1:8000"
+          - url: "http://app-2:8000"
 
   serversTransports:
     app-transport:
+      maxIdleConnsPerHost: 32
       forwardingTimeouts:
         dialTimeout: 5s
         responseHeaderTimeout: 30s
-        idleConnTimeout: 90s
+        # Below the application server's keep-alive timeout (uvicorn: 5s) so
+        # Traefik never reuses a connection the server has just closed.
+        idleConnTimeout: 4s
 
 tls:
   options:

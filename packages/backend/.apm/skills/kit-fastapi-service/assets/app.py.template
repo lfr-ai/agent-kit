@@ -25,7 +25,13 @@ from shop.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from shop.api.problems import REQUEST_ID_HEADER
-from shop.api.rate_limit import RateLimitMiddleware, RateLimitStore
+from shop.api.rate_limit import (
+    FailureMode,
+    RateLimitMiddleware,
+    RateLimitStore,
+    RatePolicy,
+    RouteRule,
+)
 from shop.api.settings import HttpSettings
 
 type ContainerFactory = Callable[[], AbstractAsyncContextManager[Container]]
@@ -33,6 +39,7 @@ type ContainerFactory = Callable[[], AbstractAsyncContextManager[Container]]
 _CORS_MAX_AGE_SECONDS = 600
 _CORS_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 _CORS_HEADERS = ("Authorization", "Content-Type", "Idempotency-Key", REQUEST_ID_HEADER)
+_DRAFT_RATE_LIMIT_HEADERS = ("RateLimit", "RateLimit-Policy")
 
 
 def create_app(
@@ -47,16 +54,17 @@ def create_app(
         settings: Validated HTTP settings facet.
         container_factory: Opens the container on startup and closes it on
             shutdown, after in-flight requests finish.
-        rate_limit_store: Counter backend shared by all workers.
+        rate_limit_store: Counter backend shared by all workers; the lifespan
+            also exposes it to ``SubjectRateLimit`` dependencies.
 
     Returns:
         The configured ASGI application.
     """
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, Container]]:
+    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, object]]:
         async with container_factory() as container:
-            yield {"container": container}
+            yield {"container": container, "rate_limit_store": rate_limit_store}
 
     app = FastAPI(
         title=settings.title,
@@ -88,17 +96,37 @@ def _install_middleware(
     app.add_middleware(
         RateLimitMiddleware,
         store=rate_limit_store,
-        limit=settings.rate_limit_requests,
-        window_seconds=settings.rate_limit_window_seconds,
+        default_policy=RatePolicy(
+            name="default",
+            limit=settings.rate_limit_requests,
+            window_seconds=settings.rate_limit_window_seconds,
+        ),
+        rules=tuple(
+            RouteRule(
+                path_prefix=route.path_prefix,
+                methods=frozenset(route.methods),
+                policy=RatePolicy(
+                    name=route.name,
+                    limit=route.requests,
+                    window_seconds=route.window_seconds,
+                ),
+            )
+            for route in settings.rate_limit_routes
+        ),
+        failure_mode=FailureMode(settings.rate_limit_failure_mode),
+        emit_draft_headers=settings.rate_limit_headers,
     )
     if settings.cors_origins:
+        exposed = [REQUEST_ID_HEADER, "Retry-After"]
+        if settings.rate_limit_headers:
+            exposed.extend(_DRAFT_RATE_LIMIT_HEADERS)
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
             allow_credentials=settings.cors_allow_credentials,
             allow_methods=list(_CORS_METHODS),
             allow_headers=list(_CORS_HEADERS),
-            expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+            expose_headers=exposed,
             max_age=_CORS_MAX_AGE_SECONDS,
         )
     app.add_middleware(

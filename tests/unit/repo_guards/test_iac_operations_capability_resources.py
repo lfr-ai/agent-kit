@@ -14,7 +14,7 @@ import yaml
 _SKILLS = Path(__file__).resolve().parents[3] / "packages/iac/.apm/skills"
 _INSTRUCTIONS = _SKILLS.parent / "instructions"
 _EDGE = _SKILLS / "kit-edge-networking"
-_REMOTE = _SKILLS / "kit-remote-access"
+_REMOTE = _SKILLS.parents[2] / "remote-access/.apm/skills/kit-remote-access"
 _OBSERVABILITY = _SKILLS / "kit-observability/assets/templates"
 _INFRA = _SKILLS / "kit-infra-review"
 _NGINX_CHECKER = _EDGE / "assets/check_nginx_config.py"

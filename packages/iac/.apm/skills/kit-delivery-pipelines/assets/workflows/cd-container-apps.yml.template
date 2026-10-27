@@ -1,0 +1,289 @@
+# Continuous delivery to Azure Container Apps: promote one digest dev -> test -> production.
+#
+# Copy to .github/workflows/cd-container-apps.yml next to ci.yml and
+# reusable-deploy.yml. Replace every PIN_FULL_COMMIT_SHA with a reviewed SHA.
+#
+# Shape:
+#   resolve      pick the digest CI built for the commit and verify its attestation
+#   deploy-dev   reusable-deploy.yml, environment "dev"
+#   deploy-test  reusable-deploy.yml, environment "test"
+#   deploy-prod  environment "production" (required reviewers), canary by
+#                traffic weight, automatic rollback on a failed check
+#
+# Every environment deploys the same image@digest; nothing is rebuilt. Each
+# environment defines AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID and
+# AZURE_RESOURCE_GROUP as environment variables, and the Entra application for
+# that environment trusts only the subject
+# repo:<owner>/<repo>:environment:<name>.
+name: cd-container-apps
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Digest already built and attested by ci (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One release train at a time; a running deploy is never cancelled.
+concurrency:
+  group: cd-orders
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/example-owner/orders
+  APP: orders
+
+jobs:
+  resolve:
+    # workflow_run fires for every CI run; deploy only successful pushes to main.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    outputs:
+      digest: ${{ steps.pick.outputs.digest }}
+      revision-suffix: ${{ steps.pick.outputs.suffix }}
+      source-sha: ${{ steps.pick.outputs.sha }}
+    steps:
+      - name: Resolve the digest for the commit
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          if [ -n "${INPUT_DIGEST}" ]; then
+            digest="${INPUT_DIGEST}"
+            sha="${GITHUB_SHA}"
+          else
+            # The sha-<commit> tag is only a lookup key; it is resolved once here
+            # and every later job uses the immutable digest.
+            digest="$(docker buildx imagetools inspect "${IMAGE}:sha-${RUN_SHA}" \
+              --format '{{json .Manifest}}' | jq -r .digest)"
+            sha="${RUN_SHA}"
+          fi
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::could not resolve a digest (got '${digest}')"
+            exit 1
+          fi
+          {
+            echo "digest=${digest}"
+            echo "suffix=r${GITHUB_RUN_NUMBER}-${digest:7:10}"
+            echo "sha=${sha}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Verify the build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.pick.outputs.digest }}
+        run: |
+          gh attestation verify "oci://${IMAGE}@${DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml"
+
+  deploy-dev:
+    needs: resolve
+    uses: ./.github/workflows/reusable-deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+      attestations: read
+    with:
+      environment: dev
+      image: ghcr.io/example-owner/orders
+      digest: ${{ needs.resolve.outputs.digest }}
+      app-name: orders
+      revision-suffix: ${{ needs.resolve.outputs.revision-suffix }}
+
+  deploy-test:
+    needs: [resolve, deploy-dev]
+    uses: ./.github/workflows/reusable-deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+      attestations: read
+    with:
+      environment: test
+      image: ghcr.io/example-owner/orders
+      digest: ${{ needs.resolve.outputs.digest }}
+      app-name: orders
+      revision-suffix: ${{ needs.resolve.outputs.revision-suffix }}
+
+  deploy-prod:
+    needs: [resolve, deploy-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: production
+      url: ${{ steps.prepare.outputs.url }}
+    # Shared with rollback.yml so a rollback and a deploy never overlap.
+    concurrency:
+      group: deploy-orders-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      IMAGE_REF: ghcr.io/example-owner/orders@${{ needs.resolve.outputs.digest }}
+      SUFFIX: ${{ needs.resolve.outputs.revision-suffix }}
+      HEALTH_PATH: /healthz
+      # Traffic percentages for the canary steps, then 100. Bake time per step.
+      CANARY_WEIGHTS: ${{ vars.CANARY_WEIGHTS || '10 50' }}
+      BAKE_SECONDS: ${{ vars.CANARY_BAKE_SECONDS || '300' }}
+      PROBES_PER_STEP: '30'
+    steps:
+      - name: Check out the released commit (canary gate script only)
+        uses: actions/checkout@PIN_FULL_COMMIT_SHA # v7
+        with:
+          ref: ${{ needs.resolve.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Azure login (OIDC, environment-scoped subject)
+        uses: azure/login@PIN_FULL_COMMIT_SHA # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record the stable revision and URLs
+        id: prepare
+        run: |
+          set -euo pipefail
+          stable="$(az containerapp revision list -n "${APP}" -g "${RG}" \
+            --query 'sort_by([?properties.trafficWeight > `0`], &properties.trafficWeight)[-1].name' \
+            -o tsv)"
+          if [ -z "${stable}" ]; then
+            echo "::error::no revision serves traffic; bootstrap production by hand first"
+            exit 1
+          fi
+          fqdn="$(az containerapp show -n "${APP}" -g "${RG}" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          domain="${fqdn#"${APP}".}"
+          {
+            echo "stable=${stable}"
+            echo "new=${APP}--${SUFFIX}"
+            echo "url=https://${fqdn}"
+            echo "candidate-url=https://${APP}---candidate.${domain}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create the candidate revision with 0% traffic
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          set -euo pipefail
+          # Pin traffic by name first so the new revision cannot take traffic
+          # through a latestRevision rule.
+          az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+            --revision-weight "${STABLE}=100" -o none
+          az containerapp update -n "${APP}" -g "${RG}" \
+            --image "${IMAGE_REF}" --revision-suffix "${SUFFIX}" -o none
+          state=""
+          for _ in $(seq 1 60); do
+            state="$(az containerapp revision show -n "${APP}" -g "${RG}" \
+              --revision "${NEW}" --query properties.provisioningState -o tsv)"
+            case "${state}" in
+              Provisioned) break ;;
+              Failed) echo "::error::${NEW} failed to provision"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          [ "${state}" = "Provisioned" ] || { echo "::error::${NEW} did not provision"; exit 1; }
+          az containerapp revision label add -n "${APP}" -g "${RG}" \
+            --label candidate --revision "${NEW}" --yes -o none
+
+      - name: Smoke check the candidate before it takes traffic
+        env:
+          URL: ${{ steps.prepare.outputs.candidate-url }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Canary by traffic weight
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+          URL: ${{ steps.prepare.outputs.url }}
+        run: |
+          set -euo pipefail
+          for weight in ${CANARY_WEIGHTS}; do
+            az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+              --revision-weight "${STABLE}=$((100 - weight))" "${NEW}=${weight}" -o none
+            echo "Canary at ${weight}%; baking ${BAKE_SECONDS}s"
+            sleep "${BAKE_SECONDS}"
+            failures=0
+            for _ in $(seq 1 "${PROBES_PER_STEP}"); do
+              curl --fail --silent --max-time 5 "${URL}${HEALTH_PATH}" > /dev/null \
+                || failures=$((failures + 1))
+            done
+            if [ "${failures}" -gt 0 ]; then
+              echo "::error::${failures} failed probes at ${weight}%"
+              exit 1
+            fi
+            # Replace or extend with an SLO query for the candidate revision
+            # (error ratio and latency against the stable revision).
+            if [ -x scripts/canary-gate.sh ]; then
+              scripts/canary-gate.sh "${NEW}" "${STABLE}" "${weight}"
+            else
+              echo "::warning::no scripts/canary-gate.sh; only synthetic probes gated this step"
+            fi
+          done
+
+      - name: Promote the candidate
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+            --revision-weight "${NEW}=100" "${STABLE}=0" -o none
+          az containerapp revision label add -n "${APP}" -g "${RG}" \
+            --label stable --revision "${NEW}" --yes -o none
+          az containerapp revision label add -n "${APP}" -g "${RG}" \
+            --label previous --revision "${STABLE}" --yes -o none
+          # Keep only the new and the previous revision active.
+          for old in $(az containerapp revision list -n "${APP}" -g "${RG}" \
+              --query "[?properties.active].name" -o tsv); do
+            if [ "${old}" != "${NEW}" ] && [ "${old}" != "${STABLE}" ]; then
+              az containerapp revision deactivate -n "${APP}" -g "${RG}" \
+                --revision "${old}" -o none
+            fi
+          done
+          {
+            echo "### Production"
+            echo
+            echo "- live: \`${NEW}\` (\`${IMAGE_REF}\`)"
+            echo "- rollback target: \`${STABLE}\` (label previous)"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Roll back to the stable revision
+        if: failure() && steps.prepare.outputs.stable != ''
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+            --revision-weight "${STABLE}=100" -o none
+          az containerapp revision deactivate -n "${APP}" -g "${RG}" \
+            --revision "${NEW}" -o none \
+            || echo "::warning::could not deactivate ${NEW}; check it by hand"
+          echo "::error::canary of ${NEW} failed; production traffic restored to ${STABLE}"

@@ -11,7 +11,18 @@ printed as ``path:line: message``:
   ``proxy_set_header`` only when a level defines none of its own;
 - a ``server`` block that proxies but has no ``client_max_body_size`` in itself
   or an enclosing block (the implicit default is 1 MiB);
-- a streaming ``location`` whose effective ``proxy_buffering`` is not ``off``.
+- a streaming ``location`` whose effective ``proxy_buffering`` is not ``off``;
+- an ``upstream`` without ``keepalive`` that a location reaches with
+  ``proxy_http_version 1.1`` (or 2), so every request opens a new connection;
+- a proxied ``location`` with an effective ``proxy_cache`` for requests that
+  carry credentials (``proxy_set_header`` of ``Authorization``,
+  ``Proxy-Authorization``, or ``Cookie``, an ``auth_basic``, ``auth_request``,
+  or ``auth_jwt`` directive, or a ``# edge:authenticated`` comment) without both
+  ``proxy_no_cache`` and ``proxy_cache_bypass``;
+- a ``limit_req_zone`` or ``limit_conn_zone`` that no ``limit_req`` or
+  ``limit_conn`` directive in the file uses. This rule is skipped when the file
+  includes other files (except ``mime.types``), because the zone may be used
+  there.
 
 A location is streaming when its path has a segment named ``sse``, ``stream``,
 ``streams``, ``events``, or ``event-stream``, or when a comment ``# edge:stream``
@@ -50,6 +61,12 @@ _STREAM_PATH = re.compile(
     r"(?i)(?:^|/)(?:sse|streams?|events|event-stream)(?=/|$|[^\w-])"
 )
 _STREAM_MARKER = re.compile(r"#\s*edge:\s*stream\b")
+_AUTH_MARKER = re.compile(r"#\s*edge:\s*authenticated\b")
+_CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
+_AUTH_DIRECTIVES = ("auth_basic", "auth_request", "auth_jwt")
+_CACHE_SKIPS = ("proxy_no_cache", "proxy_cache_bypass")
+_KEEPALIVE_VERSIONS = frozenset({"1.1", "2"})
+_ZONE_USERS = {"limit_req_zone": "limit_req", "limit_conn_zone": "limit_conn"}
 _CONFIG_SUFFIXES = (".conf", ".conf.template")
 
 
@@ -452,8 +469,61 @@ def _buffering_finding(
     )
 
 
+def _credential_signals(chain: Sequence[Block]) -> list[str]:
+    """Return the reasons a proxied location receives credential-bearing requests.
+
+    Args:
+        chain: Blocks from the main context to the location.
+
+    Returns:
+        Short descriptions such as ``proxy_set_header authorization``.
+    """
+    headers = _header_names(_effective(chain, "proxy_set_header"))
+    signals = [
+        f"proxy_set_header {name}" for name in sorted(headers & _CREDENTIAL_HEADERS)
+    ]
+    for name in _AUTH_DIRECTIVES:
+        found = _effective(chain, name)
+        if found and found[0].args and found[0].args[0].lower() != "off":
+            signals.append(name)
+    if any(_AUTH_MARKER.match(comment) for comment in chain[-1].comments):
+        signals.append("# edge:authenticated")
+    return signals
+
+
+def _cache_finding(path: Path, chain: Sequence[Block], route: str) -> Finding | None:
+    """Report a cached location that may store responses to authenticated requests.
+
+    Args:
+        path: File that contains the location.
+        chain: Blocks from the main context to the location.
+        route: Location path used in the message.
+
+    Returns:
+        A finding, or None when caching is off, no credentials are involved, or
+        both ``proxy_no_cache`` and ``proxy_cache_bypass`` apply.
+    """
+    cache = _effective(chain, "proxy_cache")
+    if not cache or not cache[0].args or cache[0].args[0].lower() == "off":
+        return None
+    signals = _credential_signals(chain)
+    missing = [name for name in _CACHE_SKIPS if not _effective(chain, name)]
+    if not signals or not missing:
+        return None
+    return Finding(
+        path=path,
+        line=chain[-1].line,
+        message=(
+            f"location '{route}' caches responses (proxy_cache {cache[0].args[0]}) "
+            f"for requests with credentials ({', '.join(signals)}) without "
+            f"{' and '.join(repr(name) for name in missing)}; skip the cache for "
+            "credential-bearing requests"
+        ),
+    )
+
+
 def _location_findings(path: Path, chain: Sequence[Block]) -> list[Finding]:
-    """Report forwarded-header and buffering problems for a proxied location."""
+    """Report forwarded-header, buffering, and cache problems for a proxied location."""
     location = chain[-1]
     if not location.named("proxy_pass"):
         return []
@@ -466,6 +536,128 @@ def _location_findings(path: Path, chain: Sequence[Block]) -> list[Finding]:
         buffering = _buffering_finding(path, chain, route)
         if buffering is not None:
             findings.append(buffering)
+    cache = _cache_finding(path, chain, route)
+    if cache is not None:
+        findings.append(cache)
+    return findings
+
+
+def _upstream_name(target: str) -> str:
+    """Return the host part of a ``proxy_pass`` URL without scheme, port, or path.
+
+    Args:
+        target: First argument of ``proxy_pass``.
+
+    Returns:
+        The host or upstream group name; empty when the URL has no scheme.
+    """
+    _, _, rest = target.partition("://")
+    return re.split(r"[/:]", rest, maxsplit=1)[0]
+
+
+def _has_keepalive(upstream: Block) -> bool:
+    """Tell whether an upstream block keeps idle connections open."""
+    return any(
+        directive.args and directive.args[0] != "0"
+        for directive in upstream.named("keepalive")
+    )
+
+
+def _keepalive_findings(
+    path: Path, blocks: Sequence[tuple[Block, tuple[Block, ...]]]
+) -> list[Finding]:
+    """Report upstream groups reached over HTTP/1.1 or 2 without ``keepalive``.
+
+    Args:
+        path: File that contains the blocks.
+        blocks: Checked blocks with their chains.
+
+    Returns:
+        At most one finding per upstream group, at the group's line.
+    """
+    upstreams = {
+        block.args[0]: block
+        for block, _ in blocks
+        if block.name == "upstream" and block.args
+    }
+    reported: dict[str, Finding] = {}
+    for block, chain in blocks:
+        for directive in block.named("proxy_pass"):
+            name = _upstream_name(directive.args[0]) if directive.args else ""
+            upstream = upstreams.get(name)
+            if upstream is None or name in reported or _has_keepalive(upstream):
+                continue
+            version = _effective(chain, "proxy_http_version")
+            if not version or not version[0].args:
+                continue
+            if version[0].args[0] not in _KEEPALIVE_VERSIONS:
+                continue
+            reported[name] = Finding(
+                path=path,
+                line=upstream.line,
+                message=(
+                    f"upstream '{name}' has no 'keepalive' although line "
+                    f"{directive.line} proxies to it with proxy_http_version "
+                    f"{version[0].args[0]}; add 'keepalive <connections>' so "
+                    "upstream connections are reused (implicit only from nginx 1.29.7)"
+                ),
+            )
+    return list(reported.values())
+
+
+def _zone_name(args: Sequence[str]) -> str:
+    """Return the zone name from a ``zone=name[:size]`` argument, or empty."""
+    for arg in args:
+        if arg.startswith("zone="):
+            return arg.removeprefix("zone=").split(":", 1)[0]
+    return ""
+
+
+def _zone_findings(
+    path: Path, blocks: Sequence[tuple[Block, tuple[Block, ...]]]
+) -> list[Finding]:
+    """Report rate and connection limit zones that nothing in the file applies.
+
+    Args:
+        path: File that contains the blocks.
+        blocks: Checked blocks with their chains.
+
+    Returns:
+        One finding per unused zone; none when the file includes other files.
+    """
+    directives = [directive for block, _ in blocks for directive in block.directives]
+    if any(
+        directive.name == "include"
+        and directive.args
+        and not directive.args[0].endswith("mime.types")
+        for directive in directives
+    ):
+        return []
+    used = {
+        ("limit_req", _zone_name(directive.args))
+        for directive in directives
+        if directive.name == "limit_req"
+    } | {
+        ("limit_conn", directive.args[0])
+        for directive in directives
+        if directive.name == "limit_conn" and directive.args
+    }
+    findings: list[Finding] = []
+    for directive in directives:
+        user = _ZONE_USERS.get(directive.name)
+        name = _zone_name(directive.args)
+        if user is None or not name or (user, name) in used:
+            continue
+        findings.append(
+            Finding(
+                path=path,
+                line=directive.line,
+                message=(
+                    f"{directive.name} zone '{name}' is not used by any '{user}' "
+                    "directive in this file; apply it or remove it"
+                ),
+            )
+        )
     return findings
 
 
@@ -482,10 +674,13 @@ def scan_text(path: Path, text: str) -> list[Finding]:
     Raises:
         NginxConfigError: If the text is not well-formed nginx syntax.
     """
+    blocks = [
+        (block, chain)
+        for block, chain in _walk(parse(text), ())
+        if not any(item.name in _IGNORED_CONTEXTS for item in chain)
+    ]
     findings: list[Finding] = []
-    for block, chain in _walk(parse(text), ()):
-        if any(item.name in _IGNORED_CONTEXTS for item in chain):
-            continue
+    for block, chain in blocks:
         findings.extend(_directive_findings(path, block))
         if block.name == "http":
             findings.extend(_http_findings(path, block))
@@ -493,6 +688,8 @@ def scan_text(path: Path, text: str) -> list[Finding]:
             findings.extend(_server_findings(path, chain))
         elif block.name == "location":
             findings.extend(_location_findings(path, chain))
+    findings.extend(_keepalive_findings(path, blocks))
+    findings.extend(_zone_findings(path, blocks))
     return sorted(findings, key=lambda finding: (finding.line, finding.message))
 
 
@@ -544,10 +741,17 @@ def self_test() -> list[str]:
     """
     headers = "proxy_set_header X-Forwarded-Proto $scheme;\n"
     clean = (
-        "http {\nserver_tokens off;\nserver {\nclient_max_body_size 10m;\n"
+        "http {\nserver_tokens off;\n"
+        "limit_req_zone $binary_remote_addr zone=per_client:1m rate=5r/s;\n"
+        "upstream app { server 127.0.0.1:8000; keepalive 8; }\n"
+        "server {\nclient_max_body_size 10m;\n"
         f"{headers}ssl_protocols TLSv1.2 TLSv1.3;\n"
+        "proxy_http_version 1.1;\nlimit_req zone=per_client;\n"
         "location / { proxy_pass http://app; }\n"
         "location /events/ { proxy_pass http://app; proxy_buffering off; }\n"
+        "location /assets/ { proxy_pass http://app; proxy_cache edge; "
+        'auth_basic "assets"; proxy_no_cache $http_authorization; '
+        "proxy_cache_bypass $http_authorization; }\n"
         "}\n}\nstream {\nserver { proxy_pass db:5432; }\n}\n"
     )
     risky = (
@@ -556,10 +760,22 @@ def self_test() -> list[str]:
         "location /feed {\n# edge:stream\nproxy_pass http://app;\n"
         f"{headers}}}\n}}\n}}\n"
     )
+    upstream = (
+        "http {\nserver_tokens off;\n"
+        "limit_req_zone $binary_remote_addr zone=unused:1m rate=1r/s;\n"
+        "upstream app { server 127.0.0.1:8000; }\nserver {\n"
+        "client_max_body_size 1m;\nproxy_http_version 1.1;\nlocation / {\n"
+        "proxy_pass http://app;\nproxy_cache edge;\n"
+        f"proxy_set_header Authorization $http_authorization;\n{headers}}}\n}}\n}}\n"
+    )
     failures: list[str] = []
     if scan_text(Path("clean.conf"), clean):
         failures.append("clean configuration produced findings")
-    rendered = "\n".join(item.render() for item in scan_text(Path("risky.conf"), risky))
+    rendered = "\n".join(
+        item.render()
+        for name, text in (("risky.conf", risky), ("upstream.conf", upstream))
+        for item in scan_text(Path(name), text)
+    )
     expectations = {
         "default server_tokens": "risky.conf:1: http block does not set",
         "legacy protocol": "risky.conf:3: ssl_protocols enables TLSv1;",
@@ -567,6 +783,9 @@ def self_test() -> list[str]:
         "missing body limit": "risky.conf:2: proxying server has no",
         "missing scheme header": "risky.conf:5: location '/' proxies without",
         "buffered stream": "risky.conf:8: streaming location '/feed'",
+        "unused zone": "upstream.conf:3: limit_req_zone zone 'unused'",
+        "upstream keepalive": "upstream.conf:4: upstream 'app' has no 'keepalive'",
+        "authenticated cache": "upstream.conf:8: location '/' caches responses",
     }
     failures.extend(
         f"expected {label}: {needle!r}"

@@ -1,0 +1,85 @@
+# Minimal AWS root composition: one private, encrypted, versioned S3 bucket.
+# Copy to infra/aws/main.tf. Each S3 setting is a separate resource in the AWS
+# provider; keep them together so a reviewer sees the full bucket posture.
+locals {
+  # Bucket names are global; account and Region keep them unique.
+  bucket_name = "${var.workload}-${var.environment}-${var.account_id}-${var.region}"
+}
+
+resource "aws_s3_bucket" "this" {
+  bucket = local.bucket_name
+
+  # Refuse to delete a bucket that still holds objects.
+  force_destroy = false
+}
+
+# Disable ACLs: the bucket owner owns every object and access is policy-only.
+resource "aws_s3_bucket_ownership_controls" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      # SSE-KMS with a customer managed key when one is supplied, else SSE-S3.
+      sse_algorithm     = var.kms_key_arn == null ? "AES256" : "aws:kms"
+      kms_master_key_id = var.kms_key_arn
+    }
+    bucket_key_enabled = var.kms_key_arn != null
+  }
+}
+
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Deny any request that does not use TLS.
+data "aws_iam_policy_document" "tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.this.arn,
+      "${aws_s3_bucket.this.arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+  policy = data.aws_iam_policy_document.tls_only.json
+
+  # Apply the policy only after Block Public Access is in place.
+  depends_on = [aws_s3_bucket_public_access_block.this]
+}

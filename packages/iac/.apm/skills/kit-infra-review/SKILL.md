@@ -1,17 +1,18 @@
 ---
 name: kit-infra-review
-description: Use when reviewing infrastructure changes that span IaC, deployment scripts, containers, or CI to ensure safe, auditable outcomes.
+description: Use when choosing IaC tooling or reviewing infrastructure changes across IaC, scripts, containers, or CI.
 license: MIT
 ---
 
 # Infrastructure review
 
 Coordinate a review across infrastructure layers, then judge the combined
-risk. Detail for each layer lives in its specialist skill:
-`kit-terraform-validation`, `kit-azure-validation`, `kit-ci-review`,
-`kit-containers`, `kit-observability`, `kit-edge-networking`, and
-`kit-remote-access`. Start with the
-[review guide](references/guide.md).
+risk. Detail for each layer lives in its specialist skill: `kit-ci-review`,
+`kit-containers`, `kit-observability`, and `kit-edge-networking` in this
+bundle, and the opt-in features `kit-terraform-validation` (`terraform`),
+`kit-azure-validation` (`bicep`), and `kit-remote-access` (`remote-access`).
+To choose or migrate an IaC tool, follow [IaC selection](references/iac-selection.md)
+instead. Start reviews with the [review guide](references/guide.md).
 
 ## Procedure
 

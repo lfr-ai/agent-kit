@@ -11,4 +11,5 @@ applyTo: "**/api/**/*.py,**/main.py,**/middleware/**/*.py"
 - Raise framework-free service errors and map them to `application/problem+json` in registered exception handlers; never return exception text to clients.
 - Write middleware as pure ASGI classes and keep the documented order; CORS lists explicit origins and never combines credentials with `*`.
 - Never log headers, query strings, bodies, or tokens; log the request id.
+- Rate limit through a shared store with an explicit failure mode; key by verified subject or proxy-resolved address, never by unverified claims.
 - Use the `kit-fastapi-service` skill for wiring, middleware, health, and test procedures.

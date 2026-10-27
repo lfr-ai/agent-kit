@@ -1,0 +1,36 @@
+// Per-environment parameters. Copy to apim/parameters/dev.bicepparam (and
+// test/prod). Non-secret values only: secrets stay in Key Vault and reach
+// API Management through Key Vault-backed named values.
+using '../main.bicep'
+
+param environmentName = 'dev'
+
+param apimName = 'apim-shop-dev'
+
+// StandardV2 for production; BasicV2 or Developer for non-production.
+param skuName = 'BasicV2'
+
+param skuCapacity = 1
+
+param publisherEmail = 'api-team@example.com'
+
+param publisherName = 'Shop API team'
+
+param appInsightsName = 'appi-shop-dev'
+
+param logAnalyticsWorkspaceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shop-dev/providers/Microsoft.OperationalInsights/workspaces/log-shop-dev'
+
+param keyVaultName = 'kv-shop-dev'
+
+param jwtIssuer = 'https://login.example.com/shop/v2.0'
+
+param jwtOpenIdConfigUrl = 'https://login.example.com/shop/v2.0/.well-known/openid-configuration'
+
+param ordersAudience = 'api://orders'
+
+param ordersBackendUrl = 'https://orders-dev.internal.example.com'
+
+param ordersBackendAppId = 'api://orders-service'
+
+// Sample every request outside production; lower it where volume is high.
+param samplingPercentage = 100

@@ -32,8 +32,10 @@ stack, so they carry no CORS or security headers; keep expected failures as
 
 - [middleware.py.template](../assets/middleware.py.template): request id with a
   `ContextVar`, access log, security headers, body size limit.
-- [rate_limit.py.template](../assets/rate_limit.py.template): rate limiter with
-  a `RateLimitStore` port and an in-memory fixed-window store.
+- [rate_limit.py.template](../assets/rate_limit.py.template): rate limiter
+  middleware and per-subject dependency over a `RateLimitStore` port, with
+  route policies, failure modes, and an in-memory fixed-window store; the
+  Redis store and algorithms are in [rate limiting](rate-limiting.md).
 - [problems.py.template](../assets/problems.py.template): the problem response
   every middleware rejection uses.
 
@@ -62,11 +64,12 @@ tasks, and cannot change the `receive` channel cleanly.
 - Body size: check `Content-Length` and count streamed chunks; raise an
   `HTTPException` subclass from `receive` so FastAPI does not turn it into a
   generic 400. Reverse proxies should enforce the same or a lower limit.
-- Rate limit: key by authenticated subject when available, else client
-  address as resolved by the server's proxy-header settings. Exempt health
-  probes. Return 429 problem details with `Retry-After`. Use a shared store
-  when more than one worker or replica serves traffic; fail closed or open
-  deliberately when the store is down and record the choice.
+- Rate limit: before authentication key by client address as resolved by the
+  server's proxy-header settings; key by verified subject in the
+  `SubjectRateLimit` dependency. Exempt health probes. Return 429 problem
+  details with `Retry-After`. Use a shared store when more than one worker or
+  replica serves traffic and set the failure mode explicitly; see
+  [rate limiting](rate-limiting.md).
 - Security headers: `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
   `Cache-Control: no-store` for authenticated data,

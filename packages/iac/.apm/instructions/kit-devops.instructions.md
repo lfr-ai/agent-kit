@@ -3,7 +3,7 @@ description: Apply to deployment scripts, environment definitions, and reverse-p
 applyTo: "**/Caddyfile,**/*.caddy,**/nginx*.conf,**/nginx/**,**/*.azcli,**/deploy/**,**/deployment/**,**/environments/**"
 ---
 
-- Deploy the same immutable, versioned artifact to every environment; vary behavior only through configuration.
+- Build once and deploy the same immutable artifact (an image digest, not a tag) to every environment; vary behavior only through configuration.
 - Parameterize deploy scripts per environment and refuse to run when the target environment or a required parameter is missing.
 - Make deploys idempotent; inspect current state before changing it and support a preview or dry run.
 - Keep secrets in a secret store or the platform's secret mechanism, never in scripts, parameter files, or command lines.
@@ -15,4 +15,4 @@ applyTo: "**/Caddyfile,**/*.caddy,**/nginx*.conf,**/nginx/**,**/*.azcli,**/deplo
 - Trust forwarded client-address headers only from known proxies, and never expose admin or metrics endpoints publicly.
 - Keep environment configuration in version control and document every environment-specific value.
 - Do not run deploy, rollout, or production commands from an authoring session.
-- Use the `kit-infra-review` skill for deployment review.
+- Use the `kit-infra-review` skill for deployment review and the `kit-delivery-pipelines` skill for promotion, rollout, and rollback design.

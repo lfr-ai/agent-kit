@@ -1,7 +1,7 @@
 ---
 name: kit-orchestrator
 description: "Coordinate a broad change through bounded workers and review."
-tools: "Agent(kit-planner, kit-plan-architect, kit-codebase-researcher, kit-devops-implementer, kit-docs-writer, kit-test-author, kit-code-reviewer, kit-solid-review, kit-security-reviewer), Read, Grep, Glob, Edit, Write, Bash"
+tools: "Agent(kit-planner, kit-plan-architect, kit-codebase-researcher, kit-devops-implementer, kit-docs-writer, kit-test-author, kit-code-reviewer, kit-solid-review, kit-security-reviewer, kit-backend-implementer, kit-contract-iac-lint), Read, Grep, Glob, Edit, Write, Bash"
 ---
 # Coordinate a broad change
 

@@ -37,7 +37,7 @@ _DESTINATION = re.compile(
     r"Copy (?:to|into|as)\s+(?P<quote>'|``)(?P<path>[^'`\n]+)\.py(?P=quote)"
 )
 _TERRAFORM_BLUEPRINT = (
-    _PACKAGES / "iac/.apm/skills/kit-terraform-validation/assets/blueprint"
+    _PACKAGES / "terraform/.apm/skills/kit-terraform-validation/assets/blueprint"
 )
 _TERRAFORM_SUFFIXES = (".tf", ".tfvars", ".tftest.hcl")
 _HADOLINT_CONFIG = (

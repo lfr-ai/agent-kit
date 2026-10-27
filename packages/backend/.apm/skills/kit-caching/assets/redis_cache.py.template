@@ -1,0 +1,187 @@
+"""Redis-compatible cache adapter over ``redis.asyncio`` with bounded failure.
+
+Copy into ``src/shop/cache/redis_cache.py``. ``create_redis_client`` builds one
+client per process from ``CacheSettings``; open it in the application
+lifespan and close it with ``await client.aclose()``. ``RedisCache``
+implements ``Cache`` and ``DistributedLock`` from ``shop.cache.port``: every
+operation runs under an overall timeout, and every client failure surfaces as
+``CacheUnavailableError`` so callers fall back to the source. Works with
+Redis and Valkey for the commands used here (GET, MGET, SET NX PX, UNLINK,
+EVALSHA).
+"""
+
+import asyncio
+from collections.abc import Awaitable, Sequence
+import logging
+import math
+
+import redis.asyncio as redis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialWithJitterBackoff
+from redis.exceptions import RedisError
+
+from shop.cache.port import CacheUnavailableError
+from shop.cache.settings import CacheSettings
+
+_LOGGER = logging.getLogger(__name__)
+_MILLISECONDS_PER_SECOND = 1000
+_MIN_TTL_MILLISECONDS = 1
+_RELEASE_IF_OWNER = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
+
+
+def create_redis_client(settings: CacheSettings) -> redis.Redis:
+    """Build a pooled asyncio client tuned for an optional cache.
+
+    Args:
+        settings: Validated cache settings; the URL carries no credentials.
+
+    Returns:
+        A client whose pool opens connections lazily. The caller closes it.
+    """
+    retry = Retry(
+        ExponentialWithJitterBackoff(
+            cap=settings.retry_backoff_cap_seconds,
+            base=settings.retry_backoff_base_seconds,
+        ),
+        settings.retry_attempts,
+    )
+    password = settings.password.get_secret_value() if settings.password else None
+    return redis.Redis.from_url(
+        settings.url,
+        username=settings.username,
+        password=password,
+        socket_connect_timeout=settings.connect_timeout_seconds,
+        socket_timeout=settings.socket_timeout_seconds,
+        retry=retry,
+        max_connections=settings.max_connections,
+        health_check_interval=settings.health_check_interval_seconds,
+        client_name=settings.client_name,
+        decode_responses=False,
+    )
+
+
+class RedisCache:
+    """Cache and advisory lock backed by a Redis-compatible server."""
+
+    def __init__(
+        self, client: redis.Redis, *, operation_timeout_seconds: float
+    ) -> None:
+        """Wrap a client owned by the application lifespan.
+
+        Args:
+            client: Shared asyncio client; this adapter never closes it.
+            operation_timeout_seconds: Budget for one operation including retries.
+        """
+        self._client = client
+        self._timeout = operation_timeout_seconds
+        self._release_script = client.register_script(_RELEASE_IF_OWNER)
+
+    async def get(self, key: str) -> bytes | None:
+        """Return stored bytes or ``None``.
+
+        Raises:
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        value = await self._call("get", self._client.get(key))
+        return _as_bytes(value)
+
+    async def get_many(self, keys: Sequence[str]) -> list[bytes | None]:
+        """Return stored bytes for several keys in request order.
+
+        In a cluster, the keys must share one hash slot (use a hash tag).
+
+        Raises:
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        if not keys:
+            return []
+        values = await self._call("mget", self._client.mget(list(keys)))
+        return [_as_bytes(value) for value in values]
+
+    async def set(self, key: str, value: bytes, *, ttl_seconds: float) -> None:
+        """Store bytes with a millisecond expiry in one command.
+
+        A non-positive TTL deletes the key, matching the in-memory fake.
+
+        Raises:
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        if ttl_seconds <= 0:
+            await self.delete(key)
+            return
+        pending = self._client.set(key, value, px=_milliseconds(ttl_seconds))
+        await self._call("set", pending)
+
+    async def delete(self, *keys: str) -> int:
+        """Unlink keys without blocking the server; return how many existed.
+
+        Raises:
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        if not keys:
+            return 0
+        return int(await self._call("unlink", self._client.unlink(*keys)))
+
+    async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
+        """Take an advisory lock with ``SET key token NX PX ttl``.
+
+        Raises:
+            ValueError: ``ttl_seconds`` is not positive.
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        if ttl_seconds <= 0:
+            msg = "lock ttl_seconds must be positive"
+            raise ValueError(msg)
+        result = await self._call(
+            "lock",
+            self._client.set(key, token, nx=True, px=_milliseconds(ttl_seconds)),
+        )
+        return bool(result)
+
+    async def release(self, key: str, token: str) -> bool:
+        """Delete the lock only if ``token`` still owns it (atomic script).
+
+        Raises:
+            CacheUnavailableError: The server failed or the budget expired.
+        """
+        result = await self._call(
+            "unlock", self._release_script(keys=[key], args=[token])
+        )
+        return bool(result)
+
+    async def _call[T](self, operation: str, pending: Awaitable[T]) -> T:
+        try:
+            async with asyncio.timeout(self._timeout):
+                return await pending
+        except (RedisError, TimeoutError, OSError) as error:
+            _LOGGER.warning(
+                "cache operation failed",
+                extra={
+                    "cache_operation": operation,
+                    "error_type": type(error).__name__,
+                },
+            )
+            msg = f"cache {operation} failed"
+            raise CacheUnavailableError(msg) from error
+
+
+def _milliseconds(ttl_seconds: float) -> int:
+    """Convert a TTL to whole milliseconds, never below one."""
+    return max(_MIN_TTL_MILLISECONDS, math.ceil(ttl_seconds * _MILLISECONDS_PER_SECOND))
+
+
+def _as_bytes(value: object) -> bytes | None:
+    """Narrow a client reply to ``bytes`` or ``None``.
+
+    Raises:
+        CacheUnavailableError: The client decodes replies to text.
+    """
+    if value is None or isinstance(value, bytes):
+        return value
+    msg = "unexpected cache reply type; create the client with decode_responses=False"
+    raise CacheUnavailableError(msg)

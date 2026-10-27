@@ -30,6 +30,12 @@ license: MIT
    [middleware module](assets/middleware.py.template) and
    [rate limiter](assets/rate_limit.py.template); see
    [middleware order](references/middleware.md). CORS lists explicit origins.
+   Size application rate limits per [rate limiting](references/rate-limiting.md):
+   route policies, per-subject limits after authentication, an explicit
+   failure mode, and the shared GCRA
+   [Redis store](assets/redis_rate_limit.py.template) whenever more than one
+   process serves traffic; edge limits stay in `kit-edge-networking` and
+   consumer quotas in `kit-api-gateway`.
 7. Raise framework-free [service errors](assets/exceptions.py.template) and map
    them once in [errors.py](assets/errors.py.template) through the
    [problem builder](assets/problems.py.template); see
@@ -44,7 +50,9 @@ license: MIT
 10. Test through the factory with fake adapters
     ([test template](assets/test_api.py.template),
     [testing guide](references/testing.md)): success, each error mapping,
-    limits, headers, readiness failure, and dependency overrides.
+    limits, headers, readiness failure, and dependency overrides. Run the
+    [store contract tests](assets/test_redis_rate_limit.py.template) against
+    a real Redis-compatible container.
 11. Run [check_fastapi_wiring.py](assets/check_fastapi_wiring.py) on the
     package, then the project gate. Review the
     [failure modes and anti-patterns](references/guide.md).
@@ -69,6 +77,10 @@ prove runtime wiring.
   unknown routes, limits, and unexpected errors; 5xx bodies are generic.
 - Middleware order matches the reference; CORS never combines credentials
   with a wildcard; body size and rate limits have tests.
+- Rate limiting uses a shared store when more than one process serves
+  traffic, keys by verified subject or proxy-resolved address, sets the
+  failure mode deliberately, returns 429 with `Retry-After`, and emits a
+  metric per policy and outcome without caller identifiers.
 - Liveness has no dependency calls; readiness returns 503 within the probe
   deadline when a dependency fails.
 - Logs carry the request identifier and never headers, query strings, bodies,

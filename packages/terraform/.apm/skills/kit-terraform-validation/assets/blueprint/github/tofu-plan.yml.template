@@ -1,0 +1,127 @@
+# OpenTofu plan workflow template with OIDC and read-only review.
+# Copy to .github/workflows/tofu-plan.yml, then:
+#   1. Replace every PIN_FULL_COMMIT_SHA with the reviewed 40-character SHA.
+#   2. Create GitHub environments 'dev-plan' and 'prod-plan' holding the
+#      variables AWS_PLAN_ROLE_ARN and AWS_REGION.
+#   3. Trust GitHub OIDC in each account's plan role with subject
+#      'repo:<owner>/<repo>:environment:<env>-plan'; grant read access plus
+#      s3:GetObject on the state key and s3:GetObject, s3:PutObject, and
+#      s3:DeleteObject on its '<key>.tflock' object (plan takes the lock).
+#   4. Copy review_plan.py from this skill to tools/review_plan.py; OpenTofu
+#      writes the same plan JSON format, so the reviewer works unchanged.
+#   5. Copy .tflint.hcl and trivy.yaml into infra/aws and switch the TFLint
+#      ruleset plugin to 'aws' (see references/providers-and-clouds.md).
+# For Google Cloud replace the credentials step with google-github-actions/auth
+# (workload_identity_provider); for Azure use azure/login and ARM_USE_OIDC.
+# Apply runs in a separate workflow bound to a protected environment.
+name: tofu-plan
+
+on:
+  pull_request:
+    paths:
+      - infra/aws/**
+      - .github/workflows/tofu-plan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tofu-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: infra/aws
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@PIN_FULL_COMMIT_SHA # v2
+        with:
+          tofu_version: 1.13.2
+          tofu_wrapper: false
+      - name: Format
+        run: tofu fmt -check -recursive -diff
+      - name: Validate
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate
+      - name: Tests
+        run: tofu test
+      - uses: terraform-linters/setup-tflint@PIN_FULL_COMMIT_SHA # v4
+      - name: TFLint
+        run: |
+          tflint --init
+          tflint --recursive --config "$PWD/.tflint.hcl"
+      - name: Trivy
+        uses: aquasecurity/trivy-action@PIN_FULL_COMMIT_SHA # v0
+        with:
+          scan-type: config
+          scan-ref: infra/aws
+          trivy-config: infra/aws/trivy.yaml
+
+  plan:
+    needs: static
+    # Fork pull requests cannot obtain OIDC tokens; skip rather than fail.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, prod]
+    environment: ${{ matrix.env }}-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENV: ${{ matrix.env }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@PIN_FULL_COMMIT_SHA # v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: opentofu/setup-opentofu@PIN_FULL_COMMIT_SHA # v2
+        with:
+          tofu_version: 1.13.2
+          tofu_wrapper: false
+      - name: Init
+        run: tofu init -backend-config="environments/$TARGET_ENV/backend.hcl"
+      - name: Plan
+        run: |
+          set +e
+          tofu plan -lock-timeout=5m -detailed-exitcode \
+            -var-file="environments/$TARGET_ENV/terraform.tfvars" -out=tfplan
+          code=$?
+          set -e
+          # 0 = no changes, 2 = changes present, anything else = failure.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit "$code"; fi
+      - name: Export plan JSON
+        # Plan JSON contains sensitive values in clear text; keep it on the
+        # runner and publish only the checksum and the action summary.
+        run: |
+          tofu show -json tfplan > plan.json
+          sha256sum plan.json tfplan > plan.sha256
+      - name: Review destructive actions
+        run: python3 ../../tools/review_plan.py --file plan.json > plan-summary.json
+      - uses: actions/upload-artifact@PIN_FULL_COMMIT_SHA # v4
+        if: always()
+        with:
+          name: tofu-plan-${{ matrix.env }}
+          path: |
+            infra/aws/plan-summary.json
+            infra/aws/plan.sha256
+          retention-days: 7
+          if-no-files-found: error

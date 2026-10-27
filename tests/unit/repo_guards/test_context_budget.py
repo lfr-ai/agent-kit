@@ -2,7 +2,7 @@
 
 from collections import Counter
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
 import pytest
@@ -13,6 +13,27 @@ _ALWAYS_ON = {"**", "**/*"}
 _MAX_ALWAYS_ON = 1
 _MAX_SAME_SCOPE = 2
 _MAX_INSTRUCTION_LINES = 20
+# Upper bound with every bundle installed; overlapping globs count once each.
+_MAX_INSTRUCTIONS_PER_PATH = 7
+_MAX_INSTRUCTION_CHARS_PER_PATH = 12_000
+_REPRESENTATIVE_PATHS = (
+    "src/app/main.py",
+    "tests/unit/test_service.py",
+    "pyproject.toml",
+    "web/src/App.tsx",
+    "web/src/App.test.tsx",
+    "package.json",
+    "infra/main.tf",
+    "infra/main.bicep",
+    "template.yaml",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    "scripts/deploy.sh",
+    "nginx/nginx.conf",
+    "README.md",
+    "docs/guide.md",
+)
 
 
 def _section(name: str) -> dict[str, dict[str, str]]:
@@ -54,3 +75,31 @@ def test_profile_has_bounded_always_on_instruction_context(profile: str) -> None
 
     assert sum(scopes[scope] for scope in _ALWAYS_ON) <= _MAX_ALWAYS_ON
     assert max(scopes.values(), default=0) <= _MAX_SAME_SCOPE
+
+
+def _all_instructions() -> list[tuple[str, tuple[str, ...], int]]:
+    """Return each instruction's name, ``applyTo`` globs, and character count."""
+    instructions: list[tuple[str, tuple[str, ...], int]] = []
+    for bundle in _section("bundles").values():
+        root = _ROOT / bundle["path"] / ".apm/instructions"
+        for path in sorted(root.glob("*.instructions.md")):
+            text = path.read_text(encoding="utf-8")
+            match = _APPLY_TO.search(text)
+            assert match, f"{path.name} has no applyTo scope"
+            globs = tuple(item.strip() for item in match["scope"].split(","))
+            instructions.append((path.name, globs, len(text)))
+    return instructions
+
+
+@pytest.mark.parametrize("path", _REPRESENTATIVE_PATHS)
+def test_one_file_loads_bounded_instruction_context(path: str) -> None:
+    """Overlapping globs from different bundles must not stack on one file."""
+    target = PurePosixPath(path)
+    loaded = [
+        (name, size)
+        for name, globs, size in _all_instructions()
+        if any(target.full_match(pattern) for pattern in globs)
+    ]
+
+    assert len(loaded) <= _MAX_INSTRUCTIONS_PER_PATH, loaded
+    assert sum(size for _, size in loaded) <= _MAX_INSTRUCTION_CHARS_PER_PATH, loaded

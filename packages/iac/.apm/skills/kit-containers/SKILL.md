@@ -1,6 +1,6 @@
 ---
 name: kit-containers
-description: Use when reviewing container images, Dockerfiles, or runtime settings to ensure reproducible builds, isolation, and safe shutdown.
+description: Use when writing or reviewing Dockerfiles, container images, Compose files, or container runtime settings.
 license: MIT
 ---
 

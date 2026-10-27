@@ -1,0 +1,8 @@
+name: agent-kit-remote-access
+version: "0.1.0"
+license: MIT
+description: Optional SSH access, bastion, and server automation review.
+targets: [copilot, claude]
+includes: [.apm/skills/]
+dependencies: {}
+executables: {}

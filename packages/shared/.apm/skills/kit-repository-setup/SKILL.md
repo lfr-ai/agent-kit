@@ -1,6 +1,6 @@
 ---
 name: kit-repository-setup
-description: Use when preparing a repository for open-source or production use with community files, README, .env.example, update bots and hooks.
+description: Use when preparing a repository for open-source or production use with community files, README, bots and hooks.
 license: MIT
 ---
 

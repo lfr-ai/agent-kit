@@ -1,0 +1,24 @@
+# Gateway API v1 GRPCRoute for the "shop" gRPC API behind gateway.yaml.
+# GRPCRoute is standard since v1.1.0 (checked 2026-10). It uses its own
+# hostname and listener because implementations may refuse an HTTPRoute and a
+# GRPCRoute that share one hostname on one listener.
+# Validate with: kubectl apply --dry-run=server -f grpcroute.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: shop-grpc
+  namespace: shop
+spec:
+  parentRefs:
+    - name: shop-edge
+      namespace: edge
+      sectionName: grpc
+  hostnames:
+    - grpc.shop.example.invalid
+  rules:
+    - matches:
+        - method:
+            service: shop.v1.CatalogService
+      backendRefs:
+        - name: shop-grpc
+          port: 9000

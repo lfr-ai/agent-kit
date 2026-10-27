@@ -4,6 +4,22 @@
 
 ### Added
 
+- `agent-kit compose --selection FILE` reads profile, features, runtimes and
+  skills from a closed, versioned JSON document for project generators and CI;
+  [consumer templates](docs/consumer-templates.md) documents the Copier
+  contract (render a pinned `apm.yml` or a selection file, never copy skills).
+- Opt-in IaC tool features `terraform`, `bicep` and `remote-access`, each a
+  package and a profile that extends `iac`, so a project loads only the tool it
+  uses. A guard composes every supported profile and feature combination within
+  the description budget.
+- Coordinator roles accept `optional_workers`, linked only when the worker's
+  bundle is composed: `kit-orchestrator` can delegate to backend, frontend,
+  contract-lint, infrastructure and evaluation workers, and `kit-devops` to
+  `kit-infra-reviewer`. The whole-catalog check still requires every listed
+  worker to exist.
+- Repository guards that parse every shipped YAML, JSON and TOML template and
+  reject repeated keys, and that bound how many instructions and characters
+  load for one representative file path, catching overlapping `applyTo` globs.
 - A portable `Taskfile.yml` template in `kit-verify-change` that wraps the gate
   script with `default`, `bootstrap`, `verify`, `test`, `lint`, `typecheck`,
   `format` and `precommit` targets; the shipped editor task templates are now
@@ -121,6 +137,13 @@
 
 ### Changed
 
+- **Migration:** Terraform, Bicep and remote-access skills, instructions and
+  prompts moved out of `iac`; add `--feature terraform`, `--feature bicep` or
+  `--feature remote-access` (or the matching package) to keep them.
+  `kit-iac-selection` is now the IaC selection reference and templates of
+  `kit-infra-review`.
+- Long skill descriptions in shared, backend and iac are shortened to their
+  trigger conditions, which lowers the per-session description load.
 - The `main` ruleset allows one bypass: the repository admin role, through pull
   requests only, so a solo owner can merge their own pull requests while agent
   changes still require the owner's approval. `check_governance.py` rejects any
@@ -159,6 +182,9 @@
 
 ### Fixed
 
+- The nginx, Caddy and Traefik edge templates shipped a two-year HSTS
+  max-age while recommending a staged rollout; they now ship the first stage
+  (300 seconds), and a guard keeps them there.
 - The `kit-config` experiment JSON template and its typed loader used different
   fields, which failed 36 tests; both now share one schema.
 - Role assets no longer pin models. A host rejected an unavailable pinned model

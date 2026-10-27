@@ -1,0 +1,292 @@
+"""Compute delivery metrics from an exported list of deployments.
+
+Copy to ``tools/dora_metrics.py``. Standard library only; no network access.
+Export the records first (for example from the GitHub deployments and
+deployment statuses REST API, which keeps previous statuses for 90 days, so
+export on a schedule) into a JSON array, or an object with a ``deployments``
+array, of records shaped like::
+
+    {
+      "id": 101,
+      "environment": "production",
+      "sha": "4f2c...",
+      "created_at": "2026-10-01T10:00:00Z",
+      "status": "success",
+      "status_at": "2026-10-01T10:12:00Z",
+      "commit_times": ["2026-09-30T15:04:00Z"],
+      "caused_incident": false,
+      "restored_at": null,
+      "unplanned": false
+    }
+
+``status`` is the final deployment status (``success``, ``failure``,
+``error``, ``inactive``; ``inactive`` means a later deployment replaced a
+successful one). ``commit_times`` lists the commit times first shipped by
+this deployment. ``caused_incident`` marks a deployment that needed immediate
+intervention (rollback, roll forward, or hotfix); ``restored_at`` is when
+service was restored; ``unplanned`` marks a deployment made to remediate an
+incident. When no record carries ``caused_incident`` the change fail rate
+falls back to failed or errored deployments, and the report says so.
+
+Usage::
+
+    python tools/dora_metrics.py deployments.json --environment production \
+        --since 2026-07-01 --until 2026-10-01 [--json]
+
+Treat the numbers as team signals for one service, never as targets or
+comparisons between teams.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+import json
+from pathlib import Path
+import statistics
+import sys
+
+SECONDS_PER_HOUR = 3600.0
+HOURS_PER_DAY = 24.0
+PERCENT = 100
+JSON_INDENT = 2
+DAYS_PER_WEEK = 7.0
+PERCENTILE_POINTS = 10
+P90_INDEX = 8
+MIN_SAMPLES_FOR_P90 = 2
+EXIT_INVALID = 2
+SUCCESS_STATES = frozenset({"success", "inactive"})
+FAILED_STATES = frozenset({"failure", "error"})
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Deployment:
+    """One deployment record after validation."""
+
+    environment: str
+    created_at: datetime
+    status: str
+    status_at: datetime
+    commit_times: tuple[datetime, ...]
+    caused_incident: bool | None
+    restored_at: datetime | None
+    unplanned: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Report:
+    """Delivery metrics for one environment and window."""
+
+    environment: str
+    window_days: float
+    deployments: int
+    successful_deployments: int
+    deployments_per_week: float
+    lead_time_median_hours: float | None
+    lead_time_p90_hours: float | None
+    change_fail_rate: float | None
+    change_fail_basis: str
+    recovery_time_median_hours: float | None
+    rework_rate: float | None
+
+
+class RecordError(ValueError):
+    """A deployment record is missing a field or has an invalid value."""
+
+
+def parse_time(value: object, field: str) -> datetime:
+    """Parse an ISO 8601 timestamp that carries a time zone.
+
+    Raises:
+        RecordError: The value is not a time-zone-aware timestamp.
+    """
+    if not isinstance(value, str):
+        message = f"{field} must be an ISO 8601 string"
+        raise RecordError(message)
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        message = f"{field} has no time zone: {value}"
+        raise RecordError(message)
+    return parsed.astimezone(UTC)
+
+
+def _optional_time(value: object, field: str) -> datetime | None:
+    """Parse an optional timestamp."""
+    return None if value is None else parse_time(value, field)
+
+
+def to_deployment(record: object) -> Deployment:
+    """Validate one raw record.
+
+    Raises:
+        RecordError: The record is not an object or a field is invalid.
+    """
+    if not isinstance(record, dict):
+        message = "each deployment must be a JSON object"
+        raise RecordError(message)
+    incident = record.get("caused_incident")
+    return Deployment(
+        environment=str(record.get("environment", "")),
+        created_at=parse_time(record.get("created_at"), "created_at"),
+        status=str(record.get("status", "")).lower(),
+        status_at=parse_time(record.get("status_at"), "status_at"),
+        commit_times=tuple(
+            parse_time(item, "commit_times") for item in record.get("commit_times", [])
+        ),
+        caused_incident=incident if isinstance(incident, bool) else None,
+        restored_at=_optional_time(record.get("restored_at"), "restored_at"),
+        unplanned=bool(record.get("unplanned", False)),
+    )
+
+
+def load(path: Path) -> list[Deployment]:
+    """Read and validate every record in an export file.
+
+    Raises:
+        RecordError: The file does not hold a list of deployment objects.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    records = data.get("deployments") if isinstance(data, dict) else data
+    if not isinstance(records, list):
+        message = "expected a JSON array or an object with a deployments array"
+        raise RecordError(message)
+    return [to_deployment(record) for record in records]
+
+
+def _hours(delta: timedelta) -> float:
+    """Convert a duration to hours."""
+    return delta.total_seconds() / SECONDS_PER_HOUR
+
+
+def _median(values: list[float]) -> float | None:
+    """Return the median, or None for no values."""
+    return statistics.median(values) if values else None
+
+
+def _p90(values: list[float]) -> float | None:
+    """Return the 90th percentile, or None when there are too few values."""
+    if len(values) < MIN_SAMPLES_FOR_P90:
+        return None
+    return statistics.quantiles(values, n=PERCENTILE_POINTS)[P90_INDEX]
+
+
+def _change_failures(selected: list[Deployment]) -> tuple[list[Deployment], str]:
+    """Pick change failures and name the basis that was used."""
+    if any(item.caused_incident is not None for item in selected):
+        return [item for item in selected if item.caused_incident], "caused_incident"
+    failed = [item for item in selected if item.status in FAILED_STATES]
+    return failed, "failed or errored deployment status (no incident data)"
+
+
+def compute(
+    deployments: list[Deployment], environment: str, since: datetime, until: datetime
+) -> Report:
+    """Compute the metrics for one environment and half-open window.
+
+    Args:
+        deployments: All validated records.
+        environment: Environment name to measure, for example production.
+        since: Inclusive window start.
+        until: Exclusive window end.
+
+    Returns:
+        The report; ratios and durations are None when there is no data.
+    """
+    selected = [
+        item
+        for item in deployments
+        if item.environment == environment and since <= item.created_at < until
+    ]
+    succeeded = [item for item in selected if item.status in SUCCESS_STATES]
+    lead_times = [
+        _hours(item.status_at - commit)
+        for item in succeeded
+        for commit in item.commit_times
+    ]
+    failures, basis = _change_failures(selected)
+    recoveries = [
+        _hours(item.restored_at - item.status_at)
+        for item in failures
+        if item.restored_at is not None
+    ]
+    window_days = (until - since).total_seconds() / SECONDS_PER_HOUR / HOURS_PER_DAY
+    weeks = window_days / DAYS_PER_WEEK
+    return Report(
+        environment=environment,
+        window_days=window_days,
+        deployments=len(selected),
+        successful_deployments=len(succeeded),
+        deployments_per_week=len(succeeded) / weeks if weeks else 0.0,
+        lead_time_median_hours=_median(lead_times),
+        lead_time_p90_hours=_p90(lead_times),
+        change_fail_rate=len(failures) / len(selected) if selected else None,
+        change_fail_basis=basis,
+        recovery_time_median_hours=_median(recoveries),
+        rework_rate=(
+            sum(item.unplanned for item in succeeded) / len(succeeded)
+            if succeeded
+            else None
+        ),
+    )
+
+
+def _format(value: float | None, unit: str) -> str:
+    """Render an optional number for the text report."""
+    return "no data" if value is None else f"{value:.2f}{unit}"
+
+
+def render(report: Report) -> str:
+    """Render the report as plain text."""
+    rate = None if report.change_fail_rate is None else report.change_fail_rate * PERCENT
+    rework = None if report.rework_rate is None else report.rework_rate * PERCENT
+    return "\n".join(
+        [
+            f"environment: {report.environment} ({report.window_days:.0f} days)",
+            f"deployments: {report.deployments} "
+            f"({report.successful_deployments} successful)",
+            f"deployment frequency: {report.deployments_per_week:.2f} per week",
+            "change lead time: median "
+            f"{_format(report.lead_time_median_hours, ' h')}, "
+            f"p90 {_format(report.lead_time_p90_hours, ' h')}",
+            f"change fail rate: {_format(rate, ' %')} "
+            f"(basis: {report.change_fail_basis})",
+            "failed deployment recovery time: median "
+            f"{_format(report.recovery_time_median_hours, ' h')}",
+            f"deployment rework rate: {_format(rework, ' %')}",
+        ]
+    )
+
+
+def _day(value: str) -> datetime:
+    """Parse a YYYY-MM-DD command-line date as midnight UTC."""
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print delivery metrics for one environment.
+
+    Returns:
+        0 on success, 2 for unreadable or invalid input.
+    """
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("export", type=Path, help="JSON export of deployments")
+    parser.add_argument("--environment", default="production")
+    parser.add_argument("--since", type=_day, required=True, help="YYYY-MM-DD")
+    parser.add_argument("--until", type=_day, required=True, help="YYYY-MM-DD")
+    parser.add_argument("--json", action="store_true", help="print JSON")
+    args = parser.parse_args(argv)
+    if args.until <= args.since:
+        parser.error("--until must be after --since")
+    try:
+        deployments = load(args.export)
+    except (OSError, ValueError) as error:
+        print(f"Cannot read {args.export}: {error}", file=sys.stderr)
+        return EXIT_INVALID
+    report = compute(deployments, args.environment, args.since, args.until)
+    print(json.dumps(asdict(report), indent=JSON_INDENT) if args.json else render(report))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

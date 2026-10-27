@@ -1,0 +1,45 @@
+# Local Redis-compatible cache for development and contract tests only.
+# Copy to 'compose.cache.yaml'. The image is a required variable holding a
+# reviewed tag and digest, for example
+#   CACHE_IMAGE=valkey/valkey:<release-tag>@sha256:<digest>
+# For a Redis image, replace 'valkey-server'/'valkey-cli' with
+# 'redis-server'/'redis-cli' and check the server license (see redis-clients.md).
+# Persistence is off: a cache must tolerate a cold start. The password comes
+# from the environment (CACHE_PASSWORD); it is interpolated into the server
+# arguments and is therefore visible to 'docker inspect'. Use this file only on
+# a developer machine or CI runner; production uses managed TLS, ACL users,
+# and secret delivery.
+# Start: docker compose -f compose.cache.yaml up -d --wait
+# Tests: CACHE_TEST_URL=redis://127.0.0.1:6379/0 with the same password.
+name: shop-cache
+
+services:
+  cache:
+    image: ${CACHE_IMAGE:?set a tag-and-digest pinned Valkey or Redis image}
+    command:
+      - valkey-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${CACHE_PASSWORD:?set CACHE_PASSWORD}
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set CACHE_PASSWORD}
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - valkey-cli --no-auth-warning -a "$$CACHE_PASSWORD" ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

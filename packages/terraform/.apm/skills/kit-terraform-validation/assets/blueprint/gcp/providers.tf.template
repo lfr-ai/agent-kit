@@ -1,0 +1,16 @@
+# Google provider configuration; lives only in the root module.
+# Copy to infra/gcp/providers.tf. Credentials come from the environment:
+#   CI:    google-github-actions/auth with Workload Identity Federation
+#   Local: 'gcloud auth application-default login'
+provider "google" {
+  project = var.project_id
+  region  = var.region
+
+  # Labels added to every resource that supports labels. Keys and values must
+  # be lowercase letters, digits, underscores, or dashes (max 63 characters).
+  default_labels = merge(var.labels, {
+    environment = var.environment
+    workload    = var.workload
+    managed_by  = "terraform"
+  })
+}

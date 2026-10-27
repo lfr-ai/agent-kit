@@ -1,0 +1,206 @@
+// One versioned API imported from its OpenAPI contract, with its backend
+// (circuit breaker), named values, API policy, and product.
+// Copy to apim/modules/api.bicep and deploy once per API version.
+// The OpenAPI document is the contract owned by the API team; never edit the
+// imported operations in the portal.
+
+metadata description = 'Versioned API, backend, named values, policy, and product.'
+
+@description('Existing API Management service name.')
+param apimName string
+
+@description('Short API name used in resource names, for example orders.')
+@minLength(1)
+@maxLength(40)
+param apiName string
+
+@description('Version segment, for example v1. A new major version is a new deployment of this module.')
+param apiVersion string = 'v1'
+
+@description('Public path prefix; the version segment follows it.')
+param apiPath string = apiName
+
+@description('Display name in the developer portal.')
+param displayName string
+
+@description('OpenAPI 3.x document text; load it with loadTextContent in the caller.')
+param openApiDocument string
+
+@description('openapi for YAML, openapi+json for JSON.')
+@allowed([
+  'openapi'
+  'openapi+json'
+])
+param openApiFormat string = 'openapi+json'
+
+@description('API-scope policy XML; load it with loadTextContent in the caller.')
+param policyXml string
+
+@description('Backend base URL without a trailing slash.')
+param backendUrl string
+
+@description('Entra application ID URI or client ID that the backend accepts as token audience.')
+param backendAppId string
+
+@description('Audience that callers request tokens for.')
+param apiAudience string
+
+@description('Optional Key Vault secret URI (no version) for a backend key; empty when the backend accepts Entra tokens.')
+param backendKeySecretUri string = ''
+
+@description('Product that groups this API for subscriptions.')
+param productName string = '${apiName}-standard'
+
+@description('Require approval before a subscription key is issued.')
+param subscriptionApproval bool = true
+
+@description('Circuit breaker: failures within the interval that trip the breaker.')
+@minValue(1)
+param breakerFailureCount int = 10
+
+@description('Circuit breaker: ISO 8601 interval and trip duration.')
+param breakerInterval string = 'PT1M'
+
+var apiResourceName = '${apiName}-${apiVersion}'
+var backendName = '${apiName}-backend'
+
+resource service 'Microsoft.ApiManagement/service@2024-05-01' existing = {
+  name: apimName
+}
+
+resource versionSet 'Microsoft.ApiManagement/service/apiVersionSets@2024-05-01' = {
+  parent: service
+  name: apiName
+  properties: {
+    displayName: displayName
+    versioningScheme: 'Segment'
+  }
+}
+
+resource backend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  parent: service
+  name: backendName
+  properties: {
+    description: '${displayName} service'
+    url: backendUrl
+    protocol: 'http'
+    tls: {
+      validateCertificateChain: true
+      validateCertificateName: true
+    }
+    circuitBreaker: {
+      rules: [
+        {
+          name: '${apiName}-server-errors'
+          failureCondition: {
+            count: breakerFailureCount
+            interval: breakerInterval
+            statusCodeRanges: [
+              {
+                min: 500
+                max: 599
+              }
+            ]
+            errorReasons: [
+              'Server errors'
+            ]
+          }
+          tripDuration: breakerInterval
+          acceptRetryAfter: true
+        }
+      ]
+    }
+  }
+}
+
+resource audienceValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: service
+  name: '${apiName}-api-audience'
+  properties: {
+    displayName: '${apiName}-api-audience'
+    value: apiAudience
+    secret: false
+  }
+}
+
+resource backendAppIdValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: service
+  name: '${apiName}-backend-app-id'
+  properties: {
+    displayName: '${apiName}-backend-app-id'
+    value: backendAppId
+    secret: false
+  }
+}
+
+// Secret named values reference Key Vault; the service identity needs the
+// Key Vault Secrets User role (granted in apim.bicep). Omit the version in the
+// URI so rotation is picked up automatically.
+resource backendKeyValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = if (!empty(backendKeySecretUri)) {
+  parent: service
+  name: '${apiName}-backend-key'
+  properties: {
+    displayName: '${apiName}-backend-key'
+    secret: true
+    keyVault: {
+      secretIdentifier: backendKeySecretUri
+    }
+  }
+}
+
+resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
+  parent: service
+  name: apiResourceName
+  properties: {
+    displayName: displayName
+    path: apiPath
+    apiVersion: apiVersion
+    apiVersionSetId: versionSet.id
+    apiType: 'http'
+    protocols: [
+      'https'
+    ]
+    subscriptionRequired: true
+    format: openApiFormat
+    value: openApiDocument
+  }
+}
+
+resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
+  parent: api
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: policyXml
+  }
+  dependsOn: [
+    audienceValue
+    backendAppIdValue
+    backendKeyValue
+    backend
+  ]
+}
+
+resource product 'Microsoft.ApiManagement/service/products@2024-05-01' = {
+  parent: service
+  name: productName
+  properties: {
+    displayName: '${displayName} standard'
+    description: 'Standard access to ${displayName}; limits are enforced by API and product policies.'
+    subscriptionRequired: true
+    approvalRequired: subscriptionApproval
+    subscriptionsLimit: 1
+    state: 'published'
+  }
+}
+
+resource productApi 'Microsoft.ApiManagement/service/products/apis@2024-05-01' = {
+  parent: product
+  name: api.name
+}
+
+@description('API resource ID.')
+output apiId string = api.id
+
+@description('Product resource ID for subscription automation.')
+output productId string = product.id

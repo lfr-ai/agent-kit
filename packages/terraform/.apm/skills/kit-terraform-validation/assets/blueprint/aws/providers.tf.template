@@ -1,0 +1,21 @@
+# AWS provider configuration; lives only in the root module.
+# Copy to infra/aws/providers.tf. Credentials come from the environment, never
+# from variables or files:
+#   CI:    aws-actions/configure-aws-credentials with GitHub OIDC (role-to-assume)
+#   Local: 'aws sso login' or 'aws login' with a named profile in AWS_PROFILE
+provider "aws" {
+  region = var.region
+
+  # Refuse to plan or apply against any other account, so a wrong profile or
+  # role fails fast instead of changing the wrong environment.
+  allowed_account_ids = [var.account_id]
+
+  # Tags added to every taggable resource. Resource-level tags override these.
+  default_tags {
+    tags = merge(var.tags, {
+      environment = var.environment
+      workload    = var.workload
+      managed_by  = "terraform"
+    })
+  }
+}

@@ -52,8 +52,8 @@ HSTS tells browsers to refuse plain HTTP for the host. It is easy to add and
 hard to undo, because browsers cache it for `max-age` seconds.
 
 1. Serve every path over HTTPS and redirect HTTP first.
-2. Start with `max-age=300`, then raise in steps (one week, one month) to
-   63072000 seconds (two years).
+2. Start with `max-age=300` (the shipped templates do), then raise in steps
+   (604800 for one week, 2592000 for one month) to 63072000 seconds (two years).
 3. Add `includeSubDomains` only after inventorying every subdomain.
 4. Add `preload` and submit to the preload list only with owner approval;
    removal takes months.

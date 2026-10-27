@@ -1,0 +1,163 @@
+# Continuous delivery to Azure App Service with a staging slot and swap.
+#
+# Copy to .github/workflows/cd-app-service-slots.yml next to ci.yml. Replace
+# every PIN_FULL_COMMIT_SHA with a reviewed full SHA.
+#
+# The app runs the container image that CI built; this workflow sets the
+# staging slot to image@digest, waits until the slot serves the new digest,
+# smoke checks it, and swaps it into production. App Service warms up every
+# staging instance before it switches routing, so production stays online.
+# A failed production check swaps back, which restores the last known good
+# app because the previous production content is now in the staging slot.
+#
+# Prerequisites (owned by infrastructure code, not this workflow):
+# - Standard, Premium, or Isolated plan with a slot named "staging".
+# - Slot settings on both slots: WEBSITE_SWAP_WARMUP_PING_PATH=/healthz and
+#   WEBSITE_SWAP_WARMUP_PING_STATUSES=200, so a failing warm-up stops the swap.
+# - Environment-specific settings and connection strings marked as slot
+#   settings, so they stay with the slot instead of following the content.
+# - Registry pull through a managed identity that holds AcrPull (shown for an
+#   Azure Container Registry image), never through a stored password.
+# - The production environment defines AZURE_CLIENT_ID, AZURE_TENANT_ID,
+#   AZURE_SUBSCRIPTION_ID, and AZURE_RESOURCE_GROUP variables.
+name: cd-app-service-slots
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Digest already built and attested by ci (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-catalog-production
+  cancel-in-progress: false
+
+env:
+  # CI must push to the registry this app pulls from; set REGISTRY in ci.yml.
+  APP: catalog-web
+  SLOT: staging
+  HEALTH_PATH: /healthz
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Require a well-formed digest before anyone is asked to approve
+        env:
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::digest input is not a sha256 digest"
+            exit 1
+          fi
+
+  release:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: ${{ steps.prepare.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      IMAGE_REF: exampleregistry.azurecr.io/catalog@${{ inputs.digest }}
+    steps:
+      - name: Azure login (OIDC, environment-scoped subject)
+        uses: azure/login@PIN_FULL_COMMIT_SHA # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify the build provenance of the digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # gh reads the manifest through the local registry credentials.
+          az acr login --name exampleregistry
+          gh attestation verify "oci://${IMAGE_REF}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml"
+
+      - name: Record hosts and the current production image
+        id: prepare
+        run: |
+          set -euo pipefail
+          prod_host="$(az webapp show -n "${APP}" -g "${RG}" --query defaultHostName -o tsv)"
+          slot_host="$(az webapp show -n "${APP}" -g "${RG}" --slot "${SLOT}" \
+            --query defaultHostName -o tsv)"
+          current="$(az webapp config show -n "${APP}" -g "${RG}" \
+            --query linuxFxVersion -o tsv)"
+          {
+            echo "url=https://${prod_host}"
+            echo "slot-url=https://${slot_host}"
+            echo "previous=${current}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Point the staging slot at the digest
+        run: |
+          set -euo pipefail
+          az webapp config container set -n "${APP}" -g "${RG}" --slot "${SLOT}" \
+            --container-image-name "${IMAGE_REF}" -o none
+          for _ in $(seq 1 30); do
+            running="$(az webapp config show -n "${APP}" -g "${RG}" --slot "${SLOT}" \
+              --query linuxFxVersion -o tsv)"
+            if [ "${running}" = "DOCKER|${IMAGE_REF}" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::staging slot did not report ${IMAGE_REF}"
+          exit 1
+
+      - name: Smoke check the staging slot
+        env:
+          URL: ${{ steps.prepare.outputs.slot-url }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 30 --retry-delay 10 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Swap staging into production (platform warm-up first)
+        id: swap
+        run: |
+          az webapp deployment slot swap -n "${APP}" -g "${RG}" \
+            --slot "${SLOT}" --target-slot production
+
+      - name: Smoke check production
+        env:
+          URL: ${{ steps.prepare.outputs.url }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Record the release
+        env:
+          PREVIOUS: ${{ steps.prepare.outputs.previous }}
+        run: |
+          {
+            echo "### Production"
+            echo
+            echo "- live: \`${IMAGE_REF}\`"
+            echo "- previous content now in slot ${SLOT}: \`${PREVIOUS}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Swap back to the last known good app
+        if: failure() && steps.swap.outcome == 'success'
+        run: |
+          az webapp deployment slot swap -n "${APP}" -g "${RG}" \
+            --slot "${SLOT}" --target-slot production
+          echo "::error::production check failed after swap; swapped back"

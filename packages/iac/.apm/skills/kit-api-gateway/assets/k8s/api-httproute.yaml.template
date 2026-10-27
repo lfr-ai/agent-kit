@@ -1,0 +1,63 @@
+# Versioned route for the orders API (Gateway API v1, standard channel).
+# Copy to deploy/orders/httproute.yaml in the application namespace.
+# timeouts and the CORS filter are "Extended" features: confirm that the
+# implementation's conformance report lists them before relying on them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders-v1
+  namespace: orders
+spec:
+  parentRefs:
+    - name: shop-gateway
+      namespace: gateway-infra
+      sectionName: https
+  hostnames:
+    - api.shop.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /orders/v1
+      filters:
+        # The service sees /orders/...; the public version segment stays at the gateway.
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /orders
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Api-Version
+                value: v1
+        - type: CORS
+          cors:
+            allowOrigins:
+              - https://shop.example.com
+            allowMethods:
+              - GET
+              - POST
+            allowHeaders:
+              - Authorization
+              - Content-Type
+              - Idempotency-Key
+            exposeHeaders:
+              - X-Correlation-Id
+              - Retry-After
+            maxAge: 600
+      # request bounds the whole exchange including retries; backendRequest
+      # bounds one upstream attempt and must not exceed request.
+      timeouts:
+        request: 10s
+        backendRequest: 4s
+      # Retries are experimental-channel only (HTTPRouteRetry). With that CRD
+      # channel installed, and only for idempotent routes:
+      #   retry:
+      #     codes: [502, 503, 504]
+      #     attempts: 2
+      #     backoff: 200ms
+      backendRefs:
+        - name: orders-api
+          port: 8080
+          weight: 100

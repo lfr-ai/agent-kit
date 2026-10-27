@@ -1,0 +1,23 @@
+# Gateway API v1 HTTPRoute that redirects plain HTTP to HTTPS on the port 80
+# listener of gateway.yaml (standard channel, Gateway API v1.6.3; checked
+# 2026-10). It lives in the Gateway's namespace because that listener only
+# accepts routes from there. List every HTTPS hostname.
+# Validate with: kubectl apply --dry-run=server -f https-redirect.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop-https-redirect
+  namespace: edge
+spec:
+  parentRefs:
+    - name: shop-edge
+      sectionName: http
+  hostnames:
+    - shop.example.invalid
+    - grpc.shop.example.invalid
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

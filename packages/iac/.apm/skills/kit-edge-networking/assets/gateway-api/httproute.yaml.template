@@ -1,0 +1,61 @@
+# Gateway API v1 HTTPRoute for the "shop" application behind gateway.yaml.
+# Standard-channel fields only (Gateway API v1.6.3, checked 2026-10):
+# HTTPRoute "timeouts" is standard since v1.2.0; "retry" is still an
+# experimental-channel field, shown commented out below.
+# Replace shop.example.invalid and the Service names before use. The HTTP to
+# HTTPS redirect is in https-redirect.yaml; gRPC is in grpcroute.yaml.
+# Validate with: kubectl apply --dry-run=server -f httproute.yaml
+# Check status after apply: every parent must report Accepted=True and
+# ResolvedRefs=True (kubectl get httproute -A -o yaml).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: shop
+spec:
+  parentRefs:
+    - name: shop-edge
+      namespace: edge
+      sectionName: https
+  hostnames:
+    - shop.example.invalid
+  rules:
+    # Server-sent events: no overall request timeout ("0s" disables it);
+    # keep heartbeats below every idle timeout on the path.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /events/
+      timeouts:
+        request: 0s
+      backendRefs:
+        - name: shop
+          port: 8000
+    # Everything else: explicit timeouts and a weighted canary split. The
+    # backendRequest timeout must not exceed the request timeout.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      timeouts:
+        request: 15s
+        backendRequest: 5s
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            remove:
+              - Server
+              - X-Powered-By
+      backendRefs:
+        - name: shop
+          port: 8000
+          weight: 90
+        - name: shop-canary
+          port: 8000
+          weight: 10
+      # Experimental channel only (pin the CRD bundle). Retry idempotent
+      # routes only; put write routes in a rule without retry.
+      # retry:
+      #   codes: [502, 503, 504]
+      #   attempts: 2
+      #   backoff: 100ms

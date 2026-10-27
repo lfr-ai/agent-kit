@@ -80,6 +80,9 @@ asset defines it, because that is the bundle that delivers it.
 | Polars 2 | `kit-polars-v2` (polars, dataframe, analytics files) | `kit-polars-v2` | none |
 | Jinja templates | `kit-jinja-templates` (`**/*.jinja`, `**/*.j2`, template files) | `kit-jinja` | none |
 | Prompt files in Python services | `kit-prompt-registry` (`**/*prompt*.py`, `**/prompts/**`) | `kit-jinja` | none |
+| In-process memoization, Redis-compatible caches, HTTP response caching and invalidation | `kit-cache-usage` (cache and Redis paths) | `kit-caching` | `kit-backend-implementer` |
+| Application rate limits (per user, tenant or cost) with a shared store | `kit-fastapi` | `kit-fastapi-service` | `kit-backend-implementer` |
+| Timeouts, deadlines, retries with jitter, circuit breakers and bulkheads | `kit-python-conventions` | `kit-python-service` (resilience reference) | `kit-backend-implementer` |
 
 ### Frontend (frontend bundle)
 
@@ -111,21 +114,43 @@ asset defines it, because that is the bundle that delivers it.
 
 | Technology or concern | Instruction (`applyTo`) | Skills | Roles |
 | --- | --- | --- | --- |
-| Bicep and ARM, Azure what-if | `kit-bicep`, `kit-iac` | `kit-azure-validation`, `kit-infra-review` | `kit-infra-reviewer` |
-| Terraform plans | `kit-terraform`, `kit-iac` | `kit-terraform-validation`, `kit-infra-review` | `kit-infra-reviewer` |
+| Bicep and ARM, Azure what-if (bicep feature) | `kit-bicep`, `kit-iac` | `kit-azure-validation`, `kit-infra-review` | `kit-infra-reviewer` |
+| Terraform and OpenTofu plans on Azure, AWS and Google Cloud (terraform feature) | `kit-terraform`, `kit-iac` | `kit-terraform-validation`, `kit-infra-review` | `kit-infra-reviewer` |
+| IaC tool choice and migration (Terraform, OpenTofu, Bicep, CloudFormation, CDK, Pulumi, Crossplane) | `kit-cloud-iac` (CloudFormation, SAM, CDK and Pulumi files), `kit-iac` | `kit-infra-review` (IaC selection reference) | `kit-infra-reviewer` |
+| API management and gateways (Azure API Management, Amazon API Gateway, Google API Gateway and Apigee, Kubernetes Gateway API) | `kit-api-management` (APIM, policy and gateway paths) | `kit-api-gateway` | `kit-infra-reviewer` |
+| Continuous delivery: build once, promote by digest, environments, rollout and rollback | `kit-ci-pipelines`, `kit-devops` | `kit-delivery-pipelines` | `kit-devops`, `kit-devops-implementer` |
 | Dockerfile, Containerfile and Compose files | `kit-containers`, `kit-iac` | `kit-containers` | `kit-infra-reviewer` |
-| GitHub Actions and Azure DevOps pipelines | `kit-ci-pipelines` (`.github/workflows/*.yml`, `.azuredevops/**`, `azure-pipelines*.yml`) | `kit-ci-review` | `kit-infra-reviewer` |
+| GitHub Actions and Azure DevOps pipelines (security review) | `kit-ci-pipelines` (`.github/workflows/*.yml`, `.azuredevops/**`, `azure-pipelines*.yml`) | `kit-ci-review` | `kit-infra-reviewer` |
 | Shell and PowerShell scripts | `kit-shell` | `kit-infra-review` | none |
 | OpenTelemetry, Prometheus, Grafana, local observability stack | `kit-observability` | `kit-observability` | `kit-infra-reviewer` |
 | Reverse proxies, load balancers, TLS, forwarded headers, WebSocket and SSE edge routing | `kit-edge-networking` (nginx, Caddy, Traefik), `kit-devops` | `kit-edge-networking` | `kit-infra-reviewer` |
-| SSH access, `sshd_config` hardening, keys, bastions and server automation | none | `kit-remote-access` | `kit-infra-reviewer` |
+| SSH access, `sshd_config` hardening, keys, bastions and server automation (remote-access feature) | none | `kit-remote-access` | `kit-infra-reviewer` |
 
+Tool-specific skills ship as opt-in features that extend iac: `terraform`,
+`bicep` (the Azure-native tool) and `remote-access`. Cloud providers are not
+separate bundles; provider detail lives in templates that load only when used.
 The read-only `kit-infra-reviewer` lives in the iac bundle and judges
 operator-produced plans and scans. Infrastructure delegation roles
 (`kit-devops`, `kit-devops-implementer`) live in the shared bundle and are
 therefore available in every profile. The static contract reviewer
 `kit-contract-iac-lint` lives in the backend bundle, so an iac-only composition
 does not include it.
+
+#### Delivery platform ownership
+
+Each concern has one owner; other skills refer to it by name instead of
+repeating it. A limit or cache belongs to the outermost layer that has the key
+it needs.
+
+| Concern | Owner | Not owned here |
+| --- | --- | --- |
+| Memoization, per-process TTL caches, Redis-compatible caches, invalidation, stampede control, HTTP cache semantics the application produces | `kit-caching` | CDN and proxy cache configuration |
+| CDN and proxy caching, reverse proxies, load balancing, TLS, edge connection and address limits, Gateway API routing | `kit-edge-networking` | Consumer quotas, business limits |
+| Consumers, keys, products, quotas, versions, gateway-level token validation, API policy as code | `kit-api-gateway` | Model gateways (`kit-llm-gateway`) |
+| Per-user, per-tenant and cost-based rate limits and their shared counter store | `kit-fastapi-service` | Edge and gateway limits |
+| Timeouts, retries with jitter, circuit breakers, bulkheads | `kit-python-service` (resilience reference) | Proxy retry policy (`kit-edge-networking`) |
+| Build once, promote by digest, environments, approvals, OIDC deploy, rollout, rollback, DORA metrics | `kit-delivery-pipelines` | Workflow security review (`kit-ci-review`), SBOM and provenance (`kit-supply-chain`), release readiness (`kit-release`), alerts and SLOs (`kit-observability`) |
+| IaC tool choice and cross-cloud structure | `kit-infra-review` (IaC selection reference) | Plan and what-if review (`kit-terraform-validation`, `kit-azure-validation`) |
 
 ### Optional workflows (workflows bundle)
 
@@ -167,8 +192,10 @@ roles; LLM experiment configuration uses the backend `kit-config` template.
 
 The matrix has no dedicated capability for these; treat them as consumer-owned
 or as candidates for new bundles: non-Python backends, mobile clients, document
-and key-value data stores, Kubernetes manifests and Helm, and cloud providers
-other than Azure for deployment previews.
+and key-value data stores, and Kubernetes manifests and Helm. AWS and Google
+Cloud have Terraform blueprints, gateway templates and delivery workflows, but
+no plan-preview reviewer like the Azure what-if one; CloudFormation, CDK and
+Pulumi have scoped instructions and selection guidance only.
 
 ## Regenerate and verify
 

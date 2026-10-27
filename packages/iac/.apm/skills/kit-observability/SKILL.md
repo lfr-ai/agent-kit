@@ -1,6 +1,6 @@
 ---
 name: kit-observability
-description: Use when reviewing metrics, traces, and logs to ensure they answer operational questions while protecting privacy and scale.
+description: Use when designing or reviewing metrics, traces, logs, dashboards, alerts, or SLOs.
 license: MIT
 ---
 

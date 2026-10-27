@@ -1,0 +1,118 @@
+# Google Cloud API Gateway for the orders service, built from an OpenAPI
+# document. Copy to infra/gcp/api-gateway.tf and commit .terraform.lock.hcl.
+#
+# The OpenAPI file is the contract owned by the service team plus a generated
+# Google overlay: x-google-backend (backend address, path translation,
+# deadline) and a security scheme with x-google-issuer, x-google-jwks_uri, and
+# x-google-audiences for JWT validation (or an API key scheme). Generate the
+# overlay in the build; never hand-edit operations in the copy.
+#
+# The api_gateway resources are documented for the google-beta provider.
+# Consumer plans, developer apps, portals, and rich mediation are Apigee
+# features; see references/cloud-equivalents.md.
+
+terraform {
+  required_version = ">= 1.10.0, < 2.0.0"
+
+  required_providers {
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 8.8"
+    }
+  }
+}
+
+# Credentials come from the environment (Workload Identity Federation in CI,
+# 'gcloud auth application-default login' locally).
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+}
+
+variable "project_id" {
+  description = "Google Cloud project that hosts the gateway."
+  type        = string
+}
+
+variable "region" {
+  description = "Region of the gateway."
+  type        = string
+  default     = "europe-west1"
+}
+
+variable "environment" {
+  description = "Environment name used in IDs and labels."
+  type        = string
+  default     = "dev"
+}
+
+variable "openapi_path" {
+  description = "Path to the generated OpenAPI document with x-google extensions."
+  type        = string
+  default     = "openapi/orders.v1.gateway.yaml"
+}
+
+variable "backend_service_account_email" {
+  description = "Service account the gateway uses to call the backend (grant it run.invoker or equivalent)."
+  type        = string
+}
+
+locals {
+  labels = {
+    environment = var.environment
+    workload    = "shop-api"
+  }
+}
+
+resource "google_api_gateway_api" "orders" {
+  provider     = google-beta
+  api_id       = "orders-${var.environment}"
+  display_name = "Orders"
+  labels       = local.labels
+}
+
+# Each change creates a new immutable config; create it before the old one is
+# destroyed so the gateway can switch without downtime.
+resource "google_api_gateway_api_config" "orders" {
+  provider             = google-beta
+  api                  = google_api_gateway_api.orders.api_id
+  api_config_id_prefix = "orders-"
+  display_name         = "Orders v1"
+  labels               = local.labels
+
+  openapi_documents {
+    document {
+      path     = "openapi.yaml"
+      contents = filebase64(var.openapi_path)
+    }
+  }
+
+  gateway_config {
+    backend_config {
+      google_service_account = var.backend_service_account_email
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "google_api_gateway_gateway" "orders" {
+  provider     = google-beta
+  region       = var.region
+  gateway_id   = "orders-${var.environment}"
+  display_name = "Orders ${var.environment}"
+  api_config   = google_api_gateway_api_config.orders.id
+  labels       = local.labels
+}
+
+output "gateway_hostname" {
+  description = "Default hostname of the gateway."
+  value       = google_api_gateway_gateway.orders.default_hostname
+}
+
+output "managed_service" {
+  description = "Managed service name; enable it in consumer projects that use API keys."
+  value       = google_api_gateway_api.orders.managed_service
+}

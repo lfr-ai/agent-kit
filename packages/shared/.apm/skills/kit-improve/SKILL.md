@@ -1,6 +1,6 @@
 ---
 name: kit-improve
-description: Use when an installed kit skill, instruction, prompt, agent role or template misbehaves or needs a lasting change and the fix belongs in the kit's source repository, not a local copy in this project.
+description: Use when an installed kit capability misbehaves or needs a lasting fix in the kit source, not a local copy.
 license: MIT
 ---
 

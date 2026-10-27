@@ -1,0 +1,45 @@
+# Shared Gateway owned by the platform team (Gateway API v1, standard channel).
+# Minimal parent for the API routes in this skill; listener, TLS, and
+# certificate design belong to kit-edge-networking.
+# Copy to platform/gateway/gateway.yaml. Application teams attach HTTPRoutes
+# from namespaces labelled shop.example.com/gateway-access=true.
+# gatewayClassName must match a GatewayClass installed by your implementation,
+# for example Envoy Gateway. Check its conformance report for the features used.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shop-gateway
+  namespace: gateway-infra
+spec:
+  gatewayClassName: envoy-gateway
+  listeners:
+    # TLS terminates here; the certificate Secret lives in this namespace and is
+    # renewed by the certificate controller (for example cert-manager).
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: api.shop.example.com
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            group: ""
+            name: api-shop-example-com-tls
+      allowedRoutes:
+        kinds:
+          - kind: HTTPRoute
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shop.example.com/gateway-access: "true"
+    # Plain HTTP only serves the redirect route kept in this namespace.
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: api.shop.example.com
+      allowedRoutes:
+        kinds:
+          - kind: HTTPRoute
+        namespaces:
+          from: Same

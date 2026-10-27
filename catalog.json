@@ -16,7 +16,10 @@
     "iac": {"path": "packages/iac", "kind": "portable"},
     "workflows": {"path": "packages/workflows", "kind": "portable"},
     "ai": {"path": "packages/ai", "kind": "portable"},
-    "coordination": {"path": "packages/coordination", "kind": "portable"}
+    "coordination": {"path": "packages/coordination", "kind": "portable"},
+    "terraform": {"path": "packages/terraform", "kind": "portable"},
+    "bicep": {"path": "packages/bicep", "kind": "portable"},
+    "remote-access": {"path": "packages/remote-access", "kind": "portable"}
   },
   "profiles": {
     "toolkit": {"extends": [], "bundles": ["toolkit", "shared"]},
@@ -26,6 +29,9 @@
     "fullstack": {"extends": ["backend", "frontend"], "bundles": ["coordination"]},
     "iac": {"extends": ["shared"], "bundles": ["iac"]},
     "workflows": {"extends": ["shared"], "bundles": ["workflows"]},
-    "ai": {"extends": ["backend"], "bundles": ["ai"]}
+    "ai": {"extends": ["backend"], "bundles": ["ai"]},
+    "terraform": {"extends": ["iac"], "bundles": ["terraform"]},
+    "bicep": {"extends": ["iac"], "bundles": ["bicep"]},
+    "remote-access": {"extends": ["iac"], "bundles": ["remote-access"]}
   }
 }

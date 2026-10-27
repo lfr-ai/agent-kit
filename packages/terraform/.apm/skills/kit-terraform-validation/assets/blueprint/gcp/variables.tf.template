@@ -1,0 +1,80 @@
+# Input variables for the Google Cloud root module. Copy to infra/gcp/variables.tf.
+# Values per environment go in environments/<env>/terraform.tfvars.
+
+variable "environment" {
+  description = "Deployment environment name."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "environment must be one of: dev, test, prod."
+  }
+}
+
+variable "project_id" {
+  description = "Google Cloud project ID this root module may change."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be 6-30 lowercase letters, digits, or hyphens, starting with a letter."
+  }
+}
+
+variable "region" {
+  description = "Default Google Cloud region, for example 'europe-west1'."
+  type        = string
+  nullable    = false
+}
+
+variable "location" {
+  description = "Bucket location: a region such as 'europe-west1' or a multi-region such as 'EU'."
+  type        = string
+  nullable    = false
+}
+
+variable "workload" {
+  description = "Short workload name used in resource names (2-10 lowercase letters or digits)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.workload))
+    error_message = "workload must be 2-10 characters, start with a letter, and use only a-z and 0-9."
+  }
+}
+
+variable "kms_key_name" {
+  description = "Optional Cloud KMS key name for default bucket encryption; null uses Google-managed keys."
+  type        = string
+  default     = null
+}
+
+variable "noncurrent_versions_to_keep" {
+  description = "Number of newer versions after which a noncurrent object version is deleted."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.noncurrent_versions_to_keep >= 1
+    error_message = "noncurrent_versions_to_keep must be at least 1."
+  }
+}
+
+variable "labels" {
+  description = "Labels applied through default_labels. Must include 'owner' and 'cost_center'."
+  type        = map(string)
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for key in ["owner", "cost_center"] : contains(keys(var.labels), key)])
+    error_message = "labels must include the keys 'owner' and 'cost_center'."
+  }
+
+  validation {
+    condition     = alltrue([for key, value in var.labels : can(regex("^[a-z][a-z0-9_-]{0,62}$", key)) && can(regex("^[a-z0-9_-]{0,63}$", value))])
+    error_message = "label keys and values must use lowercase letters, digits, '_' or '-' (max 63 characters)."
+  }
+}

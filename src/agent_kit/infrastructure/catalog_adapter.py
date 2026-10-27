@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, TypeGuard, override
 import yaml
 import yaml.constructor
 
-from agent_kit.core.errors import DuplicateJsonFieldError
+from agent_kit.core.errors import DuplicateJsonFieldError, UnreadableDocumentError
 from agent_kit.core.models import (
     BundleSource,
     CatalogSnapshot,
@@ -44,6 +44,7 @@ _EXCLUDED_ROOT_DIRECTORIES = frozenset(
         "node_modules",
     }
 )
+_MAX_SELECTION_BYTES = 65_536
 _BYTECODE_DIRECTORIES = frozenset({"__pycache__"})
 _BYTECODE_SUFFIXES = frozenset({".pyc", ".pyo"})
 
@@ -429,6 +430,30 @@ class FileCatalogAdapter(CatalogPort):
             root=resolved_root,
             root_is_symlink=root_is_symlink,
         )
+
+    def load_selection(self, path: Path) -> object:
+        """Decode one bounded selection JSON document without following links.
+
+        Raises:
+            UnreadableDocumentError: The file is missing, linked, too large,
+                not UTF-8, or not JSON with unique fields.
+        """
+        name = path.name
+        if _is_link(path) or not path.is_file():
+            raise UnreadableDocumentError(name=name, reason="must be a regular file")
+        with path.open("rb") as stream:
+            content = stream.read(_MAX_SELECTION_BYTES + 1)
+        if len(content) > _MAX_SELECTION_BYTES:
+            raise UnreadableDocumentError(name=name, reason="is too large")
+        text = _decode_utf8(content)
+        if text is None:
+            raise UnreadableDocumentError(name=name, reason="must be UTF-8")
+        value, error = _decode_json(text)
+        if error:
+            raise UnreadableDocumentError(
+                name=name, reason="must be valid JSON without repeated fields"
+            )
+        return value
 
     def _load_bundles(
         self, root: Path, catalog: object | None

@@ -162,3 +162,13 @@ class SessionContext:
 
     workspace: str
     missing: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Selection:
+    """A declared composition: one profile plus opt-in features and targets."""
+
+    profile: str
+    features: tuple[str, ...]
+    runtimes: tuple[str, ...]
+    skills: tuple[str, ...]

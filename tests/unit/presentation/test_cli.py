@@ -10,8 +10,14 @@ from typing import TYPE_CHECKING, TextIO
 
 import pytest
 
-from agent_kit.core.errors import InputTypeError
-from agent_kit.core.models import CheckReport, Finding, ProfileSummary, SessionContext
+from agent_kit.core.errors import InputTypeError, UnreadableDocumentError
+from agent_kit.core.models import (
+    CheckReport,
+    Finding,
+    ProfileSummary,
+    Selection,
+    SessionContext,
+)
 from agent_kit.infrastructure.session_context import session_context
 from agent_kit.presentation.cli import CliActions, main
 
@@ -23,12 +29,17 @@ def _ok(_root: Path) -> CheckReport:
     return CheckReport(findings=(), profiles=(), version="0.1.0")
 
 
+def _no_selection(_path: Path) -> Selection:
+    raise AssertionError
+
+
 def _cli_actions(
     check: Callable[[Path], CheckReport] = _ok,
     apm_check: Callable[[Path], CheckReport | None] = lambda _root: None,
     context: Callable[[object], SessionContext] = lambda _payload: SessionContext(
         workspace="synthetic", missing=()
     ),
+    load_selection: Callable[[Path], Selection] = _no_selection,
 ) -> CliActions:
     return CliActions(
         apm_check=apm_check,
@@ -36,6 +47,7 @@ def _cli_actions(
         compose=lambda _root, _profile, _features, _runtimes, output, _skills: output,
         default_root=Path.cwd,
         context=context,
+        load_selection=load_selection,
         provenance=_ok,
     )
 
@@ -95,21 +107,92 @@ def test_compose_refuses_before_action_when_validation_fails(
         called = True
         return output
 
-    actions = _cli_actions(check=lambda _root: report)
-    actions = CliActions(
-        apm_check=actions.apm_check,
-        check=actions.check,
-        compose=compose,
-        default_root=actions.default_root,
-        context=actions.context,
-        provenance=actions.provenance,
-    )
+    actions = replace(_cli_actions(check=lambda _root: report), compose=compose)
 
     result = main(actions, ["compose", "backend", "--output", "not-created"])
 
     assert result == 1
     assert not called
     assert "not ready" in capsys.readouterr().err
+
+
+def test_compose_reads_every_choice_from_a_selection_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    received: list[object] = []
+    selection = Selection(
+        profile="backend",
+        features=("terraform",),
+        runtimes=("claude",),
+        skills=("kit-tdd",),
+    )
+
+    def compose(
+        _root: Path,
+        profile: str,
+        features: tuple[str, ...],
+        runtimes: tuple[str, ...],
+        output: Path,
+        skills: tuple[str, ...],
+    ) -> Path:
+        received.extend((profile, features, runtimes, skills))
+        return output
+
+    actions = replace(
+        _cli_actions(load_selection=lambda _path: selection), compose=compose
+    )
+
+    result = main(
+        actions, ["compose", "--selection", "agent-kit.json", "--output", "out"]
+    )
+
+    assert result == 0
+    assert received == ["backend", ("terraform",), ("claude",), ("kit-tdd",)]
+    assert "composed backend profile" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param(["backend"], id="profile"),
+        pytest.param(["--feature", "iac"], id="feature"),
+        pytest.param(["--runtime", "claude"], id="runtime"),
+        pytest.param(["--skill", "kit-tdd"], id="skill"),
+    ],
+)
+def test_compose_rejects_selection_combined_with_inline_choices(
+    extra: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    arguments = ["compose", "--selection", "agent-kit.json", "--output", "out"]
+
+    result = main(_cli_actions(), [*arguments, *extra])
+
+    assert result == 2
+    assert "--selection cannot be combined" in capsys.readouterr().err
+
+
+def test_compose_requires_a_profile_or_selection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = main(_cli_actions(), ["compose", "--output", "out"])
+
+    assert result == 2
+    assert "requires a profile or --selection" in capsys.readouterr().err
+
+
+def test_compose_reports_an_unreadable_selection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def unreadable(_path: Path) -> Selection:
+        raise UnreadableDocumentError(name="agent-kit.json", reason="is too large")
+
+    result = main(
+        _cli_actions(load_selection=unreadable),
+        ["compose", "--selection", "agent-kit.json", "--output", "out"],
+    )
+
+    assert result == 1
+    assert "agent-kit.json is too large" in capsys.readouterr().err
 
 
 def test_context_emits_only_advisory_session_information(

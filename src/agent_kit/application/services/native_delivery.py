@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum, unique
 import json
 import re
@@ -55,6 +55,7 @@ class NativeRoleIssue(StrEnum):
     WORKER_COORDINATION = "worker roles cannot coordinate other agents"
     MISSING_WORKERS = "coordinator must name required workers"
     UNEXPECTED_WORKERS = "are only allowed for coordinators"
+    OVERLAPPING_WORKERS = "repeat a required worker"
     SCHEMA_VERSION = "has unsupported schema_version"
 
 
@@ -187,6 +188,7 @@ class _NativeRole:
     kind: str
     tier: str
     workers: tuple[str, ...]
+    optional_workers: tuple[str, ...]
 
 
 def _mapping(value: object) -> TypeGuard[dict[str, object]]:
@@ -407,20 +409,30 @@ def _role_body(value: object, location: str) -> str:
     return body
 
 
-def _role_workers(value: object, location: str) -> tuple[str, ...]:
+def _role_workers(
+    value: object, location: str, field: str = "workers"
+) -> tuple[str, ...]:
     """Require a unique list of valid worker identifiers.
+
+    Args:
+        value (object): Decoded worker list.
+        location (str): Role location used in diagnostics.
+        field (str): Role field that holds the list.
+
+    Returns:
+        tuple[str, ...]: Worker identifiers in authored order.
 
     Raises:
         InputTypeError: The workers are not a list of strings.
         NativeRoleError: A worker identifier is invalid or repeated.
     """
     if not isinstance(value, list):
-        raise InputTypeError(location=f"{location}.workers", expected="a list")
+        raise InputTypeError(location=f"{location}.{field}", expected="a list")
     workers: list[str] = []
     for worker in value:
         if not isinstance(worker, str):
             raise InputTypeError(
-                location=f"{location}.workers entry", expected="a string"
+                location=f"{location}.{field} entry", expected="a string"
             )
         if not _ROLE_ID.fullmatch(worker):
             raise NativeRoleError(
@@ -429,9 +441,34 @@ def _role_workers(value: object, location: str) -> tuple[str, ...]:
         workers.append(worker)
     if len(set(workers)) != len(workers):
         raise NativeRoleError(
-            location=f"{location}.workers", issue=NativeRoleIssue.DUPLICATE_WORKERS
+            location=f"{location}.{field}", issue=NativeRoleIssue.DUPLICATE_WORKERS
         )
     return tuple(workers)
+
+
+def _optional_workers(
+    role: dict[str, object], tier: str, workers: tuple[str, ...], location: str
+) -> tuple[str, ...]:
+    """Read workers linked only when their bundle is selected.
+
+    Raises:
+        NativeRoleError: A non-coordinator declares them, or one repeats a
+            required worker.
+    """
+    if "optional_workers" not in role:
+        return ()
+    optional = _role_workers(role["optional_workers"], location, "optional_workers")
+    if tier != "coordinator":
+        raise NativeRoleError(
+            location=f"{location}.optional_workers",
+            issue=NativeRoleIssue.UNEXPECTED_WORKERS,
+        )
+    if set(optional) & set(workers):
+        raise NativeRoleError(
+            location=f"{location}.optional_workers",
+            issue=NativeRoleIssue.OVERLAPPING_WORKERS,
+        )
+    return optional
 
 
 def _check_coordination(
@@ -464,7 +501,7 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
     role = _require_fields(
         value,
         {"id", "kind", "tier", "description", "body", "workers"},
-        {"models"},
+        {"models", "optional_workers"},
         location,
     )
     identifier = _role_identifier(role["id"], location)
@@ -478,6 +515,7 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
     body = _role_body(role["body"], location)
     workers = _role_workers(role["workers"], location)
     _check_coordination(kind, tier, workers, location)
+    optional_workers = _optional_workers(role, tier, workers, location)
     copilot_models, claude_model = (
         _model_settings(role["models"], location) if "models" in role else (None, None)
     )
@@ -490,6 +528,7 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
         kind=kind,
         tier=tier,
         workers=workers,
+        optional_workers=optional_workers,
     )
 
 
@@ -527,24 +566,49 @@ def _asset_roles(path: str, content: bytes) -> list[object]:
     return raw_roles
 
 
-def _check_worker_links(roles: dict[str, _NativeRole]) -> None:
-    """Require every coordinator target to be an available worker role.
+def _check_worker_links(
+    roles: dict[str, _NativeRole], *, require_optional: bool
+) -> dict[str, _NativeRole]:
+    """Require worker targets and link the optional workers that are present.
+
+    Args:
+        roles (dict[str, _NativeRole]): Roles keyed by identifier.
+        require_optional (bool): Whether every optional worker must exist, as
+            when validating the whole catalog rather than one composition.
+
+    Returns:
+        dict[str, _NativeRole]: Roles whose ``workers`` include each present
+        optional worker, in authored order.
 
     Raises:
-        UnavailableWorkerError: A target names no available role.
+        UnavailableWorkerError: A required target, or an optional target when
+            required, names no available role.
         InvalidWorkerTargetError: A target is not a worker role.
     """
-    for role in roles.values():
-        for worker_id in role.workers:
+    linked: dict[str, _NativeRole] = {}
+    for identifier, role in roles.items():
+        present: list[str] = []
+        for worker_id in (*role.workers, *role.optional_workers):
             worker = roles.get(worker_id)
             if worker is None:
-                raise UnavailableWorkerError(worker_id)
+                if worker_id in role.workers or require_optional:
+                    raise UnavailableWorkerError(worker_id)
+                continue
             if worker.kind != "worker":
                 raise InvalidWorkerTargetError(worker_id)
+            present.append(worker_id)
+        linked[identifier] = replace(role, workers=tuple(present))
+    return linked
 
 
-def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:
+def _load_roles(
+    files: dict[str, bytes], *, require_optional: bool = False
+) -> tuple[_NativeRole, ...]:
     """Decode every matching authored asset and resolve explicit worker links.
+
+    Args:
+        files (dict[str, bytes]): Candidate source files keyed by path.
+        require_optional (bool): Whether optional workers must all be present.
 
     Raises:
         DuplicateRoleError: Two assets declare the same role.
@@ -556,14 +620,26 @@ def _load_roles(files: dict[str, bytes]) -> tuple[_NativeRole, ...]:
             if role.identifier in roles:
                 raise DuplicateRoleError(role.identifier)
             roles[role.identifier] = role
-    _check_worker_links(roles)
-    return tuple(roles[key] for key in sorted(roles))
+    linked = _check_worker_links(roles, require_optional=require_optional)
+    return tuple(linked[key] for key in sorted(linked))
 
 
-def validate_native_assets(files: dict[str, bytes], runtimes: tuple[str, ...]) -> None:
-    """Validate all matching role assets and their explicit links for targets."""
+def validate_native_assets(
+    files: dict[str, bytes],
+    runtimes: tuple[str, ...],
+    *,
+    require_optional: bool = False,
+) -> None:
+    """Validate role assets and their worker links for the given targets.
+
+    Args:
+        files (dict[str, bytes]): Candidate source files keyed by path.
+        runtimes (tuple[str, ...]): Native runtime targets.
+        require_optional (bool): Whether every optional worker must exist; true
+            for the whole catalog, false for one profile's selection.
+    """
     _checked_runtimes(runtimes)
-    _load_roles(files)
+    _load_roles(files, require_optional=require_optional)
 
 
 def _yaml_string(value: str) -> str:

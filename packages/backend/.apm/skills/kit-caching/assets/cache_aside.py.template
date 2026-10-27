@@ -1,0 +1,345 @@
+"""Generic cache-aside loader with jittered TTLs, negative caching, and single flight.
+
+Copy into ``src/shop/cache/aside.py``. One ``CachedLoader`` serves one key
+namespace (for example ``catalog:product``) with one codec and policy:
+
+    products = CachedLoader(
+        cache=redis_cache,
+        codec=ProductCodec(),
+        policy=CachePolicy(ttl_seconds=300.0, negative_ttl_seconds=30.0),
+        key_prefix="shop",
+        namespace="catalog:product",
+        version=3,
+        lock=redis_cache,
+    )
+    product = await products.get(
+        tenant_id, str(product_id), load=lambda: repository.find(tenant_id, product_id)
+    )
+    # after the write transaction commits:
+    await products.invalidate(tenant_id, str(product_id))
+
+Concurrent misses for one key in this process share one load. With a
+``DistributedLock`` the first replica loads while others poll the cache for a
+bounded time and then load themselves, so nobody blocks forever. Cache
+failures never fail a read: the loader result is returned and the error is
+reported once by the adapter. Loader exceptions are not cached.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
+import functools
+import hashlib
+import json
+import math
+import random
+import re
+import secrets
+
+from shop.cache.port import Cache, CacheUnavailableError, Codec, DistributedLock
+
+_VALUE_MARKER = b"v"
+_MISSING_MARKER = b"n"
+_LOCK_SUFFIX = ":lock"
+_MAX_PLAIN_PART_LENGTH = 64
+_PLAIN_PART = re.compile(r"[A-Za-z0-9._@{}-]+")
+_DEFAULT_JITTER_RATIO = 0.1
+_MAX_JITTER_RATIO = 0.5
+_DEFAULT_LOCK_TTL_SECONDS = 10.0
+_DEFAULT_LOCK_WAIT_SECONDS = 2.0
+_DEFAULT_LOCK_POLL_SECONDS = 0.05
+
+type CacheEventSink = Callable[[str, str], None]
+"""Receives ``(namespace, event)``; events are hit, negative_hit, miss, load,
+unavailable, corrupt, store_failed, lock_wait, and lock_fallback."""
+
+
+def _ignore_event(namespace: str, event: str) -> None:
+    """Default event sink that records nothing."""
+    del namespace, event
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CachePolicy:
+    """Expiry and stampede settings for one namespace.
+
+    Attributes:
+        ttl_seconds: Lifetime of a cached value before jitter.
+        negative_ttl_seconds: Lifetime of a cached "not found"; ``None`` disables
+            negative caching.
+        jitter_ratio: Maximum relative TTL change, applied uniformly in both
+            directions so entries written together expire apart.
+        lock_ttl_seconds: Lifetime of the distributed lock; exceed the loader p99.
+        lock_wait_seconds: How long a replica waits for another holder's value
+            before loading itself.
+        lock_poll_seconds: Interval between cache reads while waiting.
+    """
+
+    ttl_seconds: float
+    negative_ttl_seconds: float | None = None
+    jitter_ratio: float = _DEFAULT_JITTER_RATIO
+    lock_ttl_seconds: float = _DEFAULT_LOCK_TTL_SECONDS
+    lock_wait_seconds: float = _DEFAULT_LOCK_WAIT_SECONDS
+    lock_poll_seconds: float = _DEFAULT_LOCK_POLL_SECONDS
+
+    def __post_init__(self) -> None:
+        """Reject policies that would never expire or would wait forever.
+
+        Raises:
+            ValueError: A duration or ratio is out of range.
+        """
+        if self.ttl_seconds <= 0 or self.lock_ttl_seconds <= 0:
+            msg = "ttl_seconds and lock_ttl_seconds must be positive"
+            raise ValueError(msg)
+        if self.negative_ttl_seconds is not None and not (
+            0 < self.negative_ttl_seconds <= self.ttl_seconds
+        ):
+            msg = "negative_ttl_seconds must be positive and at most ttl_seconds"
+            raise ValueError(msg)
+        if not 0 <= self.jitter_ratio <= _MAX_JITTER_RATIO:
+            msg = f"jitter_ratio must be between 0 and {_MAX_JITTER_RATIO}"
+            raise ValueError(msg)
+        if (
+            self.lock_poll_seconds <= 0
+            or self.lock_wait_seconds >= self.lock_ttl_seconds
+        ):
+            msg = "lock_poll_seconds must be positive and lock_wait_seconds < lock_ttl_seconds"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Found[T]:
+    """A cache answer: a value, or ``None`` for a cached "not found"."""
+
+    value: T | None
+
+
+def canonical(value: Mapping[str, object] | Sequence[object]) -> str:
+    """Return a stable text form of query parameters for use as a key part.
+
+    Sort and normalize parameters before calling; equivalent requests must
+    produce equal text. Long or unusual results are hashed by ``build_key``.
+    """
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def build_key(
+    *, prefix: str, namespace: str, version: int, parts: Sequence[str]
+) -> str:
+    """Join key parts as ``prefix:namespace:v<version>:part...``.
+
+    Parts that are long, empty, or contain characters outside
+    ``[A-Za-z0-9._@{}-]`` are replaced by ``h-<sha256>`` so callers cannot
+    inject separators or unbounded text. Braces are kept for cluster hash tags.
+    """
+    safe = [_safe_part(part) for part in parts]
+    return ":".join([prefix, namespace, f"v{version}", *safe])
+
+
+def _safe_part(part: str) -> str:
+    if len(part) <= _MAX_PLAIN_PART_LENGTH and _PLAIN_PART.fullmatch(part):
+        return part
+    return f"h-{hashlib.sha256(part.encode()).hexdigest()}"
+
+
+class CachedLoader[T]:
+    """Cache-aside reads for one namespace with stampede protection."""
+
+    def __init__(  # noqa: PLR0913 - explicit collaborators keep the loader testable
+        self,
+        *,
+        cache: Cache,
+        codec: Codec[T],
+        policy: CachePolicy,
+        key_prefix: str,
+        namespace: str,
+        version: int,
+        lock: DistributedLock | None = None,
+        uniform: Callable[[float, float], float] = random.uniform,  # noqa: S311 - TTL jitter, not security
+        token_factory: Callable[[], str] = secrets.token_hex,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        on_event: CacheEventSink = _ignore_event,
+    ) -> None:
+        """Configure the loader.
+
+        Args:
+            cache: Byte cache port (Redis adapter or in-memory fake).
+            codec: Converts values to and from bytes.
+            policy: TTLs, jitter, and lock timing.
+            key_prefix: Application prefix that ACLs restrict, such as ``shop``.
+            namespace: Entity namespace, such as ``catalog:product``.
+            version: Serialized-shape version; bump it to orphan old entries.
+            lock: Optional distributed lock to de-duplicate loads across replicas.
+            uniform: Jitter source; tests pass a deterministic function.
+            token_factory: Produces unique lock tokens.
+            sleep: Awaitable sleep used while waiting for another lock holder.
+            on_event: Metrics hook receiving the namespace and an event name.
+        """
+        self._cache = cache
+        self._codec = codec
+        self._policy = policy
+        self._key_prefix = key_prefix
+        self._namespace = namespace
+        self._version = version
+        self._lock = lock
+        self._uniform = uniform
+        self._token_factory = token_factory
+        self._sleep = sleep
+        self._on_event = on_event
+        self._inflight: dict[str, asyncio.Task[T | None]] = {}
+
+    def key(self, *parts: str) -> str:
+        """Return the full cache key for the given parts."""
+        return build_key(
+            prefix=self._key_prefix,
+            namespace=self._namespace,
+            version=self._version,
+            parts=parts,
+        )
+
+    async def get(
+        self, *parts: str, load: Callable[[], Awaitable[T | None]]
+    ) -> T | None:
+        """Return the cached value or load, store, and return it.
+
+        Args:
+            *parts: Key parts after the namespace, tenant first.
+            load: Reads the source; returns ``None`` for a definitive "not found".
+
+        Returns:
+            The value, or ``None`` when the source has no such record.
+        """
+        key = self.key(*parts)
+        found = await self._read(key)
+        if found is not None:
+            return found.value
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.ensure_future(self._fill(key, load))
+            self._inflight[key] = task
+            task.add_done_callback(functools.partial(self._forget, key))
+        return await asyncio.shield(task)
+
+    async def invalidate(self, *parts: str) -> None:
+        """Delete one entry after the source change has committed.
+
+        Raises:
+            CacheUnavailableError: The delete failed; the entry stays until its
+                TTL. Retry through an outbox when the budget requires it.
+        """
+        await self._cache.delete(self.key(*parts))
+
+    async def _fill(
+        self, key: str, load: Callable[[], Awaitable[T | None]]
+    ) -> T | None:
+        if self._lock is None:
+            return await self._load_and_store(key, load)
+        token = self._token_factory()
+        lock_key = key + _LOCK_SUFFIX
+        if await self._acquire(self._lock, lock_key, token):
+            try:
+                found = await self._read(key)
+                if found is not None:
+                    return found.value
+                return await self._load_and_store(key, load)
+            finally:
+                await self._release(self._lock, lock_key, token)
+        found = await self._wait_for_holder(key)
+        if found is not None:
+            return found.value
+        self._on_event(self._namespace, "lock_fallback")
+        return await self._load_and_store(key, load)
+
+    async def _load_and_store(
+        self, key: str, load: Callable[[], Awaitable[T | None]]
+    ) -> T | None:
+        self._on_event(self._namespace, "load")
+        value = await load()
+        await self._store(key, value)
+        return value
+
+    async def _read(self, key: str) -> _Found[T] | None:
+        try:
+            data = await self._cache.get(key)
+        except CacheUnavailableError:
+            self._on_event(self._namespace, "unavailable")
+            return None
+        if data is None:
+            self._on_event(self._namespace, "miss")
+            return None
+        found = self._decode(data)
+        if found is None:
+            await self._discard_corrupt(key)
+        return found
+
+    def _decode(self, data: bytes) -> _Found[T] | None:
+        if data == _MISSING_MARKER:
+            self._on_event(self._namespace, "negative_hit")
+            return _Found(value=None)
+        if not data.startswith(_VALUE_MARKER):
+            return None
+        try:
+            value = self._codec.decode(data[len(_VALUE_MARKER) :])
+        except ValueError:
+            return None
+        self._on_event(self._namespace, "hit")
+        return _Found(value=value)
+
+    async def _store(self, key: str, value: T | None) -> None:
+        if value is None:
+            if self._policy.negative_ttl_seconds is None:
+                return
+            data, ttl = _MISSING_MARKER, self._policy.negative_ttl_seconds
+        else:
+            data, ttl = (
+                _VALUE_MARKER + self._codec.encode(value),
+                self._policy.ttl_seconds,
+            )
+        try:
+            await self._cache.set(key, data, ttl_seconds=self._jittered(ttl))
+        except CacheUnavailableError:
+            self._on_event(self._namespace, "store_failed")
+
+    async def _wait_for_holder(self, key: str) -> _Found[T] | None:
+        self._on_event(self._namespace, "lock_wait")
+        polls = math.ceil(
+            self._policy.lock_wait_seconds / self._policy.lock_poll_seconds
+        )
+        for _ in range(polls):
+            await self._sleep(self._policy.lock_poll_seconds)
+            found = await self._read(key)
+            if found is not None:
+                return found
+        return None
+
+    async def _acquire(self, lock: DistributedLock, lock_key: str, token: str) -> bool:
+        try:
+            return await lock.acquire(
+                lock_key, token, ttl_seconds=self._policy.lock_ttl_seconds
+            )
+        except CacheUnavailableError:
+            self._on_event(self._namespace, "unavailable")
+            return True
+
+    async def _release(self, lock: DistributedLock, lock_key: str, token: str) -> None:
+        try:
+            await lock.release(lock_key, token)
+        except CacheUnavailableError:
+            self._on_event(self._namespace, "unavailable")
+
+    async def _discard_corrupt(self, key: str) -> None:
+        self._on_event(self._namespace, "corrupt")
+        try:
+            await self._cache.delete(key)
+        except CacheUnavailableError:
+            self._on_event(self._namespace, "unavailable")
+
+    def _jittered(self, ttl_seconds: float) -> float:
+        ratio = self._policy.jitter_ratio
+        return ttl_seconds * (1 + self._uniform(-ratio, ratio))
+
+    def _forget(self, key: str, task: asyncio.Task[T | None]) -> None:
+        if self._inflight.get(key) is task:
+            del self._inflight[key]
+        if not task.cancelled():
+            task.exception()

@@ -1,0 +1,238 @@
+# Continuous delivery to Google Cloud Run: promote one digest dev -> test -> production.
+#
+# Copy to .github/workflows/cd-gcp-cloud-run.yml next to ci.yml. Replace every
+# PIN_FULL_COMMIT_SHA with a reviewed full commit SHA. CI must push the image to
+# the Artifact Registry repository below and attest it.
+#
+# Shape:
+#   resolve           verify the digest and its provenance
+#   deploy-dev/test/production
+#                     environment approval, Workload Identity Federation per
+#                     environment, candidate revision with --no-traffic and a
+#                     "candidate" tag, smoke check on the tag URL, traffic
+#                     split in steps, promote, roll back on failure
+#
+# Each environment defines these variables: GCP_PROJECT, GCP_REGION,
+# GCP_WIF_PROVIDER (full provider resource name), GCP_DEPLOY_SA (deploy
+# service account), RUN_SERVICE, and optionally CANARY_WEIGHTS (for example
+# "10 50"; empty means switch at once) and CANARY_BAKE_SECONDS. The provider's
+# attribute condition admits only this repository owner, and only the
+# principal for repo:<owner>/<repo>:environment:<name> may impersonate that
+# environment's service account. Impersonation keeps access tokens valid for
+# up to an hour, longer than a canary bake; direct federation tokens last at
+# most ten minutes.
+#
+# The smoke checks assume the service allows unauthenticated health checks; for
+# private services send an identity token minted for the service URL.
+name: cd-gcp-cloud-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Digest already built and attested by ci (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-catalog-run
+  cancel-in-progress: false
+
+env:
+  IMAGE: europe-docker.pkg.dev/example-project/apps/catalog
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    outputs:
+      digest: ${{ steps.check.outputs.digest }}
+      suffix: ${{ steps.check.outputs.suffix }}
+    steps:
+      - name: Require a digest with provenance from this repository
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::digest input is not a sha256 digest"
+            exit 1
+          fi
+          # Private repositories need registry credentials on the runner first
+          # (for example a read-only federated identity and
+          # gcloud auth configure-docker europe-docker.pkg.dev).
+          gh attestation verify "oci://${IMAGE}@${DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml"
+          {
+            echo "digest=${DIGEST}"
+            echo "suffix=r${GITHUB_RUN_NUMBER}-${DIGEST:7:10}"
+          } >> "${GITHUB_OUTPUT}"
+
+  deploy-dev:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: dev
+      url: ${{ steps.prepare.outputs.url }}
+    concurrency:
+      group: deploy-catalog-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: &run-env
+      IMAGE_REF: europe-docker.pkg.dev/example-project/apps/catalog@${{ needs.resolve.outputs.digest }}
+      SUFFIX: ${{ needs.resolve.outputs.suffix }}
+      SERVICE: ${{ vars.RUN_SERVICE }}
+      REGION: ${{ vars.GCP_REGION }}
+      HEALTH_PATH: /healthz
+      CANARY_WEIGHTS: ${{ vars.CANARY_WEIGHTS }}
+      BAKE_SECONDS: ${{ vars.CANARY_BAKE_SECONDS || '300' }}
+      PROBES_PER_STEP: '30'
+    steps: &run-steps
+      # The auth action writes its credentials file into the workspace, so a
+      # checkout must come first; nothing from the checkout is built or run.
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v7
+        with:
+          persist-credentials: false
+
+      - name: Authenticate with Workload Identity Federation
+        uses: google-github-actions/auth@PIN_FULL_COMMIT_SHA # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+          project_id: ${{ vars.GCP_PROJECT }}
+
+      - uses: google-github-actions/setup-gcloud@PIN_FULL_COMMIT_SHA # v3
+
+      - name: Record the serving revision and URL
+        id: prepare
+        run: |
+          set -euo pipefail
+          gcloud run services describe "${SERVICE}" --region "${REGION}" --format=json > service.json
+          stable="$(jq -r '[.status.traffic[] | select((.percent // 0) > 0)]
+            | max_by(.percent) | .revisionName // empty' service.json)"
+          {
+            echo "stable=${stable}"
+            echo "new=${SERVICE}-${SUFFIX}"
+            echo "url=$(jq -r '.status.url' service.json)"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy the candidate revision with no traffic
+        run: |
+          set -euo pipefail
+          gcloud run deploy "${SERVICE}" --region "${REGION}" --image "${IMAGE_REF}" \
+            --revision-suffix "${SUFFIX}" --no-traffic --tag candidate --quiet
+
+      - name: Smoke check the candidate tag URL
+        run: |
+          set -euo pipefail
+          url="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format=json \
+            | jq -r '.status.traffic[] | select(.tag == "candidate") | .url')"
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "${url}${HEALTH_PATH}" > /dev/null
+
+      - name: Shift traffic in steps
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+          URL: ${{ steps.prepare.outputs.url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STABLE}" ] || [ -z "${CANARY_WEIGHTS}" ]; then
+            echo "No canary steps for this environment; switching at once."
+            exit 0
+          fi
+          for weight in ${CANARY_WEIGHTS}; do
+            gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+              --to-revisions "${NEW}=${weight},${STABLE}=$((100 - weight))" --quiet
+            echo "Canary at ${weight}%; baking ${BAKE_SECONDS}s"
+            sleep "${BAKE_SECONDS}"
+            failures=0
+            for _ in $(seq 1 "${PROBES_PER_STEP}"); do
+              curl --fail --silent --max-time 5 "${URL}${HEALTH_PATH}" > /dev/null \
+                || failures=$((failures + 1))
+            done
+            if [ "${failures}" -gt 0 ]; then
+              echo "::error::${failures} failed probes at ${weight}%"
+              exit 1
+            fi
+            # Extend with an SLO query comparing the candidate and stable
+            # revisions (error ratio, latency) before the next step.
+          done
+
+      - name: Promote the candidate
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+          URL: ${{ steps.prepare.outputs.url }}
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+            --to-revisions "${NEW}=100" --quiet
+          gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+            --remove-tags candidate --quiet
+          if [ -n "${STABLE}" ]; then
+            gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+              --update-tags "previous=${STABLE}" --quiet
+          fi
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Roll back to the serving revision
+        if: failure() && steps.prepare.outputs.stable != ''
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+            --to-revisions "${STABLE}=100" --quiet
+          gcloud run services update-traffic "${SERVICE}" --region "${REGION}" \
+            --remove-tags candidate --quiet \
+            || echo "::warning::could not remove the candidate tag"
+          echo "::error::deploy of ${NEW} failed; traffic restored to ${STABLE}"
+
+  deploy-test:
+    needs: [resolve, deploy-dev]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment:
+      name: test
+      url: ${{ steps.prepare.outputs.url }}
+    concurrency:
+      group: deploy-catalog-test
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: *run-env
+    steps: *run-steps
+
+  deploy-production:
+    needs: [resolve, deploy-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment:
+      name: production
+      url: ${{ steps.prepare.outputs.url }}
+    concurrency:
+      group: deploy-catalog-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env: *run-env
+    steps: *run-steps

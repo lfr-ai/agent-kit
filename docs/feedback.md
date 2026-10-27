@@ -16,8 +16,9 @@ apm install -g lfr-ai/agent-kit/packages/backend
 ```
 
 Packages do not depend on each other, so name each one: `shared` plus the
-profile packages you need. Keep `ai`, `iac` and `workflows` for the projects
-that use them; every installed skill adds its description to every session.
+profile packages you need. Keep `ai`, `iac`, `workflows` and the IaC tool
+features (`terraform`, `bicep`, `remote-access`) for the projects that use
+them; every installed skill adds its description to every session.
 
 Refresh and inspect:
 

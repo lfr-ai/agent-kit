@@ -1,0 +1,73 @@
+# Gateway API v1 Gateway for the "shop" application, with TLS from
+# cert-manager. Uses only standard-channel fields (Gateway API v1.6.3,
+# cert-manager 1.15 or later; checked 2026-10).
+# Before use:
+#   - set gatewayClassName to the GatewayClass your implementation installs
+#     (kubectl get gatewayclass);
+#   - replace shop.example.invalid;
+#   - enable Gateway API support in cert-manager (Helm value
+#     config.gatewayAPI.enabled=true) after the Gateway API CRDs exist;
+#   - label application namespaces allowed to attach routes:
+#       kubectl label namespace shop gateway-access=shop-edge
+# The ClusterIssuer is in cluster-issuer.yaml; routes are in httproute.yaml,
+# https-redirect.yaml, and grpcroute.yaml.
+# Validate with: kubectl apply --dry-run=server -f gateway.yaml
+# API-management concerns (keys, quotas, products) belong to kit-api-gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shop-edge
+  namespace: edge
+  annotations:
+    # cert-manager creates a Certificate for each HTTPS listener with a
+    # hostname and a Secret certificateRef in this namespace.
+    cert-manager.io/cluster-issuer: acme-production
+spec:
+  gatewayClassName: example-gateway-class
+  listeners:
+    # Port 80 only serves the HTTPS redirect and ACME challenges, both from
+    # routes in the Gateway's own namespace. No hostname, so challenges for
+    # every HTTPS listener hostname reach it.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: shop.example.invalid
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: shop-example-tls
+      allowedRoutes:
+        kinds:
+          - kind: HTTPRoute
+        namespaces:
+          # Never "All" on a shared internet-facing Gateway.
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: shop-edge
+    # gRPC on its own hostname: implementations may refuse an HTTPRoute and a
+    # GRPCRoute that share one hostname on one listener.
+    - name: grpc
+      protocol: HTTPS
+      port: 443
+      hostname: grpc.shop.example.invalid
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: grpc-shop-example-tls
+      allowedRoutes:
+        kinds:
+          - kind: GRPCRoute
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: shop-edge

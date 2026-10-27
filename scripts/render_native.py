@@ -11,6 +11,7 @@ import sys
 from tempfile import NamedTemporaryFile
 
 from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.application.services.selection import parse_selection
 from agent_kit.core.errors import InputTypeError
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 
@@ -97,26 +98,18 @@ def expected(root: Path) -> dict[str, bytes]:
     Raises:
         _NativeRoleError: The repository self-selection is malformed.
     """
-    config = json.loads(
-        (root / ".agents/agentic-setup/self.json").read_text(encoding="utf-8")
-    )
-    if (
-        not isinstance(config, dict)
-        or set(config) != {"schema_version", "profile", "features", "runtimes"}
-        or type(config["schema_version"]) is not int
-        or config["schema_version"] != 1
-        or not isinstance(config["profile"], str)
-        or not isinstance(config["features"], list)
-        or not all(isinstance(item, str) for item in config["features"])
-        or not isinstance(config["runtimes"], list)
-        or not all(isinstance(item, str) for item in config["runtimes"])
-    ):
-        raise _NativeRoleError(_NativeRoleIssue.INVALID_SELECTION)
+    adapter = FileCatalogAdapter()
+    try:
+        selection = parse_selection(
+            adapter.load_selection(root / ".agents/agentic-setup/self.json")
+        )
+    except (InputTypeError, ValueError) as error:
+        raise _NativeRoleError(_NativeRoleIssue.INVALID_SELECTION) from error
     plan = CatalogService().compose(
-        FileCatalogAdapter().load(root),
-        config["profile"],
-        tuple(config["features"]),
-        tuple(config["runtimes"]),
+        adapter.load(root),
+        selection.profile,
+        selection.features,
+        selection.runtimes,
     )
     return {
         item.relative_path: item.content

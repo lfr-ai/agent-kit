@@ -14,4 +14,5 @@ applyTo: "**/*.bicep,**/*.bicepparam,**/bicepconfig.json,**/*.tf,**/*.tfvars,**/
 - Protect stateful resources with deletion locks or lifecycle guards where the platform supports them.
 - Bring changes made outside code back under code by import or revert; never leave drift undocumented.
 - Do not apply changes to external resources in an agent authoring session.
+- Change or add an IaC tool only with a recorded decision and migration plan from the IaC selection procedure in the `kit-infra-review` skill.
 - Use the `kit-infra-review` skill for review procedures.

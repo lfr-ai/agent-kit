@@ -1,0 +1,40 @@
+# Release train: <service>
+
+Use a release train only when deployment cannot be continuous (fixed customer
+windows, coordinated mobile or partner releases, regulated change boards).
+Prefer small, independent deploys whenever the constraint allows it.
+
+## Cadence
+
+| Field | Value |
+| --- | --- |
+| Train interval | for example every Tuesday |
+| Cut-off (last merge to trunk) | for example Monday 12:00 UTC |
+| Candidate built from | trunk head at cut-off; one digest per train |
+| Promotion window to production | for example Tuesday 09:00-12:00 UTC |
+| Freeze periods | dates and reason |
+| Train conductor (rotating) | name |
+
+## Rules
+
+1. Work merges to trunk behind flags; the train never waits for a feature.
+2. The candidate is the digest CI built at cut-off. Nothing is rebuilt for the
+   train; a fix means a new trunk commit and a new digest.
+3. A missed train is not an emergency. The change rides the next one.
+4. Hotfix releases follow the same pipeline (build once, promote through every
+   environment) with shortened bake times recorded on the deploy gate
+   checklist, never a side channel.
+5. Release branches are cut only when a supported older version needs a fix;
+   fixes land on trunk first and are cherry-picked.
+
+## Per train record
+
+| Train | Digest | Commits | Promoted at | Outcome | Rollback | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-W44 | `sha256:...` | link | | success / rolled back | | |
+
+## Exit criteria for the train model
+
+Review every quarter: when lead time, deploy frequency, and change fail rate
+show that smaller deploys would be safe, shorten the interval or move to
+continuous deployment.

@@ -1,0 +1,208 @@
+# APIOps pipeline for the API Management layer: lint and gate in pull requests,
+# what-if per environment, approved deploys promoted dev -> prod from one commit.
+# Copy to .github/workflows/apiops.yml, then:
+#   1. Replace every PIN_FULL_COMMIT_SHA with the reviewed 40-character SHA.
+#   2. Create environments 'dev-preview', 'prod-preview' (no reviewers), 'dev',
+#      and 'prod' (required reviewers, deployment branch policy 'main'), each
+#      with variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#      RESOURCE_GROUP, and GATEWAY_URL.
+#   3. Federate a reader identity per '<env>-preview' environment and a
+#      deployer identity per '<env>' environment (subject
+#      'repo:<owner>/<repo>:environment:<env>'). Grant the deployer
+#      'API Management Service Contributor' on the instance plus only what
+#      main.bicep creates (role assignments need a role-assignment writer).
+#   4. Copy check_apim_policy.py from kit-api-gateway and compare_openapi.py
+#      from kit-api-contracts to tools/; keep the released OpenAPI document at
+#      apim/openapi/released/orders.v1.json.
+name: apiops
+
+on:
+  pull_request:
+    paths:
+      - apim/**
+  push:
+    branches: [main]
+    paths:
+      - apim/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apiops-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@PIN_FULL_COMMIT_SHA # v6
+        with:
+          python-version: "3.13"
+      - name: Policy gate
+        run: python3 tools/check_apim_policy.py --require-auth --require-quota apim/policies
+      - name: Breaking-change gate
+        run: |
+          python3 tools/compare_openapi.py \
+            apim/openapi/released/orders.v1.json apim/openapi/orders.v1.json
+      - name: Build and lint Bicep
+        working-directory: apim
+        run: |
+          az bicep install
+          az bicep build --file main.bicep --stdout > /dev/null
+          az bicep lint --file main.bicep
+          for file in parameters/*.bicepparam; do
+            az bicep build-params --file "$file" --stdout > /dev/null
+          done
+
+  preview-dev:
+    needs: validate
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev-preview
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: What-if
+        working-directory: apim
+        run: |
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --parameters parameters/dev.bicepparam \
+            --no-pretty-print --output json > whatif-dev.json
+      - uses: actions/upload-artifact@PIN_FULL_COMMIT_SHA # v4
+        with:
+          name: whatif-dev
+          path: apim/whatif-dev.json
+          retention-days: 14
+          if-no-files-found: error
+
+  deploy-dev:
+    needs: preview-dev
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+    concurrency:
+      group: apiops-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy
+        working-directory: apim
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "apim-dev-$GITHUB_RUN_ID" \
+            --parameters parameters/dev.bicepparam \
+            --output none
+      - name: Smoke test (anonymous call must be rejected)
+        run: |
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 20 "$GATEWAY_URL/orders/v1/orders")
+          test "$status" = "401"
+
+  preview-prod:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: prod-preview
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: What-if
+        working-directory: apim
+        run: |
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --parameters parameters/prod.bicepparam \
+            --no-pretty-print --output json > whatif-prod.json
+      - uses: actions/upload-artifact@PIN_FULL_COMMIT_SHA # v4
+        with:
+          name: whatif-prod
+          path: apim/whatif-prod.json
+          retention-days: 30
+          if-no-files-found: error
+
+  deploy-prod:
+    needs: preview-prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Required reviewers approve after reading the uploaded what-if.
+    environment: prod
+    concurrency:
+      group: apiops-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+    steps:
+      - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v5
+        with:
+          persist-credentials: false
+      - uses: azure/login@PIN_FULL_COMMIT_SHA # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy
+        working-directory: apim
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "apim-prod-$GITHUB_RUN_ID" \
+            --parameters parameters/prod.bicepparam \
+            --output none
+      - name: Smoke test (anonymous call must be rejected)
+        run: |
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 20 "$GATEWAY_URL/orders/v1/orders")
+          test "$status" = "401"

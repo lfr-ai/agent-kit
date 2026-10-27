@@ -15,7 +15,10 @@ covers the HTTP boundary.
 
 `TestClient` without `with` skips the lifespan, so container-backed
 dependencies fail. Mark async tests with `@pytest.mark.anyio` (AnyIO plugin)
-or the project's chosen async plugin; do not mix both.
+or the project's chosen async plugin; do not mix both. Recent Starlette test
+clients prefer the `httpx2` package and warn when they fall back to `httpx`;
+with warnings as errors, add `httpx2` to the test dependencies (observed with
+Starlette 1.10, 2026-10-27).
 
 ## Build the app the production way
 
@@ -37,7 +40,9 @@ module globals; override by injection:
 - Validation error pointers; unknown route and method problems.
 - Body over the limit (declared and streamed) returns 413 before parsing.
 - Rate limit: the request after the limit gets 429 with `Retry-After`;
-  health probes stay exempt.
+  health probes stay exempt; route policies, both store failure modes, and
+  per-subject limits; store contract cases per
+  [rate limiting](rate-limiting.md#testing).
 - Untrusted `Host` is rejected; CORS preflight succeeds for a listed origin
   and omits CORS headers for others.
 - Security headers present; request id echoed or generated.
@@ -59,3 +64,4 @@ module globals; override by injection:
 - [FastAPI: Testing events, lifespan](https://fastapi.tiangolo.com/advanced/testing-events/)
 - [HTTPX: Transports, ASGI](https://www.python-httpx.org/advanced/transports/)
 - [AnyIO: Testing with AnyIO](https://anyio.readthedocs.io/en/stable/testing.html)
+- [Starlette: Release notes](https://starlette.dev/release-notes/)

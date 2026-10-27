@@ -39,4 +39,5 @@ A regeneration-first job can erase evidence of modified owned output.
 Operators choose the remote owner, initialize version control, set protected
 required CI checks, verify legal ownership, and publish a release.
 There is no claimed hosted package coordinate until that is done.
-Copier integration is intentionally outside this implementation.
+Project generators select packages through a rendered manifest or selection
+file; see [consumer templates](consumer-templates.md).

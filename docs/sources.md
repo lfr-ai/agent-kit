@@ -188,6 +188,12 @@ no new skill, prompt, role, permission or context budget was introduced.
 - [Current APM documentation](https://microsoft.github.io/apm/)
 - [APM policy reference](https://microsoft.github.io/apm/enterprise/policy-reference/)
 - [APM lockfile reference](https://microsoft.github.io/apm/reference/lockfile-spec/)
+- [APM manifest schema](https://microsoft.github.io/apm/reference/manifest-schema/):
+  virtual packages use `owner/repo/path#ref`; checked against APM 0.33.0
+  `install --frozen` help on 2026-10-27
+- [Copier configuration](https://copier.readthedocs.io/en/stable/configuring/):
+  `choices`, `when`, `validator`, `_message_after_copy`, and `_tasks` that run
+  only with `--trust`
 - [APM CLI audit](https://microsoft.github.io/apm/reference/cli/audit/)
 - [Pinned APM 0.33.0 policy discovery source](https://github.com/microsoft/apm/blob/v0.33.0/src/apm_cli/policy/discovery.py)
 - [Agent Skills specification](https://agentskills.io/specification)

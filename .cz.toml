@@ -14,4 +14,7 @@ version_files = [
   "packages/iac/apm.yml:^version",
   "packages/shared/apm.yml:^version",
   "packages/workflows/apm.yml:^version",
+  "packages/terraform/apm.yml:^version",
+  "packages/bicep/apm.yml:^version",
+  "packages/remote-access/apm.yml:^version",
 ]

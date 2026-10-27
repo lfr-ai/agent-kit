@@ -32,7 +32,10 @@ license: MIT
    methods only as described in [dunder methods](references/dunder-methods.md).
 7. Translate boundary failures into specific documented errors per
    [error handling](references/error-handling.md). Chain with `from`; map to the
-   transport only in presentation.
+   transport only in presentation. Bound every remote call in its adapter with
+   a timeout and the caller's deadline; retry only idempotent, transient
+   failures with capped, jittered backoff, and add a breaker or bulkhead per
+   dependency per [resilience](references/resilience.md).
 8. Load configuration once into typed [settings](assets/settings.py.template)
    and configure [logging](assets/logging_setup.py.template) once; follow
    [structured logging](references/logging.md). Keep personal data and secrets
@@ -91,6 +94,7 @@ python check_backend_wiring.py src --package shop --forbid presentation:infrastr
 | [settings.py.template](assets/settings.py.template) | [test_settings.py.template](assets/test_settings.py.template) |
 | [composition_root.py.template](assets/composition_root.py.template) | [test_composition_root.py.template](assets/test_composition_root.py.template) |
 | [logging_setup.py.template](assets/logging_setup.py.template) | [test_logging_setup.py.template](assets/test_logging_setup.py.template) |
+| [resilience.py.template](assets/resilience.py.template) | [test_resilience.py.template](assets/test_resilience.py.template) |
 
 Templates use the placeholder package `shop`; rename imports when copying.
 Native role procedures for this profile live in [agents.json](assets/agents.json).
@@ -123,6 +127,7 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
 - [Dataclasses and enums](references/dataclasses-enums.md)
 - [Structured logging](references/logging.md)
 - [Error handling](references/error-handling.md)
+- [Resilience: timeouts, retries, breakers, bulkheads](references/resilience.md)
 - [Package layout and composition root](references/package-layout.md)
 
 Sources: [Google Python guide](https://google.github.io/styleguide/pyguide.html#381-docstrings)

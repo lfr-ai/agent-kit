@@ -15,7 +15,8 @@ Reviewed 2026-10-23. Topic detail lives in the sibling references:
 | Browser calls with cookies accepted from any site | CORS credentials with wildcard origin | Explicit origins |
 | 500 responses without CORS or request id headers | Expected errors raised as plain exceptions | Raise `ServiceError` subclasses mapped in handlers |
 | 400 "error parsing the body" for large uploads | Body limit raised a non-HTTP exception from `receive` | Raise an `HTTPException` subclass |
-| Rate limit ineffective with several workers | Per-process in-memory store | Shared store behind `RateLimitStore` |
+| Rate limit ineffective with several workers | Per-process in-memory store | Shared store behind `RateLimitStore` ([rate limiting](rate-limiting.md)) |
+| All traffic rejected while the limiter store is down | Fail-closed default policy | Choose the failure mode per policy; alert on `failed_*` |
 | Every replica restarted during a database outage | Liveness checks dependencies | Move checks to readiness |
 | Tokens or personal data in logs | Logging headers, query strings, or bodies | Access log fields only; redact at the boundary |
 

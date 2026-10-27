@@ -1481,10 +1481,12 @@ def _check_native_selection(
     runtimes: tuple[str, ...],
     location: str,
     findings: list[Finding],
+    *,
+    require_optional: bool = False,
 ) -> None:
     """Report native roles whose explicit dependencies cannot be rendered."""
     try:
-        validate_native_assets(assets, runtimes)
+        validate_native_assets(assets, runtimes, require_optional=require_optional)
     except (ValueError, InputTypeError) as error:
         _finding(
             findings,
@@ -1506,6 +1508,7 @@ def _check_native_assets(
         catalog.supported_runtimes,
         "catalog.json",
         findings,
+        require_optional=True,
     )
     for profile in catalog.profiles:
         try:

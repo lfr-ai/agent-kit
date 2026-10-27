@@ -1,0 +1,20 @@
+# Google Cloud root module version constraints and backend type.
+# Copy to infra/gcp/versions.tf. Commit the generated .terraform.lock.hcl and
+# record checksums for every CI platform with
+# 'terraform providers lock -platform=linux_amd64 -platform=darwin_arm64'.
+# Infrastructure Manager supports only listed Terraform versions; check the
+# list before tightening required_version if it will run this configuration.
+terraform {
+  required_version = ">= 1.10.0, < 2.0.0"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 8.0"
+    }
+  }
+
+  # Partial configuration: values come from backend.hcl at
+  # 'terraform init -backend-config=backend.hcl'. GCS locks state natively.
+  backend "gcs" {}
+}

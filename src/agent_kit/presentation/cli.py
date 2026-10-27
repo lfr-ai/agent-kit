@@ -14,10 +14,11 @@ from agent_kit.core.errors import InputTypeError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from agent_kit.core.models import CheckReport, SessionContext
+    from agent_kit.core.models import CheckReport, Selection, SessionContext
 
 _MAX_CONTEXT_CHARS = 1_000_000
 _JSON_INDENT = 2
+_USAGE_ERROR = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -31,6 +32,7 @@ class CliActions:
     ]
     default_root: Callable[[], Path]
     context: Callable[[object], SessionContext]
+    load_selection: Callable[[Path], Selection]
     provenance: Callable[[Path], CheckReport]
 
 
@@ -47,7 +49,12 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--json", action="store_true", help="print a structured report")
 
     compose = commands.add_parser("compose", help="create a new profile workspace")
-    compose.add_argument("profile")
+    compose.add_argument("profile", nargs="?")
+    compose.add_argument(
+        "--selection",
+        type=Path,
+        help="JSON selection file with profile, features, runtimes, and skills",
+    )
     compose.add_argument("--root", type=Path)
     compose.add_argument("--output", type=Path, required=True)
     compose.add_argument(
@@ -146,23 +153,53 @@ def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
     return 0 if report.valid else 1
 
 
+def _requested_selection(
+    actions: CliActions, arguments: argparse.Namespace
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
+    """Return profile, features, runtimes, and skills from one input source."""
+    flags = (arguments.feature, arguments.runtimes, arguments.skill)
+    if arguments.selection is None:
+        if arguments.profile is None:
+            print("compose requires a profile or --selection", file=sys.stderr)
+            return None
+        return (
+            arguments.profile,
+            tuple(arguments.feature),
+            tuple(arguments.runtimes or ()),
+            tuple(arguments.skill),
+        )
+    if arguments.profile is not None or any(flags):
+        print(
+            "--selection cannot be combined with a profile, --feature, "
+            "--runtime, or --skill",
+            file=sys.stderr,
+        )
+        return None
+    selection = actions.load_selection(arguments.selection)
+    return (
+        selection.profile,
+        selection.features,
+        selection.runtimes,
+        selection.skills,
+    )
+
+
 def _compose(actions: CliActions, arguments: argparse.Namespace) -> int:
     """Refuse invalid sources, then write one profile workspace."""
+    requested = _requested_selection(actions, arguments)
+    if requested is None:
+        return _USAGE_ERROR
+    profile, features, runtimes, skills = requested
     root = arguments.root or actions.default_root()
     report = actions.check(root)
     if not report.valid:
         _emit_findings(report, sys.stderr)
         return 1
     output = actions.compose(
-        root,
-        arguments.profile,
-        tuple(arguments.feature),
-        tuple(arguments.runtimes or ()),
-        arguments.output,
-        tuple(arguments.skill),
+        root, profile, features, runtimes, arguments.output, skills
     )
-    print(f"composed {arguments.profile} profile: {output}")
-    if arguments.skill:
+    print(f"composed {profile} profile: {output}")
+    if skills:
         print(
             "Session skills only; project instructions retained; native roles omitted."
         )

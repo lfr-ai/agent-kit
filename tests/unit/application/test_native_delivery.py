@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 import yaml
@@ -15,9 +15,6 @@ from agent_kit.application.services.native_delivery import (
     validate_native_assets,
 )
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _role(
@@ -481,3 +478,99 @@ def test_catalog_validation_still_checks_omitted_native_assets(
         and "roles must be a list" in item.message
         for item in report.findings
     )
+
+
+def _coordinator(optional: list[str]) -> dict[str, object]:
+    return _role(
+        "kit-lead",
+        kind="primary",
+        tier="coordinator",
+        workers=["kit-reader"],
+    ) | {"optional_workers": optional}
+
+
+def test_optional_workers_link_only_when_their_role_is_selected() -> None:
+    """A shared coordinator gains a bundle's worker only when it is composed."""
+    lead = _coordinator(["kit-builder"])
+    reader = _role("kit-reader")
+    builder = _role("kit-builder", tier="implementer")
+
+    without = render_native_agents(_assets(lead, reader), ("copilot", "claude"))
+    with_builder = render_native_agents(
+        _assets(lead, reader, builder), ("copilot", "claude")
+    )
+
+    copilot, _ = _metadata(without[".github/agents/kit-lead.agent.md"])
+    assert copilot["agents"] == ["kit-reader"]
+    copilot, _ = _metadata(with_builder[".github/agents/kit-lead.agent.md"])
+    assert copilot["agents"] == ["kit-reader", "kit-builder"]
+    claude, _ = _metadata(with_builder[".claude/agents/kit-lead.md"])
+    assert str(claude["tools"]).startswith("Agent(kit-reader, kit-builder)")
+
+
+def test_catalog_validation_requires_every_optional_worker_to_exist() -> None:
+    """A misspelled optional worker fails the whole-catalog check, not composition."""
+    files = _assets(_coordinator(["kit-bilder"]), _role("kit-reader"))
+
+    validate_native_assets(files, ("copilot",))
+    with pytest.raises(ValueError, match="'kit-bilder' is unavailable"):
+        validate_native_assets(files, ("copilot",), require_optional=True)
+
+
+@pytest.mark.parametrize(
+    ("roles", "message"),
+    [
+        (
+            [_coordinator(["kit-reader"]), _role("kit-reader")],
+            "repeat a required worker",
+        ),
+        (
+            [
+                _role("kit-solo", kind="primary", tier="implementer")
+                | {"optional_workers": ["kit-reader"]},
+                _role("kit-reader"),
+            ],
+            "only allowed for coordinators",
+        ),
+        (
+            [
+                _coordinator(["kit-other"]),
+                _role("kit-reader"),
+                _role("kit-other", kind="primary"),
+            ],
+            "is not a worker",
+        ),
+        (
+            [_coordinator(["kit-*"]), _role("kit-reader")],
+            "invalid worker identifier",
+        ),
+    ],
+)
+def test_invalid_optional_workers_fail_closed(
+    roles: list[dict[str, object]], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        render_native_agents(_assets(*roles), ("copilot",))
+
+
+def test_repository_coordinators_reach_selected_bundle_implementers() -> None:
+    """The shared orchestrator delegates to implementers of selected bundles only."""
+    root = Path(__file__).resolve().parents[3]
+    snapshot = FileCatalogAdapter().load(root)
+
+    def agents(profile: str) -> list[object]:
+        plan = CatalogService().compose(snapshot, profile, (), ("copilot",))
+        files = {item.relative_path: item.content for item in plan.files}
+        metadata, _ = _metadata(files[".github/agents/kit-orchestrator.agent.md"])
+        workers = metadata["agents"]
+        assert isinstance(workers, list)
+        return workers
+
+    shared = agents("shared")
+    assert "kit-backend-implementer" not in shared
+    assert "kit-planner" in shared
+    assert {"kit-backend-implementer", "kit-contract-iac-lint"} <= set(
+        agents("backend")
+    )
+    assert "kit-frontend-implementer" in agents("frontend")
+    assert "kit-infra-reviewer" in agents("iac")

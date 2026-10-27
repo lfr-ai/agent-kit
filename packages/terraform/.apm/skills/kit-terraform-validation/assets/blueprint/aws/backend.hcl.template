@@ -1,0 +1,18 @@
+# S3 backend settings for one environment. Copy to
+# infra/aws/environments/<env>/backend.hcl and run:
+#   terraform init -backend-config=environments/<env>/backend.hcl
+# Identifiers only; credentials come from the environment (OIDC role in CI).
+# The state bucket is created by a separate bootstrap stack with versioning,
+# default encryption, and Block Public Access enabled.
+bucket  = "orders-tfstate-dev-123456789012-eu-west-1"
+key     = "orders/dev/terraform.tfstate"
+region  = "eu-west-1"
+encrypt = true
+
+# S3-native locking with a '<key>.tflock' object next to the state. Replaces the
+# deprecated DynamoDB table lock (dynamodb_table); do not configure both
+# except briefly while migrating from DynamoDB.
+use_lockfile = true
+
+# Optional: encrypt state with a customer managed key instead of SSE-S3.
+# kms_key_id = "arn:aws:kms:eu-west-1:123456789012:alias/tfstate"

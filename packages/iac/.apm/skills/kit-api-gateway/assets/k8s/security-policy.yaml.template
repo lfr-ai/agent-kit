@@ -1,0 +1,23 @@
+# Gateway-level JWT validation for the orders route with Envoy Gateway.
+# Implementation-specific policy (gateway.envoyproxy.io/v1alpha1): verify the
+# fields against the installed Envoy Gateway release before applying.
+# Copy to deploy/orders/security-policy.yaml next to httproute.yaml.
+# The service still validates tokens and authorizes each object (kit-auth).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: orders-jwt
+  namespace: orders
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orders-v1
+  jwt:
+    providers:
+      - name: shop-identity
+        issuer: https://login.example.com/shop/v2.0
+        audiences:
+          - api://orders
+        remoteJWKS:
+          uri: https://login.example.com/shop/discovery/v2.0/keys

@@ -1,0 +1,11 @@
+# Root outputs for the AWS module. Copy to infra/aws/outputs.tf.
+# Publish identifiers consumers need; never output credentials.
+output "bucket_name" {
+  description = "Name of the S3 bucket."
+  value       = aws_s3_bucket.this.bucket
+}
+
+output "bucket_arn" {
+  description = "ARN of the S3 bucket, for IAM policies in consuming stacks."
+  value       = aws_s3_bucket.this.arn
+}

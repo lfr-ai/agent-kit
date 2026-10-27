@@ -1,0 +1,72 @@
+# IaC decision record: <short title>
+
+<!-- Copy to docs/decisions/NNNN-iac-<topic>.md and replace every <placeholder>. -->
+
+- Status: proposed | accepted | superseded by <record>
+- Date: <YYYY-MM-DD>
+- Deciders: <roles, not personal names if the record is shared>
+- Facts verified on: <YYYY-MM-DD> (tool versions, licenses, support status)
+
+## Context
+
+<What is being provisioned, in which clouds and boundaries (accounts,
+subscriptions, projects), which teams own it, and what exists today.>
+
+| Layer | Clouds and boundaries | Current tool and state location | Resource count |
+| --- | --- | --- | --- |
+| Organization and landing zone | <...> | <...> | <n> |
+| Shared platform | <...> | <...> | <n> |
+| Workloads | <...> | <...> | <n> |
+
+## Hard constraints
+
+- License policy: <for example: no source-available licenses for embedded use>
+- Support: <tool must have a supported release in the last 12 months>
+- Cloud coverage: <every API in scope, including identity and DNS>
+- Preview: <a reviewable preview must run in CI before every apply>
+- Data and hosting: <where state may be stored, hosted services allowed>
+
+## Options considered
+
+Scores come from the [tool matrix](iac-tool-matrix.md.template) (0 fails to 3 strong).
+
+| Option | Failed hard constraint | Weighted score | Notes |
+| --- | --- | --- | --- |
+| <Terraform> | <none> | <n> | <...> |
+| <OpenTofu> | <none> | <n> | <...> |
+| <Bicep, CloudFormation or CDK, Pulumi, ...> | <...> | <n> | <...> |
+
+## Decision
+
+<Chosen tool per layer, the CLI version pin, the state backend, and the
+preview mechanism.>
+
+| Layer | Tool and version pin | State location and locking | Preview | Policy points |
+| --- | --- | --- | --- | --- |
+| <layer> | <tool ~> x.y> | <backend, lock method, encryption> | <plan, what-if, change set> | <source, preview, org> |
+
+## Consequences
+
+- Positive: <...>
+- Negative and accepted risks: <...>
+- Skills and training needed: <...>
+- Operating cost: <hosted fees, runner minutes, upgrade effort>
+
+## Migration plan (if an owner changes)
+
+1. Freeze: <date, scope>
+2. Back up: <state or template location, checksum record>
+3. Adopt: <import blocks, conversion tool, native import>
+4. Prove: <preview must show zero create, delete, replace>
+5. Cut over: <date old owner loses write access>
+6. Roll back: <trigger and steps>
+
+## Exit plan
+
+<How to leave this tool later: export, state conversion, or rewrite, and the
+signal that would trigger it (license change, end of support, cost).>
+
+## Review
+
+- Next review date: <YYYY-MM-DD>
+- Owner of this record: <role>

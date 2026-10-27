@@ -1,0 +1,120 @@
+"""In-memory cache and lock with an injected clock, for tests and local L1 use.
+
+Copy into ``src/shop/cache/memory.py``. It implements ``Cache`` and
+``DistributedLock`` from ``shop.cache.port`` with the same observable
+behavior as the Redis adapter (expiry, set-if-absent locks, token-checked
+release), so the contract tests can run against both. It is bounded by entry
+count and evicts the least recently used entry when full. It is safe for one
+event loop; it is not shared between processes or threads.
+"""
+
+from collections import OrderedDict
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+import time
+
+_DEFAULT_MAX_ENTRIES = 10_000
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Entry:
+    """A stored value and its absolute expiry on the injected clock."""
+
+    value: bytes
+    expires_at: float
+
+
+class InMemoryCache:
+    """Bounded LRU cache with per-entry expiry and advisory locks."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        max_entries: int = _DEFAULT_MAX_ENTRIES,
+    ) -> None:
+        """Create an empty cache.
+
+        Args:
+            clock: Monotonic clock in seconds; tests pass a fake.
+            max_entries: Upper bound on stored entries, including locks.
+
+        Raises:
+            ValueError: ``max_entries`` is not positive.
+        """
+        if max_entries < 1:
+            msg = "max_entries must be positive"
+            raise ValueError(msg)
+        self._clock = clock
+        self._max_entries = max_entries
+        self._entries: OrderedDict[str, _Entry] = OrderedDict()
+
+    async def get(self, key: str) -> bytes | None:
+        """Return a live value and mark it recently used, or ``None``."""
+        entry = self._live(key)
+        if entry is None:
+            return None
+        self._entries.move_to_end(key)
+        return entry.value
+
+    async def get_many(self, keys: Sequence[str]) -> list[bytes | None]:
+        """Return live values in request order."""
+        return [await self.get(key) for key in keys]
+
+    async def set(self, key: str, value: bytes, *, ttl_seconds: float) -> None:
+        """Store a value for ``ttl_seconds``; a non-positive TTL deletes it."""
+        if ttl_seconds <= 0:
+            self._entries.pop(key, None)
+            return
+        expires_at = self._clock() + ttl_seconds
+        self._entries[key] = _Entry(value=value, expires_at=expires_at)
+        self._entries.move_to_end(key)
+        self._evict()
+
+    async def delete(self, *keys: str) -> int:
+        """Delete keys and return how many were live."""
+        removed = 0
+        for key in keys:
+            if self._live(key) is not None:
+                del self._entries[key]
+                removed += 1
+        return removed
+
+    async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
+        """Store ``token`` under ``key`` only if no live entry exists.
+
+        Raises:
+            ValueError: ``ttl_seconds`` is not positive.
+        """
+        if ttl_seconds <= 0:
+            msg = "lock ttl_seconds must be positive"
+            raise ValueError(msg)
+        if self._live(key) is not None:
+            return False
+        await self.set(key, token.encode(), ttl_seconds=ttl_seconds)
+        return True
+
+    async def release(self, key: str, token: str) -> bool:
+        """Delete the lock only when ``token`` still owns it."""
+        entry = self._live(key)
+        if entry is None or entry.value != token.encode():
+            return False
+        del self._entries[key]
+        return True
+
+    def clear(self) -> None:
+        """Remove every entry (local L1 eviction or test reset)."""
+        self._entries.clear()
+
+    def _live(self, key: str) -> _Entry | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if entry.expires_at <= self._clock():
+            del self._entries[key]
+            return None
+        return entry
+
+    def _evict(self) -> None:
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)

@@ -76,4 +76,6 @@ change can. Start with the [review guide](references/guide.md).
 
 Approving a workflow does not approve the release it produces. A clean checker
 run is a mechanical precondition; it does not prove a pinned SHA is benign or
-that repository settings match the file.
+that repository settings match the file. Delivery design (build-once
+promotion, environments, rollout, and rollback) is owned by
+`kit-delivery-pipelines`.

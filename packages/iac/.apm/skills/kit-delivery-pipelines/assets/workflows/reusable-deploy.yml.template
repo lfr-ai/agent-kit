@@ -1,0 +1,207 @@
+# Reusable deploy: put one verified image digest live in one environment.
+#
+# Copy to .github/workflows/reusable-deploy.yml and call it once per environment:
+#
+#   deploy-dev:
+#     needs: resolve
+#     uses: ./.github/workflows/reusable-deploy.yml
+#     permissions: {contents: read, id-token: write, packages: read, attestations: read}
+#     with:
+#       environment: dev
+#       image: ghcr.io/example-owner/orders
+#       digest: ${{ needs.resolve.outputs.digest }}
+#       app-name: orders
+#       revision-suffix: ${{ needs.resolve.outputs.revision-suffix }}
+#
+# Target: Azure Container Apps in multiple revision mode with ingress traffic
+# pinned by revision name. The new revision gets 0% until its label URL passes
+# the smoke check, then takes 100%; the old revision stays active at 0% (label
+# "previous") so a rollback is a traffic switch. The environment must define
+# the variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, and
+# AZURE_RESOURCE_GROUP. The caller grants permissions; this workflow can only
+# narrow them. Replace every PIN_FULL_COMMIT_SHA with a reviewed full SHA.
+name: reusable-deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment that gates and scopes this deploy.
+        required: true
+        type: string
+      image:
+        description: Image repository without tag or digest.
+        required: true
+        type: string
+      digest:
+        description: Image digest built and attested by CI (sha256:...).
+        required: true
+        type: string
+      app-name:
+        description: Container app name (lower case, fewer than 32 characters).
+        required: true
+        type: string
+      revision-suffix:
+        description: Unique revision suffix for this release.
+        required: true
+        type: string
+      health-path:
+        description: Readiness path that the smoke check calls.
+        required: false
+        type: string
+        default: /healthz
+    outputs:
+      revision:
+        description: Revision that now receives all traffic.
+        value: ${{ jobs.deploy.outputs.revision }}
+      previous-revision:
+        description: Revision that served traffic before this deploy.
+        value: ${{ jobs.deploy.outputs.previous }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - name: Require a digest and a provenance attestation from this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ inputs.image }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::digest input is not a sha256 digest"
+            exit 1
+          fi
+          # Log in to the registry that holds the image; ghcr.io shown.
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          gh attestation verify "oci://${IMAGE}@${DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml"
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.prepare.outputs.url }}
+    concurrency:
+      group: deploy-${{ inputs.app-name }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      revision: ${{ steps.prepare.outputs.new }}
+      previous: ${{ steps.prepare.outputs.stable }}
+    env:
+      APP: ${{ inputs.app-name }}
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      IMAGE_REF: ${{ inputs.image }}@${{ inputs.digest }}
+      SUFFIX: ${{ inputs.revision-suffix }}
+      HEALTH_PATH: ${{ inputs.health-path }}
+    steps:
+      - name: Azure login (OIDC, no stored secret)
+        uses: azure/login@PIN_FULL_COMMIT_SHA # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record the current revision and URLs
+        id: prepare
+        run: |
+          set -euo pipefail
+          stable="$(az containerapp revision list -n "${APP}" -g "${RG}" \
+            --query 'sort_by([?properties.trafficWeight > `0`], &properties.trafficWeight)[-1].name' \
+            -o tsv)"
+          fqdn="$(az containerapp show -n "${APP}" -g "${RG}" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          domain="${fqdn#"${APP}".}"
+          {
+            echo "stable=${stable}"
+            echo "new=${APP}--${SUFFIX}"
+            echo "url=https://${fqdn}"
+            echo "candidate-url=https://${APP}---candidate.${domain}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create the candidate revision with no traffic
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STABLE}" ]; then
+            az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+              --revision-weight "${STABLE}=100" -o none
+          fi
+          az containerapp update -n "${APP}" -g "${RG}" \
+            --image "${IMAGE_REF}" --revision-suffix "${SUFFIX}" -o none
+          state=""
+          for _ in $(seq 1 60); do
+            state="$(az containerapp revision show -n "${APP}" -g "${RG}" \
+              --revision "${NEW}" --query properties.provisioningState -o tsv)"
+            case "${state}" in
+              Provisioned) break ;;
+              Failed) echo "::error::${NEW} failed to provision"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          [ "${state}" = "Provisioned" ] || { echo "::error::${NEW} did not provision"; exit 1; }
+          az containerapp revision label add -n "${APP}" -g "${RG}" \
+            --label candidate --revision "${NEW}" --yes -o none
+
+      - name: Smoke check the candidate through its label URL
+        env:
+          URL: ${{ steps.prepare.outputs.candidate-url }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Switch all traffic to the candidate
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          set -euo pipefail
+          weights=("${NEW}=100")
+          if [ -n "${STABLE}" ]; then weights+=("${STABLE}=0"); fi
+          az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+            --revision-weight "${weights[@]}" -o none
+          az containerapp revision label add -n "${APP}" -g "${RG}" \
+            --label stable --revision "${NEW}" --yes -o none
+          if [ -n "${STABLE}" ]; then
+            az containerapp revision label add -n "${APP}" -g "${RG}" \
+              --label previous --revision "${STABLE}" --yes -o none
+          fi
+
+      - name: Smoke check the production URL
+        env:
+          URL: ${{ steps.prepare.outputs.url }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            "${URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Restore traffic to the previous revision
+        if: failure() && steps.prepare.outputs.stable != ''
+        env:
+          STABLE: ${{ steps.prepare.outputs.stable }}
+          NEW: ${{ steps.prepare.outputs.new }}
+        run: |
+          az containerapp ingress traffic set -n "${APP}" -g "${RG}" \
+            --revision-weight "${STABLE}=100" -o none
+          az containerapp revision deactivate -n "${APP}" -g "${RG}" \
+            --revision "${NEW}" -o none \
+            || echo "::warning::could not deactivate ${NEW}; check it by hand"
+          echo "::error::deploy of ${NEW} failed; traffic restored to ${STABLE}"

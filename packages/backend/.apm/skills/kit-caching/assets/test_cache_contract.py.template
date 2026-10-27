@@ -1,0 +1,125 @@
+"""Contract tests shared by the in-memory fake and a real Redis-compatible server.
+
+Copy into ``tests/integration/cache/test_cache_contract.py``. Every test runs
+twice: against ``InMemoryCache`` and against the server named by
+``CACHE_TEST_URL`` (optional ``CACHE_TEST_PASSWORD``), for example the service
+from ``compose.cache.yaml``. Server cases are skipped when the variable is
+unset; CI must set it so the fake never drifts from the real behavior. Each
+test uses a unique key prefix and removes its keys, so workers may share one
+server; never run FLUSHALL here.
+"""
+
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+import os
+from typing import Protocol
+import uuid
+
+import pytest
+
+from shop.cache.memory import InMemoryCache
+from shop.cache.port import Cache, DistributedLock
+from shop.cache.redis_cache import RedisCache, create_redis_client
+from shop.cache.settings import CacheSettings
+
+pytestmark = [pytest.mark.anyio, pytest.mark.integration]
+
+
+class Store(Cache, DistributedLock, Protocol):
+    """Both ports, as implemented by every cache adapter."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Target:
+    """A store under test and the key prefix reserved for this test."""
+
+    store: Store
+    prefix: str
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture(params=["memory", "server"])
+async def target(request: pytest.FixtureRequest) -> AsyncIterator[Target]:
+    prefix = f"test:{uuid.uuid4().hex}:"
+    if request.param == "memory":
+        yield Target(store=InMemoryCache(), prefix=prefix)
+        return
+    url = os.environ.get("CACHE_TEST_URL")
+    if not url:
+        pytest.skip("CACHE_TEST_URL is not set; the server contract runs in CI")
+    settings = CacheSettings(
+        url=url,
+        allow_plaintext=url.startswith("redis://"),
+        password=os.environ.get("CACHE_TEST_PASSWORD"),
+        socket_timeout_seconds=1.0,
+        operation_timeout_seconds=2.0,
+    )
+    client = create_redis_client(settings)
+    try:
+        yield Target(
+            store=RedisCache(client, operation_timeout_seconds=2.0), prefix=prefix
+        )
+    finally:
+        stale = [key async for key in client.scan_iter(match=f"{prefix}*")]
+        if stale:
+            await client.unlink(*stale)
+        await client.aclose()
+
+
+async def test_round_trip_preserves_arbitrary_bytes(target: Target) -> None:
+    key = f"{target.prefix}bytes"
+    payload = bytes(range(256))
+
+    await target.store.set(key, payload, ttl_seconds=60)
+
+    assert await target.store.get(key) == payload
+
+
+async def test_missing_key_is_none(target: Target) -> None:
+    assert await target.store.get(f"{target.prefix}absent") is None
+
+
+async def test_non_positive_ttl_removes_the_key(target: Target) -> None:
+    key = f"{target.prefix}gone"
+    await target.store.set(key, b"v", ttl_seconds=60)
+
+    await target.store.set(key, b"w", ttl_seconds=0)
+
+    assert await target.store.get(key) is None
+
+
+async def test_get_many_keeps_order_and_reports_misses(target: Target) -> None:
+    first, second, absent = (f"{target.prefix}{name}" for name in ("a", "b", "x"))
+    await target.store.set(first, b"1", ttl_seconds=60)
+    await target.store.set(second, b"2", ttl_seconds=60)
+
+    assert await target.store.get_many([second, absent, first]) == [b"2", None, b"1"]
+    assert await target.store.get_many([]) == []
+
+
+async def test_delete_counts_existing_keys(target: Target) -> None:
+    key = f"{target.prefix}k"
+    await target.store.set(key, b"v", ttl_seconds=60)
+
+    assert await target.store.delete(key, f"{target.prefix}missing") == 1
+    assert await target.store.delete() == 0
+    assert await target.store.get(key) is None
+
+
+async def test_lock_is_exclusive_and_owner_checked(target: Target) -> None:
+    key = f"{target.prefix}lock"
+
+    assert await target.store.acquire(key, "owner", ttl_seconds=30)
+    assert not await target.store.acquire(key, "other", ttl_seconds=30)
+    assert not await target.store.release(key, "other")
+    assert await target.store.release(key, "owner")
+    assert await target.store.acquire(key, "other", ttl_seconds=30)
+
+
+async def test_lock_rejects_non_positive_ttl(target: Target) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        await target.store.acquire(f"{target.prefix}lock", "t", ttl_seconds=0)

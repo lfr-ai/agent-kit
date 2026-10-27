@@ -1,0 +1,34 @@
+# Environments: <service>
+
+One row per GitHub environment. Settings live in the repository or
+organization settings (or in infrastructure code that manages them); this file
+records the intended values so a reviewer can compare.
+
+| Setting | dev | test | production |
+| --- | --- | --- | --- |
+| Purpose | integration on every trunk commit | release candidate checks | users |
+| Deploys from | `ci` on `main` | after dev succeeds | after test succeeds |
+| Deployment branches and tags | `main` | `main` | `main` |
+| Required reviewers | none | none | release approvers team (max six entries) |
+| Prevent self-review | n/a | n/a | on |
+| Wait timer | 0 | 0 | optional, minutes |
+| Allow administrators to bypass | n/a | n/a | off |
+| Custom protection rules | none | none | change-window or monitoring app, if used |
+| Environment variables | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP` | same names, test values | same names, production values |
+| Environment secrets | none (OIDC) | none (OIDC) | none (OIDC) |
+| Entra application or managed identity | `orders-deploy-dev` | `orders-deploy-test` | `orders-deploy-prod` |
+| Federated subject | `repo:<owner>/<repo>:environment:dev` | `repo:<owner>/<repo>:environment:test` | `repo:<owner>/<repo>:environment:production` |
+| Azure role and scope | role that updates the app, on dev resources only | same on test | narrowest role that updates the app, on the production app only |
+| Rollout strategy | replace | blue-green by label | canary 10, 50, 100 with bake |
+| Rollback target kept | 1 previous revision | 1 previous revision | previous revision active at 0% |
+| Smoke check | `/healthz` | `/healthz` plus API checks | `/healthz` plus synthetic journeys |
+
+## Rules
+
+- Names are case-insensitive in concurrency groups; keep one spelling.
+- An identity serves exactly one environment; never reuse the production
+  identity elsewhere.
+- Changing a protection rule is a reviewed change with an owner.
+- Repositories created after 2026-07-15 use the immutable subject format
+  `repo:<owner>@<owner-id>/<repo>@<repo-id>:environment:<name>`; match the
+  federated credential to the format the repository actually emits.

@@ -1,0 +1,310 @@
+"""Unit tests for the cache-aside loader with the in-memory fake.
+
+Copy into ``tests/unit/cache/test_cache_aside.py``. Deterministic: fake clock,
+fixed jitter, counting tokens, and a recording sleep; concurrency is driven by
+``asyncio.Event`` instead of timing.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+import itertools
+
+import pytest
+
+from shop.cache.aside import CachedLoader, CachePolicy, build_key
+from shop.cache.memory import InMemoryCache
+from shop.cache.port import (
+    Cache,
+    CacheUnavailableError,
+    DistributedLock,
+    JsonCodec,
+    JsonValue,
+)
+
+pytestmark = pytest.mark.anyio
+
+POLICY = CachePolicy(
+    ttl_seconds=100.0,
+    negative_ttl_seconds=10.0,
+    jitter_ratio=0.1,
+    lock_ttl_seconds=5.0,
+    lock_wait_seconds=0.3,
+    lock_poll_seconds=0.1,
+)
+
+
+class FakeClock:
+    """Manually advanced monotonic clock."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class CountingLoad:
+    """Loader double that counts calls and returns a fixed result."""
+
+    def __init__(self, result: JsonValue) -> None:
+        self.result = result
+        self.calls = 0
+
+    async def __call__(self) -> JsonValue:
+        self.calls += 1
+        return self.result
+
+
+class BrokenCache:
+    """Cache double whose every operation is unavailable."""
+
+    async def get(self, key: str) -> bytes | None:
+        raise CacheUnavailableError(key)
+
+    async def get_many(self, keys: Sequence[str]) -> list[bytes | None]:
+        raise CacheUnavailableError(str(keys))
+
+    async def set(self, key: str, value: bytes, *, ttl_seconds: float) -> None:
+        raise CacheUnavailableError(key)
+
+    async def delete(self, *keys: str) -> int:
+        raise CacheUnavailableError(str(keys))
+
+
+class HeldLock:
+    """Distributed lock double that is always held by another replica."""
+
+    async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
+        return False
+
+    async def release(self, key: str, token: str) -> bool:
+        return False
+
+
+def make_loader(
+    cache: Cache,
+    *,
+    lock: DistributedLock | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    events: list[str] | None = None,
+) -> CachedLoader[JsonValue]:
+    tokens = itertools.count()
+    recorded = events if events is not None else []
+
+    async def no_sleep(seconds: float) -> None:
+        del seconds
+
+    return CachedLoader(
+        cache=cache,
+        codec=JsonCodec(),
+        policy=POLICY,
+        key_prefix="shop",
+        namespace="catalog:product",
+        version=3,
+        lock=lock,
+        uniform=lambda low, high: high,
+        token_factory=lambda: f"token-{next(tokens)}",
+        sleep=sleep or no_sleep,
+        on_event=lambda namespace, event: recorded.append(event),
+    )
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def cache(clock: FakeClock) -> InMemoryCache:
+    return InMemoryCache(clock=clock)
+
+
+async def test_miss_loads_once_then_hits(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+    load = CountingLoad({"name": "lamp"})
+
+    first = await loader.get("t-1", "42", load=load)
+    second = await loader.get("t-1", "42", load=load)
+
+    assert first == second == {"name": "lamp"}
+    assert load.calls == 1
+
+
+async def test_value_expires_after_jittered_ttl(
+    cache: InMemoryCache, clock: FakeClock
+) -> None:
+    loader = make_loader(cache)
+    load = CountingLoad("v")
+    await loader.get("t-1", "42", load=load)
+
+    clock.advance(109.9)
+    await loader.get("t-1", "42", load=load)
+    assert load.calls == 1
+    clock.advance(0.2)
+    await loader.get("t-1", "42", load=load)
+    assert load.calls == 2
+
+
+async def test_not_found_is_cached_with_the_negative_ttl(
+    cache: InMemoryCache, clock: FakeClock
+) -> None:
+    loader = make_loader(cache)
+    load = CountingLoad(None)
+
+    assert await loader.get("t-1", "404", load=load) is None
+    assert await loader.get("t-1", "404", load=load) is None
+    assert load.calls == 1
+    clock.advance(11.1)
+    await loader.get("t-1", "404", load=load)
+    assert load.calls == 2
+
+
+async def test_loader_errors_are_not_cached(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+    attempts = 0
+
+    async def flaky() -> JsonValue:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            msg = "source down"
+            raise ConnectionError(msg)
+        return "ok"
+
+    with pytest.raises(ConnectionError):
+        await loader.get("t-1", "42", load=flaky)
+    assert await loader.get("t-1", "42", load=flaky) == "ok"
+
+
+async def test_invalidate_forces_a_fresh_load(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+    load = CountingLoad("v1")
+    await loader.get("t-1", "42", load=load)
+
+    load.result = "v2"
+    await loader.invalidate("t-1", "42")
+
+    assert await loader.get("t-1", "42", load=load) == "v2"
+
+
+async def test_tenants_never_share_an_entry(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+
+    await loader.get("t-1", "42", load=CountingLoad("first tenant"))
+
+    assert await loader.get("t-2", "42", load=CountingLoad("second")) == "second"
+
+
+async def test_corrupt_entry_is_replaced(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+    key = loader.key("t-1", "42")
+    await cache.set(key, b"v{not json", ttl_seconds=100)
+
+    assert await loader.get("t-1", "42", load=CountingLoad("fresh")) == "fresh"
+    assert await cache.get(key) == b'v"fresh"'
+
+
+async def test_concurrent_misses_share_one_load(cache: InMemoryCache) -> None:
+    loader = make_loader(cache)
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow() -> JsonValue:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return "shared"
+
+    waiters = [
+        asyncio.create_task(loader.get("t-1", "42", load=slow)) for _ in range(5)
+    ]
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(*waiters) == ["shared"] * 5
+    assert calls == 1
+
+
+async def test_cancelling_one_waiter_does_not_cancel_the_shared_load(
+    cache: InMemoryCache,
+) -> None:
+    loader = make_loader(cache)
+    release = asyncio.Event()
+
+    async def slow() -> JsonValue:
+        await release.wait()
+        return "shared"
+
+    first = asyncio.create_task(loader.get("t-1", "42", load=slow))
+    second = asyncio.create_task(loader.get("t-1", "42", load=slow))
+    await asyncio.sleep(0)
+    first.cancel()
+    release.set()
+
+    assert await second == "shared"
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+
+async def test_unavailable_cache_falls_back_to_the_source() -> None:
+    events: list[str] = []
+    loader = make_loader(BrokenCache(), events=events)
+
+    assert (
+        await loader.get("t-1", "42", load=CountingLoad("from source")) == "from source"
+    )
+    assert "unavailable" in events
+    assert "store_failed" in events
+
+
+async def test_waiter_uses_value_written_by_lock_holder(cache: InMemoryCache) -> None:
+    key = make_loader(cache).key("t-1", "42")
+
+    async def holder_finishes(seconds: float) -> None:
+        del seconds
+        await cache.set(key, b'v"from holder"', ttl_seconds=100)
+
+    loader = make_loader(cache, lock=HeldLock(), sleep=holder_finishes)
+    load = CountingLoad("not used")
+
+    assert await loader.get("t-1", "42", load=load) == "from holder"
+    assert load.calls == 0
+
+
+async def test_waiter_loads_itself_after_the_bounded_wait(cache: InMemoryCache) -> None:
+    waits: list[float] = []
+    events: list[str] = []
+
+    async def record(seconds: float) -> None:
+        waits.append(seconds)
+
+    loader = make_loader(cache, lock=HeldLock(), sleep=record, events=events)
+    load = CountingLoad("fallback")
+
+    assert await loader.get("t-1", "42", load=load) == "fallback"
+    assert load.calls == 1
+    assert len(waits) == 3
+    assert "lock_fallback" in events
+
+
+def test_build_key_hashes_unsafe_parts() -> None:
+    key = build_key(
+        prefix="shop", namespace="search", version=1, parts=["t-1", "a b:c"]
+    )
+
+    assert key.startswith("shop:search:v1:t-1:h-")
+    assert " " not in key
+    assert key.count(":") == 4
+
+
+def test_policy_rejects_inverted_lock_timing() -> None:
+    with pytest.raises(ValueError, match="lock_wait_seconds"):
+        CachePolicy(ttl_seconds=10.0, lock_ttl_seconds=1.0, lock_wait_seconds=2.0)

@@ -1,0 +1,68 @@
+# Input variables for the AWS root module. Copy to infra/aws/variables.tf.
+# Values per environment go in environments/<env>/terraform.tfvars.
+
+variable "environment" {
+  description = "Deployment environment name."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "environment must be one of: dev, test, prod."
+  }
+}
+
+variable "account_id" {
+  description = "AWS account ID this root module may change (12 digits)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.account_id))
+    error_message = "account_id must be exactly 12 digits."
+  }
+}
+
+variable "region" {
+  description = "AWS Region for all resources, for example 'eu-west-1'."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", var.region))
+    error_message = "region must look like an AWS Region code such as 'eu-west-1'."
+  }
+}
+
+variable "workload" {
+  description = "Short workload name used in resource names (2-10 lowercase letters or digits)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.workload))
+    error_message = "workload must be 2-10 characters, start with a letter, and use only a-z and 0-9."
+  }
+}
+
+variable "kms_key_arn" {
+  description = "Optional customer managed KMS key ARN for bucket encryption; null uses SSE-S3."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.kms_key_arn == null || can(regex("^arn:aws[a-z-]*:kms:", var.kms_key_arn))
+    error_message = "kms_key_arn must be null or a KMS key ARN."
+  }
+}
+
+variable "tags" {
+  description = "Tags applied through default_tags. Must include 'owner' and 'cost_center'."
+  type        = map(string)
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for key in ["owner", "cost_center"] : contains(keys(var.tags), key)])
+    error_message = "tags must include the keys 'owner' and 'cost_center'."
+  }
+}

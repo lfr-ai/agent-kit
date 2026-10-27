@@ -1,0 +1,96 @@
+// Composition root for the API Management layer. Copy to apim/main.bicep with
+// modules/apim.bicep, modules/api.bicep, policies/*.xml, and the OpenAPI
+// document published by the API contract owner in openapi/.
+// Deploy per environment with parameters/<env>.bicepparam.
+
+targetScope = 'resourceGroup'
+
+metadata description = 'API Management instance and the orders API.'
+
+@allowed([
+  'dev'
+  'test'
+  'prod'
+])
+param environmentName string
+
+param location string = resourceGroup().location
+
+param apimName string
+
+param skuName string
+
+param skuCapacity int
+
+param publisherEmail string
+
+param publisherName string
+
+param publicNetworkAccess string = 'Enabled'
+
+param appInsightsName string
+
+param logAnalyticsWorkspaceId string
+
+param keyVaultName string
+
+param jwtIssuer string
+
+param jwtOpenIdConfigUrl string
+
+param ordersAudience string
+
+param ordersBackendUrl string
+
+param ordersBackendAppId string
+
+param ordersBackendKeySecretUri string = ''
+
+param samplingPercentage int = 25
+
+var tags = {
+  environment: environmentName
+  workload: 'shop-api'
+}
+
+module apim 'modules/apim.bicep' = {
+  name: 'apim-${environmentName}'
+  params: {
+    name: apimName
+    location: location
+    skuName: skuName
+    skuCapacity: skuCapacity
+    publisherEmail: publisherEmail
+    publisherName: publisherName
+    publicNetworkAccess: publicNetworkAccess
+    appInsightsName: appInsightsName
+    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
+    keyVaultName: keyVaultName
+    samplingPercentage: samplingPercentage
+    jwtIssuer: jwtIssuer
+    jwtOpenIdConfigUrl: jwtOpenIdConfigUrl
+    tags: tags
+  }
+}
+
+module ordersV1 'modules/api.bicep' = {
+  name: 'api-orders-v1-${environmentName}'
+  params: {
+    apimName: apim.outputs.name
+    apiName: 'orders'
+    apiVersion: 'v1'
+    displayName: 'Orders'
+    openApiDocument: loadTextContent('openapi/orders.v1.json')
+    openApiFormat: 'openapi+json'
+    policyXml: loadTextContent('policies/orders-api.xml')
+    backendUrl: ordersBackendUrl
+    backendAppId: ordersBackendAppId
+    apiAudience: ordersAudience
+    backendKeySecretUri: ordersBackendKeySecretUri
+    subscriptionApproval: environmentName == 'prod'
+  }
+}
+
+output gatewayUrl string = apim.outputs.gatewayUrl
+
+output principalId string = apim.outputs.principalId

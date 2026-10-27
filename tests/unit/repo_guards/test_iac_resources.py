@@ -45,19 +45,22 @@ def _templates(*suffixes: str) -> list[Path]:
     )
 
 
-@pytest.mark.parametrize("path", _templates(".json"), ids=lambda path: path.name)
+def _template_id(path: Path) -> str:
+    """Name a template by its skill-relative path so equal file names stay unique."""
+    return path.relative_to(_SKILLS).as_posix()
+
+
+@pytest.mark.parametrize("path", _templates(".json"), ids=_template_id)
 def test_json_templates_parse(path: Path) -> None:
     assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict)
 
 
-@pytest.mark.parametrize(
-    "path", _templates(".yml", ".yaml"), ids=lambda path: path.name
-)
+@pytest.mark.parametrize("path", _templates(".yml", ".yaml"), ids=_template_id)
 def test_yaml_templates_parse(path: Path) -> None:
     assert isinstance(yaml.safe_load(path.read_text(encoding="utf-8")), dict)
 
 
-@pytest.mark.parametrize("path", _templates(".py"), ids=lambda path: path.name)
+@pytest.mark.parametrize("path", _templates(".py"), ids=_template_id)
 def test_python_templates_parse(path: Path) -> None:
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
@@ -181,7 +184,7 @@ def test_missing_path_is_invalid_input(
     assert "Cannot scan workflows" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("path", _WORKFLOW_TEMPLATES, ids=lambda path: path.name)
+@pytest.mark.parametrize("path", _WORKFLOW_TEMPLATES, ids=_template_id)
 def test_workflow_templates_fail_until_pinned_then_pass(
     tmp_path: Path, path: Path
 ) -> None:

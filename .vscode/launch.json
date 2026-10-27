@@ -41,7 +41,7 @@
       "id": "profile",
       "type": "pickString",
       "description": "Catalog profile to compose",
-      "options": ["toolkit", "shared", "backend", "frontend", "fullstack", "iac", "workflows", "ai"],
+      "options": ["toolkit", "shared", "backend", "frontend", "fullstack", "iac", "terraform", "bicep", "remote-access", "workflows", "ai"],
       "default": "backend"
     },
     {

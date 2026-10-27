@@ -39,6 +39,8 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-add-migration",
             "kit-model-domain",
             "kit-add-middleware",
+            "kit-add-cache",
+            "kit-design-rate-limit",
         }
     ),
     "frontend": frozenset(
@@ -56,11 +58,12 @@ EXPECTED: dict[str, frozenset[str]] = {
     ),
     "iac": frozenset(
         {
-            "kit-review-terraform-plan",
-            "kit-review-bicep-whatif",
             "kit-harden-workflow",
+            "kit-plan-deployment",
         }
     ),
+    "terraform": frozenset({"kit-review-terraform-plan"}),
+    "bicep": frozenset({"kit-review-bicep-whatif"}),
     "workflows": frozenset(
         {
             "kit-spec-explore",
