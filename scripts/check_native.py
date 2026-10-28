@@ -7,7 +7,8 @@ import sys
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
-_COMMAND = "uv run --locked agent-kit context"
+_COMMAND = "uv run --locked --no-sync agent-kit context"
+_SESSION_ENTRYPOINTS = (".venv/Scripts/agent-kit.exe", ".venv/bin/agent-kit")
 _HOOK_TIMEOUT_SECONDS = 10
 _FRONTMATTER_FENCES = 2  # split into empty prefix, metadata, and body
 # Dependencies change through a reviewed, audited lock; agents never install ad hoc.
@@ -154,6 +155,13 @@ def _reviewer_failures(root: Path) -> list[str]:
         failures.append("Copilot reviewer must use the approved read/search tools.")
     if isinstance(copilot, dict) and copilot.get("agents") != []:
         failures.append("Copilot reviewer cannot enable nested workers.")
+    if not isinstance(copilot, dict) or (
+        copilot.get("user-invocable") is not True
+        or copilot.get("disable-model-invocation") is not False
+    ):
+        failures.append(
+            "Copilot reviewer invocation flags must be true/false booleans."
+        )
     if not isinstance(claude, dict) or claude.get("tools") != "Read, Grep, Glob":
         failures.append("Claude reviewer must use the approved Read/Grep/Glob tools.")
     if copilot_body != claude_body:
@@ -201,6 +209,8 @@ def _claude_settings_failures(root: Path) -> list[str]:
     }
     if settings.get("hooks") != expected_hooks:
         failures.append("Claude hook contract changed without a contract review.")
+    if settings.get("disableAllHooks", False) is not False:
+        failures.append("Claude session hooks must not be disabled (disableAllHooks).")
     if settings.get("permissions") != {
         "defaultMode": "default",
         "ask": _VERSION_CONTROL_ASK,
@@ -229,6 +239,12 @@ def main() -> int:
     """Print native contract failures without changing configuration."""
     try:
         failures = check(_ROOT)
+        if not any((_ROOT / name).is_file() for name in _SESSION_ENTRYPOINTS):
+            failures.append(
+                "Local session context entrypoint is missing. Run task bootstrap to "
+                "audit and provision the locked environment; --no-sync hooks never "
+                "install dependencies."
+            )
     except (OSError, ValueError, yaml.YAMLError) as exc:
         print(f"Native contract cannot be parsed: {exc}", file=sys.stderr)
         return 1

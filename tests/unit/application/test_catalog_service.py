@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 import pytest
 
 from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.core.errors import UnreadableDocumentError
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from agent_kit.core.models import CheckReport
@@ -454,3 +458,76 @@ def test_invalid_yaml_diagnostic_does_not_echo_source_content(
 
     assert not report.valid
     assert all(marker not in item.message for item in report.findings)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["packages/backend/.apm/skills/kit-backend/assets", "docs/private"],
+)
+@pytest.mark.parametrize("operation", ["validate", "compose"])
+def test_denied_source_enumeration_aborts_capture(
+    source_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative: str,
+    operation: str,
+) -> None:
+    """Neither source walk may silently return a partial valid census."""
+    denied = source_root / relative
+    denied.mkdir(parents=True)
+    (denied / "resource.txt").write_bytes(b"must be captured")
+    assert _report(source_root).valid
+    failure = PermissionError(13, "controlled enumeration denial", str(denied))
+    scandir = os.scandir
+
+    def denied_scandir(
+        path: str | Path,
+    ) -> AbstractContextManager[Iterator[os.DirEntry[str]]]:
+        if str(path) == str(denied):
+            raise failure
+        return scandir(path)
+
+    def run_operation() -> None:
+        snapshot = FileCatalogAdapter().load(source_root)
+        if operation == "validate":
+            CatalogService().validate(snapshot)
+        else:
+            CatalogService().compose(snapshot, "backend", (), ())
+
+    monkeypatch.setattr(os, "scandir", denied_scandir)
+    with pytest.raises(UnreadableDocumentError, match="cannot be enumerated") as raised:
+        run_operation()
+
+    assert raised.value.__cause__ is failure
+    assert denied.name in str(raised.value)
+    assert str(source_root) not in str(raised.value)
+
+
+@pytest.mark.parametrize("original", [b"", b"approved"])
+def test_denied_source_asset_read_blocks_validation_and_composition(
+    source_root: Path, monkeypatch: pytest.MonkeyPatch, original: bytes
+) -> None:
+    from pathlib import Path
+
+    denied = source_root / "packages/backend/.apm/skills/kit-backend/asset.bin"
+    denied.write_bytes(original)
+    assert _report(source_root).valid
+    denied.write_bytes(b"tampered")
+    read_bytes = Path.read_bytes
+    failure = PermissionError(13, "controlled read denial", str(denied))
+
+    def denied_read(path: Path) -> bytes:
+        if path == denied:
+            raise failure
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", denied_read)
+    snapshot = FileCatalogAdapter().load(source_root)
+    report = CatalogService().validate(snapshot)
+
+    assert not report.valid
+    assert any(
+        item.code == "source.parse" and item.path.endswith("/asset.bin")
+        for item in report.findings
+    )
+    with pytest.raises(ValueError, match="source validation failed"):
+        CatalogService().compose(snapshot, "backend", (), ())

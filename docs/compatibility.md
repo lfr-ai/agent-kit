@@ -48,6 +48,14 @@ values must be finite and positive; NaN and infinity are invalid configuration.
 - The session hook only checks the existence of context entry files and reports
   missing files. It never denies ordinary editing or claims to filter shell commands.
 
+Repository projection ownership requires canonical, runtime-specific role paths
+and attested hashes. Existing unowned files are never adopted, even with identical
+bytes. The drift check inventories root and nested roles under this repository's
+`.github/agents` and `.claude/agents`, except the two root `kit-reviewer` definitions;
+it reports unknown roles without deleting them or scanning user-global discovery.
+Session hooks use `--no-sync`; provision their locked environment with the audited
+`task bootstrap` workflow before session entry.
+
 Source and CLI tests do not prove native approvals, sandboxing, or cloud behavior.
 Before production rollout, exercise actual hosts with synthetic repositories,
 record versions and results, and test both allowed and denied operations.

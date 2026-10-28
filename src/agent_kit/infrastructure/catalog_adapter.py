@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from functools import partial
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, TypeGuard, override
+from typing import TYPE_CHECKING, NoReturn, TypeGuard, override
 
 import yaml
 import yaml.constructor
@@ -239,6 +240,23 @@ def _decode_document(path: Path, relative_path: str) -> SourceDocument:
     return _decoded_document(path, relative_path, content)
 
 
+def _raise_enumeration_error(error: OSError, *, base: Path) -> NoReturn:
+    """Abort capture instead of accepting an incomplete directory census.
+
+    Raises:
+        UnreadableDocumentError: A directory could not be enumerated.
+    """
+    relative = (
+        Path(error.filename).relative_to(base).as_posix()
+        if error.filename is not None
+        else "."
+    )
+    raise UnreadableDocumentError(
+        name=relative,
+        reason="cannot be enumerated; check directory permissions and retry",
+    ) from error
+
+
 def _walk_documents(
     base: Path,
     *,
@@ -248,7 +266,10 @@ def _walk_documents(
 ) -> Iterator[SourceDocument]:
     """Decode files in sorted order, capturing linked directories unfollowed."""
     for current, directories, filenames in os.walk(
-        base, topdown=True, followlinks=False
+        base,
+        topdown=True,
+        followlinks=False,
+        onerror=partial(_raise_enumeration_error, base=base),
     ):
         current_path = Path(current)
         retained: list[str] = []
@@ -357,7 +378,18 @@ class FileCatalogAdapter(CatalogPort):
         """Create the stateless filesystem adapter."""
 
     def load(self, root: Path) -> CatalogSnapshot:
-        """Capture the catalog tree and each safely declared bundle."""
+        """Capture the catalog tree and each safely declared bundle.
+
+        Args:
+            root (Path): Source catalog root to capture without following links.
+
+        Returns:
+            CatalogSnapshot: Captured source inputs and document error flags.
+
+        Raises:
+            UnreadableDocumentError: A source directory cannot be enumerated;
+                no partial snapshot is returned.
+        """
         root_is_symlink = _is_link(root)
         resolved_root = root.resolve(strict=False)
         if root_is_symlink:
@@ -407,7 +439,18 @@ class FileCatalogAdapter(CatalogPort):
         )
 
     def load_composed(self, root: Path) -> ComposedSnapshot:
-        """Capture composed files and provenance without following symlinks."""
+        """Capture composed files and provenance without following symlinks.
+
+        Args:
+            root (Path): Composed workspace to capture.
+
+        Returns:
+            ComposedSnapshot: Captured output bytes and document error flags.
+
+        Raises:
+            UnreadableDocumentError: An output directory cannot be enumerated;
+                no partial snapshot is returned.
+        """
         root_is_symlink = _is_link(root)
         resolved_root = root.resolve(strict=False)
         provenance_path = resolved_root / "provenance.json"
@@ -548,7 +591,10 @@ class FileCatalogAdapter(CatalogPort):
         paths: list[str] = []
         symlinks: list[str] = []
         for current, directories, filenames in os.walk(
-            root, topdown=True, followlinks=False
+            root,
+            topdown=True,
+            followlinks=False,
+            onerror=partial(_raise_enumeration_error, base=root),
         ):
             current_path = Path(current)
             directories[:] = _retained_directories(

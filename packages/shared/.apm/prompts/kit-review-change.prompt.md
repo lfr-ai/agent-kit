@@ -17,36 +17,52 @@ proven problems over a long list of opinions. Do not edit files.
 
 ## Procedure
 
-1. Collect the diff and read every changed hunk with enough surrounding code
-   to understand callers and invariants.
-2. State the intent of the change in one sentence; if the intent is unclear,
-   say so and review against the most likely reading.
-3. Check correctness: logic errors, off-by-one, null or empty handling,
+1. Record the review target, base/head revisions and working-tree state.
+   Include staged, unstaged and untracked changes when that is the requested
+   scope; a branch review uses its actual merge base, not an assumed branch tip.
+2. Read every changed hunk and follow risk-relevant callers, invariants and
+   repository instructions. State exclusions; file selection is not evidence
+   that unchanged consumers are unaffected.
+3. State the intended outcome and acceptance criteria. Separate facts from
+   assumptions; if missing intent changes the verdict, report the ambiguity
+   instead of inventing a requirement.
+4. Check correctness: logic errors, off-by-one, null or empty handling,
    error paths that swallow failures, races, resource leaks.
-4. Check contracts with [kit-consistency](../skills/kit-consistency/SKILL.md):
+5. Check contracts with [kit-consistency](../skills/kit-consistency/SKILL.md):
    renamed fields, changed defaults, status codes, and terminology that drift
    between producer, consumer, docs, and tests.
-5. Check boundaries with
+6. Check boundaries with
    [kit-hexagonal-architecture](../skills/kit-hexagonal-architecture/SKILL.md):
    inner layers importing frameworks, adapters leaking into the core.
-6. Check tests with [kit-test-first](../skills/kit-test-first/SKILL.md): does a
+7. Check tests with [kit-test-first](../skills/kit-test-first/SKILL.md): does a
    test fail without the change, are negative cases covered, are assertions
    weakened or deleted?
-7. Check security basics: untrusted input reaching queries, shells, templates,
+8. Check security basics: untrusted input reaching queries, shells, templates,
    or paths; secrets in code or logs; widened permissions.
-8. For each candidate finding, confirm it by reading the code path. Drop it if
-   you cannot construct a concrete failing input or scenario.
-9. Note what you did not review (generated files, binaries, out-of-scope
-   paths).
+9. Challenge each candidate with a concrete failing input or scenario and
+   evidence against it. Distinguish introduced defects from pre-existing behavior;
+   retain tightly coupled issues but label them accurately.
+10. Consolidate duplicate symptoms of one cause. Report impact, confidence and
+    the smallest useful changed-line location, not a quota of findings.
+11. Inspect supplied check results and their revision. Passing checks do not
+    disprove an untested failure. Request missing execution evidence from the
+    coordinator; this read-only review does not grant shell or delegation.
+12. For a revised patch, check the original finding, its regression and new
+    interactions. Mark resolved findings explicitly; do not repeat stale comments.
+
+Use the [evidence-driven review guide](../skills/kit-feedback-loop/references/review.md)
+for risk-based depth, specialist routing and review-quality feedback.
 
 ## Acceptance gates
 
 - [ ] Every finding cites `path:line` and a concrete failure scenario.
 - [ ] Style preferences and speculative refactors are excluded.
 - [ ] Severity reflects user impact, not effort to fix.
+- [ ] Findings are deduplicated and uncertainty and unavailable checks are explicit.
 
 ## Output
 
 Findings ordered by severity (`blocker`, `major`, `minor`), each with location,
-problem, scenario, and suggested fix. Then "Verified OK" (areas checked with no
-findings) and "Not reviewed". If there are no findings, say so plainly.
+problem, scenario, confidence and suggested fix. Then "Checked with no findings"
+(inspection is not executed verification) and "Not reviewed". If there are no
+findings, say so plainly; this is not merge authorization or proof of correctness.

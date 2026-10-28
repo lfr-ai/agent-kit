@@ -29,13 +29,13 @@ An account can be real without being the approved publishing identity.
 | Control | Operator action |
 | --- | --- |
 | Default branch | `main` was confirmed on 2026-10-21; update the scanning filters if it changes |
-| Branch ruleset | Apply [rulesets/main.json](../.github/rulesets/main.json): pull requests, code-owner review, last-push approval, resolved conversations, stale-approval dismissal; the admin role may bypass only through pull requests. Not active as last checked on 2026-10-26; see [agent access](#agent-access-for-the-improvement-loop) |
-| Required checks | The local ruleset requires `Required toolkit checks`; verify the context after applying it |
+| Branch ruleset | [rulesets/main.json](../.github/rulesets/main.json) defines pull requests, code-owner review, last-push approval, resolved conversations and stale-approval dismissal. Its admin PR bypass covers the entire ruleset, including status checks, not just approval. Not active as last checked on 2026-10-26; see [agent access and remediation](#agent-access-for-the-improvement-loop) before applying it |
+| Required checks | The committed ruleset requires `Required toolkit checks` for non-bypassed PRs; verify the context and hosted enforcement after applying it |
 | Merge queue | The verification workflow listens to `merge_group`; verify actual queue checks before enabling |
 | Dependency review | Runs on pull requests, where GitHub provides the dependency diff's base/head commits; merge queue remains covered by the CI matrix |
 | Dependency graph | Still disabled; enable it before relying on the dependency-review workflow, which currently fails. The required dependency-audit job does not depend on it |
 | Force/deletion protection | Included in the branch ruleset; the pull-request-only admin bypass never permits a direct or force push |
-| Release tags | [rulesets/release-tags.json](../.github/rulesets/release-tags.json) is active; updates/deletion are blocked with no bypass actors |
+| Release tags | [rulesets/release-tags.json](../.github/rulesets/release-tags.json) defines update/deletion protection with no bypass actors, but does not restrict new tag creation. Verify hosted application; a write collaborator can otherwise create a new `v*` tag |
 | Immutable releases | Enable immutable releases so a published release's tag and assets cannot change; the workflow already creates drafts, which remain editable until publication |
 | Actions policy | Require actions to be pinned to full-length commit SHAs; same-repository calls use `$/` and already satisfy that policy |
 | Release environment | Create `release`, restrict it to approved tags, require independent approval, disallow self-review where available |
@@ -47,7 +47,7 @@ An account can be real without being the approved publishing identity.
 | Supply-chain posture | Dependency review and OpenSSF Scorecard run only on public repositories; check their first hosted results |
 | Code coverage | Install the Codecov GitHub App for this repository only; CI uploads with OIDC. Codecov statuses stay advisory; the local 90% branch-coverage gate is authoritative |
 | Automated review | Install the CodeRabbit GitHub App for this repository only and check `@coderabbitai configuration` on a PR. Reviews are advisory; GitHub rulesets control required reviews and checks |
-| Review independence | Agent changes come from a write-role machine account and need the owner's approval; the owner's own pull requests use the reviewed admin bypass. Add a second maintainer for independent review of owner changes |
+| Review independence | With the branch ruleset applied, non-bypassed agent PRs need the owner's approval. Admin PR bypass also skips status-check requirements. Add a second maintainer and remove the bypass, or separately protect checks without bypass; see remediation below |
 | Labels | The twelve labels from [labels.yml](../.github/labels.yml) were applied on 2026-10-21; reconcile hosted labels after inventory changes |
 | Issue intake | Blank issues are disabled; the security contact links to GitHub's private advisory form, with the maintainer contact as fallback |
 
@@ -61,8 +61,9 @@ coverage upload, review, or required status check is active.
 ## CodeRabbit and Codecov on free tiers
 
 Both services are free for this public repository. Neither is a merge gate:
-`Required toolkit checks` and code-owner review remain authoritative, so an
-outage, rate limit, or incorrect review cannot silently weaken the required checks.
+local verification remains authoritative. Hosted `Required toolkit checks` and
+code-owner review require an applied ruleset and are subject to its admin bypass;
+neither service removes that limitation.
 
 ### CodeRabbit
 
@@ -153,19 +154,37 @@ Sources: [CodeRabbit plans](https://docs.coderabbit.ai/management/plans),
 ## Agent access for the improvement loop
 
 The [improvement loop](feedback.md) lets an agent open pull requests against this
-repository from any project. GitHub, not prompts, keeps it contained: the agent
-works under its own identity, and your approval is a required review.
+repository from any project. The intended boundary uses a separate identity and
+hosted controls, not prompts. The permissions below are conditional on applying
+and testing those controls; committed files do not establish that they are active.
 
 | Identity | Role | Can do | Cannot do |
 | --- | --- | --- | --- |
-| You (`@lfr-ai`) | Admin, code owner | Approve agent pull requests; merge your own pull requests through the admin bypass | Push directly to `main`; the bypass applies to pull requests only |
-| Agent machine account | Write collaborator | Push branches, open pull requests, enable auto-merge | Approve or merge without your review, push to `main`, edit workflows, tag, change settings |
+| You (`@lfr-ai`) | Admin, code owner | Approve agent PRs; bypass the entire main ruleset through PRs, including its status checks | Use the PR-only bypass for a direct push to `main` |
+| Agent machine account | Write collaborator with the proposed token below | Push branches, open PRs, enable auto-merge; create new tags unless creation is separately restricted | Bypass an applied main ruleset, change settings, or edit workflows with a token lacking workflow scope |
 
 [rulesets/main.json](../.github/rulesets/main.json) requires a pull request,
 one code-owner approval from someone other than the last pusher, resolved
 conversations and `Required toolkit checks`. The only bypass actor is the
 repository admin role in `pull_request` mode. `check_governance.py` rejects any
-other bypass, mode or role.
+other bypass, mode or role. The bypass is **not approval-only**: it applies to
+all rules in that main ruleset, including `Required toolkit checks`. Local
+validation checks empty ref exclusions, the reviewed one-approval count, strict
+status checks and unique reviewed rule types; it cannot prove server enforcement.
+
+**Operator remediation recommendation:** before relying on required checks for
+admin PRs, approve a policy change that moves status checks into a separate
+ruleset with no bypass actors, or add an independent maintainer and remove the
+admin bypass entirely. The existing committed rulesets are unchanged here.
+Until remediation, manually require successful checks even for admin merges;
+that convention is not server protection.
+
+The release-tag ruleset prevents updates and deletion when applied, not
+creation. A write-role machine account may create a new `v*` tag and trigger the
+release workflow. If only operators should create release tags, separately
+approve a creation restriction with narrowly reviewed operator bypass actors,
+and test both allowed and denied identities. Independently configure and test
+the protected `release` environment; its YAML name alone is not an approval gate.
 
 ### Set it up once
 
@@ -178,7 +197,8 @@ other bypass, mode or role.
    `.github/workflows`. The account has access to this repository only, which
    bounds the token. Set an expiry and store it as `GH_TOKEN` in the agent's
    environment only; the native rules refuse `gh auth` commands.
-3. **Apply the branch ruleset and pull-request settings** as the owner:
+3. **Review the bypass and tag-creation remediation above**, then apply the
+   approved branch ruleset and pull-request settings as the owner:
 
    ```powershell
    gh api --method POST repos/lfr-ai/agent-kit/rulesets --input .github/rulesets/main.json
@@ -186,20 +206,24 @@ other bypass, mode or role.
    ```
 
    After this, you change `main` only through pull requests too. Commit on a
-   branch, open a pull request, and merge it yourself; the bypass skips only the
-   approval you cannot give yourself.
+   branch and open a pull request. The current admin bypass permits merging
+   without approval **and without required checks**; manually wait for successful
+   checks until separately approved non-bypass protection is applied and tested.
 4. **Enable the dependency graph** under *Settings > Code security*. The
    dependency-review workflow fails until it is on.
 5. **Prove the boundary** with the machine account's token: a push to `main` and
    a change under `.github/workflows` must both be rejected, and an agent pull
-   request must wait for your approval. Record the date and result.
+   request must wait for your approval and successful required checks. Test
+   admin PR checks and new-tag creation separately against the approved policy.
+   Record the date and result; this offline change does not perform those tests.
 
 ### Daily flow
 
 The agent pushes `fix/<capability>` and opens a pull request with auto-merge.
-You review it on GitHub and approve. Auto-merge completes once
-`Required toolkit checks` pass. Approving is the human step; the agent cannot
-satisfy it, whatever its prompt says.
+With the required hosted controls active, you review it on GitHub and approve.
+Auto-merge completes once `Required toolkit checks` pass. The write-role agent
+cannot satisfy the independent approval itself. Admin bypass remains the
+separate limitation described above.
 
 Do not loosen the hosted ruleset by hand without updating the committed file; the
 two must agree.

@@ -7,6 +7,7 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 import sys
 from tempfile import NamedTemporaryFile
 
@@ -18,11 +19,18 @@ from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 _ROOT = Path(__file__).resolve().parents[1]
 _LOCK_PATH = ".agents/agentic-setup/native-lock.json"
 _JSON_INDENT = 2
-_ROLE_PREFIXES = (
-    ".github/agents/kit-",
-    ".github/agents/subagents/kit-",
-    ".claude/agents/kit-",
-    ".claude/agents/subagents/kit-",
+_ROLE_PATHS = (
+    re.compile(
+        r"\.github/agents/(?:subagents/)?kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"
+    ),
+    re.compile(r"\.claude/agents/(?:subagents/)?kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
+)
+_DISCOVERY_ROOTS = {
+    ".github/agents": ".agent.md",
+    ".claude/agents": ".md",
+}
+_REPOSITORY_ROLES = frozenset(
+    {".github/agents/kit-reviewer.agent.md", ".claude/agents/kit-reviewer.md"}
 )
 
 
@@ -35,6 +43,7 @@ class _NativeRoleIssue(Enum):
     INVALID_SELECTION = "repository native selection is invalid"
     INVALID_LEDGER = "native role ledger is invalid"
     UNOWNED_LEDGER_PATH = "native role ledger contains an unowned path"
+    INVALID_ROLE_PATH = "native role path must be a canonical runtime-specific filename"
     EDITED_ROLE = "native role was edited independently"
     EXISTING_UNOWNED_ROLE = "unowned native role already exists"
     LINKED_OUTPUT = "native output cannot be a symbolic link"
@@ -123,14 +132,46 @@ def check(root: Path) -> list[str]:
     output = expected(root)
     ledger = json.loads(_owned_path(root, _LOCK_PATH).read_text(encoding="utf-8"))
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in output.items()}
-    if ledger != {"schema_version": 1, "files": hashes}:
-        return ["repository native role source/ownership ledger drifted"]
     failures: list[str] = []
+    if ledger != {"schema_version": 1, "files": hashes}:
+        failures.append("repository native role source/ownership ledger drifted")
     for name, data in output.items():
         path = _owned_path(root, name)
         if path.is_symlink() or not path.is_file() or path.read_bytes() != data:
             failures.append(f"native role projection differs: {name}")
+    discovered: set[str] = set()
+    for directory, suffix in _DISCOVERY_ROOTS.items():
+        discovered.update(_discovered_roles(root, directory, suffix))
+    failures.extend(
+        f"unexpected native role: {name}"
+        for name in sorted(discovered - output.keys() - _REPOSITORY_ROLES)
+    )
     return failures
+
+
+def _discovered_roles(root: Path, directory: str, suffix: str) -> set[str]:
+    """Inventory only repository runtime role directories without following links."""
+    pending = [_owned_path(root, directory)]
+    discovered: set[str] = set()
+    while pending:
+        parent = pending.pop()
+        if not parent.exists():
+            continue
+        for entry in parent.iterdir():
+            name = entry.relative_to(root).as_posix()
+            path = _owned_path(root, name)
+            if path.is_dir():
+                pending.append(path)
+            elif path.name.endswith(suffix):
+                discovered.add(name)
+    return discovered
+
+
+def _is_projection_path(name: str) -> bool:
+    """Accept only canonical runtime filenames, excluding separately authored reviewers."""
+    return name not in _REPOSITORY_ROLES and any(
+        pattern.fullmatch(name) is not None for pattern in _ROLE_PATHS
+    )
 
 
 def _previous_roles(root: Path) -> dict[str, str]:
@@ -156,9 +197,8 @@ def _previous_roles(root: Path) -> dict[str, str]:
 
 def _check_previous_roles(root: Path, previous: dict[str, str]) -> None:
     for name, digest in previous.items():
-        parts = PurePosixPath(name)
-        if "\\" in name or ".." in parts.parts or not name.startswith(_ROLE_PREFIXES):
-            raise _NativeRoleError(_NativeRoleIssue.UNOWNED_LEDGER_PATH)
+        if not _is_projection_path(name):
+            raise _NativeRoleError(_NativeRoleIssue.UNOWNED_LEDGER_PATH, path=name)
         path = _owned_path(root, name)
         if path.exists() and (
             path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest
@@ -169,9 +209,11 @@ def _check_previous_roles(root: Path, previous: dict[str, str]) -> None:
 def _check_planned_roles(
     root: Path, output: dict[str, bytes], previous: dict[str, str]
 ) -> None:
-    for name, data in output.items():
+    for name in output:
+        if not _is_projection_path(name):
+            raise _NativeRoleError(_NativeRoleIssue.INVALID_ROLE_PATH, path=name)
         path = _owned_path(root, name)
-        if name not in previous and path.exists() and path.read_bytes() != data:
+        if name not in previous and path.exists():
             raise _NativeRoleError(_NativeRoleIssue.EXISTING_UNOWNED_ROLE, path=name)
         if path.is_symlink():
             raise _NativeRoleError(_NativeRoleIssue.LINKED_OUTPUT)

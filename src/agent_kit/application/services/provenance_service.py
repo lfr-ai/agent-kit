@@ -162,7 +162,7 @@ def _native_digest(document: SourceDocument) -> str:
 def _actual_hashes(
     snapshot: ComposedSnapshot, findings: list[Finding]
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Hash every regular composed file exactly and with native line endings."""
+    """Hash captured bytes, not unreadable placeholders or parsed YAML values."""
     actual: dict[str, str] = {}
     native_actual: dict[str, str] = {}
     for document in snapshot.files:
@@ -171,6 +171,14 @@ def _actual_hashes(
                 findings,
                 "provenance.symlink",
                 "composed output contains a symlink",
+                document.relative_path,
+            )
+        elif document.parse_error and document.text is None:
+            # Readable malformed YAML has text; failed captures have neither.
+            _finding(
+                findings,
+                "provenance.read",
+                "composed file could not be read; check permissions and retry",
                 document.relative_path,
             )
         elif not document.is_directory:

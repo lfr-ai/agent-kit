@@ -80,8 +80,11 @@ code and summary, limitations, and follow-up items. The script parses git and pl
 unified diffs, including renames, additions, deletions, and binary markers.
 
 The gate fails (exit `1`) when the diff is empty, a changed or renamed-from path is
-outside every `--allow` prefix, no verification command was recorded, a command
-has a non-zero exit code, or an acceptance criterion is `unmet` or `partial`.
+outside every `--allow` prefix, no verification command or acceptance criterion
+was recorded, a command has a non-zero exit code, or an acceptance criterion is
+`unmet` or `partial`. Paths must be repository-relative without parent traversal,
+absolute roots or Windows drives, even when no `--allow` is supplied. Containment
+is lexical: deleted and renamed paths need not exist on the reviewer's machine.
 Unreadable or invalid inputs exit `2`. Output is deterministic: it includes a
 SHA-256 of the diff instead of a timestamp, and `--output` refuses to overwrite an
 existing file without `--force`.

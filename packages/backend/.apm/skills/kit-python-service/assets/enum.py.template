@@ -1,7 +1,8 @@
 """Closed set of wire values with behavior attached to the members.
 
-Copy into the core package and rename. Values are explicit strings because they
-are persisted and sent over the wire; renaming a member must never change data.
+Copy to ``src/<package>/core/status.py`` and rename. Values are explicit strings
+because they are persisted and sent over the wire; renaming a member must never
+change data.
 """
 
 import enum

@@ -2,9 +2,41 @@
 
 APM/source baseline reviewed 2026-10-08; repository governance reviewed 2026-10-09;
 live GitHub settings rechecked 2026-10-21; agentic capability research refreshed
-2026-10-24.
+2026-10-28.
 Source content was written for this toolkit; no company
 application files, proprietary prompts, or third-party skill bodies were copied.
+
+## Agentic review and enforcement refresh, 2026-10-28
+
+The [development review](agentic-development-review.md) contains the detailed
+article walkthrough, current-repository gap matrix, ordered ownership plan,
+implementation evidence and operator-only acceptance work.
+
+- [How the Claude Code team does code review](https://claude.dev/blog/solving-code-review-at-anthropic/):
+  separate implementation, finding verification, consolidation and human
+  approval; vendor-reported throughput/revert metrics are not toolkit guarantees.
+- [Current Claude Code best practices](https://code.claude.com/docs/en/best-practices):
+  distinguish probabilistic instructions from specific harness/checker
+  enforcement; use executable outcomes and task-appropriate independent review,
+  not stronger wording, mandatory fan-out or arbitrary model pins.
+- [Claude review customization](https://code.claude.com/docs/en/code-review-customize)
+  and [Copilot instruction support](https://docs.github.com/en/copilot/reference/custom-instructions-support):
+  instruction discovery differs across hosted review, local commands and IDE
+  surfaces; no configuration file proves a service is active.
+- [Claude hooks](https://code.claude.com/docs/en/hooks) and
+  [Copilot hooks](https://docs.github.com/en/copilot/reference/hooks-reference):
+  native event/payload/failure contracts need exact-host verification; session
+  context must not provision dependencies before audited bootstrap.
+- [GitHub rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets):
+  whole-ruleset bypass and tag creation are distinct from approval exceptions
+  and tag immutability; committed definitions are not live hosted evidence.
+
+Research fetched the two requested primary sources and current official
+follow-on documentation. No third-party article or skill bodies were copied.
+The portable changes extend existing review/feedback resources; no new
+skill, role, runtime, hosted service, integration or context budget was added.
+The APM version remains pinned; current web documentation is not certification
+of newer semantics in 0.33.0.
 
 ## Resource-depth refresh, 2026-10-19
 

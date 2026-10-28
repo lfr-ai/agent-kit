@@ -1,7 +1,7 @@
 """Application service: one use case orchestrated through injected ports.
 
-Copy into 'src/<package>/application/' and split the ports and errors into the
-core package when the project already has those modules. The service owns the
+Copy to ``src/<package>/application/invoicing.py`` and split the ports and errors
+into the core package when the project already has those modules. The service owns the
 use-case policy; adapters behind the ports own storage and time.
 """
 

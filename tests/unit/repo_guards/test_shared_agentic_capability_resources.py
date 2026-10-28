@@ -1,5 +1,6 @@
 """Agentic development skills, prompts and checkers behave as documented."""
 
+from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
 import re
@@ -22,6 +23,7 @@ _HANDOFF_CHECK = runpy.run_path(str(_DELIVERY / "assets/check_handoff.py"))
 _BUDGET_CHECK = runpy.run_path(str(_CONTEXT / "assets/check_context_budget.py"))
 _LINK = re.compile(r"\]\(([^)\s#]+)")
 _TODAY = "--today=2026-10-23"
+_REVIEW_TODAY = datetime.now(tz=UTC).date()
 
 
 def _write(root: Path, relative: str, text: str) -> Path:
@@ -39,6 +41,61 @@ def _frontmatter(path: Path) -> tuple[dict[str, str], str]:
 
 
 # Skill structure
+
+
+def _assert_review_date(text: str) -> None:
+    match = re.search(
+        r"^Reviewed: ([0-9]{4}-[0-9]{2}-[0-9]{2})\.(?:\s|$)", text, re.MULTILINE
+    )
+    assert match is not None, "missing ISO review date"
+    assert date.fromisoformat(match[1]) <= _REVIEW_TODAY, "review date is in the future"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Reviewed: 2026-02-30.",
+        "Reviewed: 20261028.",
+        f"Reviewed: {(_REVIEW_TODAY + timedelta(days=1)).isoformat()}.",
+    ],
+)
+def test_reference_review_date_rejects_missing_invalid_or_future_values(
+    text: str,
+) -> None:
+    with pytest.raises((AssertionError, ValueError)):
+        _assert_review_date(text)
+
+
+def test_reference_review_date_accepts_a_completed_review() -> None:
+    _assert_review_date("Reviewed: 2026-10-23.")
+    _assert_review_date(f"Reviewed: {_REVIEW_TODAY.isoformat()}. Notes follow.")
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "skills/kit-feedback-loop/SKILL.md",
+        "skills/kit-feedback-loop/assets/rubric.md.template",
+        "skills/kit-feedback-loop/assets/review-checklist.md.template",
+        "skills/kit-feedback-loop/assets/iteration-log.md.template",
+        "prompts/kit-run-feedback-loop.prompt.md",
+    ],
+)
+def test_feedback_entrypoints_distinguish_completion_from_blocking(
+    relative: str,
+) -> None:
+    """Keep the declared outcome vocabulary consistent, not certify model behavior."""
+    text = (_SHARED / relative).read_text(encoding="utf-8")
+    for outcome in ("ITERATE", "COMPLETE", "BLOCKED"):
+        assert outcome in text, f"{relative}: missing {outcome}"
+
+
+def test_feedback_facade_does_not_request_numerical_scoring() -> None:
+    text = (_SHARED / "prompts/kit-run-feedback-loop.prompt.md").read_text(
+        encoding="utf-8"
+    )
+    assert "score the change" not in text.casefold()
 
 
 @pytest.mark.parametrize("skill", _NEW_SKILLS, ids=lambda path: path.name)
@@ -69,7 +126,7 @@ def test_every_resource_is_linked_from_skill_and_cites_sources(skill: Path) -> N
     for reference in (skill / "references").glob("*.md"):
         content = reference.read_text(encoding="utf-8")
         assert "## Primary sources" in content, reference.name
-        assert "Reviewed: 2026-10-23" in content, reference.name
+        _assert_review_date(content)
         assert re.search(r"\]\(https://", content), reference.name
 
 

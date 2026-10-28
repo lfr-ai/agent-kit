@@ -4,7 +4,7 @@
     "sessionStart": [
       {
         "type": "command",
-        "command": "uv run --locked agent-kit context",
+        "command": "uv run --locked --no-sync agent-kit context",
         "timeoutSec": 10
       }
     ]

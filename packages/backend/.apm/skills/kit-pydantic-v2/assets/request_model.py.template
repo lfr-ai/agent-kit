@@ -1,4 +1,7 @@
-"""Validated transport input kept outside the domain layer."""
+"""Validated transport input kept outside the domain layer.
+
+Copy to ``src/myapp/presentation/requests/create_record.py``.
+"""
 
 from typing import Annotated
 

@@ -25,8 +25,10 @@ Maintainers decide unresolved technical questions and record durable decisions.
 
 ## Repository
 
-`@lfr-ai` owns the public `lfr-ai/agent-kit` repository. The governance gate
-rejects ownership or reporting metadata that diverges from
-[.github/maintainers.json](.github/maintainers.json). Hosted rulesets and
-security features are configured through [GitHub setup](docs/github-setup.md);
-committed configuration does not prove hosted enforcement.
+Approved ownership and private reporting routes are defined in
+[.github/maintainers.json](.github/maintainers.json), not inferred from prose.
+The governance gate validates that structured source, matching CODEOWNERS, and
+issue-intake repository links and labels; it does not parse contact or ownership
+claims in prose documents. Hosted rulesets and security features are configured
+through [GitHub setup](docs/github-setup.md); committed configuration does not
+prove hosted enforcement.

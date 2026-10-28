@@ -6,14 +6,21 @@
 [Taskfile.yml](../Taskfile.yml) and the CI workflow invoke it without formatting
 or refreshing generated sources. Pre-commit is supplementary, not the only CI gate.
 
-The [CI workflow](../.github/workflows/ci.yml) runs four independent jobs in
-parallel: `verify` (the gate above plus packaging, on Ubuntu and Windows with
-Python 3.13 and 3.14), `precommit` (all hooks once on Ubuntu, with cached hook
-environments), `smoke` (real APM delivery on the same OS/Python matrix) and
-`audit` (the reusable [dependency audit](../.github/workflows/dependency-audit.yml),
-which also runs daily).
-`Required toolkit checks` is the only status the branch ruleset requires; the
-governance gate rejects a summary that omits any other job and any step job
+The [CI workflow](../.github/workflows/ci.yml) first requires `audit` (the reusable
+[dependency audit](../.github/workflows/dependency-audit.yml), which also runs
+daily). Only after it succeeds may the dependency-consuming jobs install:
+`verify` (the gate above plus packaging, on Ubuntu and Windows with Python 3.13
+and 3.14), `precommit` (all hooks once on Ubuntu, with cached hook environments),
+and `smoke` (real APM delivery on the same OS/Python matrix) run in parallel.
+The `coverage` upload job follows `verify`.
+
+The always-run `Required toolkit checks` summary needs all five other jobs and
+requires every result to be successful, including the audit and coverage upload
+job. It is the only status required by the committed branch ruleset, not proof of
+hosted enforcement; the admin PR bypass also bypasses this check requirement.
+See [GitHub setup](github-setup.md#agent-access-for-the-improvement-loop).
+The governance gate rejects a summary that omits any other job, missing
+success-only audit dependencies on the three install jobs, and any step job
 without an explicit timeout. CI pins uv 0.13.3; `pyproject.toml` declares the
 minimum supported uv, and `tox-uv-bare` reuses that uv instead of installing a
 second copy into the environment.

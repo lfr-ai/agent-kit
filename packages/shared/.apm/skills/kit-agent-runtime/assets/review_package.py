@@ -7,9 +7,9 @@ runs git or the verification commands itself: it packages evidence that the work
 already produced so the reviewer can check it.
 
 Gate findings are printed to stderr as ``path:line: message`` and make the exit code
-1: a failed or missing verification command, an unmet acceptance criterion, an
-empty diff, or a changed file outside the ``--allow`` path prefixes. Exit code 2 means
-the inputs could not be read.
+1: a failed or missing verification command, missing or unmet acceptance criteria,
+an empty diff, or a changed file outside the ``--allow`` path prefixes. Exit code 2
+means the inputs could not be read.
 """
 
 import argparse
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import sys
 from typing import TextIO
@@ -410,11 +410,21 @@ def parse_evidence(text: str) -> Evidence:
 
 
 def _inside(path: str, prefixes: tuple[str, ...]) -> bool:
-    """Return True when a POSIX path equals or sits below an allowed prefix."""
-    candidate = PurePosixPath(path)
+    """Check repository-relative containment without accessing the filesystem."""
+    candidate = PurePosixPath(path.replace("\\", "/"))
+    if (
+        not candidate.parts
+        or candidate.is_absolute()
+        or PureWindowsPath(path).drive
+        or ".." in candidate.parts
+    ):
+        return False
     return any(
         candidate == PurePosixPath(prefix) or PurePosixPath(prefix) in candidate.parents
         for prefix in prefixes
+        if not PurePosixPath(prefix).is_absolute()
+        and not PureWindowsPath(prefix).drive
+        and ".." not in PurePosixPath(prefix).parts
     )
 
 
@@ -430,15 +440,17 @@ def gate_findings(
     findings: list[str] = []
     if not changes:
         findings.append(f"{diff_name}:1: diff contains no changed files")
-    if allow:
-        findings.extend(
-            f"{diff_name}:{change.line}: '{change.path}' is outside the allowed paths"
-            for change in changes
-            if not _inside(change.path, allow)
-            or (change.old_path is not None and not _inside(change.old_path, allow))
-        )
+    prefixes = allow or (".",)
+    findings.extend(
+        f"{diff_name}:{change.line}: '{change.path}' is outside the allowed paths"
+        for change in changes
+        if not _inside(change.path, prefixes)
+        or (change.old_path is not None and not _inside(change.old_path, prefixes))
+    )
     if not evidence.commands:
         findings.append(f"{evidence_name}:1: no verification command was recorded")
+    if not evidence.acceptance:
+        findings.append(f"{evidence_name}:1: no acceptance criterion was recorded")
     findings.extend(
         f"{evidence_name}:1: command failed with exit {item.exit_code}: {item.command}"
         for item in evidence.commands

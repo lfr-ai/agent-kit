@@ -12,7 +12,7 @@
 - Checks re-run after the change:
   - `<command>`: <result>
 - Criteria status: <met / partial / unmet per criterion>
-- Decision: iterate / stop, because <rule>
+- Outcome: COMPLETE / ITERATE / BLOCKED, because <rule>
 
 ## Iteration 2
 
@@ -20,11 +20,13 @@
 - Change made:
 - Checks re-run after the change:
 - Criteria status:
-- Decision:
+- Outcome:
 
 ## Close
 
 - Iterations used: <n of budget>
+- Outcome: COMPLETE / ITERATE / BLOCKED
 - Stop reason: <criteria met / budget spent / blocked / repeated finding>
 - Remaining findings: <none / list with severity>
+- Required next action and owner: <none / action; exhaustion does not mean success>
 - Lessons recorded: <none / link to the entry or check>

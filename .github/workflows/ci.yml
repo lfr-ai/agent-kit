@@ -20,10 +20,11 @@ concurrency:
   group: toolkit-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Independent jobs run in parallel; the "Required toolkit checks" summary is the
-# only status that branch rulesets require.
+# Audit before full installs; dependency-consuming jobs then run in parallel.
+# "Required toolkit checks" is the only status the committed branch ruleset requires.
 jobs:
   verify:
+    needs: audit
     name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:
       fail-fast: false
@@ -109,6 +110,7 @@ jobs:
           fail_ci_if_error: false
 
   precommit:
+    needs: audit
     name: Pre-commit hooks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -144,6 +146,7 @@ jobs:
         run: uv run --locked pre-commit run --all-files --show-diff-on-failure
 
   smoke:
+    needs: audit
     name: APM smoke (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:
       fail-fast: false

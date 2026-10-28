@@ -701,6 +701,81 @@ def test_review_package_requires_changes_and_commands(
     assert "no verification command was recorded" in err
 
 
+@pytest.mark.parametrize("acceptance", [None, []])
+def test_review_package_requires_acceptance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], acceptance: object
+) -> None:
+    diff = tmp_path / "change.diff"
+    diff.write_text(_PLAIN_DIFF, encoding="utf-8")
+    evidence = _evidence(tmp_path, acceptance=acceptance)
+    code = _REVIEW["main"](["--diff", str(diff), "--evidence", str(evidence)])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "no acceptance criterion was recorded" in captured.err
+    assert "- Gate: blocked" in captured.out
+
+
+def test_review_package_requires_missing_acceptance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    diff = tmp_path / "change.diff"
+    diff.write_text(_PLAIN_DIFF, encoding="utf-8")
+    evidence = _evidence(tmp_path)
+    data = json.loads(evidence.read_text(encoding="utf-8"))
+    del data["acceptance"]
+    evidence.write_text(json.dumps(data), encoding="utf-8")
+    assert _REVIEW["main"](["--diff", str(diff), "--evidence", str(evidence)]) == 1
+    assert "no acceptance criterion was recorded" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/../outside.py",
+        "../src/file.py",
+        "/src/file.py",
+        "C:/src/file.py",
+        "src\\..\\outside.py",
+        "src-sibling/file.py",
+    ],
+)
+@pytest.mark.parametrize("renamed_from", [False, True])
+def test_review_package_rejects_outside_paths(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    path: str,
+    renamed_from: bool,
+) -> None:
+    diff = tmp_path / "change.diff"
+    if renamed_from:
+        text = (
+            "diff --git a/src/old.py b/src/new.py\n"
+            f"rename from {path}\nrename to src/new.py\n"
+        )
+    else:
+        text = f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-old\n+new\n"
+    diff.write_text(text, encoding="utf-8")
+    code = _REVIEW["main"](
+        [
+            "--diff",
+            str(diff),
+            "--evidence",
+            str(_evidence(tmp_path)),
+            "--allow",
+            "src",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "outside the allowed paths" in captured.err
+    assert "- Gate: blocked" in captured.out
+
+
+@pytest.mark.parametrize("path", ["src", "src/file.py", "src/nested/file.py"])
+def test_review_package_accepts_contained_paths(path: str) -> None:
+    assert _REVIEW["_inside"](path, ("src",))
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

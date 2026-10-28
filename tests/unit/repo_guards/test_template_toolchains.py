@@ -34,7 +34,8 @@ _COMPANIONS = {"kit-test-first": ("kit-hexagonal-architecture",)}
 # Consumer-owned modules that templates import but deliberately do not ship.
 _CONSUMER_MODULES = frozenset({"shop.infrastructure.database"})
 _DESTINATION = re.compile(
-    r"Copy (?:to|into|as)\s+(?P<quote>'|``)(?P<path>[^'`\n]+)\.py(?P=quote)"
+    r"(?:Copy (?:to|into|as)|for example)\s+"
+    r"(?P<quote>'|``)(?P<path>[^'`\n]+)\.py(?P=quote)"
 )
 _TERRAFORM_BLUEPRINT = (
     _PACKAGES / "terraform/.apm/skills/kit-terraform-validation/assets/blueprint"
@@ -117,7 +118,7 @@ def _node_names(node: ast.AST) -> set[str]:
 def _imported_names(node: ast.AST) -> set[str]:
     if isinstance(node, ast.Import):
         return {(alias.asname or alias.name).split(".")[0] for alias in node.names}
-    if isinstance(node, ast.ImportFrom) and not _is_local(node):
+    if isinstance(node, ast.ImportFrom):
         return {alias.asname or alias.name for alias in node.names}
     return set()
 
@@ -133,16 +134,24 @@ def _defined_names(tree: ast.Module) -> set[str]:
     return names
 
 
-def _unresolved_imports(skill: Path, companions: tuple[Path, ...]) -> list[str]:
-    provided: set[str] = set()
+def _provided_modules(skill: Path, companions: tuple[Path, ...]) -> dict[str, set[str]]:
+    provided: dict[str, set[str]] = {}
     for source in (skill, *companions):
         for template in _python_templates(source):
             text = template.read_text(encoding="utf-8")
-            provided |= _defined_names(ast.parse(text))
-            provided.add(template.name.removesuffix(_PY_SUFFIX))
-            provided.update(
-                Path(match.group("path")).name for match in _DESTINATION.finditer(text)
-            )
+            tree = ast.parse(text)
+            for match in _DESTINATION.finditer(ast.get_docstring(tree) or ""):
+                parts = Path(match.group("path")).parts
+                if parts[0] == "src":
+                    parts = parts[1:]
+                if parts[-1] == "__init__":
+                    parts = parts[:-1]
+                provided.setdefault(".".join(parts), set()).update(_defined_names(tree))
+    return provided
+
+
+def _unresolved_imports(skill: Path, companions: tuple[Path, ...]) -> list[str]:
+    provided = _provided_modules(skill, companions)
     findings: list[str] = []
     for template in _python_templates(skill):
         tree = ast.parse(template.read_text(encoding="utf-8"))
@@ -155,7 +164,16 @@ def _unresolved_imports(skill: Path, companions: tuple[Path, ...]) -> list[str]:
                 findings.extend(
                     f"{template.name}: {node.module}.{alias.name}"
                     for alias in node.names
-                    if alias.name not in provided
+                    if not any(
+                        alias.name in provided.get(module, set())
+                        or f"{module}.{alias.name}" in provided
+                        for module in (
+                            node.module or "",
+                            ".".join(
+                                ("<package>", *(node.module or "").split(".")[1:])
+                            ),
+                        )
+                    )
                 )
     return findings
 
@@ -209,6 +227,93 @@ def test_import_gate_reports_a_renamed_function(tmp_path: Path) -> None:
     findings = _unresolved_imports(skill, ())
 
     assert findings == ["test_service.py.template: shop.service.settle_invoice"]
+
+
+@pytest.mark.parametrize("module", ["shop.other", "shop.missing", "myapp.service"])
+def test_import_gate_rejects_a_symbol_exported_only_by_another_module(
+    tmp_path: Path, module: str
+) -> None:
+    skill = tmp_path / "skills" / "kit-example"
+    assets = skill / "assets"
+    assets.mkdir(parents=True)
+    (assets / "service.py.template").write_text(
+        '"""Copy to \'shop/service.py\'."""\n\n\ndef settle() -> None:\n    pass\n',
+        encoding="utf-8",
+    )
+    (assets / "other.py.template").write_text(
+        '"""Copy to \'shop/other.py\'."""\n\n\ndef cancel() -> None:\n    pass\n',
+        encoding="utf-8",
+    )
+    (assets / "test_service.py.template").write_text(
+        f"from {module} import settle\n", encoding="utf-8"
+    )
+
+    findings = _unresolved_imports(skill, ())
+
+    assert findings == [f"test_service.py.template: {module}.settle"], (
+        "A symbol from another module must not satisfy this import"
+    )
+
+
+@pytest.mark.parametrize("quote", ["'", "``"], ids=["single-quotes", "backticks"])
+@pytest.mark.parametrize("use_companion", [False, True], ids=["skill", "companion"])
+def test_import_gate_accepts_declared_exports_and_existing_exceptions(
+    tmp_path: Path, quote: str, use_companion: bool
+) -> None:
+    skill = tmp_path / "kit-example"
+    skill.mkdir()
+    companion = tmp_path / "kit-companion"
+    companion.mkdir()
+    source = companion if use_companion else skill
+    (source / "different_filename.py.template").write_text(
+        f'"""Copy to {quote}shop/services/payments.py{quote}."""\n\n'
+        "def settle() -> None:\n    pass\n",
+        encoding="utf-8",
+    )
+    (source / "public.py.template").write_text(
+        '"""Copy to \'shop/public.py\'."""\n'
+        "from shop.services.payments import settle as settle_payment\n",
+        encoding="utf-8",
+    )
+    (skill / "test_service.py.template").write_text(
+        "from shop.services.payments import settle as settle_payment\n"
+        "from shop.public import settle_payment\n"
+        "from shop.services import payments\n"
+        "from shop.infrastructure.database import ConsumerOwnedSession\n"
+        "from external_library_not_installed import ExternalClient\n",
+        encoding="utf-8",
+    )
+
+    findings = _unresolved_imports(skill, (companion,) if use_companion else ())
+
+    assert findings == [], "Declared exports and consumer/external imports must resolve"
+
+
+@pytest.mark.parametrize(
+    ("declaration", "destination"),
+    [
+        ("Copy into", "src/shop/services/payments"),
+        ("Copy to", "src/<package>/services/payments"),
+        ("Copy as", "shop/services/payments"),
+        ("Copy into the consumer's adapter (for example", "shop/services/payments"),
+    ],
+    ids=["src-layout", "package-placeholder", "copy-as", "example-destination"],
+)
+def test_import_gate_resolves_declared_module_layouts(
+    tmp_path: Path, declaration: str, destination: str
+) -> None:
+    (tmp_path / "source.py.template").write_text(
+        f'"""{declaration} \'{destination}.py\'."""\n\n'
+        "def settle() -> None:\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_service.py.template").write_text(
+        "from shop.services.payments import settle\n", encoding="utf-8"
+    )
+
+    assert _unresolved_imports(tmp_path, ()) == [], (
+        "The declared copy path must resolve"
+    )
 
 
 def test_terraform_blueprint_is_canonically_formatted(tmp_path: Path) -> None:

@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.application.services.catalog_service import (
+    CatalogService,
+    CompositionCollisionError,
+)
 from agent_kit.core.models import CompositionPlan, PlannedFile
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 import agent_kit.infrastructure.output_adapter as output_module
@@ -176,6 +179,28 @@ def test_casefold_destination_collision_is_rejected(source_root: Path) -> None:
 
     with pytest.raises(ValueError, match="case-insensitive composition collision"):
         _plan(source_root)
+
+
+@pytest.mark.parametrize("name", ["selection.json", "Selection.JSON"])
+def test_authored_selection_collision_is_rejected_before_publication(
+    source_root: Path, tmp_path: Path, name: str
+) -> None:
+    bundle = source_root / "packages/backend"
+    authored = bundle / ".apm" / name
+    authored.write_bytes(b'{"authored": true}')
+    manifest_path = bundle / "apm.yml"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["includes"].append(f".apm/{name}")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert CatalogService().validate(FileCatalogAdapter().load(source_root)).valid
+    output = tmp_path / "collision"
+
+    with pytest.raises(CompositionCollisionError, match="composition collision"):
+        _materialize(source_root, output)
+
+    assert authored.read_bytes() == b'{"authored": true}'
+    assert not output.exists()
+    assert list(tmp_path.iterdir()) == [source_root]
 
 
 def test_failed_atomic_rename_cleans_staging_output(

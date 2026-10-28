@@ -2,7 +2,10 @@
 
 Task: <one-line outcome>
 Changed paths: <from the diff, not memory>
-Governing rules re-read: <policy, instructions by glob, skills used>
+Review target and base/head revisions: <include working-tree/untracked scope>
+Governing context checked: <policy, matching instructions, relevant skill gates>
+Acceptance criteria and assumptions: <link; identify missing or disputed intent>
+Runtime claims: <supported provider, host/harness/version, or outside task scope>
 
 ## 1. Deterministic checks (after the last edit)
 
@@ -17,9 +20,9 @@ Governing rules re-read: <policy, instructions by glob, skills used>
 ## 2. Inspection (cite path:line for every finding)
 
 - [ ] Names state meaning and unit; no abbreviations a newcomer must guess.
-- [ ] Numeric literals other than 0 and 1 are named constants.
-- [ ] Public functions, classes and modules have docstrings with arguments,
-      returns and raised errors.
+- [ ] Constants, units and literal exceptions follow the project's conventions.
+- [ ] Public API and docstring documentation follows the project's policy and
+      matches changed arguments, returns and errors.
 - [ ] Types are concrete; no `Any`, casts or untyped public signatures.
 - [ ] Code sits in the owning layer; dependencies point inward; I/O at edges.
 - [ ] Errors are specific, chained and actionable; nothing is swallowed.
@@ -27,6 +30,18 @@ Governing rules re-read: <policy, instructions by glob, skills used>
 - [ ] Documentation, examples and changelog match the new behavior.
 - [ ] No secrets, personal data, absolute local paths or debug leftovers.
 - [ ] No generated file was edited by hand.
+- [ ] Risk-relevant callers, defaults, permissions and unchanged consumers checked.
+- [ ] Each candidate has a concrete failure scenario and contrary evidence checked.
+- [ ] Duplicate symptoms merged; introduced and pre-existing issues distinguished.
+- [ ] Passing checks used only for the contracts they actually test.
+- [ ] Revised patches resolve the original finding without new regressions.
+
+| Severity | Confidence | Location | Failure scenario and impact | Disposition |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+Review exclusions and unavailable execution: <explicit paths/surfaces and reasons>
+Missing access is not an exclusion from an agreed acceptance criterion.
 
 ## 3. Acceptance criteria
 
@@ -42,6 +57,7 @@ Governing rules re-read: <policy, instructions by glob, skills used>
 
 ## 5. Decision
 
-- Iterate / stop:
+- Outcome: COMPLETE / ITERATE / BLOCKED
 - Reason (rule from the iterate-or-stop table):
 - Remaining findings by severity:
+- Required next action and owner if blocked:

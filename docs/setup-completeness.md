@@ -24,8 +24,8 @@ owners, documented extensions and consumer verification work.
 
 The original inventory contained 74 skills, 31 instructions, 24 roles, 24 prompt
 facades, 22 scripts, 11 integrations, five asset categories and three hooks.
-The current source contains 79 skills, 51 instructions, 27 roles and 41 prompt
-files. Consolidation intentionally does not create a duplicate discovery entry
+The 2026-10-28 source census contains 83 skills, 54 instructions, 27 roles and
+45 prompt files. Consolidation intentionally does not create a duplicate discovery entry
 for each original capability. The
 [coverage mapping](../.agents/agentic-setup/coverage.json) records original
 identities and is authoritative for replacements and exclusions; current
@@ -40,18 +40,21 @@ MCP servers.
 
 ## 2. Inspect the library, then select it
 
-The canonical library has 79 skills, split by ownership:
+The 2026-10-28 canonical library has 83 skills, split by ownership:
 
 | Bundle | Skills | Resource emphasis |
 | --- | --- | --- |
 | toolkit | 4 | Adoption, audit, capability authoring, configuration review |
-| shared | 21 | Context, project memory, feedback loops, planning, subagent delivery, architecture, consistency, tests, agents, editor/MCP, documentation, refactoring, secure code, supply chain, repository setup and release |
-| backend | 15 | Service/conventions, FastAPI, auth, contracts, API tests, CLI tools, configuration, SQL persistence, graph databases, migrations, domain, Jinja, data libraries and packaging |
+| shared | 22 | Context, project memory, feedback loops, planning, subagent delivery, architecture, consistency, tests, agents, editor/MCP, documentation, refactoring, secure code, supply chain, repository setup and release |
+| backend | 16 | Service/conventions, FastAPI, auth, contracts, API tests, CLI tools, configuration, SQL persistence, graph databases, migrations, domain, Jinja, data libraries, packaging and project bootstrap |
 | frontend | 15 | Components, design system, build tooling, client auth, accessibility, browser evidence/tests, forms, routing, state, realtime and public configuration |
 | coordination | 2 | Cross-stack contract, journey and rollout; shared naming registry |
-| iac | 8 | Infrastructure evidence, Azure what-if, Terraform plan, CI, containers, observability, edge networking and remote access |
+| iac | 7 | Infrastructure evidence, Azure what-if, CI, containers, observability, edge networking and remote access |
 | workflows | 6 | Specification lifecycle, graph impact, duplication, simplification, codebase audit and modernization |
 | ai | 8 | Retrieval, model clients, gateways, evaluation, agent systems, graph execution, streaming and queues |
+| terraform | 1 | Selected Terraform planning and state workflow |
+| bicep | 1 | Selected Bicep module authoring |
+| remote-access | 1 | Selected remote-access configuration |
 
 Do not load this whole library into every session. Descriptions select a skill;
 its short procedure selects task-specific references, assets and checks.

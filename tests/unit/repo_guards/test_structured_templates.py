@@ -18,16 +18,32 @@ _TEMPLATES = sorted(
 )
 
 
-def _repeated_yaml_keys(node: Node | None) -> list[str]:
-    """Return scalar mapping keys that appear more than once at any depth."""
+def _repeated_yaml_keys(node: Node | None, loader: yaml.SafeLoader) -> list[str]:
+    """Return scalar keys whose loaded identities collide at any depth."""
     if isinstance(node, MappingNode):
-        keys = [key.value for key, _ in node.value if isinstance(key, ScalarNode)]
-        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        # A merge directive is not a key in the loaded mapping.
+        scalar_keys = [
+            key
+            for key, _ in node.value
+            if isinstance(key, ScalarNode) and key.tag != "tag:yaml.org,2002:merge"
+        ]
+        keys = [loader.construct_object(key) for key in scalar_keys]
+        repeated = sorted(
+            {
+                key.value
+                for key, loaded in zip(scalar_keys, keys, strict=True)
+                if keys.count(loaded) > 1
+            }
+        )
         return repeated + [
-            name for _, value in node.value for name in _repeated_yaml_keys(value)
+            name
+            for _, value in node.value
+            for name in _repeated_yaml_keys(value, loader)
         ]
     if isinstance(node, SequenceNode):
-        return [name for item in node.value for name in _repeated_yaml_keys(item)]
+        return [
+            name for item in node.value for name in _repeated_yaml_keys(item, loader)
+        ]
     return []
 
 
@@ -57,9 +73,101 @@ def test_structured_template_parses_without_repeated_keys(template: Path) -> Non
         tomllib.loads(text)
     else:
         list(yaml.safe_load_all(text))
-        repeated = [
-            name
-            for document in yaml.compose_all(text, Loader=yaml.SafeLoader)
-            for name in _repeated_yaml_keys(document)
-        ]
+        loader = yaml.SafeLoader(text)
+        try:
+            repeated = []
+            while loader.check_data():
+                repeated.extend(_repeated_yaml_keys(loader.get_node(), loader))
+        finally:
+            loader.dispose()
         assert not repeated, repeated
+
+
+@pytest.mark.parametrize(
+    ("text", "repeated"),
+    [
+        ("name: first\nname: second\n", "name"),
+        ("1: first\n0x1: second\n", "0x1"),
+        ("1: first\n01: second\n", "01"),
+        ("1: first\n1.0: second\n", "1.0"),
+        ("true: first\n1: second\n", "1"),
+        ("false: first\n0: second\n", "0"),
+        ("true: first\nyes: second\n", "yes"),
+        ("null: first\n~: second\n", "~"),
+        ("nested:\n  - 1: first\n    0x1: second\n", "0x1"),
+        ("name: first\n---\n1: first\n0x1: second\n", "0x1"),
+    ],
+    ids=[
+        "same-spelling",
+        "hexadecimal",
+        "octal",
+        "float-integer",
+        "true-integer",
+        "false-integer",
+        "boolean-spellings",
+        "null-spellings",
+        "nested-sequence",
+        "later-document",
+    ],
+)
+def test_yaml_template_rejects_keys_with_equal_loaded_values(
+    tmp_path: Path, text: str, repeated: str
+) -> None:
+    template = tmp_path / "example.yaml.template"
+    template.write_text(text, encoding="utf-8")
+
+    with pytest.raises(AssertionError, match=repeated):
+        test_structured_template_parses_without_repeated_keys(template)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1: numeric\n'1': string\n",
+        "true: boolean\n'true': string\n",
+        "1.0: numeric\n'1.0': string\n",
+        "null: empty\n'null': string\n",
+        "1: first\n2: second\n",
+        "left:\n  name: first\nright:\n  name: second\n",
+        "name: first\n---\nname: second\n",
+        "",
+        "---\n---\n",
+        "base: &base {value: default}\ncopy: {<<: *base, value: override}\n",
+    ],
+    ids=[
+        "integer-string",
+        "boolean-string",
+        "float-string",
+        "null-string",
+        "distinct-numbers",
+        "separate-mappings",
+        "separate-documents",
+        "empty-stream",
+        "empty-documents",
+        "merge-override",
+    ],
+)
+def test_yaml_template_accepts_distinct_loaded_keys(tmp_path: Path, text: str) -> None:
+    template = tmp_path / "example.yml.template"
+    template.write_text(text, encoding="utf-8")
+
+    test_structured_template_parses_without_repeated_keys(template)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "name: [unterminated\n",
+        "? [unhashable, key]\n: value\n",
+        "key: !unknown value\n",
+    ],
+    ids=["invalid-syntax", "unhashable-key", "unknown-tag"],
+)
+def test_yaml_template_preserves_explicit_loader_errors(
+    tmp_path: Path, text: str
+) -> None:
+    template = tmp_path / "invalid.yaml.template"
+    template.write_text(text, encoding="utf-8")
+
+    with pytest.raises(yaml.YAMLError):
+        test_structured_template_parses_without_repeated_keys(template)

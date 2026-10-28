@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 from email.parser import BytesParser
 from enum import Enum
 import hashlib
@@ -12,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 import tarfile
+from tempfile import NamedTemporaryFile
 import tomllib
 from typing import TypeGuard
 import zipfile
@@ -24,6 +26,7 @@ from scripts.check_governance import publication_blockers
 
 _ROOT = Path(__file__).resolve().parents[1]
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
+_CONSOLE_ENTRY_POINT = "agent_kit.main:main"
 _BUNDLES = (
     "shared",
     "backend",
@@ -42,9 +45,10 @@ class _ReleaseIssue(Enum):
     """Stable diagnostics for release metadata, archives, and staging."""
 
     INVALID_PROJECT_VERSION = "project version must be a numeric three-part release"
-    INVALID_WHEEL = "wheel metadata or license does not match the release"
+    INVALID_WHEEL = "wheel code, entry point, metadata or license is invalid"
     UNSAFE_SDIST = "sdist contains unsafe members"
     INVALID_SDIST_LICENSE = "sdist license does not match"
+    INVALID_SDIST_CONTENT = "sdist implementation or build metadata is invalid"
     DUPLICATE_SOURCE_ENTRIES = "source archive has duplicate entries"
     UNTRUSTED_SOURCE = "source archive does not match independently composed source"
     INVALID_PROVENANCE = "source archive provenance is invalid"
@@ -53,7 +57,10 @@ class _ReleaseIssue(Enum):
     INVALID_SOURCE_PATH = "source archive provenance or path is invalid"
     INVALID_SOURCE_MANIFEST = "source archive license or manifest is invalid"
     LINKED_BUILD_DIRECTORY = (
-        "release staging must not traverse a linked build directory"
+        "release preparation must not traverse a linked build directory"
+    )
+    INVALID_CHECKSUM_TARGET = (
+        "release checksums require an owned regular file in the build directory"
     )
     INVALID_STAGING_DIRECTORY = "release staging must be an owned regular directory"
     UNKNOWN_STAGING_ENTRIES = "release staging contains unknown or linked entries"
@@ -112,17 +119,34 @@ def _artifacts(root: Path, version: str) -> dict[Path, str]:
     }
 
 
+class _EntryPointParser(configparser.ConfigParser):
+    """Keep installed console command names case-sensitive."""
+
+    # cspell:ignore optionstr
+    def optionxform(self, optionstr: str) -> str:
+        """Preserve the exact console command name during parsing and lookup."""
+        return optionstr
+
+
 def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
-    """Inspect metadata and actual bundled license without installing the wheel.
+    """Require package code, the declared CLI, metadata, and the bundled license.
 
     Raises:
-        _ReleaseContractError: The wheel metadata or license is invalid.
+        _ReleaseContractError: The wheel content is invalid.
     """
     with zipfile.ZipFile(path) as archive:
         prefix = f"agent_kit-{version}.dist-info"
+        archive.read("agent_kit/__init__.py")
+        entry_points = _EntryPointParser(interpolation=None)
+        entry_points.read_string(
+            archive.read(f"{prefix}/entry_points.txt").decode("utf-8")
+        )
         metadata = BytesParser().parsebytes(archive.read(f"{prefix}/METADATA"))
         if (
-            metadata.get_all("Version") != [version]
+            not archive.read("agent_kit/main.py").strip()
+            or entry_points.get("console_scripts", "agent-kit", fallback="")
+            != _CONSOLE_ENTRY_POINT
+            or metadata.get_all("Version") != [version]
             or metadata.get_all("Name") != ["agent-kit"]
             or metadata.get_all("License-Expression") != ["MIT"]
             or archive.read(f"{prefix}/licenses/LICENSE") != license_bytes
@@ -130,11 +154,26 @@ def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
             raise _ReleaseContractError(_ReleaseIssue.INVALID_WHEEL)
 
 
-def _sdist(path: Path, version: str, license_bytes: bytes) -> None:
-    """Read the source license while rejecting linked or unsafe members.
+def _sdist_file(archive: tarfile.TarFile, name: str) -> bytes:
+    """Read one required regular source member without extracting to disk.
 
     Raises:
-        _ReleaseContractError: A member is unsafe or the license differs.
+        _ReleaseContractError: The required source member is not a file.
+    """
+    stream = archive.extractfile(name)
+    if stream is None:
+        raise _ReleaseContractError(_ReleaseIssue.INVALID_SDIST_CONTENT)
+    with stream:
+        return stream.read()
+
+
+def _sdist(
+    path: Path, version: str, license_bytes: bytes, *, project_bytes: bytes
+) -> None:
+    """Require source code and release/build metadata, rejecting unsafe members.
+
+    Raises:
+        _ReleaseContractError: A member, implementation, build recipe, or license is invalid.
     """
     with tarfile.open(path, mode="r:gz") as archive:
         for item in archive.getmembers():
@@ -148,9 +187,19 @@ def _sdist(path: Path, version: str, license_bytes: bytes) -> None:
                 or (not item.isfile() and not item.isdir())
             ):
                 raise _ReleaseContractError(_ReleaseIssue.UNSAFE_SDIST)
-        stream = archive.extractfile(f"agent_kit-{version}/LICENSE")
-        if stream is None or stream.read() != license_bytes:
+        prefix = f"agent_kit-{version}"
+        if _sdist_file(archive, f"{prefix}/LICENSE") != license_bytes:
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SDIST_LICENSE)
+        _sdist_file(archive, f"{prefix}/src/agent_kit/__init__.py")
+        metadata = tomllib.loads(
+            _sdist_file(archive, f"{prefix}/pyproject.toml").decode("utf-8")
+        )
+        expected = tomllib.loads(project_bytes.decode("utf-8"))
+        if not _sdist_file(archive, f"{prefix}/src/agent_kit/main.py").strip() or any(
+            metadata.get(section) != expected.get(section)
+            for section in ("build-system", "project")
+        ):
+            raise _ReleaseContractError(_ReleaseIssue.INVALID_SDIST_CONTENT)
 
 
 def _verify_source_bytes(
@@ -277,7 +326,12 @@ def _validate_artifact(
     if kind == "wheel":
         _wheel(path, version, license_bytes)
     elif kind == "sdist":
-        _sdist(path, version, license_bytes)
+        _sdist(
+            path,
+            version,
+            license_bytes,
+            project_bytes=(root / "pyproject.toml").read_bytes(),
+        )
     else:
         _source(path, version, license_bytes, _expected_source(root))
 
@@ -300,6 +354,7 @@ def _artifact_findings(
         KeyError,
         tarfile.TarError,
         zipfile.BadZipFile,
+        configparser.Error,
         yaml.YAMLError,
     ):
         return [
@@ -345,7 +400,10 @@ def write_checksums(root: Path) -> Path:
 
     Raises:
         _ReleaseValidationError: An artifact fails validation.
+        _ReleaseContractError: The build or checksum destination is linked or irregular.
     """
+    output = root / "build/SHA256SUMS"
+    _verify_checksum_target(root, output)
     findings = check(root, tag="")
     if findings:
         raise _ReleaseValidationError(findings)
@@ -354,9 +412,44 @@ def write_checksums(root: Path) -> Path:
         f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
         for path in sorted(artifacts, key=lambda item: item.name)
     ]
-    output = root / "build/SHA256SUMS"
-    output.write_bytes("".join(lines).encode("ascii"))
+    _publish_checksums(root, output, "".join(lines).encode("ascii"))
     return output
+
+
+def _verify_checksum_target(root: Path, output: Path) -> None:
+    """Refuse linked parents, escaped paths, and irregular checksum targets.
+
+    Raises:
+        _ReleaseContractError: The checksum destination is not an owned file.
+    """
+    build = output.parent
+    if any(path.is_symlink() or path.is_junction() for path in (build, *build.parents)):
+        raise _ReleaseContractError(_ReleaseIssue.LINKED_BUILD_DIRECTORY)
+    if (
+        not build.is_dir()
+        or build.resolve().parent != root.resolve()
+        or output.is_symlink()
+        or output.is_junction()
+        or (output.exists() and (not output.is_file() or output.stat().st_nlink != 1))
+    ):
+        raise _ReleaseContractError(_ReleaseIssue.INVALID_CHECKSUM_TARGET)
+
+
+def _publish_checksums(root: Path, output: Path, content: bytes) -> None:
+    """Replace checksums through a closed sibling file, cleaning up on failure."""
+    temporary: Path | None = None
+    try:
+        _verify_checksum_target(root, output)
+        with NamedTemporaryFile(
+            dir=output.parent, prefix=".SHA256SUMS-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+        _verify_checksum_target(root, output)
+        temporary.replace(output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _verify_stage_target(root: Path, stage: Path, names: set[str]) -> None:

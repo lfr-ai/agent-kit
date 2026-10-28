@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from scripts.check_governance import check, publication_blockers
+import yaml
 
 _FILES = (
     ".github/CODEOWNERS",
@@ -18,6 +19,7 @@ _FILES = (
     ".github/rulesets/main.json",
     ".github/rulesets/release-tags.json",
     ".github/ISSUE_TEMPLATE/bug.yml",
+    ".github/ISSUE_TEMPLATE/capability-change.yml",
     ".github/ISSUE_TEMPLATE/feature.yml",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/labels.yml",
@@ -306,6 +308,162 @@ def test_dependency_audit_precedes_installing_the_lock(governed_root: Path) -> N
     path.write_text(swapped.replace("AUDIT", sync.strip()), encoding="utf-8")
 
     assert any("audited before" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("job", ["verify", "precommit", "smoke"])
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "",
+        "    needs: coverage\n",
+        "    needs: audit\n    if: always()\n",
+        "    needs: [audit]\n    if: ${{ !cancelled() }}\n",
+    ],
+)
+def test_ci_consumers_require_a_successful_audit(
+    governed_root: Path, job: str, dependency: str
+) -> None:
+    """Every full install must wait for success, not just completion, of the audit."""
+    path = governed_root / ".github/workflows/ci.yml"
+    text = path.read_text()
+    header = f"  {job}:\n"
+    text = text.replace(header + "    needs: audit\n", header, 1)
+    path.write_text(text.replace(header, header + dependency, 1), encoding="utf-8")
+
+    assert any("audited before" in item for item in check(governed_root))
+
+
+def test_ci_audit_dependencies_accept_list_syntax(governed_root: Path) -> None:
+    """GitHub's string and list forms express the same reviewed dependency."""
+    path = governed_root / ".github/workflows/ci.yml"
+    path.write_text(
+        path.read_text().replace("    needs: audit\n", "    needs: [audit]\n"),
+        encoding="utf-8",
+    )
+
+    assert check(governed_root) == []
+
+
+@pytest.mark.parametrize("name", ["main.json", "release-tags.json"])
+@pytest.mark.parametrize("exclude", [None, ["~DEFAULT_BRANCH"], ["refs/tags/v*"]])
+def test_ruleset_exclusions_require_review(
+    governed_root: Path, name: str, exclude: list[str] | None
+) -> None:
+    """An include pattern is no protection if an exclusion can remove its refs."""
+    path = governed_root / ".github/rulesets" / name
+    value = json.loads(path.read_text())
+    refs = value["conditions"]["ref_name"]
+    if exclude is None:
+        del refs["exclude"]
+    else:
+        refs["exclude"] = exclude
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert any("scope" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("count", [None, 0, -1, 2, True, "1"])
+def test_ruleset_review_count_is_the_reviewed_positive_integer(
+    governed_root: Path, count: object
+) -> None:
+    """Zero, booleans, coercions and unreviewed counts cannot change approval policy."""
+    path = governed_root / ".github/rulesets/main.json"
+    value = json.loads(path.read_text())
+    review = next(rule for rule in value["rules"] if rule["type"] == "pull_request")
+    if count is None:
+        del review["parameters"]["required_approving_review_count"]
+    else:
+        review["parameters"]["required_approving_review_count"] = count
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert any("review count" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("strict", [None, False, 0, "true"])
+def test_ruleset_status_checks_require_strictness(
+    governed_root: Path, strict: object
+) -> None:
+    """The required summary must be checked against the current protected branch."""
+    path = governed_root / ".github/rulesets/main.json"
+    value = json.loads(path.read_text())
+    status = next(
+        rule for rule in value["rules"] if rule["type"] == "required_status_checks"
+    )
+    if strict is None:
+        del status["parameters"]["strict_required_status_checks_policy"]
+    else:
+        status["parameters"]["strict_required_status_checks_policy"] = strict
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert any("strict" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("name", ["main.json", "release-tags.json"])
+@pytest.mark.parametrize("change", ["duplicate", "unknown", "malformed"])
+def test_ruleset_rule_inventory_is_closed_and_unique(
+    governed_root: Path, name: str, change: str
+) -> None:
+    """A dictionary projection must not hide duplicate or unreviewed rule entries."""
+    path = governed_root / ".github/rulesets" / name
+    value = json.loads(path.read_text())
+    added = {
+        "duplicate": value["rules"][0],
+        "unknown": {"type": "unreviewed"},
+        "malformed": {"parameters": {}},
+    }
+    value["rules"].append(added[change])
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert any("rule inventory" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("ecosystem", ["bun", "docker"])
+def test_dependabot_covers_every_configured_ecosystem(
+    governed_root: Path, ecosystem: str
+) -> None:
+    """JavaScript tooling and the container image are not optional update surfaces."""
+    path = governed_root / ".github/dependabot.yml"
+    value = yaml.safe_load(path.read_text())
+    value["updates"] = [
+        item for item in value["updates"] if item["package-ecosystem"] != ecosystem
+    ]
+    path.write_text(yaml.safe_dump(value), encoding="utf-8")
+
+    assert any(
+        f"{ecosystem} updates are required" in item for item in check(governed_root)
+    )
+
+
+@pytest.mark.parametrize("ecosystem", ["bun", "docker"])
+def test_dependabot_surface_labels_are_declared(
+    governed_root: Path, ecosystem: str
+) -> None:
+    """Each newly covered ecosystem uses the same reviewed label inventory."""
+    path = governed_root / ".github/dependabot.yml"
+    value = yaml.safe_load(path.read_text())
+    entry = next(
+        item for item in value["updates"] if item["package-ecosystem"] == ecosystem
+    )
+    entry["labels"] = ["undeclared-surface-label"]
+    path.write_text(yaml.safe_dump(value), encoding="utf-8")
+
+    assert any("undeclared-surface-label" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize("labels", [None, [], ["undeclared-capability-label"]])
+def test_capability_change_form_requires_declared_labels(
+    governed_root: Path, labels: list[str] | None
+) -> None:
+    """The capability intake form cannot escape the other forms' label contract."""
+    path = governed_root / ".github/ISSUE_TEMPLATE/capability-change.yml"
+    value = yaml.safe_load(path.read_text())
+    if labels is None:
+        del value["labels"]
+    else:
+        value["labels"] = labels
+    path.write_text(yaml.safe_dump(value), encoding="utf-8")
+
+    assert any("capability-change.yml" in item for item in check(governed_root))
 
 
 @pytest.mark.parametrize(

@@ -61,7 +61,9 @@ _RULESET_RULES = {
     "main.json": _RulesetContract(
         target="branch",
         include=["~DEFAULT_BRANCH"],
-        required=frozenset({"deletion", "non_fast_forward", "pull_request"}),
+        required=frozenset(
+            {"deletion", "non_fast_forward", "pull_request", "required_status_checks"}
+        ),
     ),
     "release-tags.json": _RulesetContract(
         target="tag",
@@ -70,8 +72,9 @@ _RULESET_RULES = {
     ),
 }
 _REQUIRED_CHECK = "Required toolkit checks"
-# Repository administrators may merge their own pull requests without a second
-# reviewer, but never push directly; agents use a write-role identity instead.
+_REQUIRED_APPROVALS = 1
+# Pull-request-only bypass covers the entire main ruleset, including status checks,
+# not just approval. It does not authorize direct pushes; agents use a write role.
 _ADMIN_ROLE_ID = 5
 _BYPASS_ACTORS = {
     "main.json": [
@@ -85,7 +88,7 @@ _BYPASS_ACTORS = {
 }
 _DEPENDABOT_VERSION = 2
 _DEPENDABOT_ECOSYSTEMS = frozenset(
-    {"uv", "github-actions", "pre-commit", "devcontainers"}
+    {"uv", "bun", "docker", "github-actions", "pre-commit", "devcontainers"}
 )
 _AUDIT_COMMAND = "uv run --locked --no-sync python scripts/audit_dependencies.py"
 _SYNC_COMMAND = "uv sync --locked"
@@ -420,8 +423,28 @@ def _root_findings(
     return findings
 
 
+def _ci_audit_consumers(jobs: dict[str, object]) -> list[str]:
+    """Keep full-install jobs behind a successful audit with no failure override."""
+    findings: list[str] = []
+    for identifier in ("verify", "precommit", "smoke"):
+        job = jobs.get(identifier)
+        needs = job.get("needs") if _mapping(job) else None
+        needed = [needs] if isinstance(needs, str) else needs
+        if (
+            not _mapping(job)
+            or not isinstance(needed, list)
+            or "audit" not in needed
+            or job.get("if") not in (None, "success()")
+        ):
+            findings.append(
+                f"ci.yml: {identifier} dependencies must be audited before installation; "
+                "need audit with success-only execution"
+            )
+    return findings
+
+
 def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[str]:
-    """Require gate triggers, an always-run summary, and the audit job."""
+    """Require gate triggers, a complete summary, and audit-before-install edges."""
     findings: list[str] = []
     if not {"pull_request", "merge_group", "workflow_call"}.issubset(triggers):
         findings.append(
@@ -442,6 +465,7 @@ def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[s
     audit = jobs.get("audit")
     if not _mapping(audit) or audit.get("uses") != _REUSABLE["ci.yml"]:
         findings.append("ci.yml: the dependency audit must be a required job")
+    findings.extend(_ci_audit_consumers(jobs))
     return findings
 
 
@@ -636,8 +660,14 @@ def _ruleset(root: Path, name: str) -> list[str]:
         if isinstance(rules, list)
         else {}
     )
-    if not expected["required"].issubset(typed):
-        findings.append(f"rulesets/{name}: required protection rules are missing")
+    if (
+        not isinstance(rules, list)
+        or len(typed) != len(rules)
+        or set(typed) != expected["required"]
+    ):
+        findings.append(
+            f"rulesets/{name}: rule inventory must contain each reviewed type exactly once"
+        )
     if name == "main.json":
         findings.extend(_main_ruleset_parameters(typed))
     return findings
@@ -655,6 +685,7 @@ def _ruleset_scope_findings(
         or raw.get("enforcement") != "active"
         or not _mapping(ref_name)
         or ref_name.get("include") != expected["include"]
+        or ref_name.get("exclude") != []
     ):
         findings.append(f"rulesets/{name}: target, scope, and enforcement are fixed")
     if raw.get("bypass_actors") != _BYPASS_ACTORS[name]:
@@ -662,15 +693,27 @@ def _ruleset_scope_findings(
     return findings
 
 
+def _review_parameter_findings(parameters: object) -> list[str]:
+    """Require the reviewed positive approval count and all review guards."""
+    if not _mapping(parameters):
+        return ["rulesets/main.json: review parameters are required"]
+    findings: list[str] = []
+    if not all(parameters.get(guard) is True for guard in _PULL_REQUEST_GUARDS):
+        findings.append("rulesets/main.json: review guards must all be enabled")
+    count = parameters.get("required_approving_review_count")
+    if type(count) is not int or count != _REQUIRED_APPROVALS:
+        findings.append(
+            "rulesets/main.json: review count must remain the reviewed positive integer"
+        )
+    return findings
+
+
 def _main_ruleset_parameters(rules: dict[str, object]) -> list[str]:
     """Check review and status-check parameters of the default-branch ruleset."""
-    findings: list[str] = []
     review = rules.get("pull_request")
-    parameters = review.get("parameters") if _mapping(review) else None
-    if not _mapping(parameters) or not all(
-        parameters.get(guard) is True for guard in _PULL_REQUEST_GUARDS
-    ):
-        findings.append("rulesets/main.json: review guards must all be enabled")
+    findings = _review_parameter_findings(
+        review.get("parameters") if _mapping(review) else None
+    )
     status = rules.get("required_status_checks")
     status_parameters = status.get("parameters") if _mapping(status) else None
     checks = (
@@ -682,6 +725,11 @@ def _main_ruleset_parameters(rules: dict[str, object]) -> list[str]:
         findings.append(
             "rulesets/main.json: the stable required matrix summary is the only check"
         )
+    if (
+        not _mapping(status_parameters)
+        or status_parameters.get("strict_required_status_checks_policy") is not True
+    ):
+        findings.append("rulesets/main.json: required status checks must be strict")
     return findings
 
 
@@ -755,7 +803,7 @@ def _issue_config_findings(root: Path, repository: object) -> list[str]:
 def _issue_form_findings(root: Path, labels: set[str]) -> list[str]:
     """Require issue forms to apply only declared labels."""
     findings: list[str] = []
-    for form in ("bug.yml", "feature.yml"):
+    for form in ("bug.yml", "capability-change.yml", "feature.yml"):
         data = _yaml_mapping(root / ".github/ISSUE_TEMPLATE" / form)
         form_labels = data.get("labels") if data is not None else None
         if not isinstance(form_labels, list) or not form_labels:

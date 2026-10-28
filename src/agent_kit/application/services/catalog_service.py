@@ -1680,7 +1680,7 @@ def _add_output(outputs: _Outputs, relative: str, content: bytes) -> None:
     """Plan one output file, rejecting case-insensitive destination collisions.
 
     Raises:
-        CompositionCollisionError: Two outputs differ only by case.
+        CompositionCollisionError: Two outputs share a case-insensitive destination.
     """
     folded = relative.casefold()
     previous = outputs.folded.get(folded)
@@ -1903,6 +1903,7 @@ class CatalogService:
 
         Raises:
             CompositionError: The source or catalog is invalid.
+            CompositionCollisionError: Authored or generated destinations collide.
         """
         report = self.validate(snapshot)
         if not report.valid:
@@ -1923,11 +1924,15 @@ class CatalogService:
         for relative, content in native_agents.items():
             _add_output(outputs, relative, content)
 
-        output_files = outputs.files
-        output_files[".apm/selection.json"] = _json_bytes(
-            _selection_record(selection, outputs, len(native_agents)),
-            ensure_ascii=True,
+        _add_output(
+            outputs,
+            ".apm/selection.json",
+            _json_bytes(
+                _selection_record(selection, outputs, len(native_agents)),
+                ensure_ascii=True,
+            ),
         )
+        output_files = outputs.files
         output_files["apm.yml"] = _json_bytes(
             _manifest_record(
                 profile, catalog, selected_runtimes, outputs.include_paths

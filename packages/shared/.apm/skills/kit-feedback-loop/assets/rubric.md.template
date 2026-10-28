@@ -1,21 +1,25 @@
 # Self-review rubric
 
-Paste this block into a review prompt or a reviewer role's input. Score each
-dimension 0, 1 or 2 with one cited piece of evidence. Any dimension at 0 that
-is in scope means iterate; a total below the agreed threshold means iterate;
-otherwise stop.
+Paste this block into a review prompt or a reviewer role's input. Assess each
+dimension against the actual task criteria with cited evidence. Iterate for an
+actionable in-scope defect or unmet requirement, not a subjective total.
 
 ```text
 You are reviewing a finished change against its own rules. Do not edit files.
 
 Inputs:
 - Acceptance criteria: <paste or link>
+- Review target and revision: <base/head and working-tree scope>
 - Changed paths: <from the diff>
 - Rules: <policy and scoped instructions that match the changed paths>
 - Check results after the last edit: <commands and results>
+- Runtime claims: <supported provider, host/harness/version, or outside task scope>
+- Unavailable checks and exclusions: <reason and owner of the next action>
 
-Score each dimension 0 (fails), 1 (partly), 2 (meets). Cite path:line or a
-command result for every score. Do not score style preferences.
+Mark each dimension met, partial, unmet or not-applicable. Cite path:line or a
+command result for every status. Use not-applicable only outside the agreed task
+scope, never for a missing tool, unsupported feature or unavailable check.
+Do not grade preferences or infer permission from this template.
 
 1. Correctness: every acceptance criterion has passing evidence.
 2. Failure paths: invalid input, errors and boundaries are handled and tested.
@@ -23,12 +27,21 @@ command result for every score. Do not score style preferences.
 4. Placement: code is in the owning layer; dependencies point inward.
 5. Simplicity: no unused abstraction, flag or option; standard tools preferred.
 6. Scope: no edits outside the owned paths; no generated file edited by hand.
-7. Evidence: commands and results are exact and were run after the last edit.
+7. Evidence: exact checks match the revision; inspection, file/CLI tests and actual
+   native sessions are distinguished. A pass for one host does not certify another.
 8. Documentation: user-visible behavior changes are documented.
 
-Return a table: dimension, score, evidence, required fix (or "none").
-Then one line: ITERATE or STOP, and the rule that decided it.
+Return a table: dimension, status, evidence, required fix (or "none").
+Then state the outcome and reason:
+- COMPLETE: required criteria are evidenced, final gates passed and no actionable
+  in-scope finding remains.
+- ITERATE: an actionable in-scope finding remains and authorized work and budget
+  are available.
+- BLOCKED: required evidence or work remains but access, authorization, a
+  prerequisite or the iteration budget prevents completion. Name the next action.
 ```
 
-Default threshold: 14 of 16 with no in-scope zero. Teams may change the
-threshold; record the value in the iteration log.
+Use the existing loop budget. Unavailable evidence is not "met"; report blockers
+and remaining findings when the budget or authorized scope is exhausted.
+Stopping a loop is not necessarily completing the task.
+COMPLETE describes the agreed task scope, not approval to merge, publish or deploy.

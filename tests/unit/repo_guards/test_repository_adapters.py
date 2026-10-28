@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 import pytest
+import scripts.check_native as native_checker
 from scripts.check_native import check
 import yaml
 
@@ -43,6 +44,94 @@ def test_reviewer_cannot_enable_nested_agents(native_root: Path) -> None:
     path.write_text(f"---\n{yaml.safe_dump(metadata)}---\n{body}", encoding="utf-8")
 
     assert any("reviewer" in finding for finding in check(native_root))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("user-invocable", False),
+        ("user-invocable", 1),
+        ("user-invocable", "true"),
+        ("user-invocable", None),
+        ("disable-model-invocation", True),
+        ("disable-model-invocation", 0),
+        ("disable-model-invocation", "false"),
+        ("disable-model-invocation", None),
+    ],
+)
+def test_reviewer_invocation_flags_require_exact_booleans(
+    native_root: Path, field: str, value: object
+) -> None:
+    """Field presence cannot substitute for the reviewed invocation semantics."""
+    path = native_root / ".github/agents/kit-reviewer.agent.md"
+    header, body = path.read_text().split("---", 2)[1:]
+    metadata = yaml.safe_load(header)
+    metadata[field] = value
+    path.write_text(f"---\n{yaml.safe_dump(metadata)}---\n{body}", encoding="utf-8")
+
+    assert any("invocation" in finding for finding in check(native_root))
+
+
+@pytest.mark.parametrize("value", [True, 1, 0, "false", None, [], {}])
+def test_claude_hooks_cannot_be_disabled_or_ambiguously_configured(
+    native_root: Path, value: object
+) -> None:
+    path = native_root / ".claude/settings.json"
+    settings = json.loads(path.read_text())
+    settings["disableAllHooks"] = value
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert any("hook" in finding.lower() for finding in check(native_root))
+
+
+def test_explicitly_enabled_claude_hooks_are_accepted(native_root: Path) -> None:
+    path = native_root / ".claude/settings.json"
+    settings = json.loads(path.read_text())
+    settings["disableAllHooks"] = False
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert check(native_root) == []
+
+
+@pytest.mark.parametrize(
+    "relative", [".github/hooks/session-context.json", ".claude/settings.json"]
+)
+def test_session_hooks_require_no_sync(native_root: Path, relative: str) -> None:
+    """Session entry must not synchronize dependencies before the audited bootstrap."""
+    path = native_root / relative
+    text = path.read_text()
+    assert "uv run --locked --no-sync agent-kit context" in text
+    path.write_text(text.replace(" --no-sync", ""), encoding="utf-8")
+
+    assert any("hook" in finding.lower() for finding in check(native_root))
+
+
+def test_missing_local_session_entrypoint_reports_audited_bootstrap(
+    native_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The check-only entrypoint explains how to provision a non-syncing hook."""
+    monkeypatch.setattr(native_checker, "_ROOT", native_root)
+
+    assert native_checker.main() == 1
+    diagnostic = capsys.readouterr().err
+    assert "task bootstrap" in diagnostic
+    assert "--no-sync" in diagnostic
+
+
+@pytest.mark.parametrize(
+    "relative", [".venv/Scripts/agent-kit.exe", ".venv/bin/agent-kit"]
+)
+def test_local_session_entrypoint_needs_no_install_or_execution(
+    native_root: Path, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    path = native_root / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"not executed")
+    monkeypatch.setattr(native_checker, "_ROOT", native_root)
+
+    assert native_checker.main() == 0
 
 
 def test_writable_tools_are_rejected(native_root: Path) -> None:

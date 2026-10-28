@@ -12,9 +12,10 @@ points. They do not replace the CLI completion gate.
 1. Review the repository before granting Workspace Trust.
 2. Install the recommended extensions you need. Recommendations do not silently
    install extensions or disable ones already installed.
-3. Run **Tasks: Run Task > Bootstrap locked environment**, or `uv sync --locked`.
-   This is an explicit install of the declared project environment, not a
-   folder-open task.
+3. Run **Tasks: Run Task > Bootstrap locked environment**, or `task bootstrap`.
+   Bootstrap audits the Python and JavaScript locks before installing either
+   environment and then installs Git hooks. This is an explicit action, not a
+   folder-open task; do not bypass the audit with a direct dependency sync.
 4. Run **Python: Select Interpreter** and select the repository's `.venv`.
    The portable default points to the directory, so Windows and Unix do not need
    different executable paths. Changing this default does not replace a previous

@@ -1,104 +1,100 @@
-# The self-review and feedback loop
+# Bounded self-review and feedback
 
-Reviewed: 2026-10-23.
+Reviewed: 2026-10-28.
 
-An agent that finishes edits and immediately reports success hands its
-reviewer the work of finding what it missed. A short, bounded loop catches
-most of that cheaply: re-read the rules, run the deterministic checks,
-compare with the acceptance criteria, and only then decide to iterate or
-stop. The loop is bounded because unbounded self-revision drifts into
-rewriting working code and burning budget.
+Check the requested outcome, repair evidenced defects and stop. Set the iteration
+budget and early-stop condition before reviewing; more revisions are not a
+quality measure. This guide owns self-review. Independent assessment, finding
+verification and patch re-review belong to the [review guide](review.md).
 
-## Order of evidence
+## Establish the evidence
 
-| Rank | Source | Why |
+| Input | Use | Limit |
 | --- | --- | --- |
-| 1 | Deterministic checker output (format, lint, types, conventions, architecture, tests) | repeatable, cheap, no judgment |
-| 2 | Acceptance criteria with their proving tests | defines done |
-| 3 | Re-read instructions and skills for the changed paths | rules the checkers do not encode |
-| 4 | Inspection with `path:line` citations | judgment, must be specific |
-| 5 | General preference | not a reason to iterate |
+| Acceptance criteria | Define observable success and failure cases | Missing or disputed intent is not permission to invent requirements |
+| Governing policy and scoped instructions | Identify required conventions and approval boundaries | Prompt text does not enforce permissions |
+| Deterministic checks | Test their declared contracts reproducibly | A pass does not prove untested behavior |
+| Inspection with `path:line` and a failing scenario | Find gaps, interactions and incorrect assumptions | Label code-traced findings separately from executed reproductions |
+| General preference | Optional proposal | Not a reason to block or iterate |
 
-A finding from a lower rank never overrides a passing check from a higher
-rank without new evidence; it becomes a proposal instead.
+Run relevant deterministic checks before subjective review. When inspection
+contradicts a pass, reproduce the scenario and identify the incorrect code, test
+or requirement. Do not vote away the finding or weaken a valid assertion.
 
-## Re-read the governing rules
+## Refresh only relevant context
 
-- Open the operating policy and every scoped instruction whose glob matches a
-  changed path. Do not rely on what you remember from the start of the task;
-  long tasks lose early context.
-- Re-open the procedure and acceptance gates of each skill used.
-- Write the rules as a short checklist. Mark which ones a tool verifies and
-  which need inspection.
+Read the operating policy, matching instructions and relevant skill acceptance
+gates at review start. Refresh them when scope or guidance changes, or context
+has been lost; do not reload unchanged handbooks on every iteration.
 
-## Convention re-check
+Keep a short checklist of required rules and their proving checks. Consumer
+conventions govern the review; examples below do not impose a new language-wide
+style policy.
 
-Run the project's own checkers before reading code by eye. Typical mapping:
-
-| Convention | Prefer this check | Inspect when no check exists |
+| Concern | Prefer the existing check | Inspect the remaining risk |
 | --- | --- | --- |
-| Naming | linter naming rules, naming checker | names state meaning and unit |
-| Magic numbers | linter or convention checker for unnamed literals | literals other than 0 and 1 are named constants |
-| Docstrings | docstring linter | public symbols document arguments, returns, raises |
-| Typing | type checker in strict mode | no `Any`, casts or untyped public functions |
-| Layering | architecture or import-boundary check | dependencies point inward; I/O at the edges |
-| Errors | linter exception rules | specific exceptions, chained causes, no silent catch |
-| Tests | focused test run, coverage of changed lines | a failing path is tested, not only the happy path |
-| Docs | link and spelling checks | changed behavior is reflected where it is documented |
+| Naming and constants | Linter and convention checker | Meaning, units and the project's literal exceptions |
+| API documentation | Project docstring/documentation checker | Changed arguments, errors and observable behavior |
+| Typing | Configured type checker | Unvalidated dynamic boundaries or weakened guarantees |
+| Layering | Import/architecture contracts | Policy ownership, dependency direction and I/O boundaries |
+| Errors | Exception rules and negative tests | Actionable diagnostics, preserved causes and cleanup |
+| Tests | Focused behavioral regressions | Original symptom, failure paths and assertions that prove the outcome |
+| Docs and resources | Links, spelling and owning source contracts | Changed behavior, examples, ownership and installation |
 
-## Simplify and check currency
+## Simplify without losing behavior
 
-Ask, for the final diff:
+1. Remove a helper, class, flag or configuration only after checking callers and
+   required behavior. Passing tests alone do not prove unused or untested code
+   is safe to delete.
+2. Prefer the standard library, native platform or an already-locked dependency
+   when it preserves the contract and handles the relevant edge cases.
+3. Consult current primary documentation to resolve a concrete compatibility or
+   support question. Check the version actually supported, not just the newest
+   release; record the source and uncertainty.
+4. Drop unrelated additions from your own patch. Do not revert another author's
+   edits to make the scope appear clean.
 
-1. Can any new helper, class, flag or configuration be deleted with no
-   failing test? Delete it.
-2. Does the standard library or an already-locked dependency do this? Use it.
-3. Is there a newer, officially recommended tool or API for this task in the
-   current documentation of the language, framework or host? Check the
-   official source and its date; do not rely on training memory.
-4. Is the change larger than the request? Split out or drop the extra part.
-
-Adopting a newer tool or dependency is a separate, approved change, not a
-side effect of a review loop. Record the proposal and its source instead.
+An upgrade or new dependency is a separate reviewed change, not an automatic
+consequence of finding newer documentation.
 
 ## Iterate or stop
 
-| Situation | Decision |
+| Evidence | Decision |
 | --- | --- |
-| A checker fails on a changed file | iterate; fix the cause, not the check |
-| An acceptance criterion is unmet or partial | iterate if inside scope; otherwise stop and report |
-| A required convention is violated (inspection, cited) | iterate |
-| A simpler equivalent exists and is local | iterate once to adopt it |
-| Only style preferences remain | stop |
-| The same finding returns after a fix | stop; report it with evidence, request a decision |
-| The budget is spent | stop; report remaining findings by severity |
-| The fix needs files outside the owned scope | stop; report it as a follow-up |
+| Caused or coupled check failure | Fix the cause and rerun the affected check |
+| Unmet criterion or cited required-rule violation | Repair within scope and budget; otherwise report the blocker |
+| A simpler equivalent with preserved behavior | Simplify locally and rerun the affected checks |
+| The same finding returns | Continue only with new evidence and budget; otherwise report the failed approach |
+| Scope, permission or prerequisite is missing | Stop and report; do not fabricate success |
+| Budget is exhausted | Stop and list remaining findings by impact |
+| Criteria are evidenced and no actionable in-scope finding remains | Run final acceptance and hand off |
+| Only preferences or a subjective score remain | Stop |
 
-Severity order for fixes: correctness and security, contract and data
-compatibility, required conventions, tests and documentation, then
-simplification.
+Fix correctness/security and contract risks first, then required conventions,
+tests/docs and local simplification. Each iteration records the finding, change,
+exact check result and criterion status in the existing iteration log.
 
-## Recording lessons
+The completion gate must run after the last relevant edit. Preserve thresholds,
+assertions and approval rules; report failures and unavailable checks explicitly.
+Do not claim native, cloud or model behavior from file tests.
 
-At the end of the loop, ask which surprise would have saved time if known at
-the start. Record it only if it is durable, evidenced and not already
-enforced, through the `kit-project-memory` skill. A lesson that can become a
-check should become a check.
+Use COMPLETE only when required criteria and final gates are evidenced, ITERATE
+when authorized in-scope work and budget remain, and BLOCKED when unmet work
+cannot continue. Missing tools, unsupported host behavior or exhausted budget
+do not make a required criterion not-applicable. Record actual provider,
+host/harness and version for native claims; do not infer cross-provider parity.
 
-## Failure modes
+## Retain useful feedback
 
-| Symptom | Cause | Response |
-| --- | --- | --- |
-| Loop never ends | no budget or stop condition | set both before the first review |
-| Review approves a failing build | checks not re-run after the last edit | run checks last, then report |
-| Each iteration rewrites unrelated code | scope creep | revert out-of-scope edits; log as follow-up |
-| Weakened assertion or raised threshold to pass | optimizing for green | restore it; fix the cause |
-| Generic findings ("could be cleaner") | no citations | require `path:line` and the violated rule |
-| Lessons file grows every task | recording activity, not knowledge | apply the evidence and durability bar |
+Turn a reproducible escaped defect into a regression. Record a lesson through
+`kit-project-memory` only when it is durable, evidenced and not already captured
+by an existing rule or check. Zero new lessons is a valid outcome; transcripts
+and transient task state do not belong in permanent memory.
 
 ## Primary sources
 
-- [Anthropic: building effective agents (evaluator-optimizer loop)](https://www.anthropic.com/engineering/building-effective-agents)
-- [Anthropic: Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices)
-- [Anthropic: effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
-- [Google SRE book: postmortem culture](https://sre.google/sre-book/postmortem-culture/)
+- [Claude Code best practices](https://code.claude.com/docs/en/best-practices)
+- [Anthropic code review case study](https://claude.dev/blog/solving-code-review-at-anthropic/)
+- [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+- [Effective context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+- [Google SRE: postmortem culture](https://sre.google/sre-book/postmortem-culture/)

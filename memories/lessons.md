@@ -197,3 +197,12 @@ drifted only the two `kit-orchestrator` files, and `task verify -- roles` then p
 paths with `PurePosixPath.full_match` and bound the instruction count and
 characters per path. Evidence: a Python test file loads 7 instructions,
 about 10.8k characters, with every bundle installed.
+
+## Research scratch cleanup must name owned artifacts
+
+A research worker's repository-root `*.md`/`*.txt` cleanup deleted twelve clean
+tracked context documents. Work paused; only the known baseline files were
+restored and checked byte-identical before resuming. Use an explicit disposable
+scratch directory and exact owned cleanup paths; a read-only assignment is not
+filesystem isolation. Evidence: the 2026-10-28
+[review execution record](../docs/agentic-development-review.md#12-verification-and-execution-notes).
