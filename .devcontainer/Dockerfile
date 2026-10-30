@@ -1,2 +1,2 @@
 # The tag documents intent and the digest pins the image; Dependabot updates both.
-FROM mcr.microsoft.com/devcontainers/python:3-3.13-trixie@sha256:5ea7e72d3c1beb6aefdfea8001483345c39af4898e22f2c543deb6a00802ede4
+FROM mcr.microsoft.com/devcontainers/python:3.15-trixie@sha256:eb39f07323784af4c7558396808ceb01dacbe6dd7c63614f34d0235d0344a0ff
