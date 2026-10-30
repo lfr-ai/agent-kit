@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report hard-coded colors and pixel values outside the design token file.
 
 The scan reads ``.css`` and ``.tsx`` files (configurable with ``--suffix``)
@@ -329,7 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Design token checker self-test passed.")
+        sys.stdout.write("Design token checker self-test passed.\n")
         return EXIT_CLEAN
     if not args.paths:
         parser.error("give at least one file or directory")
@@ -341,13 +345,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             allowed_px=tuple(args.allow_px or DEFAULT_ALLOWED_PX),
         )
     except (OSError, UnicodeDecodeError) as error:
-        print(f"Cannot scan: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan: {error}\n")
         return EXIT_USAGE
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
         return EXIT_FINDINGS
-    print("No hard-coded colors or pixel values found (pattern scan only).")
+    sys.stdout.write(
+        "No hard-coded colors or pixel values found (pattern scan only).\n"
+    )
     return EXIT_CLEAN
 
 

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check ``pyproject.toml`` packaging metadata against PEP 517, 621, 639, and 508.
 
 The checker reads the file with ``tomllib`` and never runs a build backend. It
@@ -15,6 +19,7 @@ from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
 import re
+import sys
 import tomllib
 
 _DEFAULT_DEV_TOOLS = (
@@ -621,7 +626,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_pyproject self-test passed.")
+        sys.stdout.write("check_pyproject self-test passed.\n")
         return 0
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
@@ -643,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

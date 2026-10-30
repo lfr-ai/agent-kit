@@ -15,10 +15,16 @@ Do not add another Task target for every executable or repeat a tool's defaults.
 | Locked dependency vulnerabilities (network) | `task verify -- dependencies` |
 | Exact versions, frozen hooks and image digests | `task verify -- pins` |
 | All tests, or a pytest selector | `task test`, `task test -- tests/integration` |
+| Isolated Python versions and coverage through tox | `task test:matrix`, `task test:matrix -- -e unit` |
+| Refresh the clone path for future Windows sessions | `task checkout:register` |
 | Format, lint or types | `task format`, `task lint`, `task typecheck` |
 | Python conventions, named numbers and docstrings | `task verify -- conventions` |
 | All pre-commit-stage hooks | `task precommit` |
 | Conventional Commit authoring | `task commit` |
+| Read-only version and changelog preview | `task version:preview` |
+| Confirmed version/lock preparation, without a commit or tag | `task version:prepare` |
+| Build/check release products | `task release:build` |
+| Operator-only publication of an existing draft | `task release:publish TAG=v0.1.1` |
 | Real APM delivery | `task apm:smoke` |
 | Capability source archive | `task capabilities:build -- --profile fullstack` |
 
@@ -34,6 +40,16 @@ editor validation, a `desc` on every target, a `default` target that lists them,
 and `bootstrap` preconditions that name a missing uv or Bun instead of failing
 mid-install. Editor tasks wrap these targets one to one; consumers start from
 the portable Taskfile template in `kit-verify-change`.
+
+Task defaults `AGENT_KIT_DIR` to the actual checkout for its subprocesses;
+an existing process variable takes precedence in the pinned Task version.
+On Windows, bootstrap additionally registers that path in the user environment;
+the explicit registration task supports a moved clone. Restart the parent
+editor/terminal before expecting other repositories to inherit it. Registration
+does not install an agent hook or turn the path into a permission grant.
+
+The tox matrix runs environments sequentially. Do not start it alongside another
+test/coverage gate: interpreter isolation does not isolate shared report paths.
 
 The verifier never synchronizes dependencies, including when selecting the
 network audit. Provision the reviewed environment separately through bootstrap.
@@ -74,6 +90,11 @@ configuration rerun the scanners against the actual workflows. See
 The default stage is explicitly **pre-commit** because pre-commit's own default
 is every supported stage. Commitizen alone selects **commit-msg**.
 There are no manual-stage hooks: links and duplication run with ordinary checks.
+
+On Windows, check `Get-Command uv -All` if hooks ignore `SKIP`: a version-manager
+shim can change child environment variables. Invoke the native `uv.exe` or put
+its directory first on that terminal's `PATH`. Do not rewrite user-global shims
+as a repository repair.
 
 Pre-commit manages the upstream Python and Node hook environments. Bun runs the
 locked jscpd binary (`bun run --bun jscpd`) from [package.json](../package.json)
@@ -129,7 +150,13 @@ reach the `uv lock --check` hook.
   This repository deliberately declares its Python 3.13 target and formatter
   settings. Complexity, branch, return and statement limits are 6, 8, 6 and 40;
   portable assets have no complexity exemptions. `TC` imports use postponed
-  annotations rather than string-literal forward references.
+  annotations rather than string-literal forward references. Command-line output
+  uses stream writes instead of `print`, and every standalone asset script opens
+  with PEP 723 metadata declaring Python 3.13 and `dependencies = []`.
+  The assets use only the standard library. Run environment-inspection tools
+  through the target environment's Python, not an isolated script environment.
+  Neither `T201` nor `INP001` has a source exemption; Ruff and the metadata tests
+  enforce these conventions.
 - Commitizen inherits its Conventional Commits adapter and disabled automatic
   changelog rewriting. Coverage inherits standard report destinations and
   `skip_covered = false`; Markdown and YAML lint configurations omit unchanged
@@ -160,10 +187,10 @@ composition. This does not exempt unexpected files in composed output.
 APM subprocess output is handled without locale-dependent pipe decoding:
 the private adapter discards it, while smoke failures render captured bytes
 as UTF-8 with visible escapes for invalid bytes. Nonzero exits and timeouts
-still fail. The adapter defaults to 300 seconds per APM command so cold
+still fail. The adapter defaults to 900 seconds per APM command so cold
 full-profile replays can finish on slower filesystems; explicitly supplied
-timeouts must be finite and positive. The outer smoke-command bound remains
-600 seconds. Both paths use the pinned environment's recorded APM launcher,
+timeouts must be finite and positive. The outer smoke-command bound is
+1800 seconds. Both paths use the pinned environment's recorded APM launcher,
 not an unrelated `PATH` entry. No audit, drift or integrity check is skipped.
 
 ## Scanner configuration discovery
@@ -288,6 +315,8 @@ No Copier scaffolding or additional framework is needed for the present cleanup.
 
 ## Primary references
 
+- [Ruff's distinction between debug prints and CLI output](https://docs.astral.sh/ruff/rules/print/)
+- [uv script metadata and isolated environments](https://docs.astral.sh/uv/guides/scripts/)
 - [pre-commit configuration, stages and local hooks](https://pre-commit.com/)
 - [Basic hook behavior](https://github.com/pre-commit/pre-commit-hooks/tree/v6.0.0)
 - [CSpell hook manifest at v10.3.0](https://github.com/streetsidesoftware/cspell-cli/blob/v10.3.0/.pre-commit-hooks.yaml)

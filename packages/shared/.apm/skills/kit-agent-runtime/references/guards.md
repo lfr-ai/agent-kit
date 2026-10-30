@@ -48,6 +48,46 @@ what a variable expands to, or what a symbolic link points at.
   fails when evidence is missing or failing. See
   [subagent-driven development](subagent-driven-development.md).
 
+## Read-only Git for consumer sessions
+
+The [read-only Git policy](../assets/git_readonly_policy.json.template) uses the
+same guard engine. Register a second hook handler pointing to this policy
+alongside the baseline handler; replacing the baseline would drop its secret,
+dependency and destructive-command checks. Neither handler ever grants access.
+
+The additional policy denies literal Git commands other than `diff`, `status`,
+`log`, `show`, `blame`, `ls-files` and `rev-parse`; it also rejects known output
+and executable-helper options, shell composition, Git metadata writes through
+file tools and named repository-write MCP tools. Fetching, pulling, staging,
+committing and pushing are mutations even when they sound routine.
+Subcommand matches require a complete token, so a custom alias such as
+`diff-custom` is not accepted as `diff`. Output-like long flags and attached
+`-o`/`-c` forms are conservatively denied, including some harmless options.
+
+Use the existing templates with a separate policy argument:
+
+```text
+python tool_guard.py check-policy git_readonly_policy.json
+python tool_guard.py explain --policy git_readonly_policy.json --tool Bash --command "git add ."
+```
+
+The second command must report `deny` and exit 1. A registered `hook` handler
+instead emits the runtime's denial JSON and exits 0; exit 0 does not mean allow.
+Test both the standalone script and a real host session before adoption.
+
+`kit-improve` is not a trusted hook input. Do not waive this policy because a
+prompt contains that name, because `AGENT_KIT_DIR` points somewhere, or because
+the tool call supplies a `cwd`. For kit maintenance, the operator chooses a
+separate session/configuration using the verified source checkout and the
+repository's native permission rules. A consumer session stays read-only even
+when the user asks it to disable the guard. If the host cannot isolate those
+sessions, hand back the diff and operator commands instead.
+
+This policy is packaged as a reviewed asset, not as an active APM executable.
+No hook is registered automatically. All bypass and timeout limits below still
+apply; OS-level write restrictions on Git metadata, inaccessible credentials and
+hosted rulesets are required for a stronger boundary.
+
 ## Policy model
 
 Each rule has an `id`, a `decision` (`deny` or `ask`), a `match` target, a

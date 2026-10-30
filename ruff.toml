@@ -123,26 +123,10 @@ property-decorators = ["functools.cached_property"]
 [lint.per-file-ignores]
 "tests/**" = [
   "S101",    # assert is the standard pytest assertion idiom
-  "D",       # test names and one-line docstrings document behavior
-  "ANN401",  # pytest hooks and fakes accept arbitrary objects
-  "SLF001",  # tests legitimately reach into private members to verify internals
-  "PLR2004", # literal expected values in assertions are not "magic"
-  "PLC0415", # deferred imports inside fixtures/parametrized helpers are deliberate
-  "S105",    # fake credentials in test fixtures are not real secrets
-  "S106",    # fake credentials passed as call/fixture arguments, not real secrets
-  "ARG001",  # stub/mock functions commonly match an interface signature unused here
-  "ARG002",  # same, for unused arguments on stub/mock methods
-  "ARG005",  # same, for unused arguments on stub/mock lambdas
-  "INP001",  # no __init__.py needed under --import-mode=importlib
-  # Boolean positional args/values are idiomatic in tests: parametrized bool
-  # cases and Hypothesis-injected bool strategies.
-  "FBT001",
-  "FBT002",
-  "FBT003",
+  "D",       # pytest names describe behavior; test docstrings are optional
+  "SLF001",  # tests reach into private members to verify internals
+  "PLR2004", # literal expected values in assertions are not magic numbers
+  "ARG001",  # stub functions keep the interface signature they imitate
+  "INP001",  # importlib import mode needs no __init__.py
+  "FBT001",  # boolean positional args are idiomatic in parametrized tests
 ]
-# CLI entry points intentionally write human-facing output to stdout.
-"src/agent_kit/presentation/cli.py" = ["T201"]
-"scripts/**" = ["T201"]
-".agents/guard/**" = ["T201", "INP001"]
-# Portable skill assets are standalone CLIs executed by path, never imported.
-"packages/**/assets/**" = ["T201", "INP001"]

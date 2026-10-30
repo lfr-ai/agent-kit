@@ -26,6 +26,10 @@ decide whether the change is reusable at all.
    Continue only when the origin equals the recorded origin and the tree is
    clean; otherwise stop and report. Without a checkout, draft the
    [change record](assets/capability-change.md.template) for an issue and stop.
+   `AGENT_KIT_DIR` locates source; it is not authorization. A consumer's
+   read-only Git hook remains active. The operator must select a separate
+   kit-maintenance session with the checkout's native permissions for Git
+   mutations; otherwise hand back the source diff and operator commands.
 4. Reproduce the behavior with a synthetic example, following
    [synthetic examples](references/synthetic-examples.md). Nothing private from
    this project may enter the kit: no code, names, paths, hosts or secrets.
@@ -52,8 +56,9 @@ decide whether the change is reusable at all.
 
 ## Boundaries
 
-- This skill grants version-control commands only inside the verified kit
-  checkout. Every other repository keeps its own rules.
+- This skill requests version-control commands only inside the verified kit
+  checkout, subject to native permissions. It never grants access or disables
+  a hook. Every other repository keeps its own rules.
 - Never push or merge to the default branch, force-push, rewrite pushed history,
   tag, create a release, change repository settings or touch credentials.
 - Stop and report when the origin differs, the tree is dirty, a push or check

@@ -1,6 +1,9 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 version: "3"
 
+env:
+  AGENT_KIT_DIR: "{{.ROOT_DIR}}"
+
 tasks:
   default:
     desc: List the available targets
@@ -21,6 +24,16 @@ tasks:
       - uv sync --locked
       - bun install --frozen-lockfile
       - uv run --locked pre-commit install --install-hooks
+      - cmd: '"{{.TASK_EXE}}" checkout:register'
+        platforms: [windows]
+
+  checkout:register:
+    desc: Register this checkout for future Windows sessions (user environment)
+    preconditions:
+      - sh: test "{{OS}}" = windows
+        msg: Persistent registration is Windows-only; Task already sets AGENT_KIT_DIR for its child processes.
+    cmds:
+      - powershell -NoProfile -NonInteractive -File scripts/register_checkout.ps1
 
   lint:
     desc: Ruff lint (read-only)
@@ -43,6 +56,11 @@ tasks:
     cmds:
       - uv run --locked pytest -n auto {{.CLI_ARGS}}
 
+  test:matrix:
+    desc: Test Python 3.13, Python 3.14 and coverage in isolated tox environments
+    cmds:
+      - uv run --locked --no-sync tox {{.CLI_ARGS}}
+
   verify:
     desc: Read-only local and CI quality gate; pass one gate after --
     cmds:
@@ -58,6 +76,48 @@ tasks:
     interactive: true
     cmds:
       - uv run --locked cz commit
+
+  version:preview:
+    desc: Preview the next version and generated changelog without writing files
+    cmds:
+      - uv run --locked --no-sync cz bump --dry-run --yes
+      - uv run --locked --no-sync cz changelog --dry-run
+
+  version:prepare:
+    desc: Update version files and uv.lock; curate CHANGELOG.md before committing
+    interactive: true
+    prompt: Update version files and uv.lock without committing or tagging? Review CHANGELOG.md manually afterward.
+    preconditions:
+      - sh: git diff --quiet && git diff --cached --quiet
+        msg: Preserve or commit tracked changes on your release branch before preparing a version.
+    cmds:
+      - uv run --locked --no-sync cz bump --version-files-only --yes
+      - uv lock
+
+  release:build:
+    desc: Build and verify the wheel, sdist and capability ZIP (no overwrite or publish)
+    cmds:
+      - uv build --out-dir build/distributions
+      - task: capabilities:build
+        vars:
+          CLI_ARGS: --profile fullstack --feature iac
+      - uv run --locked --no-sync python -m scripts.check_release
+
+  release:publish:
+    desc: Operator only; publish an existing reviewed GitHub draft with TAG=vX.Y.Z
+    interactive: true
+    requires:
+      vars: [TAG]
+    prompt: Publish the reviewed draft {{.TAG}} on lfr-ai/agent-kit? This is a remote operator action.
+    preconditions:
+      - sh: 'test {{regexMatch "^v[0-9]+[.][0-9]+[.][0-9]+$" .TAG}} = true'
+        msg: Supply a numeric release tag in vX.Y.Z format, for example TAG=v0.1.1.
+      - sh: test "$(gh release view {{.TAG | shellQuote}} --repo lfr-ai/agent-kit --json isDraft --jq .isDraft)" = true
+        msg: The tag must identify an accessible draft created by the release workflow.
+    cmds:
+      - uv run --locked --no-sync python scripts/check_governance.py --publication
+      - gh release view {{.TAG | shellQuote}} --repo lfr-ai/agent-kit
+      - gh release edit {{.TAG | shellQuote}} --repo lfr-ai/agent-kit --draft=false
 
   capabilities:build:
     desc: Create a new licensed APM source archive without replacing an existing artifact

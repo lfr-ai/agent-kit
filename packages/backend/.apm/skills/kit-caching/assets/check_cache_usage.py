@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag risky in-process caching and unsafe cache deserialization without importing code.
 
 Rules (select with ``--rule``, repeatable; default: all):
@@ -491,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_cache_usage self-test passed.")
+        sys.stdout.write("check_cache_usage self-test passed.\n")
         return 0
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
@@ -508,10 +512,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
     except (OSError, UnicodeError, SyntaxError) as error:
-        print(f"input error: {error}", file=sys.stderr)
+        sys.stderr.write(f"input error: {error}\n")
         return _EXIT_INPUT_ERROR
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return _EXIT_FINDINGS if findings else 0
 
 

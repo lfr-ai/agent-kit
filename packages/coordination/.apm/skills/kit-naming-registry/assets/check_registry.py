@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Validate a naming registry and detect drift in its generated modules.
 
 Checks, in order:
@@ -701,7 +705,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Registry checker self-test passed.")
+        sys.stdout.write("Registry checker self-test passed.\n")
         return EXIT_CLEAN
     if args.registry is None:
         parser.error("give the registry JSON file")
@@ -711,13 +715,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.registry, schema=args.schema, outputs=outputs, baseline=args.baseline
         )
     except (OSError, ValueError) as error:
-        print(f"Cannot check {args.registry}: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check {args.registry}: {error}\n")
         return EXIT_USAGE
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
         return EXIT_FINDINGS
-    print(f"Registry {args.registry.as_posix()} is valid and outputs are current.")
+    sys.stdout.write(
+        f"Registry {args.registry.as_posix()} is valid and outputs are current.\n"
+    )
     return EXIT_CLEAN
 
 

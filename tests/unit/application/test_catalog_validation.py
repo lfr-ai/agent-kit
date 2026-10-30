@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from agent_kit.application.services import catalog_service as cs
 from agent_kit.application.services.catalog_service import (
     CatalogService,
     _body_text,
@@ -31,6 +32,7 @@ from agent_kit.application.services.catalog_service import (
     _skill_records,
     _string_list,
 )
+from agent_kit.application.services.provenance_service import ProvenanceService
 from agent_kit.core.models import (
     Bundle,
     BundleSource,
@@ -40,6 +42,7 @@ from agent_kit.core.models import (
     SourceDocument,
 )
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.infrastructure.output_adapter import OutputAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,9 +118,6 @@ def test_empty_effective_profiles_are_rejected(
 def test_inheritance_only_nonempty_profile_has_valid_provenance(
     source_root: Path,
 ) -> None:
-    from agent_kit.application.services.provenance_service import ProvenanceService
-    from agent_kit.infrastructure.output_adapter import OutputAdapter
-
     snapshot = FileCatalogAdapter().load(source_root)
     service = CatalogService()
     assert service.validate(snapshot).valid
@@ -242,8 +242,6 @@ def test_link_target_various_behaviors(
 
 def test_policy_mapping_rejects_modified_policy_values() -> None:
     """Any deviation from the strict policy contract is reported as a policy.value finding."""
-    from agent_kit.application.services import catalog_service as cs
-
     modified: dict[str, object] = dict(copy.deepcopy(cs._POLICY))
     # mutate an expected nested child to provoke a mismatch
     manifest = modified["manifest"]
@@ -277,21 +275,19 @@ def test_compose_raises_for_unknown_profile_and_features_and_skill_availability(
 
 def test_parse_catalog_and_manifest_issues_are_reported(source_root: Path) -> None:
     """Malformed bundle declarations and manifest includes produce clear diagnostics."""
-    import json as _json
-
     root = source_root
     catalog_path = root / "catalog.json"
-    catalog = _json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     # add a declared but absent bundle to exercise bundle.missing
     catalog["bundles"]["ghost"] = {"path": "packages/ghost", "kind": "portable"}
-    catalog_path.write_text(_json.dumps(catalog, indent=2), encoding="utf-8")
+    catalog_path.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
 
     # corrupt a manifest to exercise manifest.includes and manifest.dependencies checks
     manifest_path = root / "packages/backend/apm.yml"
-    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["includes"] = []
     manifest["dependencies"] = {"unexpected": True}
-    manifest_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     report = CatalogService().validate(FileCatalogAdapter().load(root))
     codes = {f.code for f in report.findings}
@@ -377,8 +373,6 @@ def test_exact_mapping_string_list_and_same_value_helpers() -> None:
 
 def test_policy_mapping_nested_security_mismatch_reports() -> None:
     """_policy mapping reports when nested security child values differ from expectation."""
-    from agent_kit.application.services import catalog_service as cs
-
     modified: dict[str, object] = dict(cs._POLICY)
     assert isinstance(modified, dict)
     security_value = modified.get("security")

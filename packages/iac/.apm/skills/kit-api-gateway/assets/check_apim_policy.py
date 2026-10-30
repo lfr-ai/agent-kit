@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag risky Azure API Management policy XML before it is published.
 
 Each file is checked on its own and every finding is printed as
@@ -706,10 +710,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome, and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _FINDINGS
-    print("check_apim_policy self-test passed.")
+    sys.stdout.write("check_apim_policy self-test passed.\n")
     return 0
 
 
@@ -801,14 +805,14 @@ def _scan(paths: Sequence[Path], options: Options) -> int:
         files = collect_files(paths)
         findings = _scan_files(files, options)
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Cannot check policies: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check policies: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
-        print(f"{len(findings)} finding(s) in {len(files)} file(s)", file=sys.stderr)
+        sys.stderr.write(f"{len(findings)} finding(s) in {len(files)} file(s)\n")
         return _FINDINGS
-    print(f"No findings in {len(files)} file(s).")
+    sys.stdout.write(f"No findings in {len(files)} file(s).\n")
     return 0
 
 

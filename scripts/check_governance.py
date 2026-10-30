@@ -927,13 +927,13 @@ def main() -> int:
     findings = check(_ROOT)
     blockers = publication_blockers(_ROOT)
     for finding in findings:
-        print(finding, file=sys.stderr)
+        sys.stderr.write(f"{finding}\n")
     for blocker in blockers:
-        print(f"Publication blocked: {blocker}", file=sys.stderr)
+        sys.stderr.write(f"Publication blocked: {blocker}\n")
     if findings or (args.publication and blockers):
         return 1
-    print(
-        "Local governance contracts passed; publication prerequisites remain separate."
+    sys.stdout.write(
+        "Local governance contracts passed; publication prerequisites remain separate.\n"
     )
     return 0
 

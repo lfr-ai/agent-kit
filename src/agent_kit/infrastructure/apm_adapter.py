@@ -12,7 +12,7 @@ import sys
 import sysconfig
 
 APM_VERSION = "0.33.0"
-_DEFAULT_TIMEOUT_SECONDS = 300.0
+_DEFAULT_TIMEOUT_SECONDS = 900.0
 
 
 class ApmCliError(RuntimeError):

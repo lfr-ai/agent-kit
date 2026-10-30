@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag the highest-risk Python calls with a standard-library AST scan.
 
 Rules (select a subset with ``--rule``):
@@ -370,10 +374,10 @@ def _self_test_status() -> int:
     """Report the self-test result and return 0 on success or 1 on failure."""
     problems = self_test()
     if problems:
-        print("\n".join(problems), file=sys.stderr)
-        print("check_secure_patterns self-test failed.")
+        sys.stderr.write(f"{'\n'.join(problems)}\n")
+        sys.stdout.write("check_secure_patterns self-test failed.\n")
         return 1
-    print("check_secure_patterns self-test passed.")
+    sys.stdout.write("check_secure_patterns self-test passed.\n")
     return 0
 
 
@@ -391,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         return _self_test_status()
     absent = [path for path in args.paths if not path.exists()]
     if absent:
-        print(f"path does not exist: {absent[0].as_posix()}", file=sys.stderr)
+        sys.stderr.write(f"path does not exist: {absent[0].as_posix()}\n")
         return _USAGE_ERROR
     rules = tuple(args.rule) or tuple(RULES)
     findings: list[Finding] = []
@@ -400,10 +404,10 @@ def main(argv: list[str] | None = None) -> int:
             text = path.read_text(encoding="utf-8")
             findings.extend(check_source(path.as_posix(), text, rules=rules))
     except (OSError, UnicodeDecodeError) as error:
-        print(f"cannot read source: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read source: {error}\n")
         return _USAGE_ERROR
     for finding in sorted(findings):
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     return 1 if findings else 0
 
 

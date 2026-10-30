@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that ``uv.lock`` still matches ``pyproject.toml`` and pins every artifact.
 
 The checker reads both files with ``tomllib``. It never runs uv, resolves
@@ -639,10 +643,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _FINDINGS
-    print("check_lock_freshness self-test passed")
+    sys.stdout.write("check_lock_freshness self-test passed\n")
     return 0
 
 
@@ -676,11 +680,11 @@ def main(argv: list[str] | None = None) -> int:
             lock_path=arguments.lock.as_posix(),
         )
     except (OSError, tomllib.TOMLDecodeError, LockInputError) as error:
-        print(f"check-lock-freshness: cannot check: {error}", file=sys.stderr)
+        sys.stderr.write(f"check-lock-freshness: cannot check: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render())
-    print(f"check-lock-freshness: {len(findings)} findings")
+        sys.stdout.write(f"{finding.render()}\n")
+    sys.stdout.write(f"check-lock-freshness: {len(findings)} findings\n")
     return _FINDINGS if findings else 0
 
 

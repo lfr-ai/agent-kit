@@ -130,7 +130,7 @@ def test_version_metadata_alone_cannot_authorize_environment_launcher(
 
 
 @pytest.mark.parametrize(
-    ("timeout_seconds", "expected_timeout"), [(None, 300.0), (5.0, 5.0)]
+    ("timeout_seconds", "expected_timeout"), [(None, 900.0), (5.0, 5.0)]
 )
 def test_apm_commands_use_fixed_version_no_scripts_and_explicit_policy(
     tmp_path: Path,

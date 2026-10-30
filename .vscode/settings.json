@@ -8,6 +8,16 @@
     "tests"
   ],
 
+  "terminal.integrated.env.windows": {
+    "AGENT_KIT_DIR": "${workspaceFolder}"
+  },
+  "terminal.integrated.env.linux": {
+    "AGENT_KIT_DIR": "${workspaceFolder}"
+  },
+  "terminal.integrated.env.osx": {
+    "AGENT_KIT_DIR": "${workspaceFolder}"
+  },
+
   "ruff.configuration": "${workspaceFolder}/ruff.toml",
   "ruff.nativeServer": "on",
   "ruff.importStrategy": "fromEnvironment",

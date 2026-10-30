@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Collect deliberate-shortcut marker comments into a Markdown debt ledger.
 
 A debt marker is a comment such as '# DEBT(owner=@orders-team,
@@ -407,25 +411,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("collect_debt_markers self-test passed.")
+        sys.stdout.write("collect_debt_markers self-test passed.\n")
         return 0
     if not args.paths:
         parser.print_usage(sys.stderr)
         return _EXIT_USAGE
     missing = [path for path in args.paths if not path.exists()]
     if missing:
-        print(f"path not found: {missing[0]}", file=sys.stderr)
+        sys.stderr.write(f"path not found: {missing[0]}\n")
         return _EXIT_USAGE
     options = _options(args)
     try:
         entries = collect(args.paths, options)
     except OSError as error:
-        print(f"cannot read target: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read target: {error}\n")
         return _EXIT_USAGE
     _write_ledger(render_ledger(entries, title=args.title), args.output)
     findings = problems(entries, options)
     for finding in findings:
-        print(finding, file=sys.stderr)
+        sys.stderr.write(f"{finding}\n")
     return int(bool(findings))
 
 

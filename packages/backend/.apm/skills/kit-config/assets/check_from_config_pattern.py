@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag process-environment access outside the configured settings modules.
 
 Configuration is parsed once by a typed settings object at the composition root
@@ -15,6 +19,7 @@ from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from pathlib import Path
+import sys
 
 _DEFAULT_ALLOW = (
     "*settings.py",
@@ -381,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_from_config_pattern self-test passed.")
+        sys.stdout.write("check_from_config_pattern self-test passed.\n")
         return 0
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
@@ -391,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
         exclude=(*_DEFAULT_EXCLUDE, *args.exclude),
     )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

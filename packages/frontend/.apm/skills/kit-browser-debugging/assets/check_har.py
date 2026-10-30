@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check a HAR (HTTP Archive) file for credentials and personal data before sharing.
 
 Browser network exports often contain cookies, bearer tokens, one-time codes, and
@@ -308,19 +312,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("HAR checker self-test passed.")
+        sys.stdout.write("HAR checker self-test passed.\n")
         return 0
     if not args.files:
         parser.error("provide at least one HAR file or --self-test")
     try:
         findings = _check_all(args.files, allow_bodies=args.allow_bodies)
     except (OSError, UnicodeError, ValueError, HarInputTypeError) as error:
-        print(f"Cannot check HAR input: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check HAR input: {error}\n")
         return 1
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     if not findings:
-        print("No credentials or retained bodies found in the HAR input.")
+        sys.stdout.write("No credentials or retained bodies found in the HAR input.\n")
     return int(bool(findings))
 
 

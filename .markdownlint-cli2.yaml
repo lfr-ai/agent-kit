@@ -17,13 +17,11 @@ ignores:
   - ".github/agents/**"
   - ".github/instructions/**"
   - "**/*.template.md"
-  # Deployed by APM to .agents/ and .claude/ with pinned hashes; restyle it only
-  # together with the APM refresh in its own Verify procedure.
+  # Deployed by APM with pinned hashes; restyle only together with an APM refresh.
   - ".apm/skills/kit-capability-authoring/SKILL.md"
 
 config:
-  # Capability prose is soft-wrapped; skills enforce their own body-line budgets
-  # (catalog.json budgets.skill_body_lines), which hard wrapping would fight.
+  # Prose is soft-wrapped; skills enforce body-line budgets in catalog.json instead.
   MD013: false
   MD024:
     siblings_only: true

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag unsafe Jinja environment setup and risky template constructs.
 
 Python sources are parsed without importing them. Calls to Jinja ``Environment``
@@ -19,6 +23,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 import re
+import sys
 
 _WAIVER = "template-safety: reviewed"
 _DEFAULT_SUFFIXES = (".j2", ".jinja", ".jinja2", ".html", ".htm", ".xml")
@@ -514,7 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_template_safety self-test passed.")
+        sys.stdout.write("check_template_safety self-test passed.\n")
         return 0
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
@@ -522,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         args.paths, suffixes=tuple(args.template_suffix or _DEFAULT_SUFFIXES)
     )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

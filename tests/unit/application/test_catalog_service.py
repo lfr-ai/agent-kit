@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,7 +16,6 @@ from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from contextlib import AbstractContextManager
-    from pathlib import Path
 
     from agent_kit.core.models import CheckReport
 
@@ -506,8 +506,6 @@ def test_denied_source_enumeration_aborts_capture(
 def test_denied_source_asset_read_blocks_validation_and_composition(
     source_root: Path, monkeypatch: pytest.MonkeyPatch, original: bytes
 ) -> None:
-    from pathlib import Path
-
     denied = source_root / "packages/backend/.apm/skills/kit-backend/asset.bin"
     denied.write_bytes(original)
     assert _report(source_root).valid

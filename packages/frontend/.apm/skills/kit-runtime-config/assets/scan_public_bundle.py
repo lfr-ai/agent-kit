@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Scan built frontend output for secret-like values and forbidden public content.
 
 Everything a browser downloads is public. This checker reads files below a build
@@ -250,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Public bundle scanner self-test passed.")
+        sys.stdout.write("Public bundle scanner self-test passed.\n")
         return 0
     try:
         findings = scan(
@@ -261,12 +265,14 @@ def main(argv: list[str] | None = None) -> int:
             max_bytes=args.max_bytes,
         )
     except (OSError, ValueError, re.error) as error:
-        print(f"Cannot scan build output: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan build output: {error}\n")
         return 1
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     if not findings:
-        print(f"No secret-like patterns found in {args.root} (pattern scan only).")
+        sys.stdout.write(
+            f"No secret-like patterns found in {args.root} (pattern scan only).\n"
+        )
     return int(bool(findings))
 
 

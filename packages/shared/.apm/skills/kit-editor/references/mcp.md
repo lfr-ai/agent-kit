@@ -14,9 +14,17 @@ Claude-shaped example, not the shape for VS Code's workspace MCP file.
 
 Copy **one selected definition**, not the full file. Replace every `REVIEWED_*`
 placeholder with an approved immutable version/digest and consumer-owned identity.
-Resolve local tooling from the consumer's approved dependency policy; `npx`
-may download and execute code. The templates do not run it. Never substitute
-`latest` merely to make an example start.
+Keep the hardening flags the templates carry: `--read-only` for Azure,
+`--toolsets=registry` for Terraform, `--isolated --headless` for Playwright and
+Chrome DevTools, plus the latter's usage-statistics and CrUX opt-outs. The
+coverage gate rejects a template that drops them; loosening one is a reviewed,
+per-consumer decision.
+The JavaScript CLI examples use `bunx --bun`; `--bun` precedes the executable
+so Bun, not a Node shebang, selects the runtime. `bunx` can download packages:
+activation requires operator approval, a reviewed version, and a successful
+Bun compatibility check. Prefer a locked local executable when available.
+The templates never run these commands. Do not substitute `latest` or fall back
+to Node to make a server start.
 
 | Integration | Required review and upstream |
 | --- | --- |
@@ -94,4 +102,5 @@ one configured server does not start multiple duplicate processes.
 
 Sources: [VS Code MCP](https://code.visualstudio.com/docs/agent-customization/mcp-servers),
 [Claude MCP](https://code.claude.com/docs/en/mcp),
+[Bun executables and runtime selection](https://bun.sh/docs/pm/bunx),
 [MCP security](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices).

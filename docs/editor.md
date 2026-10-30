@@ -11,18 +11,23 @@ points. They do not replace the CLI completion gate.
 
 1. Review the repository before granting Workspace Trust.
 2. Install the recommended extensions you need. Recommendations do not silently
-   install extensions or disable ones already installed.
+   install extensions or disable ones already installed. The dev container
+   installs the same list except two host-side extensions (PowerShell and Dev
+   Containers), which belong on the machine that opens the container.
 3. Run **Tasks: Run Task > Bootstrap locked environment**, or `task bootstrap`.
    Bootstrap audits the Python and JavaScript locks before installing either
    environment and then installs Git hooks. This is an explicit action, not a
    folder-open task; do not bypass the audit with a direct dependency sync.
+   On Windows it also registers `AGENT_KIT_DIR` for future sessions. New
+   integrated terminals in this checkout receive the workspace path directly.
 4. Run **Python: Select Interpreter** and select the repository's `.venv`.
    The portable default points to the directory, so Windows and Unix do not need
    different executable paths. Changing this default does not replace a previous
    workspace interpreter selection.
 5. Use **Run Build Task** for `task verify`, or **Run Test Task** for all test
    tiers. The other editor tasks cover bootstrap, types, lint, formatting,
-   pre-commit, APM smoke and an interactive Conventional Commit prompt. Use `task verify -- <gate>` or the owning CLI for
+   pre-commit, APM smoke, the tox matrix, checkout registration and an interactive
+   Conventional Commit prompt. Use `task verify -- <gate>` or the owning CLI for
    focused checks; editor tasks do not duplicate the complete gate inventory.
 
 ## Workspace contract

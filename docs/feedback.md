@@ -7,6 +7,29 @@ project receives the change.
 
 ## Install once per machine
 
+### Locate the source checkout automatically
+
+Inside the agent-kit clone, `task bootstrap` sets `AGENT_KIT_DIR` for its Task
+subprocesses. On Windows it also calls `task checkout:register`, which stores the
+checkout path in the current user's environment (never the machine environment).
+It is idempotent and uses the script's location, not the current directory.
+After moving the clone, rerun registration and fully restart VS Code/terminals.
+No hook, credential or shell profile is modified by registration.
+
+For a dry run before touching the Windows user environment:
+
+```powershell
+powershell -NoProfile -File scripts/register_checkout.ps1 -WhatIf
+```
+
+New integrated terminals in this repository receive the workspace path directly.
+Dev-container processes started by VS Code receive the container workspace path.
+Neither sets a variable in the already-running parent editor or an unrelated
+repository. On Linux/macOS, Task provides process scope only: set the variable
+in the personal shell environment for unrelated repositories if needed.
+
+The value helps find source; a Git guard must never trust it as authorization.
+
 Install the packages you use every day at user scope. Nothing is copied into a
 project repository.
 

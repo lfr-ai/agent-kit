@@ -79,13 +79,22 @@ def test_every_feature_is_locked_by_digest() -> None:
         assert entry["integrity"].startswith("sha256:")
 
 
+_HOST_ONLY_EXTENSIONS = {
+    "ms-vscode-remote.remote-containers",
+    "ms-vscode.powershell",
+}
+
+
 def test_container_extensions_match_workspace_recommendations() -> None:
-    """One extension list, installed automatically in the container."""
+    """One extension list; only named host-side extensions stay out of the container."""
     recommended = json.loads((_ROOT / ".vscode/extensions.json").read_text())
     customizations = _devcontainer()["customizations"]
     assert isinstance(customizations, dict)
     installed = customizations["vscode"]["extensions"]
-    assert sorted(installed) == sorted(recommended["recommendations"])
+    assert set(recommended["recommendations"]) >= _HOST_ONLY_EXTENSIONS
+    assert sorted(installed) == sorted(
+        set(recommended["recommendations"]) - _HOST_ONLY_EXTENSIONS
+    )
 
 
 def test_container_environment_keeps_apm_non_interactive() -> None:

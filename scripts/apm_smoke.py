@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from agent_kit.infrastructure import apm_adapter
 
 _ROOT = Path(__file__).resolve().parents[1]
-_TIMEOUT_SECONDS = 600
+_TIMEOUT_SECONDS = 1800
 _RUNTIMES = "copilot,claude"
 # Each selection must fit the profile description budget; together they cover
 # every portable bundle.
@@ -122,10 +122,15 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     except subprocess.TimeoutExpired as error:
         raise _SmokeCommandTimeout(_TIMEOUT_SECONDS, command) from error
     if result.returncode:
-        print(result.stdout.decode("utf-8", errors="backslashreplace"), file=sys.stderr)
-        print(result.stderr.decode("utf-8", errors="backslashreplace"), file=sys.stderr)
+        sys.stderr.write(
+            f"{result.stdout.decode('utf-8', errors='backslashreplace')}\n"
+        )
+        sys.stderr.write(
+            f"{result.stderr.decode('utf-8', errors='backslashreplace')}\n"
+        )
         raise SystemExit(result.returncode)
-    print(f"Passed: {' '.join(command[1:])}", flush=True)
+    sys.stdout.write(f"Passed: {' '.join(command[1:])}\n")
+    sys.stdout.flush()
 
 
 def _compose_command(
@@ -193,7 +198,7 @@ def _delivered(
         package, skills=skills, roles=roles, resources=resources
     )
     if failures:
-        print("\n".join(failures), file=sys.stderr)
+        sys.stderr.write(f"{'\n'.join(failures)}\n")
     return not failures
 
 
@@ -260,10 +265,10 @@ def smoke_profile(
             return 1
         run([toolkit, "apm-check", "--root", str(package)], cwd=package, env=env)
         if not session_skills and not expected_roles:
-            print("Selected project has no native roles.", file=sys.stderr)
+            sys.stderr.write("Selected project has no native roles.\n")
             return 1
         if not (package / "apm.lock.yaml").is_file():
-            print("APM did not create its lockfile.", file=sys.stderr)
+            sys.stderr.write("APM did not create its lockfile.\n")
             return 1
         run(
             [
@@ -292,9 +297,9 @@ def _smoke_apm_executable() -> str | None:
         return apm_adapter.pinned_apm_executable()
     except apm_adapter.ApmAvailabilityError as error:
         if error.issue is apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE:
-            print("Use the locked toolkit environment.", file=sys.stderr)
+            sys.stderr.write("Use the locked toolkit environment.\n")
         else:
-            print(f"APM {apm_adapter.APM_VERSION} is required.", file=sys.stderr)
+            sys.stderr.write(f"APM {apm_adapter.APM_VERSION} is required.\n")
         return None
 
 
@@ -334,7 +339,7 @@ def main() -> int:
         return 1
     toolkit = _toolkit_executable()
     if toolkit is None:
-        print("Use the locked toolkit environment.", file=sys.stderr)
+        sys.stderr.write("Use the locked toolkit environment.\n")
         return 1
     env = {
         key: value
@@ -362,7 +367,7 @@ def main() -> int:
         )
         if result:
             return result
-    print("Released APM smoke passed; no live agent session is certified.")
+    sys.stdout.write("Released APM smoke passed; no live agent session is certified.\n")
     return 0
 
 

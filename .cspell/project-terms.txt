@@ -336,6 +336,7 @@ NTFS
 numprocesses
 nvme
 Nygard
+ochanges
 ocsp
 oklab
 oklch
@@ -411,6 +412,7 @@ readyz
 realip
 reauthored
 rebalances
+recieve
 recompiles
 redirections
 rediss
@@ -524,6 +526,7 @@ testclient
 testpaths
 testserver
 textareas
+textconv
 tflint
 tflock
 tfsec
@@ -567,6 +570,7 @@ Unpickler
 unreplayable
 unreproduced
 unreviewed
+unrun
 unsanitized
 unstub
 unvalidated

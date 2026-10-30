@@ -279,13 +279,13 @@ def main() -> int:
             write(_ROOT)
         failures = check(_ROOT)
     except (OSError, ValueError, InputTypeError) as error:
-        print(str(error), file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return 1
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("Selected repository native roles and ownership hashes passed.")
+    sys.stdout.write("Selected repository native roles and ownership hashes passed.\n")
     return 0
 
 

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Validate task envelope samples against the queue message contract.
 
 Input: one or more JSON files, each holding a list of envelope objects as
@@ -239,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         supported = parse_supported(args.supported)
     except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
+        sys.stderr.write(f"error: {error}\n")
         return _EXIT_USAGE
     findings: list[str] = []
     seen_ids: dict[str, str] = {}
@@ -248,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             items = items_with_lines(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError) as error:
-            print(f"{path}:1: cannot read envelopes: {error}", file=sys.stderr)
+            sys.stderr.write(f"{path}:1: cannot read envelopes: {error}\n")
             return _EXIT_USAGE
         findings.extend(
             _sample_findings(
@@ -262,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

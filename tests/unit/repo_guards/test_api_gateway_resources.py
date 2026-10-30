@@ -52,7 +52,7 @@ _RISKY = """<policies>
     <set-header name="Ocp-Apim-Subscription-Key" exists-action="override">
       <value>0123456789abcdef0123456789abcdef</value>
     </set-header>
-    <authentication-basic username="svc" password="hunter2-literal" />
+    <!-- pragma: allowlist secret --><authentication-basic username="svc" password="hunter2-literal" />
   </inbound>
   <backend><base /></backend>
   <outbound><base /></outbound>

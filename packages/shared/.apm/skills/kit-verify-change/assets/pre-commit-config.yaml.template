@@ -100,10 +100,11 @@ repos:
         types_or: [python, pyi]
       - id: type-check
         name: type check
-        entry: uv run --locked mypy src
+        entry: uv run --locked --no-sync ty check
         language: unsupported
         pass_filenames: false
-        types: [python]
+        types: [file]
+        files: (\.pyi?$|^(ty\.toml|pyproject\.toml|uv\.lock)$)
       - id: import-contracts
         name: import contracts
         entry: uv run --locked lint-imports

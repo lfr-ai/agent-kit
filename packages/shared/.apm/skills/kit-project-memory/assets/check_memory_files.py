@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Validate project memory files: dated entries, required fields, links and age.
 
 Two shapes are recognized in each Markdown file:
@@ -519,10 +523,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _EXIT_FINDINGS
-    print("check_memory_files self-test passed.")
+    sys.stdout.write("check_memory_files self-test passed.\n")
     return 0
 
 
@@ -562,13 +566,13 @@ def main(argv: list[str] | None = None) -> int:
         return _run_self_test()
     policy = _policy(args)
     if isinstance(policy, str):
-        print(policy, file=sys.stderr)
+        sys.stderr.write(f"{policy}\n")
         return _EXIT_USAGE
     try:
         files = collect(args.paths or [Path("memories")])
         texts = [(path, path.read_text(encoding="utf-8")) for path in files]
     except (OSError, UnicodeDecodeError) as error:
-        print(error, file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return _EXIT_USAGE
     findings = [
         finding
@@ -578,9 +582,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     ]
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print(f"Memory files are valid: {len(files)} file(s) checked.")
+        sys.stdout.write(f"Memory files are valid: {len(files)} file(s) checked.\n")
     return _EXIT_FINDINGS if findings else 0
 
 

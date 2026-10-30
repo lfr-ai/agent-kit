@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Review Azure what-if changes or properties.changes envelopes without deployment.
 
 Use --file or --self-test. Exit 2 rejects malformed/unsupported input, 3 flags
@@ -248,27 +252,28 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         self_test()
-        print("Azure what-if reviewer self-test passed.")
+        sys.stdout.write("Azure what-if reviewer self-test passed.\n")
         return 0
     if args.file is None:
         parser.error("--file is required unless --self-test is selected")
     try:
         groups = _read(args.file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError, WhatIfInputTypeError) as error:
-        print(f"Cannot review what-if: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot review what-if: {error}\n")
         return _INVALID
-    print(
-        json.dumps(
-            {
-                "summary": {key: len(items) for key, items in groups.items()},
-                "lists": groups,
-            }
-        )
+    sys.stdout.write(
+        f"{
+            json.dumps(
+                {
+                    'summary': {key: len(items) for key, items in groups.items()},
+                    'lists': groups,
+                }
+            )
+        }\n"
     )
     if groups["delete"] or groups["recreate"] or groups["review"]:
-        print(
-            "Destructive or unresolved changes require operator review; no deployment is authorized.",
-            file=sys.stderr,
+        sys.stderr.write(
+            "Destructive or unresolved changes require operator review; no deployment is authorized.\n"
         )
         return _DELETE if groups["delete"] else _REVIEW
     return 0

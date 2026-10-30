@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag legacy Python syntax that a modernization batch should replace.
 
 Sources are parsed with ``ast`` and never imported. Default rules:
@@ -373,7 +377,7 @@ def _scan(files: Sequence[Path], *, rules: frozenset[Rule]) -> tuple[list[str], 
             source = path.read_text(encoding="utf-8")
             findings = check_source(source, path.as_posix(), rules=rules)
         except (OSError, UnicodeDecodeError, SyntaxError, ValueError) as error:
-            print(f"{path.as_posix()}: cannot check: {error}", file=sys.stderr)
+            sys.stderr.write(f"{path.as_posix()}: cannot check: {error}\n")
             failures += 1
             continue
         lines.extend(finding.render() for finding in findings)
@@ -385,12 +389,12 @@ def _check(args: argparse.Namespace) -> int:
     try:
         files = collect(args.paths, excluded=_DEFAULT_EXCLUDES | set(args.exclude))
     except FileNotFoundError as error:
-        print(f"{error}: path does not exist", file=sys.stderr)
+        sys.stderr.write(f"{error}: path does not exist\n")
         return _EXIT_USAGE
     lines, failures = _scan(files, rules=_rules(args))
     for line in lines:
-        print(line)
-    print(f"{len(files)} file(s) checked, {len(lines)} finding(s).")
+        sys.stdout.write(f"{line}\n")
+    sys.stdout.write(f"{len(files)} file(s) checked, {len(lines)} finding(s).\n")
     if failures:
         return _EXIT_USAGE
     return _EXIT_FINDINGS if lines else 0
@@ -401,9 +405,9 @@ def _run_self_test() -> int:
     try:
         self_test()
     except SelfTestError as error:
-        print(f"check_legacy_syntax self-test failed: {error}", file=sys.stderr)
+        sys.stderr.write(f"check_legacy_syntax self-test failed: {error}\n")
         return _EXIT_FINDINGS
-    print("check_legacy_syntax self-test passed.")
+    sys.stdout.write("check_legacy_syntax self-test passed.\n")
     return 0
 
 

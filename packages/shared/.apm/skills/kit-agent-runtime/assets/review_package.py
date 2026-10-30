@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Assemble a reviewer-ready Markdown package from a diff and verification evidence.
 
 Inputs are a unified diff file (for example the output of ``git diff --no-color`` or
@@ -655,10 +659,12 @@ def _self_test() -> int:
     if len(findings) != _SELF_TEST_GATE_FINDINGS:
         failures.append(f"gate findings {findings}")
     for failure in failures:
-        print(f"self-test: {failure}")
+        sys.stdout.write(f"self-test: {failure}\n")
     if failures:
         return 1
-    print(f"self-test passed: {len(_SELF_TEST_EXPECTED_CHANGES) + 1} cases")
+    sys.stdout.write(
+        f"self-test passed: {len(_SELF_TEST_EXPECTED_CHANGES) + 1} cases\n"
+    )
     return 0
 
 
@@ -693,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_bytes < 1:
         parser.error("--max-bytes must be positive")
     if args.output is not None and args.output.exists() and not args.force:
-        print(f"{args.output}: exists; pass --force to replace it", file=sys.stderr)
+        sys.stderr.write(f"{args.output}: exists; pass --force to replace it\n")
         return _CONFIG_EXIT
     document, status = build(
         diff_path=args.diff,

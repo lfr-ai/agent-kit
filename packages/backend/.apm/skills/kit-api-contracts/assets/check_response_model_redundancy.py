@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag FastAPI routes whose ``response_model`` repeats the return annotation.
 
 FastAPI uses the return annotation as the response model. Passing the same type
@@ -17,6 +21,7 @@ import argparse
 import ast
 from collections.abc import Iterable
 from pathlib import Path
+import sys
 
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _DEFAULT_METHODS = (
@@ -189,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError, SyntaxError):
             findings.append(f"{path.as_posix()}:1: source cannot be parsed")
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

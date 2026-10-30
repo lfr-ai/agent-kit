@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check explicit consumer context entries and their local links without execution."""
 
 import argparse
@@ -138,17 +142,17 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         self_test()
-        print("Context checker self-test passed.")
+        sys.stdout.write("Context checker self-test passed.\n")
         return 0
     try:
         failures = check(args.root, entries=tuple(args.entry) or _DEFAULT_ENTRIES)
     except (OSError, UnicodeError) as error:
-        print(f"Cannot read context: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot read context: {error}\n")
         return 1
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if not failures:
-        print("Context entries and their local links passed.")
+        sys.stdout.write("Context entries and their local links passed.\n")
     return int(bool(failures))
 
 

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Generate Python and TypeScript identifier modules from a naming registry.
 
 The registry is a JSON document (see ``naming_registry.json.template``) with a
@@ -426,20 +430,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Registry generator self-test passed.")
+        sys.stdout.write("Registry generator self-test passed.\n")
         return EXIT_OK
     if args.registry is None or (args.python is None and args.typescript is None):
         parser.error("give REGISTRY and --python, --typescript, or both")
     try:
         registry = load_registry(args.registry)
     except (OSError, ValueError) as error:
-        print(f"Cannot generate from {args.registry}: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot generate from {args.registry}: {error}\n")
         return EXIT_USAGE
     outputs = ((args.python, render_python), (args.typescript, render_typescript))
     for path, render in outputs:
         if path is not None:
             changed = write_if_changed(path, render(registry))
-            print(f"{'wrote' if changed else 'unchanged'} {path.as_posix()}")
+            sys.stdout.write(
+                f"{'wrote' if changed else 'unchanged'} {path.as_posix()}\n"
+            )
     return EXIT_OK
 
 

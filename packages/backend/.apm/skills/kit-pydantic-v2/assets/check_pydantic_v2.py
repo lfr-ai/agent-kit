@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag Pydantic v1 APIs and compatibility shims in code that targets v2.
 
 Python sources are parsed without importing them. Only files that import
@@ -16,6 +20,7 @@ import ast
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+import sys
 
 _WAIVER = "# pydantic: reviewed"
 _V1_DECORATORS = {
@@ -373,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_pydantic_v2 self-test passed.")
+        sys.stdout.write("check_pydantic_v2 self-test passed.\n")
         return 0
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
@@ -385,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError, SyntaxError):
             findings.append(f"{display}:1: source cannot be read or parsed")
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

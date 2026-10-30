@@ -33,9 +33,17 @@ task apm:smoke
   [dependency security](docs/dependency-security.md).
 - `task bootstrap` needs uv and Bun: it audits `uv.lock` and `bun.lock`, installs
   both locked environments, then installs Git hooks.
+  Task children default `AGENT_KIT_DIR` to the actual checkout root unless the
+  caller already set it. On Windows,
+  bootstrap also registers it in the user environment for future processes;
+  `task checkout:register` repeats that step after moving the clone.
+  Fully restart VS Code and terminals to inherit the persisted value.
 - `task test` runs every tier; pass pytest selectors after `--`.
   `task verify -- tests` adds branch coverage. Test tiers are described in
   [tests/README.md](tests/README.md).
+- `task test:matrix` runs the locked tox Python 3.13/3.14 and coverage
+  environments sequentially; use `-- -e unit` for one environment. Do not run
+  it concurrently with `task verify`, which writes the same coverage reports.
 - Tool configuration lives in its own file: [ruff.toml](ruff.toml), [ty.toml](ty.toml),
   [pytest.ini](pytest.ini), [.coveragerc](.coveragerc), [tox.ini](tox.ini),
   [.cz.toml](.cz.toml) (commitizen), [.yamllint.yaml](.yamllint.yaml),
@@ -49,6 +57,12 @@ task apm:smoke
   Link and duplication checks run at pre-commit, not a separate manual stage.
 - `task commit`: Conventional Commits; `uv run --locked cz bump --dry-run --yes`
   previews the next version without changing files.
+- `task version:preview` also previews generated changelog notes.
+  `task version:prepare` updates version metadata and the lock after confirmation;
+  it never commits, tags or overwrites the curated changelog.
+- `task release:build` builds and verifies the exact release products.
+  `task release:publish TAG=v0.1.1` is an operator-only, confirmed publication
+  of an existing GitHub draft; see [releasing](docs/releasing.md).
 - Dependency updates: Dependabot ([.github/dependabot.yml](.github/dependabot.yml))
   for uv, Bun, GitHub Actions, pre-commit hooks, the dev container image, and
   dev container features.
@@ -76,7 +90,7 @@ task apm:smoke
   named numeric values and double-backtick docstrings across the toolkit,
   portable assets, and production Python templates; the same script runs in
   the always-on pre-commit hook.
-- Task exposes ten recurring workflows plus a `default` target that lists them,
+- Task exposes recurring workflows plus a `default` target that lists them,
   not aliases for every executable.
   `task verify -- <gate>` selects a named gate; one-off tools use their own CLI.
   See [developer tooling](docs/devtools.md) for defaults, hooks and template guidance.

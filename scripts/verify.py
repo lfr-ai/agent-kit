@@ -64,11 +64,10 @@ def main() -> int:
         command = checks[name]
         executable = shutil.which(command[0])
         if executable is None:
-            print(
-                f"{name}: required executable {command[0]} is missing", file=sys.stderr
-            )
+            sys.stderr.write(f"{name}: required executable {command[0]} is missing\n")
             return 1
-        print(f"Gate: {name}", flush=True)
+        sys.stdout.write(f"Gate: {name}\n")
+        sys.stdout.flush()
         result = subprocess.run(  # noqa: S603 - fixed repository commands, no shell
             [executable, *command[1:]], cwd=_ROOT, check=False, env=env
         )

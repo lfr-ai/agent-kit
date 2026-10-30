@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Validate a spec-driven change folder before review, verification or archive.
 
 The checker reads Markdown only and never executes or imports consumer files.
@@ -590,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("check_spec_change self-test passed.")
+        sys.stdout.write("check_spec_change self-test passed.\n")
         return 0
     if not args.changes:
         parser.print_usage(sys.stderr)
@@ -598,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         re.compile(args.id_pattern)
     except re.error as error:
-        print(f"invalid --id-pattern: {error}", file=sys.stderr)
+        sys.stderr.write(f"invalid --id-pattern: {error}\n")
         return _EXIT_USAGE
     settings = _settings(args)
     findings: list[Finding] = []
@@ -606,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
         for change in args.changes:
             findings.extend(check_change(change, settings))
     except (OSError, UnicodeError) as error:
-        print(f"cannot read change: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read change: {error}\n")
         return _EXIT_USAGE
     return _print_findings(findings, len(args.changes))
 
@@ -628,9 +632,9 @@ def _settings(args: argparse.Namespace) -> Settings:
 def _print_findings(findings: list[Finding], count: int) -> int:
     """Print findings or a pass summary and return the exit code."""
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print(f"{count} change folder(s) passed.")
+        sys.stdout.write(f"{count} change folder(s) passed.\n")
     return int(bool(findings))
 
 

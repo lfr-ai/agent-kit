@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Reject floating versions in repository tooling and automation files.
 
 Each check runs only when its file exists under ``--root``:
@@ -616,9 +620,9 @@ def _self_test() -> int:
         clean = scan(Path(directory) / "good")
         dirty = scan(Path(directory) / "bad")
     if clean or len(dirty) < _SELF_TEST_MIN_DIRTY_FINDINGS:
-        print(f"self-test failed: clean={clean} dirty={len(dirty)}", file=sys.stderr)
+        sys.stderr.write(f"self-test failed: clean={clean} dirty={len(dirty)}\n")
         return _FINDINGS
-    print("check_pins self-test passed")
+    sys.stdout.write("check_pins self-test passed\n")
     return 0
 
 
@@ -632,16 +636,16 @@ def main(argv: list[str] | None = None) -> int:
         return _self_test()
     root = arguments.root.resolve()
     if not root.is_dir():
-        print(f"Cannot scan pins: {root} is not a directory", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan pins: {root} is not a directory\n")
         return _INVALID
     try:
         findings = scan(root)
     except (OSError, UnicodeDecodeError, ValueError, configparser.Error) as error:
-        print(f"Cannot scan pins: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan pins: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render(root))
-    print(f"check-pins: {len(findings)} findings")
+        sys.stdout.write(f"{finding.render(root)}\n")
+    sys.stdout.write(f"check-pins: {len(findings)} findings\n")
     return _FINDINGS if findings else 0
 
 

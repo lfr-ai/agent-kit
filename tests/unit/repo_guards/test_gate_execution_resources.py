@@ -1,12 +1,15 @@
 """Portable gate evidence retains every command outcome without provisioning."""
 
+from collections.abc import Iterator, Sequence
 import json
 from pathlib import Path
+import re
 import runpy
 import subprocess
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 _ASSET = (
     Path(__file__).resolve().parents[3]
@@ -19,6 +22,19 @@ def gate() -> SimpleNamespace:
     return SimpleNamespace(**runpy.run_path(str(_ASSET)))
 
 
+def _stub_run(
+    gate: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: Iterator[tuple[str, int]],
+) -> None:
+    def run(command: Sequence[str], *, timeout: float) -> tuple[str, int]:
+        assert command in (("fix",), ("check",))
+        assert timeout == 1.0
+        return next(outcomes)
+
+    monkeypatch.setitem(gate.run_gate.__globals__, "_run", run)
+
+
 @pytest.mark.parametrize("status", ["failed", "unavailable", "timeout"])
 def test_failed_fixer_is_retained_when_check_passes(
     gate: SimpleNamespace,
@@ -27,11 +43,7 @@ def test_failed_fixer_is_retained_when_check_passes(
     status: str,
 ) -> None:
     outcomes = iter([(status, 1), ("passed", 0)])
-    monkeypatch.setitem(
-        gate.run_gate.__globals__,
-        "_run",
-        lambda command, *, timeout: next(outcomes),
-    )
+    _stub_run(gate, monkeypatch, outcomes)
     monkeypatch.setitem(gate.write_report.__globals__, "_git_revision", lambda: "test")
     step = gate.Step(name="lint", check=("check",), fix=("fix",))
     results = gate.run_gate([step], fix=True, keep_going=False, timeout=1.0)
@@ -52,11 +64,7 @@ def test_failed_attempt_controls_later_steps(
     gate: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, keep_going: bool
 ) -> None:
     outcomes = iter([("failed", 1), ("passed", 0), ("passed", 0)])
-    monkeypatch.setitem(
-        gate.run_gate.__globals__,
-        "_run",
-        lambda command, *, timeout: next(outcomes),
-    )
+    _stub_run(gate, monkeypatch, outcomes)
     steps = [
         gate.Step(name="first", check=("check",), fix=("fix",)),
         gate.Step(name="second", check=("check",)),
@@ -76,11 +84,7 @@ def test_failed_check_controls_later_steps(
     gate: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, keep_going: bool
 ) -> None:
     outcomes = iter([("failed", 1), ("passed", 0)])
-    monkeypatch.setitem(
-        gate.run_gate.__globals__,
-        "_run",
-        lambda command, *, timeout: next(outcomes),
-    )
+    _stub_run(gate, monkeypatch, outcomes)
     steps = [gate.Step(name=name, check=("check",)) for name in ("first", "second")]
 
     results = gate.run_gate(steps, fix=False, keep_going=keep_going, timeout=1.0)
@@ -128,3 +132,22 @@ def test_commands_never_use_ephemeral_package_runners(gate: SimpleNamespace) -> 
             if command[:2] == ("uv", "run"):
                 assert "--locked" in command
                 assert "--no-sync" in command
+
+
+def test_exported_type_gates_use_the_same_checker(gate: SimpleNamespace) -> None:
+    step = next(step for step in gate.STEPS if step.name == "types")
+    assert step.check == ("uv", "run", "--locked", "--no-sync", "ty", "check")
+    config = yaml.safe_load(
+        (_ASSET.parent / "pre-commit-config.yaml.template").read_text(encoding="utf-8")
+    )
+    hook = next(
+        hook
+        for repo in config["repos"]
+        for hook in repo["hooks"]
+        if hook["id"] == "type-check"
+    )
+    assert hook["entry"].split() == list(step.check)
+    assert hook["pass_filenames"] is False
+    for path in ("src/main.py", "src/main.pyi", "ty.toml", "pyproject.toml", "uv.lock"):
+        assert re.search(hook["files"], path)
+    assert not re.search(hook["files"], "README.md")

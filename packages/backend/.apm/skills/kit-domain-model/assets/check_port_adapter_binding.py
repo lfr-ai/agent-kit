@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report Protocol ports in core packages that no adapter class implements.
 
 A port is a class in a ``--core`` path that lists ``Protocol`` (or
@@ -338,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ignore = tuple(re.compile(pattern) for pattern in args.ignore)
     except re.error as error:
-        print(f"invalid --ignore pattern: {error}", file=sys.stderr)
+        sys.stderr.write(f"invalid --ignore pattern: {error}\n")
         return _EXIT_USAGE
     excluded = _EXCLUDED | set(args.exclude)
     core, core_problems = _scan(args.core, excluded)
@@ -349,9 +353,9 @@ def main(argv: list[str] | None = None) -> int:
         *unbound_ports(core, adapters, ignore=ignore),
     ]
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     ports = sum(1 for info in core if info.is_protocol)
-    print(f"checked {ports} port(s) against {len(adapters)} class(es)", file=sys.stderr)
+    sys.stderr.write(f"checked {ports} port(s) against {len(adapters)} class(es)\n")
     return 1 if findings else 0
 
 

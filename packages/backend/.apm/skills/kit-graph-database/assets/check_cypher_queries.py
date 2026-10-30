@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag Cypher built by string formatting and unbounded read queries.
 
 Input: Python files, ``*.cypher`` files, or directories. ``--templates`` also
@@ -337,10 +341,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _EXIT_FINDINGS
-    print("check_cypher_queries self-test passed.")
+    sys.stdout.write("check_cypher_queries self-test passed.\n")
     return 0
 
 
@@ -389,9 +393,9 @@ def main(argv: list[str] | None = None) -> int:
         for report in _report(path, problems)
     ]
     for report in reports:
-        print(report)
+        sys.stdout.write(f"{report}\n")
     for problem in problems:
-        print(problem, file=sys.stderr)
+        sys.stderr.write(f"{problem}\n")
     if problems:
         return _EXIT_INPUT_ERROR
     return _EXIT_FINDINGS if reports else 0

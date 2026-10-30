@@ -2,8 +2,7 @@
 version_provider = "pep621"
 tag_format = "v$version"
 major_version_zero = true
-# CHANGELOG.md is curated by hand (Keep a Changelog style); bump never rewrites it.
-# check_release.py requires these to equal the pyproject version.
+# CHANGELOG.md is curated by hand; check_release.py keeps these files equal to the pyproject version.
 version_files = [
   "catalog.json:\"version\"",
   "apm.yml:^version",

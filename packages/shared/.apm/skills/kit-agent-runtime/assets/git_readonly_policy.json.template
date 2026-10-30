@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "description": "Literal-input Git restrictions for consumer sessions, not a sandbox. Register alongside the baseline tool guard. Unmatched calls retain native approval rules. No automatic exception based on a skill name, environment variable or workspace path.",
+  "fail_mode": "closed",
+  "mode": "enforce",
+  "max_input_bytes": 2097152,
+  "rules": [
+    {
+      "id": "git-readonly",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.])(?!\\s+(?:(?:--no-pager|--no-optional-locks)\\s+)*(?:diff|status|log|show|blame|ls-files|rev-parse)(?:\\s|$))",
+      "reason": "only diff, status, log, show, blame, ls-files and rev-parse are available to consumer agents; staging, commits, branches, fetch, pull and push belong to the operator"
+    },
+    {
+      "id": "git-unsafe-read-options",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.]).*\\s(?:-[co]|--(?:out[\\w-]*|config-env|ext-diff|textconv|open-files-in-pager|git-dir|work-tree|exec-path))|\\bgit_(?:index_file|dir|work_tree|config|ssh_command|pager|external_diff)\\s*=",
+      "reason": "read commands must not redirect output, execute configured helpers or select a different Git state"
+    },
+    {
+      "id": "git-shell-composition",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.]).*(?:[;&|<>]|\\$\\()|(?:[;&|<>]|\\$\\().*\\bgit(?:\\.exe)?(?![\\w.])",
+      "reason": "run each Git inspection as a standalone command, without chaining, pipes, redirection or command substitution"
+    },
+    {
+      "id": "github-readonly",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgh(?:\\.exe)?(?![\\w.])(?!\\s+(?:pr|issue|run|release|repo)\\s+(?:view|list|diff|checks|status)(?:\\s|$))|\\bgh(?:\\.exe)?(?![\\w.]).*(?:\\s--(?:jq|template|web)(?:=|\\s|$)|[;&|<>])",
+      "reason": "only literal read-only GitHub CLI commands are available; API, authentication and publication commands belong to the operator"
+    },
+    {
+      "id": "git-metadata-shell-access",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "(^|[\\s'\"=/\\\\])\\.git([/\\\\]|[\\s'\"]|$)|(^|[\\s'\"=/\\\\])(?:git_readonly_policy\\.json|tool_guard\\.py)([\\s'\"]|$)",
+      "reason": "Git metadata and the guard cannot be accessed through shell commands; use reviewed read-only Git inspection commands"
+    },
+    {
+      "id": "git-metadata-writes",
+      "decision": "deny",
+      "match": "path",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)\\.git(/|$)",
+      "reason": "agents must not edit Git metadata through file tools"
+    },
+    {
+      "id": "guard-configuration-writes",
+      "decision": "deny",
+      "match": "path",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)(\\.agents/hooks/|\\.github/(hooks/|copilot/settings)|\\.claude/(hooks/|settings)|\\.copilot/(hooks/|settings)|git_readonly_policy\\.json$|tool_guard\\.py$)",
+      "reason": "a consumer agent cannot change the guard that restricts it"
+    },
+    {
+      "id": "repository-write-tools",
+      "decision": "deny",
+      "match": "tool",
+      "pattern": "push_files|create_or_update_file|delete_file|create_branch|create_commit|create_ref|update_ref|create_tree|create_pull_request|update_pull_request|merge_pull_request",
+      "reason": "repository publication through MCP is subject to the same operator-only boundary as git push"
+    }
+  ]
+}

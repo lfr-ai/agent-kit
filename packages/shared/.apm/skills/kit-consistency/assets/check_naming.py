@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check file and directory naming conventions without reading file contents.
 
 Rules:
@@ -328,10 +332,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("check_naming self-test passed.")
+    sys.stdout.write("check_naming self-test passed.\n")
     return 0
 
 
@@ -349,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_self_test()
     root: Path = args.root
     if not root.is_dir():
-        print(f"{root.as_posix()}: not a directory", file=sys.stderr)
+        sys.stderr.write(f"{root.as_posix()}: not a directory\n")
         return _EXIT_USAGE
     options = Options(
         kebab_roots=tuple(PurePosixPath(item) for item in args.kebab_root),
@@ -362,9 +366,9 @@ def main(argv: list[str] | None = None) -> int:
     prefix = root.as_posix().rstrip("/")
     for finding in findings:
         shown = finding.path if prefix == "." else f"{prefix}/{finding.path}"
-        print(Finding(shown, finding.message).render())
+        sys.stdout.write(f"{Finding(shown, finding.message).render()}\n")
     if not findings:
-        print(f"Naming conventions hold for {len(files)} file(s).")
+        sys.stdout.write(f"Naming conventions hold for {len(files)} file(s).\n")
     return 1 if findings else 0
 
 

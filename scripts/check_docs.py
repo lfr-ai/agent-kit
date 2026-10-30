@@ -88,10 +88,10 @@ def main() -> int:
     """Print actionable link failures and an exit status."""
     failures = check(_ROOT)
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("Documentation entries and local links passed.")
+    sys.stdout.write("Documentation entries and local links passed.\n")
     return 0
 
 

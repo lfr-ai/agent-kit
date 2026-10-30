@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that a worker handoff carries changed paths, evidence and limitations.
 
 A handoff is a Markdown file returned by a delegated worker. Sections are
@@ -327,10 +331,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _EXIT_FINDINGS
-    print("check_handoff self-test passed.")
+    sys.stdout.write("check_handoff self-test passed.\n")
     return 0
 
 
@@ -353,7 +357,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         texts = [(path, path.read_text(encoding="utf-8")) for path in args.paths]
     except (OSError, UnicodeDecodeError) as error:
-        print(error, file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return _EXIT_USAGE
     findings = [
         finding
@@ -361,9 +365,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         for finding in check_text(text, shown=path.as_posix())
     ]
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print(f"Handoffs are complete: {len(texts)} file(s) checked.")
+        sys.stdout.write(f"Handoffs are complete: {len(texts)} file(s) checked.\n")
     return _EXIT_FINDINGS if findings else 0
 
 

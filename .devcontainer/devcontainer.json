@@ -25,10 +25,14 @@
     "APM_NON_INTERACTIVE": "1",
     "UV_LINK_MODE": "copy"
   },
+  "remoteEnv": {
+    "AGENT_KIT_DIR": "${containerWorkspaceFolder}"
+  },
   "updateContentCommand": "task bootstrap",
   "customizations": {
     "vscode": {
       "extensions": [
+        "anthropic.claude-code",
         "astral-sh.ty",
         "charliermarsh.ruff",
         "davidanson.vscode-markdownlint",
@@ -38,6 +42,7 @@
         "ms-python.debugpy",
         "ms-python.python",
         "ms-python.vscode-python-envs",
+        "ms-vscode.vscode-chat-customizations-evaluations",
         "redhat.vscode-yaml",
         "streetsidesoftware.code-spell-checker",
         "tamasfe.even-better-toml",

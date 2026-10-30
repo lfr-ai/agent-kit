@@ -521,10 +521,10 @@ def main() -> int:
     args = parser.parse_args()
     findings = check(_ROOT, tag=args.tag)
     for finding in findings:
-        print(finding, file=sys.stderr)
+        sys.stderr.write(f"{finding}\n")
     if findings:
         return 1
-    print(f"Release artifacts verified and staged: {stage_release(_ROOT)}")
+    sys.stdout.write(f"Release artifacts verified and staged: {stage_release(_ROOT)}\n")
     return 0
 
 

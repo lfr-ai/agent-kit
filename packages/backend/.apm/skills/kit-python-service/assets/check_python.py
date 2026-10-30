@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check Python convention invariants in explicit paths without importing them.
 
 Rules (``bool-trap``, ``magic-number``, and ``redundant-default`` are opt-in;
@@ -510,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError, SyntaxError):
             findings.append(f"{path}: source cannot be parsed")
     for finding in findings:
-        print(finding, file=sys.stderr)
+        sys.stderr.write(f"{finding}\n")
     return 1 if findings else 0
 
 

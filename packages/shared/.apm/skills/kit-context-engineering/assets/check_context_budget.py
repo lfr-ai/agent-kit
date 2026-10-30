@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report the character size of agent context files that load on every request.
 
 Always-on files found below ``--root``:
@@ -382,10 +386,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _EXIT_FINDINGS
-    print("check_context_budget self-test passed.")
+    sys.stdout.write("check_context_budget self-test passed.\n")
     return 0
 
 
@@ -415,7 +419,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_self_test()
     error = _usage_error(args)
     if error:
-        print(error, file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return _EXIT_USAGE
     try:
         files = discover(
@@ -424,7 +428,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             extras=args.extra,
         )
     except (OSError, UnicodeDecodeError) as problem:
-        print(problem, file=sys.stderr)
+        sys.stderr.write(f"{problem}\n")
         return _EXIT_USAGE
     limits = Limits(
         max_file_chars=args.max_file_chars, max_total_chars=args.max_total_chars
@@ -440,9 +444,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "limits": {"file": limits.max_file_chars, "total": limits.max_total_chars},
             "findings": findings,
         }
-        print(json.dumps(payload, indent=_JSON_INDENT, sort_keys=True))
+        sys.stdout.write(
+            f"{json.dumps(payload, indent=_JSON_INDENT, sort_keys=True)}\n"
+        )
     else:
-        print("\n".join([*render(files), *findings]))
+        sys.stdout.write(f"{'\n'.join([*render(files), *findings])}\n")
     return _EXIT_FINDINGS if findings else 0
 
 

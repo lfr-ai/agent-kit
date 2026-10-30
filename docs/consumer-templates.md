@@ -29,6 +29,43 @@ Packages do not depend on each other; name each one. A cloud-specific package
 would duplicate the shared review procedure across three clouds without
 reducing what loads.
 
+## What the optional workflows package does
+
+The `workflows` package adds procedures, not an orchestration service. It does
+not start agents, create Git commits, run a scheduler or deploy resources.
+Install `shared` plus `workflows` when a change needs a specification, an impact
+analysis or a structured codebase audit; skip it for ordinary small fixes.
+
+For example, adding CSV export:
+
+1. `/kit-spec-explore add-csv-export`: describe the problem and alternatives;
+   do not implement.
+2. `/kit-spec-propose add-csv-export`: write a small proposal for acceptance.
+3. Before `/kit-spec-apply`, complete requirements and the task plan. A
+   requirement can be as small as:
+
+   ```text
+   Given two allowed records
+   When the user exports CSV
+   Then a header and two rows are returned
+   ```
+
+4. `/kit-spec-apply add-csv-export`: implement only the agreed tasks and tests.
+5. `/kit-spec-verify add-csv-export`: record real results for the scenarios.
+6. `/kit-spec-archive add-csv-export`: retain the accepted specification and
+   archive the change's evidence.
+
+The [lifecycle contract](../packages/workflows/.apm/skills/kit-spec-workflow/references/lifecycle.md)
+defines the complete stages and folder layout. The shorthand above does not
+skip Specify or Plan. These prompts are procedures, not guaranteed command-line
+programs; the host must discover the installed prompt.
+
+Other workflows cover impact graphs, duplication, simplification, audits and
+modernization. Use one relevant procedure rather than loading all of them.
+For recurring mistakes in those procedures, use the existing
+[capability evaluation loop](../packages/shared/.apm/skills/kit-feedback-loop/references/skill-evaluations.md)
+to compare baseline and candidate behavior in a local, synthetic project.
+
 ## Template answers
 
 Ask for the tool and derive the cloud only where the tool implies it. Copier

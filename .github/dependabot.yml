@@ -1,7 +1,4 @@
-# Dependabot version and security updates.
-# Reference: https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
-# Commit messages follow Conventional Commits so `cz check` accepts them:
-#   build(deps): ...  build(deps-dev): ...  ci(deps): ...
+# Dependabot version and security updates with Conventional Commit prefixes for `cz check`.
 version: 2
 
 updates:
@@ -33,16 +30,14 @@ updates:
         dependency-type: development
         update-types: [minor, patch]
         patterns: ["*"]
-        # The APM CLI is pinned exactly and needs its own compatibility review
-        # (`task apm:smoke`), so it is never batched.
+        # The APM CLI needs its own compatibility review (`task apm:smoke`), so it is never batched.
         exclude-patterns: [apm-cli]
       python-runtime:
         dependency-type: production
         update-types: [minor, patch]
         patterns: ["*"]
 
-  # GitHub Actions stay pinned to full commit SHAs (enforced by
-  # scripts/check_governance.py); Dependabot updates the SHA and version comment.
+  # Actions stay pinned to full commit SHAs (check_governance.py); Dependabot updates SHA and comment.
   - package-ecosystem: github-actions
     directory: /
     schedule:

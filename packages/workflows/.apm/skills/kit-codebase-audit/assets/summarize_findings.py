@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Merge SARIF, Ruff JSON and GitLab Code Quality reports into one ranked table.
 
 The script reads report files that analysis tools already wrote; it never runs
@@ -676,7 +680,7 @@ def _summarize(args: argparse.Namespace) -> int:
         try:
             findings.extend(load_report(path, options=options))
         except (OSError, ValueError, TypeError) as error:
-            print(f"{path}: {error}", file=sys.stderr)
+            sys.stderr.write(f"{path}: {error}\n")
             return _EXIT_USAGE
     groups = rank(findings, min_level=Level(args.min_level))
     text = render(groups, max_locations=args.max_locations)
@@ -692,9 +696,9 @@ def _run_self_test() -> int:
     try:
         self_test()
     except SelfTestError as error:
-        print(f"summarize_findings self-test failed: {error}", file=sys.stderr)
+        sys.stderr.write(f"summarize_findings self-test failed: {error}\n")
         return _EXIT_FINDINGS
-    print("summarize_findings self-test passed.")
+    sys.stdout.write("summarize_findings self-test passed.\n")
     return 0
 
 

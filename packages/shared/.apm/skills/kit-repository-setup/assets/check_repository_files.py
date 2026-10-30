@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report missing community files, README emojis and unsafe ``.env.example`` lines.
 
 Checks:
@@ -468,8 +472,10 @@ def _run_self_test() -> int:
     """Print the self-test outcome and return its exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
-    print("check_repository_files self-test " + ("failed." if failures else "passed."))
+        sys.stderr.write(f"{failure}\n")
+    sys.stdout.write(
+        f"{'check_repository_files self-test ' + ('failed.' if failures else 'passed.')}\n"
+    )
     return 1 if failures else 0
 
 
@@ -510,12 +516,12 @@ def _parser() -> argparse.ArgumentParser:
 def _env_files(root: Path, explicit: list[Path]) -> list[Path] | None:
     """Return files to check, or None when the root or an explicit file is missing."""
     if not root.is_dir():
-        print(f"{root.as_posix()}: root is not a directory", file=sys.stderr)
+        sys.stderr.write(f"{root.as_posix()}: root is not a directory\n")
         return None
     if explicit:
         missing = [path for path in explicit if not path.is_file()]
         for path in missing:
-            print(f"{path.as_posix()}: environment file not found", file=sys.stderr)
+            sys.stderr.write(f"{path.as_posix()}: environment file not found\n")
         return None if missing else explicit
     default = root / ".env.example"
     return [default] if default.is_file() else []
@@ -545,12 +551,12 @@ def main(argv: list[str] | None = None) -> int:
             allowed=frozenset(args.allow_value),
         )
     except (OSError, UnicodeDecodeError) as error:
-        print(f"cannot read repository files: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read repository files: {error}\n")
         return _USAGE_ERROR
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print("Repository files are complete and safe.")
+        sys.stdout.write("Repository files are complete and safe.\n")
     return 1 if findings else 0
 
 

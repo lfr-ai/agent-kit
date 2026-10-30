@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report imports that bypass a feature's public entry or invert shared layering.
 
 The checker reads TypeScript and JavaScript sources as text; it never runs a
@@ -312,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Feature import checker self-test passed.")
+        sys.stdout.write("Feature import checker self-test passed.\n")
         return 0
     try:
         findings = check(
@@ -322,12 +326,12 @@ def main(argv: list[str] | None = None) -> int:
             aliases=tuple(args.alias),
         )
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Cannot check feature imports: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check feature imports: {error}\n")
         return 1
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     if not findings:
-        print("Feature import boundaries passed.")
+        sys.stdout.write("Feature import boundaries passed.\n")
     return int(bool(findings))
 
 

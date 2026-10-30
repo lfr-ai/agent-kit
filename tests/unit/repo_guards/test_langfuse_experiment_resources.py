@@ -115,9 +115,11 @@ class _ValueScorer:
     def __init__(self, *, value: object) -> None:
         self.value = value
         self.calls = 0
+        self.inputs: list[tuple[object, str]] = []
 
     def score(self, *, case: object, output: str) -> object:
         self.calls += 1
+        self.inputs.append((case, output))
         return self.value
 
 
@@ -150,6 +152,7 @@ def test_invalid_scores_propagate_without_score_record_or_success_summary(
             max_concurrency=1,
         )
     assert sdk.calls == scorer.calls == 1
+    assert scorer.inputs == [(_cases(experiment)[0], "recorded")]
     assert sdk.scores == []
     assert not sdk.completed
 
@@ -175,6 +178,7 @@ def test_valid_scores_preserve_numeric_bounds(
         experiment.ScoreRecord(name="untrusted", value=float(value)),
         experiment.ScoreRecord(name="untrusted", value=float(value)),
     ]
+    assert scorer.inputs == [(case, "recorded") for case in _cases(experiment)]
     assert sdk.completed
 
 

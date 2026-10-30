@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Enforce layer import rules in a backend package without importing it.
 
 Each rule names a source layer and the layers it must not import, using the
@@ -235,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             parse_rule(text, absolute=True) for text in args.forbid_module
         ]
     except ValueError as error:
-        print(error, file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return _EXIT_USAGE
     if not rules:
         rules = [parse_rule(_DEFAULT_RULE)]
@@ -247,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         ignore_type_checking=args.ignore_type_checking,
     )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

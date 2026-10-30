@@ -246,13 +246,13 @@ def main() -> int:
                 "install dependencies."
             )
     except (OSError, ValueError, yaml.YAMLError) as exc:
-        print(f"Native contract cannot be parsed: {exc}", file=sys.stderr)
+        sys.stderr.write(f"Native contract cannot be parsed: {exc}\n")
         return 1
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("Repository native adapter contracts passed.")
+    sys.stdout.write("Repository native adapter contracts passed.\n")
     return 0
 
 

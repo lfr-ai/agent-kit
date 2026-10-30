@@ -86,12 +86,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _emit_findings(report: CheckReport, stream: TextIO) -> None:
-    """Print safe source-relative findings to a text stream."""
-    for finding in report.findings:
-        print(
-            f"{finding.path}: {finding.message} [{finding.code}]",
-            file=stream,
-        )
+    """Write safe source-relative findings to a text stream."""
+    stream.writelines(
+        f"{finding.path}: {finding.message} [{finding.code}]\n"
+        for finding in report.findings
+    )
 
 
 def _report_dict(report: CheckReport) -> dict[str, object]:
@@ -120,13 +119,13 @@ def _context(actions: CliActions) -> int:
     """Emit bounded advisory context without authorizing or denying tool calls."""
     raw = sys.stdin.read(_MAX_CONTEXT_CHARS + 1)
     if len(raw) > _MAX_CONTEXT_CHARS:
-        print("session context input is too large", file=sys.stderr)
+        sys.stderr.write("session context input is too large\n")
         return 1
     try:
         payload: object = json.loads(raw)
         context = actions.context(payload)
     except (RecursionError, OSError, ValueError, InputTypeError) as error:
-        print(f"session context could not be checked: {error}", file=sys.stderr)
+        sys.stderr.write(f"session context could not be checked: {error}\n")
         return 1
     text = f"Active workspace: {context.workspace}\nAgent entry points: AGENTS.md, PROJECT.md, llms.txt."
     if context.missing:
@@ -137,7 +136,7 @@ def _context(actions: CliActions) -> int:
             "additionalContext": text,
         },
     }
-    print(json.dumps(response, ensure_ascii=True))
+    sys.stdout.write(f"{json.dumps(response, ensure_ascii=True)}\n")
     return 0
 
 
@@ -145,9 +144,12 @@ def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
     """Validate the source catalog and print a text or JSON report."""
     report = actions.check(arguments.root or actions.default_root())
     if arguments.json:
-        print(json.dumps(_report_dict(report), indent=_JSON_INDENT, ensure_ascii=True))
+        rendered = json.dumps(
+            _report_dict(report), indent=_JSON_INDENT, ensure_ascii=True
+        )
+        sys.stdout.write(f"{rendered}\n")
     elif report.valid:
-        print(f"source catalog valid: {report.version}")
+        sys.stdout.write(f"source catalog valid: {report.version}\n")
     else:
         _emit_findings(report, sys.stderr)
     return 0 if report.valid else 1
@@ -160,7 +162,7 @@ def _requested_selection(
     flags = (arguments.feature, arguments.runtimes, arguments.skill)
     if arguments.selection is None:
         if arguments.profile is None:
-            print("compose requires a profile or --selection", file=sys.stderr)
+            sys.stderr.write("compose requires a profile or --selection\n")
             return None
         return (
             arguments.profile,
@@ -169,10 +171,9 @@ def _requested_selection(
             tuple(arguments.skill),
         )
     if arguments.profile is not None or any(flags):
-        print(
+        sys.stderr.write(
             "--selection cannot be combined with a profile, --feature, "
-            "--runtime, or --skill",
-            file=sys.stderr,
+            "--runtime, or --skill\n"
         )
         return None
     selection = actions.load_selection(arguments.selection)
@@ -198,12 +199,14 @@ def _compose(actions: CliActions, arguments: argparse.Namespace) -> int:
     output = actions.compose(
         root, profile, features, runtimes, arguments.output, skills
     )
-    print(f"composed {profile} profile: {output}")
+    sys.stdout.write(f"composed {profile} profile: {output}\n")
     if skills:
-        print(
-            "Session skills only; project instructions retained; native roles omitted."
+        sys.stdout.write(
+            "Session skills only; project instructions retained; native roles omitted.\n"
         )
-    print("Source footprint: .apm/selection.json (characters, not billed tokens).")
+    sys.stdout.write(
+        "Source footprint: .apm/selection.json (characters, not billed tokens).\n"
+    )
     return 0
 
 
@@ -213,7 +216,7 @@ def _provenance(actions: CliActions, arguments: argparse.Namespace) -> int:
     if not report.valid:
         _emit_findings(report, sys.stderr)
         return 1
-    print("composed output provenance verified")
+    sys.stdout.write("composed output provenance verified\n")
     return 0
 
 
@@ -223,7 +226,7 @@ def _apm_check(actions: CliActions, arguments: argparse.Namespace) -> int:
     if report is not None and not report.valid:
         _emit_findings(report, sys.stderr)
         return 1
-    print("APM policy and audit checks passed")
+    sys.stdout.write("APM policy and audit checks passed\n")
     return 0
 
 
@@ -243,5 +246,5 @@ def main(actions: CliActions, argv: list[str] | None = None) -> int:
     try:
         return _COMMANDS[arguments.command](actions, arguments)
     except (OSError, RuntimeError, ValueError, InputTypeError) as error:
-        print(str(error), file=sys.stderr)
+        sys.stderr.write(f"{error}\n")
         return 1

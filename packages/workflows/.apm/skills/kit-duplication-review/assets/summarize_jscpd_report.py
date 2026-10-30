@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Summarize a jscpd JSON report into reviewable clone findings.
 
 Reads the file written by the jscpd ``json`` reporter (by default
@@ -404,15 +408,15 @@ def _print_clones(kept: list[Clone], *, markdown: bool) -> None:
         sys.stdout.write(to_markdown(kept))
         return
     for clone in kept:
-        print(clone.render())
+        sys.stdout.write(f"{clone.render()}\n")
 
 
 def _report_over(report: Path, percentage: float | None, maximum: float | None) -> bool:
     """Print and return whether the duplication percentage exceeds the gate."""
     if maximum is None or percentage is None or not percentage > maximum:
         return False
-    print(
-        f"{report.as_posix()}:1: duplication {percentage:.2f}% exceeds {maximum:.2f}%"
+    sys.stdout.write(
+        f"{report.as_posix()}:1: duplication {percentage:.2f}% exceeds {maximum:.2f}%\n"
     )
     return True
 
@@ -431,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("summarize_jscpd_report self-test passed.")
+        sys.stdout.write("summarize_jscpd_report self-test passed.\n")
         return 0
     if args.report is None:
         parser.print_usage(sys.stderr)
@@ -441,15 +445,14 @@ def main(argv: list[str] | None = None) -> int:
             json.loads(args.report.read_text(encoding="utf-8"))
         )
     except (OSError, UnicodeError, ValueError, DuplicationInputTypeError) as error:
-        print(f"cannot summarize report: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot summarize report: {error}\n")
         return _EXIT_USAGE
     kept = select(clones, min_lines=args.min_lines, ignore=tuple(args.ignore))
     _print_clones(kept, markdown=args.markdown)
     over = _report_over(args.report, percentage, args.max_percentage)
-    print(
+    sys.stderr.write(
         f"{len(kept)} of {len(clones)} clone(s) reported; "
-        f"total duplication {'unknown' if percentage is None else f'{percentage:.2f}%'}.",
-        file=sys.stderr,
+        f"total duplication {'unknown' if percentage is None else f'{percentage:.2f}%'}.\n"
     )
     return int(bool(kept) or over)
 

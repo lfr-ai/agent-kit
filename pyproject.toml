@@ -25,8 +25,7 @@ classifiers = [
 agent-kit = "agent_kit.main:main"
 
 [dependency-groups]
-# Development tooling never ships to consumers, so every tool is pinned exactly.
-# Dependabot updates these pins together with uv.lock.
+# Development tooling never ships, so every tool is pinned exactly; Dependabot bumps pins with uv.lock.
 dev = [
   "apm-cli==0.33.0",
   "commitizen==4.19.2",
@@ -47,8 +46,7 @@ audit = ["pip-audit==2.10.1"]
 [tool.uv]
 required-version = ">=0.10.0,<0.14"
 default-groups = ["dev", "audit"]
-# Pin the isolated build backend closure; uv.lock covers only runtime and
-# development dependencies. Add hashes when the minimum uv supports them.
+# Pins the isolated build backend closure, which uv.lock does not cover.
 build-constraint-dependencies = [
   "hatchling==1.27.0",
   "packaging==26.3",

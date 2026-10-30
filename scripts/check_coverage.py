@@ -68,6 +68,17 @@ _ACTIVE_MCP_SERVERS = {
         "url": "https://learn.microsoft.com/api/mcp",
     },
 }
+_REQUIRED_MCP_FLAGS = {
+    "azure": ("--read-only",),
+    "terraform": ("--toolsets=registry",),
+    "playwright": ("--isolated", "--headless"),
+    "chrome-devtools": (
+        "--isolated",
+        "--headless",
+        "--no-usage-statistics",
+        "--no-performance-crux",
+    ),
+}
 
 
 class _CoverageIssue(Enum):
@@ -134,12 +145,14 @@ def _valid_mcp_template_server(name: str, server: dict[str, object]) -> bool:
     return (
         set(server) == {"type", "command", "args"}
         and isinstance(command, str)
-        and command in {"npx", "docker"}
+        and command in {"bunx", "docker"}
         and isinstance(args, list)
         and bool(args)
         and all(isinstance(item, str) for item in args)
+        and (command != "bunx" or args[0] == "--bun")
         and "REVIEWED_" in " ".join(args)
         and not any("latest" in item for item in args)
+        and set(_REQUIRED_MCP_FLAGS.get(name, ())) <= set(args)
     )
 
 
@@ -616,14 +629,14 @@ def main() -> int:
     try:
         failures = check(_ROOT, source_root=args.source_root)
     except (OSError, ValueError, yaml.YAMLError):
-        print("Capability coverage inputs cannot be parsed.", file=sys.stderr)
+        sys.stderr.write("Capability coverage inputs cannot be parsed.\n")
         return 1
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print(
-        "Original capability inventory, replacements, templates, and editor contracts passed."
+    sys.stdout.write(
+        "Original capability inventory, replacements, templates, and editor contracts passed.\n"
     )
     return 0
 

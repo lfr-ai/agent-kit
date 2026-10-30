@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag continuous-delivery hazards in GitHub Actions workflow files.
 
 A deploy job is a job with an ``environment`` key, or a job that calls a
@@ -697,10 +701,10 @@ def _run_self_test(yaml_module: ModuleType) -> int:
     """Run the self-test, print its outcome, and return the exit status."""
     failures = self_test(yaml_module)
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _FINDINGS
-    print("check_delivery_workflow self-test passed.")
+    sys.stdout.write("check_delivery_workflow self-test passed.\n")
     return 0
 
 
@@ -770,17 +774,17 @@ def _scan(paths: Iterable[Path], yaml_module: ModuleType, options: Options) -> i
             try:
                 findings.extend(scan_text(path, text, yaml_module, options))
             except WorkflowError as error:
-                print(f"Cannot parse {path.as_posix()}: {error}", file=sys.stderr)
+                sys.stderr.write(f"Cannot parse {path.as_posix()}: {error}\n")
                 return _INVALID
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Cannot check workflows: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check workflows: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
-        print(f"{len(findings)} finding(s) in {len(files)} file(s)", file=sys.stderr)
+        sys.stderr.write(f"{len(findings)} finding(s) in {len(files)} file(s)\n")
         return _FINDINGS
-    print(f"No findings in {len(files)} file(s).")
+    sys.stdout.write(f"No findings in {len(files)} file(s).\n")
     return 0
 
 
@@ -798,10 +802,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     yaml_module = load_yaml()
     if yaml_module is None:
-        print(
+        sys.stderr.write(
             "PyYAML is required; run this checker in an environment that "
-            "can import the yaml module.",
-            file=sys.stderr,
+            "can import the yaml module.\n"
         )
         return _INVALID
     if args.self_test:
@@ -811,7 +814,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         options = _options(args)
     except re.error as error:
-        print(f"Invalid regular expression option: {error}", file=sys.stderr)
+        sys.stderr.write(f"Invalid regular expression option: {error}\n")
         return _INVALID
     return _scan(args.paths, yaml_module, options)
 

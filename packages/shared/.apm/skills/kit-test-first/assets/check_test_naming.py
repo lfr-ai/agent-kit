@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that test function names describe behavior, not just existence.
 
 A test name is the first line of its failure report. ``test_1`` or ``test_it``
@@ -338,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             for path in _test_files(args.paths)
         ]
     except (OSError, UnicodeDecodeError) as error:
-        print(f"cannot read tests: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read tests: {error}\n")
         return _EXIT_USAGE
     findings = check_files(sources, options=options)
     return _report(findings, file_count=len(sources))
@@ -347,9 +351,9 @@ def main(argv: list[str] | None = None) -> int:
 def _report(findings: list[Finding], *, file_count: int) -> int:
     """Print findings or a success line and return the exit status."""
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print(f"Test names are descriptive in {file_count} file(s).")
+        sys.stdout.write(f"Test names are descriptive in {file_count} file(s).\n")
     return 1 if findings else 0
 
 
@@ -357,10 +361,10 @@ def _run_self_test() -> int:
     """Print self-test failures and return the matching exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("check_test_naming self-test passed.")
+    sys.stdout.write("check_test_naming self-test passed.\n")
     return 0
 
 
@@ -368,7 +372,7 @@ def _report_missing(paths: Iterable[Path]) -> bool:
     """Print each path that does not exist and return whether any is missing."""
     missing = [path for path in paths if not path.exists()]
     for path in missing:
-        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+        sys.stderr.write(f"{path.as_posix()}: path does not exist\n")
     return bool(missing)
 
 

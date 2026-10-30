@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report likely breaking changes between two OpenAPI descriptions in JSON.
 
 Compares a released description (``old``) with a candidate (``new``) using only the
@@ -510,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         OpenApiInputTypeError,
         re.error,
     ) as error:
-        print(f"cannot compare: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot compare: {error}\n")
         return _EXIT_USAGE
     changes = [
         change
@@ -518,8 +522,8 @@ def main(argv: list[str] | None = None) -> int:
         if not any(pattern.search(change.location) for pattern in ignore)
     ]
     for change in changes:
-        print(
-            f"{args.new.as_posix()}: {change.location}: {change.severity}: {change.message}"
+        sys.stdout.write(
+            f"{args.new.as_posix()}: {change.location}: {change.severity}: {change.message}\n"
         )
     failing = {"breaking", "warning"} if args.strict else {"breaking"}
     return 1 if any(change.severity in failing for change in changes) else 0

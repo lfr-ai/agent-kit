@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag public ``VITE_`` variables whose names suggest secrets.
 
 Vite compiles every variable with a public prefix (``VITE_`` by default) into
@@ -289,18 +293,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Frontend env checker self-test passed.")
+        sys.stdout.write("Frontend env checker self-test passed.\n")
         return EXIT_CLEAN
     if not args.paths:
         parser.error("give at least one file or directory")
     prefixes = tuple(args.prefix or DEFAULT_PREFIXES)
     if not all(prefixes):
-        print("An empty prefix would expose every variable.", file=sys.stderr)
+        sys.stderr.write("An empty prefix would expose every variable.\n")
         return EXIT_USAGE
     try:
         findings = scan_paths(args.paths, prefixes=prefixes, allow=tuple(args.allow))
     except (OSError, UnicodeDecodeError) as error:
-        print(f"Cannot scan: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan: {error}\n")
         return EXIT_USAGE
     return _report(findings)
 
@@ -308,10 +312,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _report(findings: Sequence[Finding]) -> int:
     """Print findings or a clean summary and return the exit status."""
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
         return EXIT_FINDINGS
-    print("No secret-like public variable names found (names only).")
+    sys.stdout.write("No secret-like public variable names found (names only).\n")
     return EXIT_CLEAN
 
 

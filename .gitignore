@@ -51,5 +51,6 @@ apm_modules/
 *.key
 
 # Local runtime settings
+CLAUDE.local.md
 .claude/settings.local.json
 .github/copilot/settings.local.json

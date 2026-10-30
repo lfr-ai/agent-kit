@@ -230,6 +230,34 @@ def test_ruff_complexity_limits_are_enforced_without_file_exemptions() -> None:
     )
 
 
+def test_output_and_namespace_rules_have_no_source_exemptions() -> None:
+    lint = tomllib.loads((_ROOT / "ruff.toml").read_text())["lint"]
+    assert {"T20", "INP"} <= set(lint["extend-select"])
+    source_exemptions = [
+        *lint.get("ignore", []),
+        *lint.get("extend-ignore", []),
+        *(
+            rule
+            for pattern, rules in {
+                **lint.get("per-file-ignores", {}),
+                **lint.get("extend-per-file-ignores", {}),
+            }.items()
+            if pattern != "tests/**"
+            for rule in rules
+        ),
+    ]
+    assert not any(
+        selected.startswith(rule)
+        for selected in ("T201", "T203", "INP001")
+        for rule in source_exemptions
+    )
+    assert not any(
+        selected.startswith(rule)
+        for selected in ("T201", "T203")
+        for rule in lint["per-file-ignores"]["tests/**"]
+    )
+
+
 def test_ty_uses_the_same_configuration_in_hook_and_verifier() -> None:
     config = load_config(str(_ROOT / ".pre-commit-config.yaml"))
     hook = next(
@@ -258,13 +286,19 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
     assert set(tasks) == {
         "default",
         "bootstrap",
+        "checkout:register",
         "lint",
         "format",
         "typecheck",
         "test",
+        "test:matrix",
         "verify",
         "precommit",
         "commit",
+        "version:preview",
+        "version:prepare",
+        "release:build",
+        "release:publish",
         "capabilities:build",
         "apm:smoke",
     }
@@ -280,6 +314,10 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
         "uv run --locked --no-sync python scripts/audit_dependencies.py"
     ) < bootstrap.index("uv sync --locked")
     assert bootstrap[0] == "uv sync --locked --inexact --only-group audit"
+    assert bootstrap[-1] == {
+        "cmd": '"{{.TASK_EXE}}" checkout:register',
+        "platforms": ["windows"],
+    }
     editor = json.loads((_ROOT / ".vscode/tasks.json").read_text())["tasks"]
     assert all(task["args"][0] in tasks for task in editor)
     assert len(editor) == len({task["args"][0] for task in editor})

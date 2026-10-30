@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that VS Code tasks which call the Task runner name existing Taskfile targets.
 
 The checker reads a workspace ``tasks.json`` (JSON with comments and trailing commas,
@@ -517,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Task wiring checker self-test passed.")
+        sys.stdout.write("Task wiring checker self-test passed.\n")
         return 0
     try:
         tasks_text = args.tasks.read_text(encoding="utf-8")
@@ -530,12 +534,14 @@ def main(argv: list[str] | None = None) -> int:
             verify_includes=args.verify_includes,
         )
     except (OSError, UnicodeError, ValueError, TaskInputTypeError) as error:
-        print(f"Cannot check task wiring: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check task wiring: {error}\n")
         return _EXIT_USAGE
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     if not findings:
-        print(f"All Task runner targets in {args.tasks.as_posix()} are declared.")
+        sys.stdout.write(
+            f"All Task runner targets in {args.tasks.as_posix()} are declared.\n"
+        )
     return int(bool(findings))
 
 

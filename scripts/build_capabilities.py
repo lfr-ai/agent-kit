@@ -108,7 +108,7 @@ def main() -> int:
     args = parser.parse_args()
     executable = shutil.which("agent-kit")
     if executable is None:
-        print("Use the locked toolkit environment.", file=sys.stderr)
+        sys.stderr.write("Use the locked toolkit environment.\n")
         return 1
     with TemporaryDirectory(prefix="agent-kit-source-") as temporary:
         package = Path(temporary) / "package"
@@ -123,7 +123,7 @@ def main() -> int:
         output = _OUTPUT / f"agent-kit-{suffix}-{version}.zip"
         _OUTPUT.mkdir(parents=True, exist_ok=True)
         _archive(output, package, [*provenance["files"], "provenance.json"])
-    print(f"Licensed APM source archive: {output}")
+    sys.stdout.write(f"Licensed APM source archive: {output}\n")
     return 0
 
 

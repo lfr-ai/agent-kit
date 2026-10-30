@@ -74,6 +74,10 @@ Details: [native roles](references/native-roles.md).
 2. Copy [tool_guard.py](assets/tool_guard.py) and
    [the policy template](assets/tool_guard_policy.json.template) into a consumer-owned
    directory; review every rule and the `fail_mode` (default `closed`).
+   For consumer Git inspection, also register the
+   [read-only Git policy](assets/git_readonly_policy.json.template) as a separate
+   handler. Do not replace the baseline policy or infer a maintenance exception
+   from a skill name; see [Git scope](references/guards.md#read-only-git-for-consumer-sessions).
 3. Run `tool_guard.py --self-test`, `check-policy`, and `explain` cases for each rule.
 4. Register the hook from [the Copilot template](assets/copilot-hooks.json.template) or
    [the Claude template](assets/claude-settings-hooks.json.template), following the

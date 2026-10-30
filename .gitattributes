@@ -2,3 +2,9 @@
 *.png binary
 *.zip binary
 *.whl binary
+*.ico binary
+*.jpg binary
+*.pdf binary
+uv.lock linguist-generated
+bun.lock linguist-generated
+apm.lock.yaml linguist-generated

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Plan, and optionally create, one Git worktree and branch for a parallel agent.
 
 By default the tool only prints the Git commands it would run, so the plan can
@@ -342,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Worktree planner self-test passed.")
+        sys.stdout.write("Worktree planner self-test passed.\n")
         return 0
     if not args.branch:
         parser.error("--branch is required")
@@ -354,9 +358,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     status, failed = execute(plan)
     if status != 0:
-        print(f"Command failed with exit status {status}: {failed}", file=sys.stderr)
+        sys.stderr.write(f"Command failed with exit status {status}: {failed}\n")
         return 1
-    print(f"Created worktree {plan.path} on branch {plan.branch} from {plan.base}.")
+    sys.stdout.write(
+        f"Created worktree {plan.path} on branch {plan.branch} from {plan.base}.\n"
+    )
     return 0
 
 
@@ -364,7 +370,7 @@ def _plan_or_report(args: argparse.Namespace) -> Plan | None:
     """Build the plan from parsed arguments, printing why it cannot be built."""
     git = shutil.which("git") if args.execute else "git"
     if git is None:
-        print("git executable not found on PATH", file=sys.stderr)
+        sys.stderr.write("git executable not found on PATH\n")
         return None
     try:
         return build_plan(
@@ -375,18 +381,18 @@ def _plan_or_report(args: argparse.Namespace) -> Plan | None:
             git=git,
         )
     except ValueError as error:
-        print(f"Refusing to plan worktree: {error}", file=sys.stderr)
+        sys.stderr.write(f"Refusing to plan worktree: {error}\n")
         return None
 
 
 def _print_dry_run(plan: Plan) -> None:
     """Print the commands to review and the commented cleanup commands."""
-    print("# Dry run. Review, then re-run with --execute to apply:")
+    sys.stdout.write("# Dry run. Review, then re-run with --execute to apply:\n")
     for line in render(plan.commands):
-        print(line)
-    print("# Cleanup after the branch is merged or abandoned:")
+        sys.stdout.write(f"{line}\n")
+    sys.stdout.write("# Cleanup after the branch is merged or abandoned:\n")
     for line in render(plan.cleanup):
-        print(f"# {line}")
+        sys.stdout.write(f"# {line}\n")
 
 
 if __name__ == "__main__":

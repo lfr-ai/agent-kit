@@ -40,6 +40,12 @@ license: MIT
    step 3. Log each iteration: findings, change, checker results.
 9. Record durable, evidenced lessons through the `kit-project-memory` skill;
    prefer turning a lesson into a check. Zero lessons is a valid outcome.
+   For skill or instruction behavior, retain positive, negative and boundary
+   cases using the [capability evaluation loop](references/skill-evaluations.md);
+   propose reusable changes through `kit-improve`, never self-publish them.
+   Start with the [synthetic cases](assets/skill-evaluation-cases.json.template)
+   and [result record](assets/skill-evaluation-results.json.template), then run
+   the [record checker](assets/check_skill_evaluations.py).
 10. Report the final state: criteria status, checks run with results,
     remaining findings, lessons recorded, and why the loop stopped. Classify it
     as COMPLETE, ITERATE or BLOCKED using the rubric; budget exhaustion does not

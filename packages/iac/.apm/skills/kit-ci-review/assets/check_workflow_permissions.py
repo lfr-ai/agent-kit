@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag risky GitHub Actions workflow patterns with a line-based scan.
 
 Reports a missing top-level ``permissions`` key in workflow files, ``write-all``
@@ -376,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("Workflow permission checker self-test passed.")
+        sys.stdout.write("Workflow permission checker self-test passed.\n")
         return 0
     options = Options(
         trusted_owners=frozenset(args.trusted_owner),
@@ -391,17 +395,14 @@ def main(argv: list[str] | None = None) -> int:
             for finding in scan_text(path, path.read_text(encoding="utf-8"), options)
         ]
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Cannot scan workflows: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot scan workflows: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
-        print(
-            f"{len(findings)} finding(s) in {len(files)} file(s)",
-            file=sys.stderr,
-        )
+        sys.stderr.write(f"{len(findings)} finding(s) in {len(files)} file(s)\n")
         return _FINDINGS
-    print(f"No findings in {len(files)} file(s).")
+    sys.stdout.write(f"No findings in {len(files)} file(s).\n")
     return 0
 
 

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check installed Python distribution licenses against a local allowlist.
 
 The checker reads only installed metadata through ``importlib.metadata``. It never
@@ -611,10 +615,10 @@ def _self_test() -> int:
     if evidence != ("MIT", "Classifier"):
         failures.append(f"classifier mapping {evidence}")
     for failure in failures:
-        print(f"self-test: {failure}")
+        sys.stdout.write(f"self-test: {failure}\n")
     if failures:
         return 1
-    print(f"self-test passed: {len(cases) + _SELF_TEST_EXTRA_CASES} cases")
+    sys.stdout.write(f"self-test passed: {len(cases) + _SELF_TEST_EXTRA_CASES} cases\n")
     return 0
 
 
@@ -639,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         allowlist = load_allowlist(args.allowlist)
     except (OSError, UnicodeError, ValueError, LicenseInputTypeError) as error:
-        print(f"{args.allowlist}:1: allowlist is unusable: {error}", file=sys.stderr)
+        sys.stderr.write(f"{args.allowlist}:1: allowlist is unusable: {error}\n")
         return _CONFIG_EXIT
     today = args.today or datetime.now(tz=UTC).date()
     results = [

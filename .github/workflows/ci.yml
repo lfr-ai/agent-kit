@@ -20,8 +20,7 @@ concurrency:
   group: toolkit-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Audit before full installs; dependency-consuming jobs then run in parallel.
-# "Required toolkit checks" is the only status the committed branch ruleset requires.
+# Audit runs before full installs; "Required toolkit checks" is the only status the ruleset requires.
 jobs:
   verify:
     needs: audit

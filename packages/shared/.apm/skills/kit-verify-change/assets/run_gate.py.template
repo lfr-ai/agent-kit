@@ -114,7 +114,7 @@ STEPS: tuple[Step, ...] = (
     ),
     Step(
         name="types",
-        check=(*_UV, "mypy", "src"),
+        check=(*_UV, "ty", "check"),
         proves="the type checker accepts the source package",
     ),
     Step(

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Summarize explicit Terraform JSON format 1.x plans without authorizing apply.
 
 Use --file for terraform show -json output or --self-test for isolated regressions.
@@ -276,27 +280,28 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         self_test()
-        print("Terraform reviewer self-test passed.")
+        sys.stdout.write("Terraform reviewer self-test passed.\n")
         return 0
     if args.file is None:
         parser.error("--file is required unless --self-test is selected")
     try:
         groups = _read(args.file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError, PlanInputTypeError) as error:
-        print(f"Cannot review plan: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot review plan: {error}\n")
         return _INVALID
-    print(
-        json.dumps(
-            {
-                "summary": {key: len(items) for key, items in groups.items()},
-                "lists": groups,
-            }
-        )
+    sys.stdout.write(
+        f"{
+            json.dumps(
+                {
+                    'summary': {key: len(items) for key, items in groups.items()},
+                    'lists': groups,
+                }
+            )
+        }\n"
     )
     if groups["delete"] or groups["replace"]:
-        print(
-            "Destructive changes require operator review; no apply is authorized.",
-            file=sys.stderr,
+        sys.stderr.write(
+            "Destructive changes require operator review; no apply is authorized.\n"
         )
         return _DELETE if groups["delete"] else _REPLACE
     return 0

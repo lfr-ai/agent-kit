@@ -1,12 +1,13 @@
 """Portable validators distinguish wrong types from invalid values and shapes."""
 
-import asyncio
 import json
 from pathlib import Path
 import re
 import runpy
 import shutil
+import subprocess
 import sys
+import tomllib
 from typing import NoReturn
 
 import pytest
@@ -509,22 +510,47 @@ def test_portable_input_exception_contract(
     assert not isinstance(caught.value, other_type)
 
 
-async def _run_asset(
+def _run_asset(
     script: Path, arguments: list[str], directory: Path
 ) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        str(script),
-        *arguments,
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and copied local asset
+        [sys.executable, "-I", str(script), *arguments],
         cwd=directory,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        input="[]",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
     )
-    stdout, stderr = await asyncio.wait_for(process.communicate(b"[]"), timeout=30)
-    assert process.returncode is not None
-    return process.returncode, stdout.decode(), stderr.decode()
+    return result.returncode, result.stdout, result.stderr
+
+
+def test_asset_runner_keeps_input_output_and_failure_status(tmp_path: Path) -> None:
+    script = tmp_path / "synthetic.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stdout.write(sys.stdin.read())\n"
+        "sys.stderr.write('synthetic diagnostic')\n"
+        "raise SystemExit(2)\n",
+        encoding="utf-8",
+    )
+    assert _run_asset(script, [], tmp_path) == (2, "[]", "synthetic diagnostic")
+
+
+@pytest.mark.parametrize(
+    "script",
+    sorted(_PACKAGES.glob("*/.apm/skills/*/assets/*.py")),
+    ids=lambda path: path.relative_to(_PACKAGES).as_posix(),
+)
+def test_standalone_assets_declare_complete_script_metadata(script: Path) -> None:
+    lines = script.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "# /// script"
+    closing = lines.index("# ///", 1)
+    metadata = tomllib.loads(
+        "\n".join(line.removeprefix("# ") for line in lines[1:closing])
+    )
+    assert metadata == {"requires-python": ">=3.13", "dependencies": []}
 
 
 @pytest.mark.parametrize(
@@ -640,7 +666,7 @@ def test_relocated_cli_handles_only_intended_input_type_failures(
         ),
         encoding="utf-8",
     )
-    status, _, stderr = asyncio.run(_run_asset(script, arguments, tmp_path))
+    status, _, stderr = _run_asset(script, arguments, tmp_path)
     assert status == code, stderr
     assert diagnostic in stderr
     assert "Traceback" not in stderr
@@ -713,6 +739,6 @@ def test_cli_does_not_swallow_programmer_type_errors(
 def test_changed_self_tests_run_standalone(tmp_path: Path, asset: str) -> None:
     script = tmp_path / Path(asset).name
     shutil.copyfile(_PACKAGES / asset, script)
-    status, stdout, stderr = asyncio.run(_run_asset(script, ["--self-test"], tmp_path))
+    status, stdout, stderr = _run_asset(script, ["--self-test"], tmp_path)
     assert status == 0, stderr
     assert "self-test" in stdout.lower()

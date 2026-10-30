@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Report private helpers that break the stepdown order relative to their sole caller.
 
 A private helper is a function or method named with one leading underscore
@@ -271,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ignore = tuple(re.compile(pattern) for pattern in args.ignore)
     except re.error as error:
-        print(f"invalid --ignore pattern: {error}", file=sys.stderr)
+        sys.stderr.write(f"invalid --ignore pattern: {error}\n")
         return _EXIT_USAGE
     files, findings = _python_files(args.paths, _EXCLUDED | set(args.exclude))
     for path in files:
@@ -288,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError, SyntaxError):
             findings.append(f"{path.as_posix()}:1: source cannot be parsed")
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 

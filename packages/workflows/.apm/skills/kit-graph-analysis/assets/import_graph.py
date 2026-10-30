@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Build a static import graph for one Python package and query it.
 
 The tool parses source files with ``ast`` and never imports or executes them.
@@ -503,18 +507,22 @@ def _query(graph: Graph, args: argparse.Namespace) -> int:
     modules = [args.reverse or args.forward] if not args.chain else list(args.chain)
     unknown = [name for name in modules if name not in graph.files]
     if unknown:
-        print(f"unknown module: {unknown[0]}", file=sys.stderr)
+        sys.stderr.write(f"unknown module: {unknown[0]}\n")
         return _EXIT_USAGE
     if args.chain:
         chain = shortest_path(graph, args.chain[0], args.chain[1])
-        print(" -> ".join(chain) if chain else "no import chain")
+        sys.stdout.write(f"{' -> '.join(chain) if chain else 'no import chain'}\n")
         return 0
     if args.reverse:
         for level, name, via in reachable(graph.reverse(), args.reverse, args.depth):
-            print(f"{graph.location(name, via)}: {name} -> {via} (depth {level})")
+            sys.stdout.write(
+                f"{graph.location(name, via)}: {name} -> {via} (depth {level})\n"
+            )
         return 0
     for level, name, via in reachable(graph.edges, args.forward, args.depth):
-        print(f"{graph.location(via, name)}: {via} -> {name} (depth {level})")
+        sys.stdout.write(
+            f"{graph.location(via, name)}: {via} -> {name} (depth {level})\n"
+        )
     return 0
 
 
@@ -531,10 +539,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         self_test()
-        print("import_graph self-test passed.")
+        sys.stdout.write("import_graph self-test passed.\n")
         return 0
     if args.package is None or not args.package.is_dir():
-        print("a package directory is required", file=sys.stderr)
+        sys.stderr.write("a package directory is required\n")
         return _EXIT_USAGE
     try:
         graph = build_graph(
@@ -544,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
             include_external=args.include_external,
         )
     except (OSError, UnicodeError, SyntaxError, ValueError) as error:
-        print(f"cannot build graph: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot build graph: {error}\n")
         return _EXIT_USAGE
     return _report(graph, args)
 
@@ -558,9 +566,11 @@ def _report(graph: Graph, args: argparse.Namespace) -> int:
         return _query(graph, args)
     findings = cycle_findings(graph)
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     count = sum(len(targets) for targets in graph.edges.values())
-    print(f"{len(graph.files)} modules, {count} imports, {len(findings)} cycle(s).")
+    sys.stdout.write(
+        f"{len(graph.files)} modules, {count} imports, {len(findings)} cycle(s).\n"
+    )
     return int(bool(findings))
 
 

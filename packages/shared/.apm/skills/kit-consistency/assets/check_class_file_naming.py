@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that each module is named after the public class it defines.
 
 A module ``invoice_repository.py`` is expected to define ``InvoiceRepository``.
@@ -382,10 +386,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return 1
-    print("check_class_file_naming self-test passed.")
+    sys.stdout.write("check_class_file_naming self-test passed.\n")
     return 0
 
 
@@ -393,7 +397,7 @@ def _report_missing(paths: Sequence[Path]) -> bool:
     """Print every nonexistent path and return whether any was found."""
     missing = [path for path in paths if not path.exists()]
     for path in missing:
-        print(f"{path.as_posix()}: path does not exist", file=sys.stderr)
+        sys.stderr.write(f"{path.as_posix()}: path does not exist\n")
     return bool(missing)
 
 
@@ -415,9 +419,9 @@ def _options(args: argparse.Namespace) -> Options:
 def _report(findings: list[Finding], *, module_count: int) -> int:
     """Print findings or a success summary and return the exit status."""
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if not findings:
-        print(f"Class and module names agree in {module_count} module(s).")
+        sys.stdout.write(f"Class and module names agree in {module_count} module(s).\n")
     return 1 if findings else 0
 
 
@@ -445,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             for path in _python_files(args.paths)
         ]
     except (OSError, UnicodeDecodeError) as error:
-        print(f"cannot read sources: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read sources: {error}\n")
         return _EXIT_USAGE
     return _report(check_files(sources, options=options), module_count=len(sources))
 

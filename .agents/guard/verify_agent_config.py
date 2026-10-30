@@ -14,9 +14,8 @@ def main() -> int:
     root = args.root.resolve()
     verifier = root / "scripts/verify.py"
     if not verifier.is_file():
-        print(
-            "Target must be the toolkit checkout containing scripts/verify.py.",
-            file=sys.stderr,
+        sys.stderr.write(
+            "Target must be the toolkit checkout containing scripts/verify.py.\n"
         )
         return 1
     for gate in (

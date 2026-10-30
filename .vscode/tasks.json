@@ -2,96 +2,226 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Preview version and changelog",
+      "detail": "Read-only Commitizen preview (task version:preview).",
+      "type": "process",
+      "command": "task",
+      "args": ["version:preview"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Prepare version (operator)",
+      "detail": "Confirmed version-file and lock update; no commit or tag (task version:prepare).",
+      "type": "process",
+      "command": "task",
+      "args": ["version:prepare"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "focus": true, "panel": "dedicated"}
+    },
+    {
+      "label": "Build release artifacts",
+      "detail": "Build and verify exact local release products without publishing (task release:build).",
+      "type": "process",
+      "command": "task",
+      "args": ["release:build"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Register agent-kit checkout (Windows)",
+      "detail": "Persist AGENT_KIT_DIR in the Windows user environment (task checkout:register).",
+      "type": "process",
+      "command": "task",
+      "args": [
+        "checkout:register"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test Python matrix (tox)",
+      "detail": "Run the locked tox environments sequentially (task test:matrix).",
+      "type": "process",
+      "command": "task",
+      "args": [
+        "test:matrix"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "Verify toolkit",
       "detail": "Read-only local and CI quality gate (task verify).",
       "type": "process",
       "command": "task",
-      "args": ["verify"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "verify"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "group": {"kind": "build", "isDefault": true},
-      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Test",
       "detail": "All test tiers in parallel (task test).",
       "type": "process",
       "command": "task",
-      "args": ["test"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "test"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "group": {"kind": "test", "isDefault": true},
-      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Lint",
       "detail": "Ruff lint, read-only (task lint).",
       "type": "process",
       "command": "task",
-      "args": ["lint"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "lint"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "silent", "panel": "shared"}
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
     },
     {
       "label": "Format",
       "detail": "Apply Ruff formatting and safe fixes; writes files (task format).",
       "type": "process",
       "command": "task",
-      "args": ["format"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "format"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "silent", "panel": "shared"}
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
     },
     {
       "label": "Type check",
       "detail": "ty over every Python root in ty.toml (task typecheck).",
       "type": "process",
       "command": "task",
-      "args": ["typecheck"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "typecheck"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "silent", "panel": "shared"}
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
     },
     {
       "label": "Pre-commit (all files)",
       "detail": "Every pre-commit-stage hook on all files (task precommit).",
       "type": "process",
       "command": "task",
-      "args": ["precommit"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "precommit"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "APM smoke",
       "detail": "Released APM CLI in disposable packages (task apm:smoke).",
       "type": "process",
       "command": "task",
-      "args": ["apm:smoke"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "apm:smoke"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Bootstrap locked environment",
       "detail": "Audit the locks, install locked environments and hooks (task bootstrap).",
       "type": "process",
       "command": "task",
-      "args": ["bootstrap"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "bootstrap"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "always", "panel": "dedicated", "clear": true}
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Commit (Conventional Commits)",
       "detail": "Interactive commitizen prompt for the staged changes (task commit).",
       "type": "process",
       "command": "task",
-      "args": ["commit"],
-      "options": {"cwd": "${workspaceFolder}"},
+      "args": [
+        "commit"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": [],
-      "presentation": {"reveal": "always", "focus": true, "panel": "dedicated", "clear": true}
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

@@ -1,5 +1,6 @@
 {
   "recommendations": [
+    "anthropic.claude-code",
     "astral-sh.ty",
     "charliermarsh.ruff",
     "davidanson.vscode-markdownlint",
@@ -9,6 +10,9 @@
     "ms-python.debugpy",
     "ms-python.python",
     "ms-python.vscode-python-envs",
+    "ms-vscode-remote.remote-containers",
+    "ms-vscode.powershell",
+    "ms-vscode.vscode-chat-customizations-evaluations",
     "redhat.vscode-yaml",
     "streetsidesoftware.code-spell-checker",
     "tamasfe.even-better-toml",

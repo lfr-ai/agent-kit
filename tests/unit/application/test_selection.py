@@ -103,11 +103,15 @@ def test_wrongly_typed_selection_is_rejected(document: object) -> None:
 
 
 def test_rejection_does_not_echo_untrusted_values() -> None:
-    secret = "token-value-that-must-not-leak"
+    untrusted = "token-value-that-must-not-leak"
 
     with pytest.raises(InvalidSelectionError) as raised:
         parse_selection(
-            {"schema_version": 1, "profile": "backend", "features": [secret, secret]}
+            {
+                "schema_version": 1,
+                "profile": "backend",
+                "features": [untrusted, untrusted],
+            }
         )
 
-    assert secret not in str(raised.value)
+    assert untrusted not in str(raised.value)

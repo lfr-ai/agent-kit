@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Evaluate one agent pre-tool hook payload against a local deny and ask policy.
 
 The guard is opt-in defense in depth for GitHub Copilot (Copilot CLI, cloud agent,
@@ -906,10 +910,12 @@ def _self_test() -> int:
     ):
         failures.append("failure semantics")
     for failure in failures:
-        print(f"self-test: {failure}")
+        sys.stdout.write(f"self-test: {failure}\n")
     if failures:
         return 1
-    print(f"self-test passed: {len(_SELF_TEST_CASES) + _SELF_TEST_EXTRA_CASES} cases")
+    sys.stdout.write(
+        f"self-test passed: {len(_SELF_TEST_CASES) + _SELF_TEST_EXTRA_CASES} cases\n"
+    )
     return 0
 
 

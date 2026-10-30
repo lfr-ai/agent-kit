@@ -119,7 +119,7 @@ def run(root: Path) -> int:
         return result
     bun = shutil.which("bun")
     if bun is None:
-        print("Dependency audit requires bun to audit bun.lock.", file=sys.stderr)
+        sys.stderr.write("Dependency audit requires bun to audit bun.lock.\n")
         return 1
     # Reads the lockfile, so it also runs before node_modules is installed.
     return subprocess.run(  # noqa: S603 - fixed bun arguments, no shell
@@ -142,18 +142,17 @@ def _audit_uv_lock(root: Path) -> int:
         tomllib.TOMLDecodeError,
         InvalidLockMetadataError,
     ) as error:
-        print(f"Dependency audit cannot read uv.lock: {error}", file=sys.stderr)
+        sys.stderr.write(f"Dependency audit cannot read uv.lock: {error}\n")
         return 1
     for package in blocked:
-        print(
-            f"uv.lock: {package} has no wheel; installing it would run its build",
-            file=sys.stderr,
+        sys.stderr.write(
+            f"uv.lock: {package} has no wheel; installing it would run its build\n"
         )
     if blocked:
         return 1
     uv = shutil.which("uv")
     if uv is None:
-        print("Dependency audit requires uv on PATH.", file=sys.stderr)
+        sys.stderr.write("Dependency audit requires uv on PATH.\n")
         return 1
     with tempfile.TemporaryDirectory(prefix="agent-kit-audit-") as directory:
         requirements = Path(directory) / "requirements.txt"
@@ -174,7 +173,7 @@ def _audit_uv_lock(root: Path) -> int:
             check=False,
         )
         if export.returncode:
-            print("Dependency audit could not export uv.lock.", file=sys.stderr)
+            sys.stderr.write("Dependency audit could not export uv.lock.\n")
             return export.returncode
         return subprocess.run(  # noqa: S603 - fixed audit arguments, no shell
             audit_command(requirements, Path(directory) / "cache"),

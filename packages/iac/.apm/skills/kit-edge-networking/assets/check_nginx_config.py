@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Flag risky nginx reverse-proxy settings with a small block parser.
 
 Each file is parsed on its own (``include`` is not followed) and every finding is
@@ -805,10 +809,10 @@ def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
     failures = self_test()
     for failure in failures:
-        print(failure, file=sys.stderr)
+        sys.stderr.write(f"{failure}\n")
     if failures:
         return _FINDINGS
-    print("check_nginx_config self-test passed.")
+    sys.stdout.write("check_nginx_config self-test passed.\n")
     return 0
 
 
@@ -836,17 +840,17 @@ def _scan(paths: Iterable[Path]) -> int:
             try:
                 findings.extend(scan_text(path, path.read_text(encoding="utf-8")))
             except NginxConfigError as error:
-                print(f"Cannot check {path.as_posix()}: {error}", file=sys.stderr)
+                sys.stderr.write(f"Cannot check {path.as_posix()}: {error}\n")
                 return _INVALID
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Cannot check nginx configuration: {error}", file=sys.stderr)
+        sys.stderr.write(f"Cannot check nginx configuration: {error}\n")
         return _INVALID
     for finding in findings:
-        print(finding.render())
+        sys.stdout.write(f"{finding.render()}\n")
     if findings:
-        print(f"{len(findings)} finding(s) in {len(files)} file(s)", file=sys.stderr)
+        sys.stderr.write(f"{len(findings)} finding(s) in {len(files)} file(s)\n")
         return _FINDINGS
-    print(f"No findings in {len(files)} file(s).")
+    sys.stdout.write(f"No findings in {len(files)} file(s).\n")
     return 0
 
 

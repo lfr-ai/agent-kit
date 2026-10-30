@@ -233,6 +233,62 @@ def test_mcp_catalog_entry_cannot_lose_native_setup(covered_root: Path) -> None:
     assert any("MCP template" in item for item in check(covered_root))
 
 
+@pytest.mark.parametrize(
+    ("template", "wrapper"),
+    [
+        ("mcp-vscode.json.template", "servers"),
+        ("mcp-claude.json.template", "mcpServers"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("server", "flag"),
+    [
+        ("azure", "--read-only"),
+        ("terraform", "--toolsets=registry"),
+        ("playwright", "--isolated"),
+        ("playwright", "--headless"),
+        ("chrome-devtools", "--isolated"),
+        ("chrome-devtools", "--headless"),
+        ("chrome-devtools", "--no-usage-statistics"),
+        ("chrome-devtools", "--no-performance-crux"),
+    ],
+)
+def test_mcp_templates_keep_their_hardening_flags(
+    covered_root: Path, template: str, wrapper: str, server: str, flag: str
+) -> None:
+    """Read-only, isolation and telemetry opt-outs cannot be dropped from a template."""
+    path = covered_root / "packages/shared/.apm/skills/kit-editor/assets" / template
+    content = json.loads(path.read_text())
+    content[wrapper][server]["args"].remove(flag)
+    path.write_text(json.dumps(content), encoding="utf-8")
+
+    assert any("invalid MCP template transport" in item for item in check(covered_root))
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("npx", ["--yes", "shadcn@REVIEWED_VERSION", "mcp"]),
+        ("node", ["shadcn@REVIEWED_VERSION", "mcp"]),
+        ("bunx", ["shadcn@REVIEWED_VERSION", "mcp"]),
+        ("bunx", ["shadcn@REVIEWED_VERSION", "--bun", "mcp"]),
+    ],
+)
+def test_native_mcp_templates_require_bun_runtime(
+    covered_root: Path, command: str, args: list[str]
+) -> None:
+    for template, wrapper in (
+        ("mcp-vscode.json.template", "servers"),
+        ("mcp-claude.json.template", "mcpServers"),
+    ):
+        path = covered_root / "packages/shared/.apm/skills/kit-editor/assets" / template
+        content = json.loads(path.read_text())
+        content[wrapper]["shadcn"].update(command=command, args=args)
+        path.write_text(json.dumps(content), encoding="utf-8")
+
+    assert any("invalid MCP template transport" in item for item in check(covered_root))
+
+
 def test_script_disposition_cannot_claim_nonexistent_implementation(
     covered_root: Path,
 ) -> None:

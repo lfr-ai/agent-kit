@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check a LiteLLM proxy config or a resolved compose file exported as JSON.
 
 Input: one JSON document from a file path or ``-`` for standard input.

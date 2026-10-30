@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,7 +20,6 @@ from agent_kit.infrastructure.output_adapter import OutputAdapter
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from contextlib import AbstractContextManager
-    from pathlib import Path
 
     from agent_kit.core.models import CheckReport
 
@@ -173,8 +173,6 @@ def test_denied_composed_asset_read_never_hashes_placeholder(
     monkeypatch: pytest.MonkeyPatch,
     original: bytes,
 ) -> None:
-    from pathlib import Path
-
     relative = ".apm/skills/kit-backend/asset.bin"
     (source_root / "packages/backend" / relative).write_bytes(original)
     output = _compose(source_root, tmp_path / "backend")

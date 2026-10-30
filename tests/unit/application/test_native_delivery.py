@@ -510,6 +510,7 @@ def test_optional_workers_link_only_when_their_role_is_selected() -> None:
 
 def test_catalog_validation_requires_every_optional_worker_to_exist() -> None:
     """A misspelled optional worker fails the whole-catalog check, not composition."""
+    # cspell:ignore bilder
     files = _assets(_coordinator(["kit-bilder"]), _role("kit-reader"))
 
     validate_native_assets(files, ("copilot",))

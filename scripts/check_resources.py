@@ -157,18 +157,18 @@ def main() -> int:
         failures = check(args.root)
         records = inventory(args.root)
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Resource inputs cannot be read: {error}", file=sys.stderr)
+        sys.stderr.write(f"Resource inputs cannot be read: {error}\n")
         return 1
     if args.json:
-        print(
-            json.dumps({"valid": not failures, "failures": failures, "skills": records})
+        sys.stdout.write(
+            f"{json.dumps({'valid': not failures, 'failures': failures, 'skills': records})}\n"
         )
     else:
         for failure in failures:
-            print(failure, file=sys.stderr)
+            sys.stderr.write(f"{failure}\n")
         if not failures:
-            print(
-                f"Linked references, assets and Python syntax passed for {len(records)} skills."
+            sys.stdout.write(
+                f"Linked references, assets and Python syntax passed for {len(records)} skills.\n"
             )
     return int(bool(failures))
 

@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Check that a test suite follows its tier layout and that every test asserts.
 
 Rules:
@@ -262,9 +266,9 @@ def _report_self_test() -> int:
     """Print the self-test verdict; return 0 when it passed and 1 otherwise."""
     unmet = self_test()
     for line in unmet:
-        print(line, file=sys.stderr)
+        sys.stderr.write(f"{line}\n")
     verdict = "failed" if unmet else "passed"
-    print(f"check_test_layout self-test {verdict}.")
+    sys.stdout.write(f"check_test_layout self-test {verdict}.\n")
     return int(bool(unmet))
 
 
@@ -291,15 +295,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return _report_self_test()
     if not args.root.is_dir():
-        print(f"{args.root.as_posix()}: tests root is not a directory", file=sys.stderr)
+        sys.stderr.write(f"{args.root.as_posix()}: tests root is not a directory\n")
         return _USAGE_ERROR
     try:
         issues = check_tree(args.root, tiers=tuple(args.tier) or DEFAULT_TIERS)
     except (OSError, UnicodeDecodeError) as error:
-        print(f"cannot read tests: {error}", file=sys.stderr)
+        sys.stderr.write(f"cannot read tests: {error}\n")
         return _USAGE_ERROR
     for issue in issues:
-        print(issue.render())
+        sys.stdout.write(f"{issue.render()}\n")
     return 1 if issues else 0
 
 

@@ -40,7 +40,7 @@ second copy into the environment.
 | Unit/property tests | Synthetic profile, collision, path, provenance, and process boundaries |
 | Architecture | Declarative inward import contracts |
 | Documentation | Source entry files and local links, excluding consumer templates |
-| Actual APM | Three budget-compliant selections (`fullstack`; `ai` with `iac`; `workflows`) that together cover every portable bundle: install/compile, both native rosters, exact installed resource bytes, explicit policy, audit and frozen reproduction |
+| Actual APM | Three budget-compliant selections (`fullstack`; `ai` with `terraform`, `bicep` and `remote-access`, which inherit `iac`; `workflows`) that together cover every portable bundle: install/compile, both native rosters, exact installed resource bytes, explicit policy, audit and frozen reproduction |
 | Session context | Explicit allowlist, selected-skill instruction links, role omission and real narrowed APM delivery |
 | Distribution | Build the Python wheel/sdist with the declared build backend |
 | Native host | Separate live-session certification, not inferred from CLI tests |
@@ -86,11 +86,12 @@ before `task verify`. Keep that environment for later coverage-report commands.
 This isolates output files; it does not change the 90% branch-coverage gate.
 
 Provenance verifies authored source/configuration and exact first-party native
-files attested in the APM ledger. Compiled root context, lock, and ignore metadata
+files attested in the APM ledger.
 Native prompt projections must also map to an authored `.apm/prompts` facade:
 Copilot prompt files and Claude commands are not approved merely because they
 occupy a runtime directory. Ledger ownership, native hashes and source hashes
-remain required. Session selection omits these project-level facades. Compiled root context, lock, and ignore metadata
+remain required. Session selection omits these project-level facades.
+Compiled root context, lock, and ignore metadata
 are not source-provenance bytes; inspect them separately and run the explicit
 APM audit. The provenance file itself is not a signature or authorization grant.
 Release artifacts are additionally compared byte-for-byte with fresh composition

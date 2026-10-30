@@ -12,6 +12,45 @@ See [GitHub setup](github-setup.md) and [governance](../GOVERNANCE.md).
 
 ## Prepare a reviewed version
 
+Use the Task entry points rather than reconstructing flags:
+
+| Action | Command | Writes |
+| --- | --- | --- |
+| Preview next version and commit-derived notes | `task version:preview` | Nothing |
+| Prepare versions from Conventional Commits | `task version:prepare` | Version metadata and `uv.lock`, after confirmation |
+| Build and verify exact local release products | `task release:build` | Wheel, sdist, source ZIP, checksums and staging |
+| Publish a reviewed workflow-created draft | `task release:publish TAG=v0.1.1` | Remote release visibility, after confirmation |
+
+`version:prepare` requires clean tracked changes. Run it on an operator-created
+release branch after reviewing `version:preview`. Commitizen's
+`--version-files-only` updates the PEP 621 version and configured APM metadata
+without committing or creating a tag. The curated changelog remains manual:
+review the generated preview, keep an Unreleased section, and add the dated
+release entry before committing.
+
+Keep the changelog focused on reader decisions:
+
+- Group related user-visible changes; omit commit lists and test-run narration.
+- Lead with the effect, then any required migration or setup step.
+- Use only applicable Keep a Changelog categories; put vulnerability fixes in
+  Security and distinguish available configuration from activated integrations.
+- Preserve dated release history. Use generated notes as input, not a replacement
+  for the curated entries.
+
+The operator reviews, commits and merges that preparation, then creates/pushes
+the approved version tag. The tag workflow below builds the draft from that
+commit. `release:publish` does not create tags, upload replacement artifacts,
+change prerelease status or bypass CI. Its tag must be `vX.Y.Z`; it refuses
+missing/inaccessible or already-published releases. Verify the draft's
+attestations and notes first. The confirmation prompt is a convenience, not
+authorization: Task's `--yes` can bypass it, and agents must not invoke this
+operator workflow.
+
+Stale archives remain errors. No release task automatically deletes prior
+products or overwrites the capability ZIP; remove only identified stale build
+files before intentionally rebuilding. A fork must review the fixed repository
+coordinate in `release:publish` before adopting this toolkit-specific task.
+
 1. Update Python, catalog, root APM, and every bundle version together.
 2. Add a dated changelog entry and migration/rollback guidance.
 3. Audit existing delivery before intentionally regenerating APM-owned output.
@@ -25,7 +64,8 @@ See [GitHub setup](github-setup.md) and [governance](../GOVERNANCE.md).
 
 Stale or extra build products fail the release check instead of being uploaded
 through a permissive wildcard. Remove only identified old artifacts deliberately.
-No command in this guide initializes version control or publishes remotely.
+The preparation commands do not initialize version control or push tags.
+The explicitly confirmed `release:publish` task is the final remote operator step.
 
 ## Draft workflow
 
@@ -56,4 +96,7 @@ creation command fails instead of overwriting it.
 
 Reference: [artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations),
 [reusable workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows),
-and [draft creation flags](https://cli.github.com/manual/gh_release_create).
+[Commitizen bump flags](https://commitizen-tools.github.io/commitizen/commands/bump/),
+[changelog preview](https://commitizen-tools.github.io/commitizen/commands/changelog/),
+[draft creation flags](https://cli.github.com/manual/gh_release_create) and
+[publishing an existing draft](https://cli.github.com/manual/gh_release_edit).

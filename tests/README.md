@@ -31,6 +31,11 @@ uv run --locked tox -e 3.14       # isolated environment for one interpreter
 markers, unique parametrization ids, and xfail; warnings as errors). Coverage settings live
 in `.coveragerc`; subprocesses started by integration tests are measured too.
 
+Run verification, tox, and all-file hooks sequentially in a shared checkout.
+Preserve the complete output of a failed run before retrying; a passing retry
+does not identify the original failure. To limit local CPU use without changing
+the suite, set `PYTEST_XDIST_AUTO_NUM_WORKERS=4` before an `auto` run.
+
 ## Adding a test
 
 - Put it in the tier and layer of the behavior it proves; name files `test_*.py`.

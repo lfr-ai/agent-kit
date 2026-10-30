@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
 """Validate recorded SSE event manifests against the stream contract.
 
 Input: one or more JSON files, each holding a list of event objects shaped
@@ -217,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             items = items_with_lines(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError) as error:
-            print(f"{path}:1: cannot read events: {error}", file=sys.stderr)
+            sys.stderr.write(f"{path}:1: cannot read events: {error}\n")
             return _EXIT_USAGE
         findings.extend(
             check_events(
@@ -229,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     for finding in findings:
-        print(finding)
+        sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0
 
 
