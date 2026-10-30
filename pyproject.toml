@@ -29,16 +29,16 @@ agent-kit = "agent_kit.main:main"
 dev = [
   "apm-cli==0.33.0",
   "commitizen==4.19.2",
-  "hypothesis==6.168.5",
+  "hypothesis==6.170.0",
   "import-linter==2.15",
-  "pre-commit==4.6.2",
+  "pre-commit==4.7.0",
   "pytest==9.1.1",
   "pytest-cov==7.1.0",
   "pytest-xdist==3.8.0",
   "ruff==0.17.1",
   "tox==4.67.1",
   "tox-uv-bare==1.37.0",
-  "ty==0.0.85",
+  "ty==0.0.88",
 ]
 # Installed alone by bootstrap so the full lock is audited before it is synced.
 audit = ["pip-audit==2.10.1"]
