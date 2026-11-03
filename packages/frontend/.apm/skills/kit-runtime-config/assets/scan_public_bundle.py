@@ -33,7 +33,7 @@ class Rule:
     hint: str
 
 
-_RULES: tuple[Rule, ...] = (
+_RULES = (
     Rule(
         name="private-key",
         pattern=re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
@@ -102,7 +102,7 @@ class BundleInputError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            root: Diagnostic root for the failing input.
+            root (Path): Diagnostic root for the failing input.
         """
         super().__init__(f"not a directory: {root}")
 
@@ -119,13 +119,14 @@ def scan(
     """Return sorted ``path:line: [rule] message`` findings for a build directory.
 
     Args:
-        root: Build output directory to scan.
-        deny: Extra regular expressions that must not appear (for example
-            internal host names).
-        allow: Regular expressions; a match fully covered by one is ignored.
-        forbid_source_maps: Report every ``.map`` file as a finding.
-        suffixes: File suffixes to read.
-        max_bytes: Files larger than this are reported instead of read.
+        root (Path): Build output directory to scan.
+        deny (tuple[str, ...]): Extra regular expressions that must not appear (for
+            example internal host names).
+        allow (tuple[str, ...]): Regular expressions; a match fully covered by one is
+            ignored.
+        forbid_source_maps (bool): Report every ``.map`` file as a finding.
+        suffixes (tuple[str, ...]): File suffixes to read.
+        max_bytes (int): Files larger than this are reported instead of read.
 
     Returns:
         Findings ordered by path and line; empty when nothing matched.
@@ -188,8 +189,8 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            findings: Observed findings for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            findings (list[str] | None): Observed findings for the failing case.
         """
         super().__init__(issue.value.format(findings=findings))
 
@@ -238,11 +239,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Scan a build directory or run the self-test; return a process exit code.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when no findings exist, 1 when findings or input errors exist.
+    Returns 0 when no findings exist, 1 when findings or input errors exist.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", nargs="?", type=Path, default=Path("dist"))

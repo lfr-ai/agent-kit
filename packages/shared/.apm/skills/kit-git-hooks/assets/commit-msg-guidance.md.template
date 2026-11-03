@@ -1,0 +1,45 @@
+# Commit message guidance
+
+Copy this into the contributing guide and adjust the types and scopes.
+
+## Format
+
+```text
+<type>[optional scope][!]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+- Types: `feat` (new behavior), `fix` (bug fix), `docs`, `refactor`, `perf`,
+  `test`, `build`, `ci`, `chore`, `style`, `revert`.
+- Scope names the area, for example `fix(orders): reject negative quantities`.
+- Mark a breaking change with `!` after the type or scope, or with a
+  `BREAKING CHANGE: <what breaks and how to migrate>` footer.
+- Write the description in the imperative and describe the effect, not the
+  activity (`reject empty input`, not `fixed stuff`).
+- Keep trailers in Git trailer format (`Refs: #123`, `Co-authored-by: ...`).
+
+## Checking locally
+
+```text
+cz check --commit-msg-file <path to message file>   # what the commit-msg hook runs
+cz check --rev-range origin/main..HEAD              # validate a whole branch
+```
+
+The hook runs at the `commit-msg` stage; it exists only after hooks are
+installed. If it rejects a message, rewrite the message. Do not use
+`git commit --no-verify`.
+
+## CI
+
+CI validates the commit range, or the pull-request title when the repository
+uses squash merges, because hooks can be skipped or never installed. A failing
+title or range check blocks the merge.
+
+## Reviewer checklist
+
+- Does the type match the change (a `feat` adds behavior; a bug fix is `fix`)?
+- Is a breaking change marked, with migration guidance in the footer?
+- Does the description say what changed for the user or caller?

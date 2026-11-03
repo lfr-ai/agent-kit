@@ -269,14 +269,7 @@ def load_dataset(*, path: Path) -> tuple[EvalCase, ...]:
 
 
 def dataset_fingerprint(*, path: Path) -> str:
-    """Return a content digest that identifies the exact dataset snapshot.
-
-    Args:
-        path (Path): Dataset file.
-
-    Returns:
-        str: ``sha256:`` prefixed hexadecimal digest.
-    """
+    """Return a ``sha256:``-prefixed digest of the exact dataset snapshot."""
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -655,12 +648,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Score recorded outputs, print the report and optionally write it.
 
-    Args:
-        argv (Sequence[str] | None): Arguments; defaults to ``sys.argv``.
-
-    Returns:
-        int: 0 when no configured gates fail (including scoring-only runs),
-        1 on a gate failure, 2 on invalid input.
+    Returns 0 when no configured gates fail (including scoring-only runs), 1 on a gate
+    failure, 2 on invalid input.
     """
     try:
         args = _parser().parse_args(argv)

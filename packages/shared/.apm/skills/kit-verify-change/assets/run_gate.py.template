@@ -44,7 +44,7 @@ class UnknownStepError(ValueError):
         """Describe the unknown selection.
 
         Args:
-            names: Undeclared step names supplied by the caller.
+            names (Sequence[str]): Undeclared step names supplied by the caller.
         """
         super().__init__(f"unknown step(s): {', '.join(names)}")
 
@@ -164,6 +164,16 @@ def _run(command: Sequence[str], *, timeout: float) -> tuple[str, int | None]:
 
     The executable is resolved with ``shutil.which`` so wrappers such as
     Windows executable wrappers run without ``shell=True``.
+
+    Args:
+        command (Sequence[str]): Non-empty executable and argument vector;
+            the executable is resolved on PATH before invocation.
+        timeout (float): Maximum subprocess runtime in seconds.
+
+    Returns:
+        tuple[str, int | None]: Outcome label followed by exit code. ``passed``
+        has code 0, ``failed`` has the nonzero code, and ``timeout`` or
+        ``unavailable`` has None when no completed exit status is available.
     """
     executable = shutil.which(command[0])
     if executable is None:
@@ -189,10 +199,11 @@ def select(
     """Choose the steps to run, preserving gate order.
 
     Args:
-        steps: All configured steps.
-        only: When non-empty, run exactly these names (slow ones included).
-        skip: Names never run.
-        include_slow: Include the ``slow`` tier when ``only`` is empty.
+        steps (Sequence[Step]): All configured steps.
+        only (Sequence[str]): When non-empty, run exactly these names (slow ones
+            included).
+        skip (Sequence[str]): Names never run.
+        include_slow (bool): Include the ``slow`` tier when ``only`` is empty.
 
     Returns:
         Selected steps in gate order.
@@ -236,10 +247,10 @@ def run_gate(
     """Run fixers (optionally) and checks, printing one line per step.
 
     Args:
-        steps: Selected steps in order.
-        fix: Run each step's fixer before its check.
-        keep_going: Continue to later steps after any failing attempt.
-        timeout: Seconds allowed per command.
+        steps (Sequence[Step]): Selected steps in order.
+        fix (bool): Run each step's fixer before its check.
+        keep_going (bool): Continue to later steps after any failing attempt.
+        timeout (float): Seconds allowed per command.
 
     Returns:
         One result per fixer/check attempt; steps after a stop are skipped.
@@ -291,9 +302,9 @@ def write_report(path: Path, results: Sequence[Result], *, mode: str) -> None:
     """Write machine-readable evidence for the run.
 
     Args:
-        path: Destination JSON file.
-        results: Fixer and checker attempt outcomes.
-        mode: ``check`` or ``fix``.
+        path (Path): Destination JSON file.
+        results (Sequence[Result]): Fixer and checker attempt outcomes.
+        mode (str): ``check`` or ``fix``.
     """
     report = {
         "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -336,11 +347,7 @@ def _list_steps() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments, run the gate and summarize.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when every selected check passed, 1 otherwise, 2 on usage errors.
+    Returns 0 when every selected check passed, 1 otherwise, 2 on usage errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

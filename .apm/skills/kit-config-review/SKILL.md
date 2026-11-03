@@ -17,5 +17,7 @@ license: MIT
 Prefer extending an existing procedure over adding another near-duplicate.
 Keep discovery metadata short and specific; full resources load only when needed.
 
-Use the [review matrix](references/guide.md) and
-[configuration evidence](assets/review.md.template).
+Use the [review matrix](references/guide.md),
+[configuration evidence](assets/review.md.template) and, before adding always-on
+text or skills, [harness evaluation](references/harness-evaluation.md): measure
+the added context cost and prune what shows no effect.

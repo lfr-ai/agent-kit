@@ -16,12 +16,163 @@ from agent_kit.application.services.native_delivery import (
 )
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 
+_ROOT = Path(__file__).resolve().parents[3]
+_CANONICAL_ASSETS = {
+    path.relative_to(_ROOT).as_posix(): path.read_bytes()
+    for path in sorted((_ROOT / "packages").glob("*/.apm/skills/*/assets/agents.json"))
+}
+_CANONICAL_ROLES = [
+    role
+    for content in _CANONICAL_ASSETS.values()
+    for role in json.loads(content)["roles"]
+]
+_MAIN_ROLES = {"kit-debug", "kit-devops", "kit-orchestrator"}
+_RETIRED_ROLES = {
+    "kit-ai-engineer",
+    "kit-frontend",
+    "kit-fullstack",
+    "kit-modernization",
+    "kit-plan-architect",
+    "kit-reviewer",
+    "kit-solid-review",
+    "kit-tdd",
+}
+_ADVISERS = {"kit-ddd", "kit-sdd", "kit-deep-thinking"}
+_VERIFIERS = {
+    "kit-code-reviewer",
+    "kit-codebase-researcher",
+    "kit-contract-iac-lint",
+    "kit-ddd",
+    "kit-deep-thinking",
+    "kit-eval-reviewer",
+    "kit-infra-reviewer",
+    "kit-planner",
+    "kit-sdd",
+    "kit-security-reviewer",
+}
+_COPILOT_TIER_TOOLS = {
+    "verifier": ["read", "search", "execute", "todo"],
+    "implementer": ["read", "search", "edit", "execute", "todo"],
+    "coordinator": ["read", "search", "edit", "execute", "agent", "todo"],
+}
+_CLAUDE_TIER_TOOLS = {
+    "verifier": "Read, Grep, Glob, Bash",
+    "implementer": "Read, Grep, Glob, Edit, Write, Bash",
+}
+
+
+def test_canonical_picker_roster_and_worker_links_are_deliberate() -> None:
+    """Specialists stay callable, not picker entries or unrestricted delegates."""
+    roles = {role["id"]: role for role in _CANONICAL_ROLES}
+    assert {name for name, role in roles.items() if role["kind"] == "primary"} == (
+        _MAIN_ROLES
+    )
+    assert "kit-testing" not in roles
+    assert not roles.keys() & _RETIRED_ROLES
+    assert roles["kit-refactor"]["kind"] == "worker"
+    assert roles["kit-refactor"]["tier"] == "implementer"
+    assert "kit-refactor" in roles["kit-orchestrator"]["workers"]
+    assert "kit-infra-reviewer" in roles["kit-devops"]["workers"]
+    assert "optional_workers" not in roles["kit-devops"]
+    assert all(roles[name]["kind"] == "worker" for name in _ADVISERS)
+    assert all(roles[name]["tier"] == "verifier" for name in _ADVISERS)
+    referenced = set()
+    for role in roles.values():
+        workers = [*role["workers"], *role.get("optional_workers", [])]
+        assert "*" not in workers
+        for worker in workers:
+            assert roles[worker]["kind"] == "worker"
+        referenced.update(workers)
+        if role["kind"] == "worker":
+            assert role["tier"] != "coordinator", role["id"]
+    assert (
+        set(roles["kit-orchestrator"]["workers"])
+        | set(roles["kit-orchestrator"]["optional_workers"])
+        >= _ADVISERS
+    )
+    assert referenced == {
+        name for name, role in roles.items() if role["kind"] == "worker"
+    }
+
+
+def test_canonical_frontmatter_matches_tier_and_kind() -> None:
+    """Every role renders the documented tools, visibility and worker allowlist."""
+    rendered = render_native_agents(_CANONICAL_ASSETS, ("copilot", "claude"))
+    assert len(rendered) == 2 * len(_CANONICAL_ROLES)
+    names = {role["id"] for role in _CANONICAL_ROLES}
+    worker_names = {role["id"] for role in _CANONICAL_ROLES if role["kind"] == "worker"}
+    for role in _CANONICAL_ROLES:
+        name = role["id"]
+        copilot, copilot_body = _metadata(rendered[f".github/agents/{name}.agent.md"])
+        claude, claude_body = _metadata(rendered[f".claude/agents/{name}.md"])
+        assert copilot_body == claude_body, name
+        assert copilot["name"] == claude["name"] == name
+        copilot_tools = copilot["tools"]
+        claude_tools = claude["tools"]
+        assert isinstance(copilot_tools, list), name
+        assert isinstance(claude_tools, str), name
+        assert {"read", "search"} <= set(copilot_tools), name
+        assert {"Read", "Grep", "Glob"} <= set(claude_tools.split(", ")), name
+        assert copilot_tools == _COPILOT_TIER_TOOLS[role["tier"]], name
+        is_primary = role["kind"] == "primary"
+        assert copilot["user-invocable"] is is_primary, name
+        assert copilot["disable-model-invocation"] is is_primary, name
+        if role["tier"] == "coordinator":
+            workers = copilot["agents"]
+            assert isinstance(workers, list), name
+            assert workers == [*role["workers"], *role.get("optional_workers", [])]
+            assert workers, name
+            assert set(workers) <= worker_names, name
+            assert set(workers) <= names, name
+            assert claude_tools == (
+                f"Agent({', '.join(workers)}), Read, Grep, Glob, Edit, Write, Bash"
+            ), name
+        else:
+            assert "agents" not in copilot, name
+            assert claude_tools == _CLAUDE_TIER_TOOLS[role["tier"]], name
+
+
+def test_verifier_roster_is_exact() -> None:
+    """Analysis, review and verification roles share the non-editing shell tier."""
+    assert {
+        role["id"] for role in _CANONICAL_ROLES if role["tier"] == "verifier"
+    } == _VERIFIERS
+
+
+def test_every_canonical_role_can_inspect_history_with_a_shell() -> None:
+    """No role is rendered without the shell needed for diffs, history and checks."""
+    assert all(role["tier"] != "readonly" for role in _CANONICAL_ROLES)
+    rendered = render_native_agents(_CANONICAL_ASSETS, ("copilot", "claude"))
+    for role in _CANONICAL_ROLES:
+        name = role["id"]
+        copilot, _ = _metadata(rendered[f".github/agents/{name}.agent.md"])
+        claude, _ = _metadata(rendered[f".claude/agents/{name}.md"])
+        copilot_tools = copilot["tools"]
+        claude_tools = claude["tools"]
+        assert isinstance(copilot_tools, list), name
+        assert isinstance(claude_tools, str), name
+        assert "execute" in copilot_tools, name
+        assert "Bash" in claude_tools.split(", "), name
+
+
+def test_every_coordinator_worker_resolves_to_a_rendered_name() -> None:
+    """Each ``agents:`` entry must match the ``name:`` of an existing agent file."""
+    rendered = render_native_agents(_CANONICAL_ASSETS, ("copilot",))
+    discovered = {_metadata(content)[0]["name"] for content in rendered.values()}
+    for path, content in rendered.items():
+        metadata, _ = _metadata(content)
+        workers = metadata.get("agents", [])
+        assert isinstance(workers, list), path
+        for worker in workers:
+            assert worker in discovered, (path, worker)
+    assert all(path.count("/") == 2 for path in rendered)
+
 
 def _role(
     identifier: str,
     *,
     kind: str = "worker",
-    tier: str = "readonly",
+    tier: str = "verifier",
     workers: list[str] | None = None,
     models: dict[str, object] | None = None,
     description: str = "A concise role description.",
@@ -53,6 +204,63 @@ def _metadata(content: bytes) -> tuple[dict[str, object], bytes]:
     return metadata, body.encode("utf-8")
 
 
+@pytest.mark.parametrize(
+    ("coordinator", "worker"),
+    [
+        ("kit-orchestrator", "kit-planner"),
+        ("kit-devops", "kit-devops-implementer"),
+    ],
+)
+def test_workers_resolve_from_flat_discovery_without_picker_visibility(
+    coordinator: str, worker: str
+) -> None:
+    """Hidden helpers must still resolve by exact name from the standard folder."""
+    rendered = render_native_agents(
+        _assets(
+            _role(
+                coordinator,
+                kind="primary",
+                tier="coordinator",
+                workers=[worker],
+            ),
+            _role(worker),
+        ),
+        ("copilot", "claude"),
+    )
+    discovered = {
+        _metadata(content)[0]["name"]: _metadata(content)[0]
+        for path, content in rendered.items()
+        if path.startswith(".github/agents/") and path.count("/") == 2
+    }
+
+    assert set(discovered) == {coordinator, worker}
+    assert discovered[coordinator]["agents"] == [worker]
+    assert discovered[worker]["user-invocable"] is False
+    assert discovered[worker]["disable-model-invocation"] is False
+    assert f".claude/agents/{worker}.md" in rendered
+
+
+def test_verifier_tier_gets_a_shell_but_no_editing_or_delegation_tools() -> None:
+    """Verifiers get execution for offline inspection, not implementation."""
+    rendered = render_native_agents(
+        _assets(_role("kit-verifier")), ("copilot", "claude")
+    )
+
+    verifier, _ = _metadata(rendered[".github/agents/kit-verifier.agent.md"])
+    claude_verifier, _ = _metadata(rendered[".claude/agents/kit-verifier.md"])
+    assert verifier["tools"] == ["read", "search", "execute", "todo"]
+    assert "agents" not in verifier
+    assert claude_verifier["tools"] == "Read, Grep, Glob, Bash"
+
+
+def test_removed_shell_less_tier_fails_closed() -> None:
+    """The retired ``readonly`` tier is rejected instead of rendered without a shell."""
+    with pytest.raises(ValueError, match="invalid tier"):
+        render_native_agents(
+            _assets(_role("kit-reader", tier="readonly")), ("copilot",)
+        )
+
+
 def test_render_emits_provider_metadata_with_identical_source_bodies() -> None:
     body = "Line one.\nKeep this exact body.\n"
     rendered = render_native_agents(
@@ -60,7 +268,7 @@ def test_render_emits_provider_metadata_with_identical_source_bodies() -> None:
             _role(
                 "kit-analyzer",
                 kind="primary",
-                body="Read and report. Do not edit, execute, or delegate.",
+                body="Read and report. Do not edit or delegate.",
             ),
             _role(
                 "kit-coordinator",
@@ -84,45 +292,41 @@ def test_render_emits_provider_metadata_with_identical_source_bodies() -> None:
     assert set(rendered) == {
         ".github/agents/kit-analyzer.agent.md",
         ".github/agents/kit-coordinator.agent.md",
-        ".github/agents/subagents/kit-builder.agent.md",
+        ".github/agents/kit-builder.agent.md",
         ".claude/agents/kit-analyzer.md",
         ".claude/agents/kit-coordinator.md",
-        ".claude/agents/subagents/kit-builder.md",
+        ".claude/agents/kit-builder.md",
     }
     copilot_metadata, copilot_body = _metadata(
-        rendered[".github/agents/subagents/kit-builder.agent.md"]
+        rendered[".github/agents/kit-builder.agent.md"]
     )
-    claude_metadata, claude_body = _metadata(
-        rendered[".claude/agents/subagents/kit-builder.md"]
-    )
+    claude_metadata, claude_body = _metadata(rendered[".claude/agents/kit-builder.md"])
     assert copilot_body == claude_body == body.encode()
     assert copilot_metadata["model"] == ["GPT-5 mini", "Claude Haiku 4.5"]
     assert claude_metadata["model"] == "haiku"
-    assert copilot_metadata["agents"] == []
+    assert "agents" not in copilot_metadata
     assert copilot_metadata["user-invocable"] is False
     assert copilot_metadata["disable-model-invocation"] is False
     assert "model" not in _metadata(rendered[".claude/agents/kit-analyzer.md"])[0]
-    assert copilot_metadata["tools"] == ["read", "search", "edit", "execute"]
+    assert copilot_metadata["tools"] == ["read", "search", "edit", "execute", "todo"]
     assert (
-        _metadata(rendered[".claude/agents/subagents/kit-builder.md"])[0]["tools"]
+        _metadata(rendered[".claude/agents/kit-builder.md"])[0]["tools"]
         == "Read, Grep, Glob, Edit, Write, Bash"
     )
     assert _metadata(rendered[".claude/agents/kit-analyzer.md"])[0]["tools"] == (
-        "Read, Grep, Glob"
+        "Read, Grep, Glob, Bash"
     )
     assert _metadata(rendered[".github/agents/kit-analyzer.agent.md"])[0] == {
         "name": "kit-analyzer",
         "description": "A concise role description.",
-        "tools": ["read", "search"],
-        "agents": [],
+        "tools": ["read", "search", "execute", "todo"],
         "user-invocable": True,
         "disable-model-invocation": True,
     }
     for identifier in ("kit-analyzer", "kit-coordinator", "kit-builder"):
-        directory = "/subagents" if identifier == "kit-builder" else ""
         assert (
-            _metadata(rendered[f".github/agents{directory}/{identifier}.agent.md"])[1]
-            == _metadata(rendered[f".claude/agents{directory}/{identifier}.md"])[1]
+            _metadata(rendered[f".github/agents/{identifier}.agent.md"])[1]
+            == _metadata(rendered[f".claude/agents/{identifier}.md"])[1]
         )
 
 
@@ -171,7 +375,7 @@ def test_coordinator_worker_permissions_are_explicit_per_runtime() -> None:
 
     copilot, _ = _metadata(rendered[".github/agents/kit-coordinator.agent.md"])
     claude, _ = _metadata(rendered[".claude/agents/kit-coordinator.md"])
-    assert copilot["tools"] == ["read", "search", "edit", "execute", "agent"]
+    assert copilot["tools"] == ["read", "search", "edit", "execute", "agent", "todo"]
     assert copilot["agents"] == ["kit-builder"]
     assert copilot["user-invocable"] is True
     assert copilot["disable-model-invocation"] is True
@@ -221,14 +425,14 @@ def test_coordinator_worker_permissions_are_explicit_per_runtime() -> None:
             [
                 _role(
                     "kit-worker",
-                    tier="readonly",
+                    tier="verifier",
                     body="secret: synthetic-placeholder",
                 )
             ],
             "secret-like",
         ),
         (
-            [_role("kit-worker", tier="readonly", workers=["kit-*"])],
+            [_role("kit-worker", tier="verifier", workers=["kit-*"])],
             "invalid worker identifier",
         ),
     ],
@@ -382,7 +586,7 @@ def test_native_dependencies_must_close_within_each_effective_profile(
         assert report.valid, report.findings
         for profile in ("shared", "backend", "fullstack"):
             plan = service.compose(snapshot, profile, (), ())
-            assert ".github/agents/subagents/kit-builder.agent.md" in {
+            assert ".github/agents/kit-builder.agent.md" in {
                 item.relative_path for item in plan.files
             }
             if coordinator_bundle == "shared" or profile != "shared":
@@ -456,9 +660,9 @@ def test_profile_native_closure_uses_discoverable_skill_assets(
             ".apm/skills/kit-worker/SKILL.md",
             ".apm/skills/kit-worker/assets/agents.json",
             ".github/agents/kit-coordinator.agent.md",
-            ".github/agents/subagents/kit-builder.agent.md",
+            ".github/agents/kit-builder.agent.md",
             ".claude/agents/kit-coordinator.md",
-            ".claude/agents/subagents/kit-builder.md",
+            ".claude/agents/kit-builder.md",
         } <= paths
 
 
@@ -569,9 +773,13 @@ def test_repository_coordinators_reach_selected_bundle_implementers() -> None:
 
     shared = agents("shared")
     assert "kit-backend-implementer" not in shared
-    assert "kit-planner" in shared
-    assert {"kit-backend-implementer", "kit-contract-iac-lint"} <= set(
-        agents("backend")
-    )
+    assert {"kit-planner", "kit-deep-thinking"} <= set(shared)
+    assert not {"kit-ddd", "kit-sdd"} & set(shared)
+    assert {
+        "kit-backend-implementer",
+        "kit-contract-iac-lint",
+        "kit-ddd",
+        "kit-sdd",
+    } <= set(agents("backend"))
     assert "kit-frontend-implementer" in agents("frontend")
     assert "kit-infra-reviewer" in agents("iac")

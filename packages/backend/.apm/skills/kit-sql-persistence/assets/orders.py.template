@@ -20,8 +20,8 @@ class OrderPersistenceError(Exception):
         """Record which order failed.
 
         Args:
-            message: Human-readable description of the failure.
-            order_id: Identifier of the affected order.
+            message (str): Human-readable description of the failure.
+            order_id (uuid.UUID): Identifier of the affected order.
         """
         super().__init__(message)
         self.order_id = order_id
@@ -34,7 +34,7 @@ class OrderNotFoundError(OrderPersistenceError, LookupError):
         """Describe the missing order.
 
         Args:
-            order_id: Identifier that was looked up.
+            order_id (uuid.UUID): Identifier that was looked up.
         """
         super().__init__(f"order {order_id} was not found", order_id=order_id)
 
@@ -46,7 +46,7 @@ class DuplicateOrderError(OrderPersistenceError):
         """Describe the duplicate identifier.
 
         Args:
-            order_id: Identifier that already exists.
+            order_id (uuid.UUID): Identifier that already exists.
         """
         super().__init__(f"order {order_id} already exists", order_id=order_id)
 
@@ -58,7 +58,7 @@ class ConcurrentUpdateError(OrderPersistenceError):
         """Describe the lost update.
 
         Args:
-            order_id: Identifier of the order that changed concurrently.
+            order_id (uuid.UUID): Identifier of the order that changed concurrently.
         """
         super().__init__(f"order {order_id} changed concurrently", order_id=order_id)
 

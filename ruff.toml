@@ -22,8 +22,16 @@ docstring-code-format = true
 # Preview applies only to preview rules selected by exact code below.
 preview = true
 explicit-preview-rules = true
-# Ruff's default rule set: docs.astral.sh/ruff/default-rules
+# Every Ruff linter is selected below or excluded here with a reason
+# (`uv run ruff linter` lists them):
+#   AIR, DJ, NPY, PD — Airflow, Django, NumPy, pandas: not used.
+#   COM, Q — the formatter owns commas and quotes; selecting them conflicts.
+#   CPY — LICENSE covers the repository; per-file headers add noise.
+#   FA — targets Python 3.13; postponed annotations need no future import rule.
+#   INT — no gettext translation.
 extend-select = [
+  "F",     # Pyflakes — undefined names, unused imports and variables
+  "E",     # pycodestyle errors — full set beyond the E4/E7/E9 defaults
   "W",     # pycodestyle warnings — style warnings and formatting issues
   "I",     # isort — one deterministic, alphabetized import order and grouping
   "N",     # pep8-naming — requires PEP 8 naming conventions
@@ -72,8 +80,16 @@ extend-select = [
   "ERA",   # eradicate — detects commented-out code
   "FURB",  # refurb — suggests modern, idiomatic Python replacements
   "RUF",   # Ruff-specific — e.g. unused noqa, mutable dataclass defaults
-  "DOC501", # pydoclint (preview) — raised exception missing from 'Raises:'
+  # pydoclint (preview, exact codes). DOC201 is off: one-line docstrings state the
+  # return in the summary. DOC502 is off: 'Raises:' also lists propagated failures.
+  "DOC102", # documented parameter is not in the signature
+  "DOC202", # 'Returns:' on a function that returns nothing
+  "DOC402", # yielded value missing from 'Yields:'
+  "DOC403", # 'Yields:' on a function that does not yield
+  "DOC501", # raised exception missing from 'Raises:'
 ]
+# The formatter wraps code; long URLs, literals and messages may exceed the limit.
+ignore = ["E501"]
 
 [lint.pylint]
 max-args = 8

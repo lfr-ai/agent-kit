@@ -62,28 +62,14 @@ class DatabaseSettings:
 
 
 def create_engine_for(settings: DatabaseSettings) -> AsyncEngine:
-    """Create the process-wide engine for the configured database.
-
-    Args:
-        settings: Validated connection settings.
-
-    Returns:
-        An engine whose pool the caller disposes of at shutdown.
-    """
+    """Create the process-wide engine; the caller disposes of its pool at shutdown."""
     if settings.url.startswith(_SQLITE_SCHEME):
         return _sqlite_engine(settings)
     return _postgres_engine(settings)
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    """Create the session factory injected into units of work.
-
-    Args:
-        engine: Process-wide engine.
-
-    Returns:
-        A factory whose sessions keep loaded attributes readable after commit.
-    """
+    """Create the unit-of-work session factory; attributes survive commit."""
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -123,7 +109,14 @@ def _sqlite_engine(settings: DatabaseSettings) -> AsyncEngine:
 def _configure_sqlite(
     dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
 ) -> None:
-    """Enable foreign keys, WAL, and lock waits; SQLite resets them per connection."""
+    """Enable foreign keys, WAL, and lock waits; SQLite resets them per connection.
+
+    Args:
+        dbapi_connection (DBAPIConnection): New SQLite connection whose cursor
+            executes the configured pragmas before being closed.
+        connection_record (ConnectionPoolEntry): SQLAlchemy connect-event record,
+            unused because configuration applies directly to the connection.
+    """
     del connection_record
     cursor = dbapi_connection.cursor()
     try:

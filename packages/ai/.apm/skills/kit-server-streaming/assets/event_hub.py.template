@@ -1,13 +1,13 @@
 """In-process event hub: fan-out, replay, backpressure, and producer lifecycle.
 
-Copy to 'streaming/hub.py'. One hub instance per process serves streams whose
+Copy to ``streaming/hub.py``. One hub instance per process serves streams whose
 producer runs in the same process (for example a model generation task). For
 multiple replicas, put the same interface in front of a shared log such as a
 broker stream, and route reconnects to any replica.
 
 Backpressure policy: each subscriber has a bounded queue. A subscriber that
-falls a full queue behind is disconnected ('SlowConsumerError'); its client
-reconnects with 'Last-Event-ID' and catches up from the replay buffer. The
+falls a full queue behind is disconnected (``SlowConsumerError``); its client
+reconnects with ``Last-Event-ID`` and catches up from the replay buffer. The
 producer is never blocked by a slow reader.
 """
 
@@ -86,7 +86,7 @@ class EventHub:
         """Create an empty hub.
 
         Args:
-            limits: Resource bounds; defaults to 'HubLimits()'.
+            limits (HubLimits | None): Resource bounds; defaults to ``HubLimits()``.
         """
         self._limits = limits or HubLimits()
         self._streams: dict[str, _Stream] = {}
@@ -104,7 +104,7 @@ class EventHub:
         return stream_id in self._streams
 
     def is_closed(self, stream_id: str) -> bool:
-        """Return whether the stream has published its 'end' event."""
+        """Return whether the stream has published its ``end`` event."""
         return self._get(stream_id).closed
 
     def last_seq(self, stream_id: str) -> int:
@@ -115,8 +115,8 @@ class EventHub:
         """Check, before a response starts, that a subscription can be served.
 
         Args:
-            stream_id: Stream to follow.
-            after: Last sequence the client saw.
+            stream_id (str): Stream to follow.
+            after (int): Last sequence the client saw.
 
         Raises:
             StreamNotFoundError: If the stream is unknown.
@@ -155,9 +155,9 @@ class EventHub:
         """Append an event and fan it out without ever blocking the producer.
 
         Args:
-            stream_id: Target stream.
-            event: Event name.
-            data: JSON-serializable payload.
+            stream_id (str): Target stream.
+            event (EventName): Event name.
+            data (Mapping[str, object] | None): JSON-serializable payload.
 
         Returns:
             The sequenced event.
@@ -188,12 +188,12 @@ class EventHub:
         """Publish the single terminal event unless the stream is already closed.
 
         Args:
-            stream_id: Stream to close.
-            status: Terminal outcome.
-            error: Safe error category for failed streams.
+            stream_id (str): Stream to close.
+            status (EndStatus): Terminal outcome.
+            error (str | None): Safe error category for failed streams.
 
         Returns:
-            The 'end' event, or None if the stream was already closed.
+            The ``end`` event, or None if the stream was already closed.
         """
         if self._get(stream_id).closed:
             return None
@@ -207,14 +207,14 @@ class EventHub:
     ) -> None:
         """Open a stream and run its producer as a bounded background task.
 
-        The producer receives an 'emit' function. Its outcome becomes the end
-        status: return is 'completed', timeout is 'timeout', cancellation is
-        'cancelled', and any other exception is 'failed' with a safe category.
+        The producer receives an ``emit`` function. Its outcome becomes the end
+        status: return is ``completed``, timeout is ``timeout``, cancellation is
+        ``cancelled``, and any other exception is ``failed`` with a safe category.
 
         Args:
-            stream_id: New stream id.
-            producer: Coroutine function that emits events.
-            max_duration_s: Upper bound on producer run time.
+            stream_id (str): New stream id.
+            producer (Producer): Coroutine function that emits events.
+            max_duration_s (float): Upper bound on producer run time.
         """
         self.open(stream_id)
 
@@ -250,13 +250,9 @@ class EventHub:
         )
 
     async def cancel(self, stream_id: str) -> bool:
-        """Cancel a running producer and wait for it to publish 'end'.
+        """Cancel a running producer and wait for it to publish ``end``.
 
-        Args:
-            stream_id: Stream to cancel.
-
-        Returns:
-            True if a running producer was cancelled.
+        Returns whether a running producer was cancelled.
         """
         stream = self._get(stream_id)
         task = stream.producer
@@ -271,17 +267,17 @@ class EventHub:
     async def subscribe(
         self, stream_id: str, *, after: int = 0
     ) -> AsyncGenerator[StreamEvent]:
-        """Yield events newer than 'after', then live events until 'end'.
+        """Yield events newer than ``after``, then live events until ``end``.
 
         Replay snapshot and live registration happen without an intervening
         await, so no event can fall between them.
 
         Args:
-            stream_id: Stream to follow.
-            after: Last sequence the client saw.
+            stream_id (str): Stream to follow.
+            after (int): Last sequence the client saw.
 
         Yields:
-            Events in sequence order, ending with 'end' when the stream closes.
+            Events in sequence order, ending with ``end`` when the stream closes.
 
         Raises:
             StreamNotFoundError: If the stream is unknown.

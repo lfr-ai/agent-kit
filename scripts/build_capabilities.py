@@ -38,7 +38,17 @@ class _ArchiveContractError(ValueError):
 def _compose(
     executable: str, profile: str, features: list[str], *, package: Path
 ) -> int:
-    """Compose the selection into ``package`` and verify its provenance."""
+    """Compose the selection into ``package`` and verify its provenance.
+
+    Args:
+        executable (str): Path of the toolkit launcher.
+        profile (str): Profile to compose.
+        features (list[str]): Optional features to add to the profile.
+        package (Path): Output directory for the composed package.
+
+    Returns:
+        int: Zero when composition and provenance verification both pass, otherwise the failing exit code.
+    """
     command = [
         executable,
         "compose",
@@ -60,7 +70,13 @@ def _compose(
 def _write_entries(
     archive: zipfile.ZipFile, package: Path, relatives: list[str]
 ) -> None:
-    """Write files with fixed metadata so archives are byte-reproducible."""
+    """Write files with fixed metadata so archives are byte-reproducible.
+
+    Args:
+        archive (zipfile.ZipFile): Open archive to write into.
+        package (Path): Composed package directory to read from.
+        relatives (list[str]): Package-relative paths to add, in any order.
+    """
     for relative in sorted(relatives):
         entry = zipfile.ZipInfo(relative, date_time=_ZIP_EPOCH)
         entry.create_system = _ZIP_UNIX_SYSTEM
@@ -84,7 +100,13 @@ def _verify_archive(output: Path) -> None:
 
 
 def _archive(output: Path, package: Path, relatives: list[str]) -> None:
-    """Create and verify a new archive, removing only a partial one we created."""
+    """Create and verify a new archive, removing only a partial one we created.
+
+    Args:
+        output (Path): Archive to create; it must not already exist.
+        package (Path): Composed package directory to read from.
+        relatives (list[str]): Package-relative paths to add.
+    """
     created = False
     completed = False
     try:

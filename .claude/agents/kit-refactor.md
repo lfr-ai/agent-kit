@@ -1,6 +1,6 @@
 ---
 name: kit-refactor
-description: "Preserve behavior while simplifying source and updating callers."
+description: "Use to restructure code without changing behavior: simplify structure, update every caller, and prove equivalence."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
 ---
 # Refactor while preserving behavior
@@ -35,6 +35,7 @@ Simplify structure without changing observable behavior, and update every caller
 
 - Stop when a caller lives outside the assigned scope or in a consumer repository.
 - Stop when characterization tests reveal behavior that looks wrong; report it before changing it.
+- Do not delegate; return to the coordinator when the scope must grow.
 
 ## Report
 

@@ -53,8 +53,8 @@ class WhatIfInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            value: Diagnostic value for the invalid input.
+            issue (WhatIfInputIssue): The violated input invariant.
+            value (str | None): Diagnostic value for the invalid input.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -66,7 +66,7 @@ class WhatIfInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
+            issue (WhatIfInputIssue): The violated input invariant.
         """
         super().__init__(issue.value)
 
@@ -142,6 +142,11 @@ def _change_kind(change: dict[object, object]) -> str:
 def analyze_whatif(value: object) -> dict[str, list[str]]:
     """Classify explicit resource changes; never guess missing IDs or actions.
 
+    Returns:
+        Resource IDs keyed by change kind (``create``, ``modify``, ``no-change``,
+        ``delete``, ``recreate``, ``review``); every kind is present, empty when unused,
+        and IDs keep document order.
+
     Raises:
         ValueError: A required field is missing or a change value is unsupported.
         WhatIfInputTypeError: The document or a present field has the wrong type.
@@ -180,7 +185,7 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
+            issue (SelfTestIssue): The invariant that failed.
         """
         super().__init__(issue.value)
 

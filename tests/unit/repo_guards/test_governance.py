@@ -300,7 +300,7 @@ def test_dependency_audit_precedes_installing_the_lock(governed_root: Path) -> N
     """Swapping the audit after sync would install unaudited packages first."""
     path = governed_root / ".github/workflows/dependency-audit.yml"
     text = path.read_text()
-    audit = "uv run --locked --no-sync python scripts/audit_dependencies.py"
+    audit = "uv run --no-project python scripts/audit_dependencies.py"
     sync = "uv sync --locked\n"
     assert audit in text
     assert sync in text

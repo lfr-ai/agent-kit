@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "description": "Agent safety guard, not a sandbox. Git is read-only outside AGENT_KIT_DIR; inside it, local changes, fetch, pull and explicit non-default-branch pushes reach native approval. Credential access, dangerous operations and unaudited installation are denied. Unmatched calls keep the host's approval rules.",
+  "fail_mode": "closed",
+  "mode": "enforce",
+  "max_input_bytes": 2097152,
+  "rules": [
+    {
+      "id": "git-readonly",
+      "decision": "deny",
+      "match": "command",
+      "except_in": "AGENT_KIT_DIR",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.])(?!\\s+(?:(?:--no-pager|--no-optional-locks)\\s+)*(?:diff|status|log|show|blame|ls-files|rev-parse)(?:\\s|$))",
+      "reason": "only diff, status, log, show, blame, ls-files and rev-parse are available; staging, commits, branches, fetch, pull and push belong to the operator"
+    },
+    {
+      "id": "git-kit-writes",
+      "decision": "deny",
+      "match": "command",
+      "only_in": "AGENT_KIT_DIR",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.])(?!\\s+(?:(?:--no-pager|--no-optional-locks)\\s+)*(?:diff|status|log|show|blame|ls-files|rev-parse|add|commit|switch|restore|fetch|pull|push)(?:\\s|$))",
+      "reason": "in the registered kit checkout, inspect, stage, commit, switch, restore, fetch, pull and explicit safe pushes reach native approval; other Git commands remain operator-only"
+    },
+    {
+      "id": "git-bypass-hooks",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.]).*\\s(?:commit|push)\\b.*(?:\\s--no-v[\\w-]*|\\s-[a-z]*n[a-z]*)(?:\\s|$)",
+      "reason": "commit and push hooks must run; bypassing them is an operator decision"
+    },
+    {
+      "id": "git-push-target",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?\\s+(?:(?:--no-pager|--no-optional-locks)\\s+)*push\\b(?!\\s+[a-z0-9][a-z0-9_-]*\\s+(?!(?:main|master|trunk|head)(?:\\s|$))[a-z0-9][a-z0-9_./-]*\\s*$)",
+      "reason": "push needs an explicit remote and branch other than main/master/trunk/HEAD, with no force, deletion, wildcard, tag, refspec or hook-bypass options; confirm the actual default branch and obtain native approval"
+    },
+    {
+      "id": "git-unsafe-options",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.]).*\\s(?:-[co]|--(?:out[\\w-]*|config-env|ext-diff|textconv|open-files-in-pager|git-dir|work-tree|exec-path))|\\bgit_(?:index_file|dir|work_tree|config|ssh_command|pager|external_diff)\\s*=",
+      "reason": "Git commands must not redirect output, run configured helpers or select a different Git state"
+    },
+    {
+      "id": "git-shell-composition",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgit(?:\\.exe)?(?![\\w.]).*(?:[\\r\\n;&|<>]|\\$\\()|(?:[\\r\\n;&|<>]|\\$\\().*\\bgit(?:\\.exe)?(?![\\w.])",
+      "reason": "run each Git command on its own, without chaining, pipes, redirection or command substitution"
+    },
+    {
+      "id": "github-readonly",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\bgh(?:\\.exe)?(?![\\w.])(?!\\s+(?:pr|issue|run|release|repo)\\s+(?:view|list|diff|checks|status)(?:\\s|$))|\\bgh(?:\\.exe)?(?![\\w.]).*(?:\\s--(?:jq|template|web)(?:=|\\s|$)|[;&|<>])",
+      "reason": "only literal read-only GitHub CLI commands are available; API, authentication and publication belong to the operator"
+    },
+    {
+      "id": "git-metadata-shell-access",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "(^|[\\s'\"=/\\\\])\\.git([/\\\\]|[\\s'\"]|$)",
+      "reason": "Git metadata cannot be reached through shell commands; use Git inspection commands"
+    },
+    {
+      "id": "guard-shell-access",
+      "decision": "deny",
+      "match": "command",
+      "except_in": "AGENT_KIT_DIR",
+      "pattern": "(^|[\\s'\"=/\\\\])(?:git-guard\\.policy|git_guard\\.py|tool_guard\\.py)([\\s'\"]|$)",
+      "reason": "the guard that restricts an agent cannot be read or run by that agent"
+    },
+    {
+      "id": "git-metadata-writes",
+      "decision": "deny",
+      "match": "path",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)\\.git(/|$)",
+      "reason": "agents must not edit Git metadata through file tools"
+    },
+    {
+      "id": "guard-installed-writes",
+      "decision": "deny",
+      "match": "path",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)(\\.agents/hooks/|\\.github/(hooks/|copilot/settings)|\\.claude/(hooks/|settings)|\\.copilot/(hooks/|settings))",
+      "reason": "an agent cannot change the hook registrations that restrict it"
+    },
+    {
+      "id": "guard-source-writes",
+      "decision": "deny",
+      "match": "path",
+      "except_in": "AGENT_KIT_DIR",
+      "tools": "edit|multiedit|write|notebookedit|create|apply_patch|str_replace_editor|str_replace_based_edit_tool|create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|edit_notebook_file|edit_file",
+      "pattern": "(^|/)(git-guard\\.policy|git_guard\\.py|tool_guard\\.py)$",
+      "reason": "an agent cannot change the guard that restricts it, except while maintaining the agent-kit checkout"
+    },
+    {
+      "id": "repository-write-tools",
+      "decision": "deny",
+      "match": "tool",
+      "pattern": "push_files|create_or_update_file|delete_file|create_branch|create_commit|create_ref|update_ref|create_tree|create_pull_request|update_pull_request|merge_pull_request",
+      "reason": "repository writes through MCP remain operator-only; the scoped Git exception does not authorize MCP publication"
+    },
+    {
+      "id": "secret-files",
+      "decision": "deny",
+      "match": "path",
+      "pattern": "(^|/)(\\.env(\\.(?!example$|sample$|template$|dist$|defaults$)[^/]*)?|\\.envrc|\\.netrc|_netrc|\\.pgpass|\\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|secrets?\\.(json|ya?ml|toml|env|ini)|\\.vault-token)$|\\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$|(^|/)(\\.ssh|\\.gnupg|\\.aws|\\.azure|\\.kube)(/|$)|(^|/)\\.docker/config\\.json$",
+      "reason": "credential files and private keys must stay in the approved secret store; sanitized .env.example, .env.sample and .env.template files are allowed"
+    },
+    {
+      "id": "dependency-install",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\b(?:pip3?|pipx)(?:\\.exe)?\\s+(?:install|run|inject)\\b|\\bpython[0-9.]*(?:\\.exe)?\\s+-m\\s+pip\\s+install\\b|\\buv(?:\\.exe)?\\s+(?:pip\\s+(?:install|sync)|tool\\s+(?:install|run)|add\\b(?![^\\n]*--no-sync\\b))|\\b(?:uvx|npx|bunx)(?:\\.exe)?\\b|\\b(?:npm|pnpm|yarn|bun)(?:\\.exe)?\\s+(?:add|i|install|ci|exec|dlx|x)\\b",
+      "reason": "package installation and downloading runners are operator-only; change the manifest without syncing, audit the lock, then let the operator run the locked install"
+    },
+    {
+      "id": "dependency-sync",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\buv(?:\\.exe)?\\s+sync\\b|\\buv(?:\\.exe)?\\s+run\\b(?![^\\n]*--no-sync\\b)",
+      "reason": "syncing can install dependencies and run builds; audit first, then use an operator-controlled locked sync; agent execution uses uv run --locked --no-sync"
+    },
+    {
+      "id": "recursive-delete",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\brm(?:\\.exe)?\\b[^\\n]*(?:\\s--recursive\\b|\\s-[a-z]*r[a-z]*(?:\\s|$))|\\b(?:remove-item|ri|del|erase|rd|rmdir)\\b[^\\n]*(?:\\s-(?:recurse|r)(?:\\s|$)|\\s/s(?:\\s|$))",
+      "reason": "recursive deletion needs an operator to resolve and approve the exact target; a literal leaf-file cleanup is not blocked by this rule"
+    },
+    {
+      "id": "disk-destroy",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\b(?:mkfs(?:\\.\\w+)?|wipefs|diskpart|clear-disk)\\b|\\bdd\\b.*\\bof=/dev/(?:sd|nvme|hd|disk|xvd)|\\bformat(?:\\.com)?\\s+[a-z]:",
+      "reason": "formatting or overwriting block devices is operator-only"
+    },
+    {
+      "id": "remote-script-exec",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\\b[^|;&\\n]*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh|dash|pwsh|powershell|python[0-9.]*|node|bun|perl|ruby|iex|invoke-expression)\\b|\\b(?:iex|invoke-expression)\\b.*\\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|net\\.webclient)\\b|\\b(?:sh|bash|zsh)\\s+(?:-c\\s+)?<\\(\\s*(?:curl|wget)\\b",
+      "reason": "downloaded scripts cannot be executed before source, version and integrity review"
+    },
+    {
+      "id": "database-mutations",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\b(?:drop\\s+(?:database|schema|table|index)|truncate\\s+(?:table\\s+)?|delete\\s+from\\s+|insert\\s+into\\s+|update\\s+[\\w.\\[\\]`\"]+\\s+set\\s+|alter\\s+(?:table|database|role)|grant\\s+|revoke\\s+)\\b|\\b(?:alembic|prisma)\\s+(?:upgrade|downgrade|migrate|db\\s+push)\\b|\\b(?:redis-cli|redis-cli\\.exe)\\b.*\\b(?:flushall|flushdb|del|unlink|set|mset|eval|evalsha)\\b|\\b(?:mongosh|mongo)\\b.*\\b(?:dropdatabase|drop|deletemany|deleteone|updateone|updatemany|insertone|insertmany)\\b",
+      "reason": "database writes, schema changes and destructive cache operations require an operator-reviewed environment, migration and recovery plan; use a read-only database identity for inspection"
+    },
+    {
+      "id": "database-write-tools",
+      "decision": "deny",
+      "match": "tool",
+      "pattern": "(?:database|postgres|mysql|sqlite|mongo|redis|neo4j|sql)[\\w/.-]*(?:execute|write|mutate|insert|update|delete|drop|truncate|migrate|flush)",
+      "reason": "database execution and mutation tools are operator-only; select query-only tools backed by a read-only identity"
+    },
+    {
+      "id": "verification-bypass",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "\\bcurl\\b.*\\s(?:-[a-z]*k[a-z]*|--insecure)\\b|\\bwget\\b.*\\s--no-check-certificate\\b|\\b(?:node_tls_reject_unauthorized=0|pythonhttpsverify=0|git_ssl_no_verify=(?:1|true))|\\bstrict-ssl\\s+false\\b|\\s--trusted-host\\b|\\s-skipcertificatecheck\\b|\\bsslverify\\s*=\\s*false\\b|\\s--allow-unauthenticated\\b",
+      "reason": "TLS, package-signature and certificate verification cannot be disabled to make a command pass"
+    },
+    {
+      "id": "encoded-payload",
+      "decision": "deny",
+      "match": "command",
+      "pattern": "\\b(?:pwsh|powershell)(?:\\.exe)?\\b.*\\s-(?:e|ec|enc|enco|encod|encode|encoded|encodedc\\w*)\\s+\\S{8,}|\\bbase64\\b.*\\s(?:-d|--decode)\\b.*\\|\\s*(?:sh|bash|zsh|pwsh|powershell|iex)\\b",
+      "reason": "encoded executable payloads hide the operation from review"
+    },
+    {
+      "id": "environment-dump",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "^(?:env|printenv|export\\s+-p)\\s*$|\\b(?:get-childitem|gci|dir|ls)\\s+env:\\s*$",
+      "reason": "dumping the whole process environment can disclose credentials; inspect only approved non-secret variable names"
+    },
+    {
+      "id": "privilege-escalation",
+      "decision": "deny",
+      "match": "segment",
+      "pattern": "(^|\\s)(?:sudo|doas|su|runas|pkexec)(?:\\s|$)|\\bstart-process\\b.*\\s-verb\\s+runas\\b|\\bchmod\\b.*\\b(?:777|a\\+rwx)\\b",
+      "reason": "privilege escalation and world-writable permissions are operator-only"
+    }
+  ]
+}

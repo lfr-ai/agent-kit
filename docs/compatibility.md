@@ -35,10 +35,15 @@ values must be finite and positive; NaN and infinity are invalid configuration.
 
 ## Native exceptions
 
-- Roles use one procedure body with separately rendered native metadata.
-- Read-only workers omit shell/edit/delegation; implementers receive explicit
-  bounded capabilities and coordinators use available worker IDs only.
-- Copilot visibility/delegation flags have no claimed Claude equivalent.
+- Roles use one procedure body with separately rendered native metadata, flat in
+  `.github/agents` and `.claude/agents`.
+- There is no shell-less tier: verifiers (analysis, review and checks) get only
+  read/search plus a shell for offline inspection, without edit or delegation;
+  implementers receive explicit bounded capabilities and
+  coordinators use available worker IDs only.
+- Copilot visibility/delegation flags (`user-invocable`, `disable-model-invocation`,
+  `agents`) have no claimed Claude equivalent and are unsupported on the github.com
+  cloud agent.
 - Claude `Agent(...)` limits apply when selected as the main agent, not as a worker.
 - Model availability depends on the actual provider and account. Configured small
   worker choices are a preference, not proof every host supports them.
@@ -51,8 +56,10 @@ values must be finite and positive; NaN and infinity are invalid configuration.
 Repository projection ownership requires canonical, runtime-specific role paths
 and attested hashes. Existing unowned files are never adopted, even with identical
 bytes. The drift check inventories root and nested roles under this repository's
-`.github/agents` and `.claude/agents`, except the two root `kit-reviewer` definitions;
-it reports unknown roles without deleting them or scanning user-global discovery.
+`.github/agents` and `.claude/agents`;
+any nested file is reported as unexpected because neither runtime discovery nor
+the renderer uses subfolders. It reports unknown roles without deleting them or
+scanning user-global discovery.
 Session hooks use `--no-sync`; provision their locked environment with the audited
 `task bootstrap` workflow before session entry.
 

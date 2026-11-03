@@ -1,8 +1,8 @@
 """Jinja rendering adapters: HTML/email output, plain-text prompts, untrusted text.
 
 Copy into the consumer's infrastructure layer (for example
-'myapp/infrastructure/templates/renderer.py'). Application code depends on the
-'TemplateRenderer' protocol, not on Jinja.
+``myapp/infrastructure/templates/renderer.py``). Application code depends on the
+``TemplateRenderer`` protocol, not on Jinja.
 """
 
 from __future__ import annotations
@@ -30,7 +30,12 @@ class TemplateRenderer(Protocol):
     """Port used by the application layer."""
 
     def render(self, name: str, context: Mapping[str, object]) -> str:
-        """Render a named template with an explicit context."""
+        """Render a named template with an explicit context.
+
+        Args:
+            name (str): Application-registered template name, not template source.
+            context (Mapping[str, object]): Validated values exposed to the template.
+        """
         ...
 
 
@@ -43,7 +48,12 @@ class TemplateNotAllowedError(TemplateRenderingError):
 
 
 def _html_environment(package: str, folder: str) -> Environment:
-    """Build the environment for HTML and email bodies."""
+    """Build the environment for HTML and email bodies.
+
+    Args:
+        package (str): Importable package containing the trusted template files.
+        folder (str): Template directory relative to that package.
+    """
     return Environment(
         loader=PackageLoader(package, folder),
         autoescape=select_autoescape(
@@ -82,7 +92,13 @@ class JinjaRenderer:
         )
 
     def render(self, name: str, context: Mapping[str, object]) -> str:
-        """Render one allow-listed template; failures never echo context values."""
+        """Render one allow-listed template; failures never echo context values.
+
+        Args:
+            name (str): Packaged template name that must belong to ``allowed``.
+            context (Mapping[str, object]): Validated values copied into the
+                autoescaped HTML rendering context.
+        """
         if name not in self.allowed:
             raise TemplateNotAllowedError(f"template {name!r} is not allowed")
         try:
@@ -126,7 +142,13 @@ class PromptRenderer:
         object.__setattr__(self, "_environment", environment)
 
     def render(self, name: str, context: Mapping[str, object]) -> str:
-        """Render a named prompt with explicit, already-validated values."""
+        """Render a named prompt with explicit, already-validated values.
+
+        Args:
+            name (str): Key selecting trusted source from ``templates``.
+            context (Mapping[str, object]): Validated values rendered as plain text
+                without HTML escaping.
+        """
         source = self.templates.get(name)
         if source is None:
             raise TemplateNotAllowedError(f"prompt {name!r} is not registered")
@@ -140,7 +162,13 @@ class PromptRenderer:
 
 
 def render_untrusted(source: str, context: Mapping[str, object]) -> str:
-    """Render template text supplied by users, with sandbox and size limits."""
+    """Render template text supplied by users, with sandbox and size limits.
+
+    Args:
+        source (str): Untrusted template text subject to the source-size bound.
+        context (Mapping[str, object]): Values exposed through an immutable
+            sandbox with autoescaping and strict missing-variable checks.
+    """
     if len(source) > MAX_UNTRUSTED_TEMPLATE_CHARS:
         raise TemplateRenderingError("template source is too large")
     environment = ImmutableSandboxedEnvironment(

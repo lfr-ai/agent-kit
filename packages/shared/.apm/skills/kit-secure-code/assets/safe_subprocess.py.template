@@ -52,7 +52,7 @@ def resolve_executable(name: str) -> Path:
     """Resolve a program name or path to an absolute executable path.
 
     Args:
-        name: Program name looked up on ``PATH``, or a path to an executable.
+        name (str): Program name looked up on ``PATH``, or a path to an executable.
 
     Returns:
         The absolute, resolved executable path.
@@ -73,8 +73,8 @@ def minimal_environment(
     """Build a child environment without the parent's secrets.
 
     Args:
-        extra: Variables the child needs explicitly.
-        inherit: Names copied from the parent environment when present.
+        extra (Mapping[str, str] | None): Variables the child needs explicitly.
+        inherit (Sequence[str]): Names copied from the parent environment when present.
 
     Returns:
         A new environment mapping.
@@ -88,7 +88,7 @@ def reject_option_like(value: str) -> str:
     """Return a positional value, refusing one a program could read as an option.
 
     Args:
-        value: Untrusted positional argument.
+        value (str): Untrusted positional argument.
 
     Returns:
         The unchanged value.
@@ -114,12 +114,13 @@ def run_command(
     """Run a program with an argument list, a timeout and bounded output.
 
     Args:
-        executable: Program name or path; resolved before running.
-        arguments: Arguments passed verbatim, never through a shell.
-        timeout_seconds: Seconds before the child is killed.
-        environment: Child environment; ``minimal_environment()`` when None.
-        cwd: Working directory for the child.
-        check: Raise when the exit status is not zero.
+        executable (str): Program name or path; resolved before running.
+        arguments (Sequence[str]): Arguments passed verbatim, never through a shell.
+        timeout_seconds (float): Seconds before the child is killed.
+        environment (Mapping[str, str] | None): Child environment;
+            ``minimal_environment()`` when None.
+        cwd (Path | None): Working directory for the child.
+        check (bool): Raise when the exit status is not zero.
 
     Returns:
         The exit status and decoded output.

@@ -20,18 +20,18 @@ _ROOT = Path(__file__).resolve().parents[1]
 _LOCK_PATH = ".agents/agentic-setup/native-lock.json"
 _JSON_INDENT = 2
 _ROLE_PATHS = (
-    re.compile(
-        r"\.github/agents/(?:subagents/)?kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"
-    ),
-    re.compile(r"\.claude/agents/(?:subagents/)?kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
+    re.compile(r"\.github/agents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"),
+    re.compile(r"\.claude/agents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
+)
+# Earlier ledgers attested workers under subagents/; those paths may only be removed.
+_LEGACY_ROLE_PATHS = (
+    re.compile(r"\.github/agents/subagents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"),
+    re.compile(r"\.claude/agents/subagents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
 )
 _DISCOVERY_ROOTS = {
     ".github/agents": ".agent.md",
     ".claude/agents": ".md",
 }
-_REPOSITORY_ROLES = frozenset(
-    {".github/agents/kit-reviewer.agent.md", ".claude/agents/kit-reviewer.md"}
-)
 
 
 class _NativeRoleIssue(Enum):
@@ -62,6 +62,10 @@ class _NativeRoleError(ValueError):
 def _owned_path(root: Path, relative: str) -> Path:
     """Reject linked parents and path escapes for reads, writes, deletions, and rollback.
 
+    Args:
+        root (Path): Ownership root that must not be a link or junction.
+        relative (str): POSIX-style path beneath the root, without parent traversal.
+
     Raises:
         _NativeRoleError: The path escapes the root or crosses a link.
     """
@@ -86,7 +90,12 @@ def _owned_path(root: Path, relative: str) -> Path:
 
 
 def _replace(path: Path, content: bytes) -> None:
-    """Replace one attested projection atomically without leaving a partial file."""
+    """Replace one attested projection atomically without leaving a partial file.
+
+    Args:
+        path (Path): Destination whose parent directories are created if absent.
+        content (bytes): Complete replacement projection.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -103,6 +112,10 @@ def _replace(path: Path, content: bytes) -> None:
 
 def expected(root: Path) -> dict[str, bytes]:
     """Resolve the repository's own selection through the canonical catalog.
+
+    Returns:
+        dict[str, bytes]: Generated role content keyed by repository-relative
+        Copilot or Claude agent path.
 
     Raises:
         _NativeRoleError: The repository self-selection is malformed.
@@ -144,13 +157,19 @@ def check(root: Path) -> list[str]:
         discovered.update(_discovered_roles(root, directory, suffix))
     failures.extend(
         f"unexpected native role: {name}"
-        for name in sorted(discovered - output.keys() - _REPOSITORY_ROLES)
+        for name in sorted(discovered - output.keys())
     )
     return failures
 
 
 def _discovered_roles(root: Path, directory: str, suffix: str) -> set[str]:
-    """Inventory only repository runtime role directories without following links."""
+    """Inventory only repository runtime role directories without following links.
+
+    Args:
+        root (Path): Repository ownership root used to validate every discovered path.
+        directory (str): Root-relative runtime directory to search recursively.
+        suffix (str): Filename ending identifying role files.
+    """
     pending = [_owned_path(root, directory)]
     discovered: set[str] = set()
     while pending:
@@ -167,11 +186,15 @@ def _discovered_roles(root: Path, directory: str, suffix: str) -> set[str]:
     return discovered
 
 
-def _is_projection_path(name: str) -> bool:
-    """Accept only canonical runtime filenames, excluding separately authored reviewers."""
-    return name not in _REPOSITORY_ROLES and any(
-        pattern.fullmatch(name) is not None for pattern in _ROLE_PATHS
-    )
+def _is_projection_path(name: str, *, legacy: bool = False) -> bool:
+    """Accept only canonical runtime filenames.
+
+    Args:
+        name (str): Repository-relative role path.
+        legacy (bool): Whether previously attested ``subagents/`` paths also count.
+    """
+    patterns = (*_ROLE_PATHS, *_LEGACY_ROLE_PATHS) if legacy else _ROLE_PATHS
+    return any(pattern.fullmatch(name) is not None for pattern in patterns)
 
 
 def _previous_roles(root: Path) -> dict[str, str]:
@@ -197,7 +220,7 @@ def _previous_roles(root: Path) -> dict[str, str]:
 
 def _check_previous_roles(root: Path, previous: dict[str, str]) -> None:
     for name, digest in previous.items():
-        if not _is_projection_path(name):
+        if not _is_projection_path(name, legacy=True):
             raise _NativeRoleError(_NativeRoleIssue.UNOWNED_LEDGER_PATH, path=name)
         path = _owned_path(root, name)
         if path.exists() and (

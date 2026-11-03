@@ -15,9 +15,19 @@ _ASSET_PATH = re.compile(r"(?:[^/]+/)*\.apm/skills/[^/\\]+/assets/agents\.json\Z
 _ROLE_ID = re.compile(r"kit-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUNTIMES = frozenset({"copilot", "claude"})
 _ROLE_KINDS = frozenset({"primary", "worker"})
-_ROLE_TIERS = frozenset({"readonly", "implementer", "coordinator"})
+_ROLE_TIERS = frozenset({"verifier", "implementer", "coordinator"})
 _COPILOT_MODELS = frozenset({"GPT-5 mini", "Claude Haiku 4.5"})
 _CLAUDE_MODELS = frozenset({"haiku"})
+_COPILOT_TOOLS = {
+    "verifier": ("read", "search", "execute", "todo"),
+    "implementer": ("read", "search", "edit", "execute", "todo"),
+    "coordinator": ("read", "search", "edit", "execute", "agent", "todo"),
+}
+_CLAUDE_TOOLS = {
+    "verifier": ("Read", "Grep", "Glob", "Bash"),
+    "implementer": ("Read", "Grep", "Glob", "Edit", "Write", "Bash"),
+    "coordinator": ("Read", "Grep", "Glob", "Edit", "Write", "Bash"),
+}
 _MAX_ROLE_BODY_LINES = 125
 _MAX_ROLE_DESCRIPTION_CHARS = 180
 _SECRET_PATTERNS = (
@@ -199,6 +209,10 @@ def _mapping(value: object) -> TypeGuard[dict[str, object]]:
 def _object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     """Reject repeated JSON keys rather than accepting the final value.
 
+    Returns:
+        dict[str, object]: Decoded field values keyed by their unique JSON names,
+        preserving input order.
+
     Raises:
         DuplicateJsonFieldError: A JSON object repeats a key.
     """
@@ -239,6 +253,16 @@ def _require_fields(
 ) -> dict[str, object]:
     """Validate an object's exact required and optional field set.
 
+    Args:
+        value (object): Decoded JSON value to validate as a string-keyed object.
+        required (set[str]): Field names that must be present.
+        optional (set[str]): Additional permitted field names.
+        location (str): Object location used in validation diagnostics.
+
+    Returns:
+        dict[str, object]: The original object with all required fields and no keys
+        outside the required and optional sets; field values remain unvalidated.
+
     Raises:
         InputTypeError: The value is not an object.
         MissingNativeFieldError: A required field is absent.
@@ -257,6 +281,11 @@ def _require_fields(
 
 def _check_text(value: object, location: str, *, maximum: int | None) -> str:
     """Require bounded visible text without secret-like credential material.
+
+    Args:
+        value (object): Decoded text to validate without trimming or normalization.
+        location (str): Full field location used in validation diagnostics.
+        maximum (int | None): Character limit, or ``None`` to skip the length check.
 
     Raises:
         InputTypeError: The value is not a string.
@@ -284,6 +313,10 @@ def _check_text(value: object, location: str, *, maximum: int | None) -> str:
 def _copilot_models(raw: object, location: str) -> tuple[str, ...]:
     """Validate a non-empty, unique list of supported Copilot models.
 
+    Args:
+        raw (object): Decoded Copilot model list in authored preference order.
+        location (str): Role location to which the model field path is appended.
+
     Raises:
         InputTypeError: The models are not a list of strings.
         NativeRoleError: The list is empty, repeats, or names an unsupported model.
@@ -306,6 +339,10 @@ def _copilot_models(raw: object, location: str) -> tuple[str, ...]:
 def _claude_model(raw: object, location: str) -> str:
     """Validate one supported Claude model alias.
 
+    Args:
+        raw (object): Decoded Claude model alias.
+        location (str): Role location to which the model field path is appended.
+
     Raises:
         InputTypeError: The model is not a string.
         NativeRoleError: The model alias is unsupported.
@@ -321,6 +358,14 @@ def _model_settings(
     value: object, location: str
 ) -> tuple[tuple[str, ...] | None, str | None]:
     """Validate only the explicitly supported native model declarations.
+
+    Args:
+        value (object): Decoded provider-to-model declarations.
+        location (str): Role location used to identify model validation failures.
+
+    Returns:
+        tuple[tuple[str, ...] | None, str | None]: Copilot model names in authored
+        order, then the Claude model alias; each is ``None`` if its provider is absent.
 
     Raises:
         InputTypeError: The models value is not an object.
@@ -350,6 +395,10 @@ def _model_settings(
 def _role_identifier(value: object, location: str) -> str:
     """Require a ``kit-`` role identifier.
 
+    Args:
+        value (object): Decoded role identifier.
+        location (str): Role location to which the identifier field path is appended.
+
     Raises:
         InputTypeError: The identifier is not a string.
         NativeRoleError: The identifier lacks the ``kit-`` form.
@@ -370,6 +419,13 @@ def _closed_choice(
 ) -> str:
     """Require a string drawn from a closed vocabulary.
 
+    Args:
+        value (object): Decoded field value to check against the vocabulary.
+        allowed (frozenset[str]): Accepted string values.
+        field (str): Field name appended to the role location for type errors.
+        location (str): Role location used in diagnostics.
+        issue (NativeRoleIssue): Violation reported for a string outside the vocabulary.
+
     Raises:
         InputTypeError: The value is not a string.
         NativeRoleError: The value is outside ``allowed``.
@@ -384,6 +440,10 @@ def _closed_choice(
 def _role_description(value: object, location: str) -> str:
     """Require a bounded, single-line role description.
 
+    Args:
+        value (object): Decoded description checked for safe text and length.
+        location (str): Role location to which the description field path is appended.
+
     Raises:
         NativeRoleError: The description spans several lines.
     """
@@ -396,6 +456,10 @@ def _role_description(value: object, location: str) -> str:
 
 def _role_body(value: object, location: str) -> str:
     """Require a role body within the shared line budget.
+
+    Args:
+        value (object): Decoded body checked for safe text and line count.
+        location (str): Role location to which the body field path is appended.
 
     Raises:
         NativeTextLimitError: The body exceeds the line budget.
@@ -451,6 +515,12 @@ def _optional_workers(
 ) -> tuple[str, ...]:
     """Read workers linked only when their bundle is selected.
 
+    Args:
+        role (dict[str, object]): Role fields, optionally including ``optional_workers``.
+        tier (str): Validated tier; only coordinators may declare optional workers.
+        workers (tuple[str, ...]): Required worker identifiers that must not be repeated.
+        location (str): Role location used in worker validation diagnostics.
+
     Raises:
         NativeRoleError: A non-coordinator declares them, or one repeats a
             required worker.
@@ -476,6 +546,12 @@ def _check_coordination(
 ) -> None:
     """Allow workers only on primary coordinators, which must name some.
 
+    Args:
+        kind (str): Validated role kind; coordinators must be primary roles.
+        tier (str): Validated role tier controlling whether workers are required.
+        workers (tuple[str, ...]): Required worker identifiers declared by the role.
+        location (str): Role location used in coordination diagnostics.
+
     Raises:
         NativeRoleError: Workers appear outside a primary coordinator, or a
             coordinator names none.
@@ -496,7 +572,13 @@ def _check_coordination(
 
 
 def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
-    """Validate one role against the closed role schema."""
+    """Validate one role against the closed role schema.
+
+    Args:
+        value (object): Decoded role entry, including text and coordination fields.
+        asset_path (str): Source-relative asset path used in diagnostics.
+        index (int): Zero-based position in the asset's role list.
+    """
     location = f"{asset_path}:roles[{index}]"
     role = _require_fields(
         value,
@@ -534,6 +616,10 @@ def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
 
 def _asset_roles(path: str, content: bytes) -> list[object]:
     """Decode one native asset and return its raw role list.
+
+    Args:
+        path (str): Source-relative asset path used in decoding diagnostics.
+        content (bytes): UTF-8 JSON asset with schema version and role declarations.
 
     Raises:
         InvalidNativeJsonError: The asset cannot be read or decoded.
@@ -649,22 +735,21 @@ def _yaml_string(value: str) -> str:
 
 def _copilot_metadata(role: _NativeRole) -> str:
     """Render recognized Copilot agent frontmatter with bounded tool grants."""
-    if role.tier == "readonly":
-        tools = ["read", "search"]
-    elif role.tier == "implementer":
-        tools = ["read", "search", "edit", "execute"]
-    else:
-        tools = ["read", "search", "edit", "execute", "agent"]
     is_primary = role.kind == "primary"
     lines = [
         "---",
         f"name: {role.identifier}",
         f"description: {_yaml_string(role.description)}",
-        f"tools: {json.dumps(tools)}",
-        f"agents: {json.dumps(list(role.workers))}",
-        f"user-invocable: {'true' if is_primary else 'false'}",
-        f"disable-model-invocation: {'true' if is_primary else 'false'}",
+        f"tools: {json.dumps(list(_COPILOT_TOOLS[role.tier]))}",
     ]
+    if role.workers:
+        lines.append(f"agents: {json.dumps(list(role.workers))}")
+    lines.extend(
+        (
+            f"user-invocable: {'true' if is_primary else 'false'}",
+            f"disable-model-invocation: {'true' if is_primary else 'false'}",
+        )
+    )
     if role.copilot_models is not None:
         lines.append(f"model: {json.dumps(list(role.copilot_models))}")
     lines.append("---")
@@ -673,18 +758,14 @@ def _copilot_metadata(role: _NativeRole) -> str:
 
 def _claude_metadata(role: _NativeRole) -> str:
     """Render recognized Claude agent frontmatter with scoped tools only."""
-    if role.tier == "readonly":
-        tools = "Read, Grep, Glob"
-    elif role.tier == "implementer":
-        tools = "Read, Grep, Glob, Edit, Write, Bash"
-    else:
-        worker_tool = f"Agent({', '.join(role.workers)})"
-        tools = f"{worker_tool}, Read, Grep, Glob, Edit, Write, Bash"
+    tools = list(_CLAUDE_TOOLS[role.tier])
+    if role.tier == "coordinator":
+        tools.insert(0, f"Agent({', '.join(role.workers)})")
     lines = [
         "---",
         f"name: {role.identifier}",
         f"description: {_yaml_string(role.description)}",
-        f"tools: {_yaml_string(tools)}",
+        f"tools: {_yaml_string(', '.join(tools))}",
     ]
     if role.claude_model is not None:
         lines.append(f"model: {_yaml_string(role.claude_model)}")
@@ -693,25 +774,38 @@ def _claude_metadata(role: _NativeRole) -> str:
 
 
 def _render(metadata: str, body: str) -> bytes:
-    """Join provider metadata to the exact shared UTF-8 role body."""
+    """Join provider metadata to the exact shared UTF-8 role body.
+
+    Args:
+        metadata (str): Complete provider frontmatter, including its trailing newline.
+        body (str): Authored role body appended without modification or separators.
+    """
     return metadata.encode("utf-8") + body.encode("utf-8")
 
 
 def render_native_agents(
     files: dict[str, bytes], runtimes: tuple[str, ...]
 ) -> dict[str, bytes]:
-    """Render selected runtime adapters from strict, selected source assets."""
+    """Render selected runtime adapters from strict, selected source assets.
+
+    Args:
+        files (dict[str, bytes]): Selected source files keyed by path; only matching
+            native role assets are decoded.
+        runtimes (tuple[str, ...]): Non-empty, unique selection of supported runtimes.
+
+    Returns:
+        dict[str, bytes]: UTF-8 frontmatter and shared role body keyed by output path
+        under ``.github/agents/`` or ``.claude/agents/``; empty when no roles are found.
+    """
     targets = _checked_runtimes(runtimes)
     roles = _load_roles(files)
     rendered: dict[str, bytes] = {}
     for role in roles:
-        subagent = role.kind == "worker"
+        # Standard agent-folder discovery is flat; frontmatter hides workers.
         if "copilot" in targets:
-            directory = ".github/agents/subagents" if subagent else ".github/agents"
-            path = f"{directory}/{role.identifier}.agent.md"
+            path = f".github/agents/{role.identifier}.agent.md"
             rendered[path] = _render(_copilot_metadata(role), role.body)
         if "claude" in targets:
-            directory = ".claude/agents/subagents" if subagent else ".claude/agents"
-            path = f"{directory}/{role.identifier}.md"
+            path = f".claude/agents/{role.identifier}.md"
             rendered[path] = _render(_claude_metadata(role), role.body)
     return rendered

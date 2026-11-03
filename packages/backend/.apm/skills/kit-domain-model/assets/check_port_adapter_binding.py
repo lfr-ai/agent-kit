@@ -93,8 +93,8 @@ def classes_in_source(text: str, path: str) -> list[ClassInfo]:
     """Collect every class definition in a module, including nested ones.
 
     Args:
-        text: Python source text.
-        path: Display path stored on each result.
+        text (str): Python source text.
+        path (str): Display path stored on each result.
 
     Returns:
         Class descriptions in source order.
@@ -116,9 +116,10 @@ def unbound_ports(
     """Return one finding per port without a complete adapter.
 
     Args:
-        core: Classes found in the core paths.
-        adapters: Classes found in the adapter paths.
-        ignore: Port-name patterns that are never reported.
+        core (Iterable[ClassInfo]): Classes found in the core paths.
+        adapters (Iterable[ClassInfo]): Classes found in the adapter paths.
+        ignore (tuple[re.Pattern[str], ...]): Port-name patterns that are never
+            reported.
 
     Returns:
         Findings formatted as ``path:line: message``, sorted by path and line.
@@ -323,11 +324,7 @@ def _lineage(start: ClassInfo, index: dict[str, ClassInfo]) -> Iterator[ClassInf
 def main(argv: list[str] | None = None) -> int:
     """Check that every core port has a complete adapter.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero when every port is bound, one on findings, two on usage errors.
+    Returns zero when every port is bound, one on findings, two on usage errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

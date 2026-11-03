@@ -1,19 +1,18 @@
 # Developer tooling
 
-For contributors and automation authors: run recurring workflows through Task,
-focused gates through the existing verifier, and one-off tools directly.
-Do not add another Task target for every executable or repeat a tool's defaults.
+Use Task for recurring workflows, `task verify -- <gate>` for focused checks,
+and the owning CLI for one-off work. Prerequisites: [contributing](../CONTRIBUTING.md).
 
 ## Entry points
 
 | Need | Command |
 | --- | --- |
 | List the targets and their descriptions | `task` |
-| Audit the lock, then install the Python environment and Git hooks | `task bootstrap` |
+| Audit both locks, install Python/Bun environments and Git hooks | `task bootstrap` |
 | Full read-only repository gate, including coverage | `task verify` |
 | One gate, such as source, drift, roles or docs | `task verify -- source` |
 | Locked dependency vulnerabilities (network) | `task verify -- dependencies` |
-| Exact versions, frozen hooks and image digests | `task verify -- pins` |
+| Exact versions, frozen hooks and image digests | `task verify -- pins` (MCP pins in `apm.yml` are checked by `task verify -- source`; Dependabot cannot bump them) |
 | All tests, or a pytest selector | `task test`, `task test -- tests/integration` |
 | Isolated Python versions and coverage through tox | `task test:matrix`, `task test:matrix -- -e unit` |
 | Refresh the clone path for future Windows sessions | `task checkout:register` |
@@ -34,170 +33,105 @@ census, `uv run --locked python -m scripts.render_native --write` for an
 approved native-role refresh, and the release guide for publication commands.
 These are explicit operations, not additional aliases in Task or the editor.
 
-The [Taskfile](../Taskfile.yml) follows the
-[Task style guide](https://taskfile.dev/docs/styleguide): a schema comment for
-editor validation, a `desc` on every target, a `default` target that lists them,
-and `bootstrap` preconditions that name a missing uv or Bun instead of failing
-mid-install. Editor tasks wrap these targets one to one; consumers start from
-the portable Taskfile template in `kit-verify-change`.
+The [Taskfile](../Taskfile.yml) owns targets and prerequisites;
+[editor tasks](editor.md#start) wrap recurring workflows. Do not add a target
+for every executable. Consumer templates live in `kit-verify-change`.
 
-Task defaults `AGENT_KIT_DIR` to the actual checkout for its subprocesses;
-an existing process variable takes precedence in the pinned Task version.
-On Windows, bootstrap additionally registers that path in the user environment;
-the explicit registration task supports a moved clone. Restart the parent
-editor/terminal before expecting other repositories to inherit it. Registration
-does not install an agent hook or turn the path into a permission grant.
+Task defaults `AGENT_KIT_DIR` to this checkout unless already set. Windows
+bootstrap also registers it for future processes; use `task checkout:register`
+after moving the clone, then restart the parent editor/terminal. Registration
+neither installs a hook nor grants permission.
 
-The tox matrix runs environments sequentially. Do not start it alongside another
-test/coverage gate: interpreter isolation does not isolate shared report paths.
+The verifier never syncs dependencies, even for the network audit. Bootstrap
+first; a stale lock or missing tool fails rather than installing or repairing it.
+See the [verification contract](verification.md) for evidence and failure behavior.
 
-The verifier never synchronizes dependencies, including when selecting the
-network audit. Provision the reviewed environment separately through bootstrap.
-The full gate first runs `uv lock --check`, since suppressing environment
-synchronization must not silently waive lock consistency. A stale lock fails
-before code checks run; a missing tool remains an error rather than triggering
-an installation. CI uses the same non-syncing command after explicit provisioning.
+For a fast subset: `task test -- -m "not integration and not slow"`.
+Full coverage remains in `task verify`; hooks do not replace it.
+The tox matrix runs sequentially but shares report paths: do not run it alongside
+another test/coverage gate. See [test tiers](../tests/README.md).
 
-`task test` runs every tier. Select a fast subset with
-`task test -- -m "not integration and not slow"`. Coverage remains enforced by
-`task verify`; hooks are complementary, not a replacement for the test gate.
-The conventions gate runs the shared AST checker over toolkit source and checks
-Python docstrings and named numeric values in portable APM assets. Nontrivial
-numeric literals must have names expressing intent and units; `0`, `1`, `-1`,
-type annotations, and literal expectations in test modules are exempt.
-The gate also uses `--templates --only magic-number` for production Python
-templates; `test_*.py.template` and `conftest.py.template` retain fixture literals.
-Docstrings use paired double-backtick
-reStructuredText literals; Markdown prose retains CommonMark's single-backtick
-inline syntax. The same gate runs on every pre-commit invocation.
+[check_conventions.py](../scripts/check_conventions.py) owns the shared AST gate,
+including `--templates --only magic-number`. Name nontrivial numeric values by
+intent/units; `0`, `1`, `-1`, annotations and test expectations are exempt.
+Production templates are checked; test templates retain fixture literals.
+Python docstrings use paired double-backtick reStructuredText literals;
+Markdown uses single backticks. The gate runs on every pre-commit invocation.
 
 ## Hooks and runtimes
 
-The [pre-commit configuration](../.pre-commit-config.yaml) installs pre-commit
-and commit-msg hooks. `task bootstrap` audits the lock, syncs it, and installs
-them; run it after operator-owned repository initialization.
-Hook repositories are frozen to full commit SHAs and the link-check image is
-pinned by digest. When `pyproject.toml` or `uv.lock` changes, the dependency audit
-runs before any hook that syncs the environment, followed by the license check.
-actionlint (with an exact Go toolchain) checks workflow correctness; zizmor checks
-workflow, Dependabot, action, and pre-commit security. The actionlint hook carries
-a narrow compatibility exception in its arguments, without a separate
-configuration file. [.github/zizmor.yml](../.github/zizmor.yml)
-sets a 14-day Dependabot default cooldown without disabling audits or restating
-the default SHA-pinning policy. Changes to either
-configuration rerun the scanners against the actual workflows. See
-[dependency security](dependency-security.md).
-The default stage is explicitly **pre-commit** because pre-commit's own default
-is every supported stage. Commitizen alone selects **commit-msg**.
-There are no manual-stage hooks: links and duplication run with ordinary checks.
+Run bootstrap after operator-owned repository initialization.
+[.pre-commit-config.yaml](../.pre-commit-config.yaml) owns hook order, frozen SHAs,
+image digests and stage selection: **pre-commit** by default, **commit-msg** for
+Commitizen only, no manual stage. Changed dependency locks are audited before
+syncing hooks and license checks; see [dependency security](dependency-security.md).
 
 On Windows, check `Get-Command uv -All` if hooks ignore `SKIP`: a version-manager
 shim can change child environment variables. Invoke the native `uv.exe` or put
 its directory first on that terminal's `PATH`. Do not rewrite user-global shims
 as a repository repair.
 
-Pre-commit manages the upstream Python and Node hook environments. Bun runs the
-locked jscpd binary (`bun run --bun jscpd`) from [package.json](../package.json)
-and [bun.lock](../bun.lock); `task bootstrap` installs it with
-`bun install --frozen-lockfile`, and [bunfig.toml](../bunfig.toml) disables
-dependency lifecycle scripts. Docker must be running for `lychee-docker`.
-The recommended VS Code Container Tools extension helps manage containers but
-does not install or start the Docker engine.
-The Bun version used in CI is pinned to the locally exercised 1.3.11, not
-claimed to be the newest available release. Changing execution to Bun does not
-turn every upstream Node hook into a Bun hook or remove Node.js from the toolchain.
+Pre-commit manages upstream Python/Node hook environments; Node.js is still
+required. Bun runs locked jscpd with `bun run --bun jscpd`, not its Node shebang.
+Bootstrap uses `bun install --frozen-lockfile`;
+[bunfig.toml](../bunfig.toml) disables dependency lifecycle scripts.
+Missing `node_modules` fails instead of downloading. CI's exercised Bun pin
+lives in [ci.yml](../.github/workflows/ci.yml), not a latest-version promise.
 
-`--bun` deliberately runs the tool with Bun instead of its Node shebang. The hook
-never downloads: a missing `node_modules` fails until bootstrap installs the lock.
-The `version-pins` hook and `task verify -- pins` reject mutable hook revisions,
-undigested images, package runners such as `npx`/`uvx`/`bunx`, unlocked installs,
-and ranged tool requirements; see [version pinning](dependency-security.md#version-pinning).
+Links run during commits and need network access and a running Docker engine;
+the Container Tools extension does not provide that engine. The hook ID is
+`lychee-docker`, not `lychee`. Duplication scans the repository once, not only
+changed files. Run it alone with
+`uv run --locked pre-commit run jscpd --all-files`. Failures/timeouts remain failures.
 
-Link checks now require network access and Docker during commits. Duplication
-checks scan the repository once, not only changed files. Those are intentional
-costs of removing manual stages; no timeout or failure is converted into success.
-Run an individual hook with
-`uv run --locked pre-commit run jscpd --all-files`.
-The link hook's actual ID is `lychee-docker`, not `lychee`.
-
-Generated skills, instruction mirrors, native agents and lockfiles are not
-globally excluded from pre-commit. Read-only hooks can inspect them for secrets,
-syntax, merge conflicts and filename safety. Only the four whitespace, newline,
-line-ending and byte-order-marker fixers exclude these tool-owned outputs, using
-one shared YAML anchor. Correct their canonical source and regenerate through
-the owning tool instead of rewriting attested output independently.
-The always-running drift and native-role checks still enforce provenance;
-they complement rather than replace file safety checks. Lock-only changes also
-reach the `uv lock --check` hook.
+Generated capabilities, native agents and locks still receive read-only safety
+checks. Only the four whitespace/newline/line-ending/BOM fixers exclude owned
+outputs through the shared YAML anchor. Fix canonical source and regenerate with
+its owner; never edit attested output to pass drift or native-role checks.
+Lock-only changes still reach `uv lock --check`.
 
 ## Defaults and intentional overrides
 
-- Large-file validation inherits upstream's 500 kB limit.
-- Branch protection inherits upstream's `main` and `master` branch list.
-- yamllint discovers its configuration; Import Linter discovers its own.
-- CSpell inherits the upstream hook's filename handling and quiet-output flags.
-  Hook `args` replace upstream arguments rather than append them. Removing the
-  override restores `--gitignore --files` too; keeping just `--cache` would not.
-  Cache is optional, not a correctness requirement.
+- Large-file/branch checks inherit 500 kB and `main`/`master` defaults.
+- yamllint, Import Linter and CSpell use native discovery/default arguments.
+  Hook `args` replace rather than append upstream arguments: a CSpell override
+  containing only `--cache` would lose `--gitignore --files`.
 - jscpd discovers [.jscpd.json](../.jscpd.json); lychee reads
   [lychee.toml](../lychee.toml). Nonstandard filenames would require explicit
   configuration arguments.
-- The lychee v0.24.2 hook manifest still names its 0.23.0 Docker image. The entry
-  explicitly selects 0.24.2 to match the pinned hook revision; this is a necessary
-  compatibility override, not a duplicate default. Review that entry together
-  with future hook-revision updates; remove it when upstream fixes its manifest.
-- Ruff discovers [ruff.toml](../ruff.toml) and defaults to the current directory.
-  This repository deliberately declares its Python 3.13 target and formatter
-  settings. Complexity, branch, return and statement limits are 6, 8, 6 and 40;
-  portable assets have no complexity exemptions. `TC` imports use postponed
-  annotations rather than string-literal forward references. Command-line output
-  uses stream writes instead of `print`, and every standalone asset script opens
-  with PEP 723 metadata declaring Python 3.13 and `dependencies = []`.
-  The assets use only the standard library. Run environment-inspection tools
-  through the target environment's Python, not an isolated script environment.
-  Neither `T201` nor `INP001` has a source exemption; Ruff and the metadata tests
-  enforce these conventions.
-- Commitizen inherits its Conventional Commits adapter and disabled automatic
-  changelog rewriting. Coverage inherits standard report destinations and
-  `skip_covered = false`; Markdown and YAML lint configurations omit unchanged
-  rule defaults. Explicit strictness, coverage thresholds and project exclusions
-  remain in their owning configurations.
+- Lychee's pinned hook manifest names an older image; the explicit image entry
+  matches the hook release. Review both together on updates.
+- [ruff.toml](../ruff.toml) owns Python target, formatter, complexity and lint
+  limits; portable assets have no complexity exemption. Use postponed annotations,
+  stream writes instead of `print`, and stdlib-only PEP 723 asset scripts declaring
+  Python 3.13 and `dependencies = []`. `T201` and `INP001` have no source exemption.
+  Run environment inspection with the target environment's Python, not isolation.
+- Commitizen, coverage, Markdown and YAML settings live in the
+  [owning configurations](../PROJECT.md#commands); do not duplicate defaults.
 - `--locked`, read-only format checks, LF normalization, test filename style,
   explicit secret baselines, output destinations, stage restrictions, version
   pins and least-privilege workflow permissions express policy, not redundant
   defaults. Do not remove them merely to shorten a command.
 
-Other tool settings are not indiscriminately deleted: a setting can encode a
-cross-platform contract or a tested safety boundary even when one release
-happens to use the same value. Change an override only after reviewing the
-owning tool's version, behavior and related regression.
+Change overrides only after checking the pinned version and relevant regression.
+Coinciding with an upstream default does not invalidate a tested safety boundary.
 
-The existing link policy accepts bot-blocked HTTP 403 and rate-limited HTTP 429
-responses. A passing link scan therefore does not prove those destinations
-actually served their content; inspect them separately when availability matters.
+Lychee accepts HTTP 403/429; success does not prove content was served.
+The offline docs gate checks local files, not external availability or anchors.
 
-Capability composition excludes Python bytecode (`__pycache__`, `.pyc`, `.pyo`)
-from authored bundles. Running or importing a checker must not change the
-portable output. This is a source-selection rule, not a provenance exemption:
-unexpected bytecode added to composed output is still rejected, as are links
-masquerading as cache paths.
-The source-path inventory also prunes Git internals, installed Node dependencies,
-and test/type caches rather than traversing generated trees during every
-composition. This does not exempt unexpected files in composed output.
-APM subprocess output is handled without locale-dependent pipe decoding:
-the private adapter discards it, while smoke failures render captured bytes
-as UTF-8 with visible escapes for invalid bytes. Nonzero exits and timeouts
-still fail. The adapter defaults to 900 seconds per APM command so cold
-full-profile replays can finish on slower filesystems; explicitly supplied
-timeouts must be finite and positive. The outer smoke-command bound is
-1800 seconds. Both paths use the pinned environment's recorded APM launcher,
-not an unrelated `PATH` entry. No audit, drift or integrity check is skipped.
+[Source selection](../src/agent_kit/infrastructure/catalog_adapter.py) prunes
+bytecode, Git internals, Node dependencies and caches, not unexpected output.
+Bytecode or links masquerading as caches in composed output still fail provenance.
+The [APM adapter](../src/agent_kit/infrastructure/apm_adapter.py) owns its
+900-second default and finite positive timeout requirement;
+[smoke](../scripts/apm_smoke.py) bounds commands at 1800 seconds.
+Both use the pinned environment's APM launcher, not an unrelated `PATH` entry.
+The adapter discards subprocess output; smoke decodes failure bytes as UTF-8
+with invalid bytes escaped. Nonzero exits/timeouts fail without skipping integrity.
 
 ## Scanner configuration discovery
 
-Configuration is read by the tool that owns it, not by GitHub simply because it
-is committed. The native hooks and hosted integrations do not all have the same
-discovery rules:
+A committed configuration is not proof that a hosted scanner reads it:
 
 | Tool | Native CLI / pre-commit | CodeRabbit integration |
 | --- | --- | --- |
@@ -209,26 +143,18 @@ discovery rules:
 | OSV-Scanner | Discovers `osv-scanner.toml` beside each scanned file, not recursively; `--config` overrides discovery | Documents use of a repository `osv-scanner.toml` |
 | detect-secrets | Baseline must be passed explicitly; our hook uses `--baseline .secrets.baseline` | Not a native integration; Betterleaks provides complementary advisory findings |
 
-The two zizmor policies (repository and portable template) only override the
-Dependabot minimum default cooldown to 14 days. SHA pinning uses the pinned
-tool's default; there are no disabled rules or allowlisted owners.
-The actionlint hook's `-ignore` argument covers only the unsupported `$/`
-workflow-call diagnostic in the pinned version. Remove it when the tool
-supports that GitHub syntax.
+The repository and portable zizmor policies only set a 14-day Dependabot
+cooldown; no disabled rules or allowlisted owners. actionlint's `-ignore` covers
+only the pinned version's unsupported `$/` workflow-call diagnostic; remove it
+when supported. Scanner-config edits rerun the actual workflows.
 
-No Gitleaks or OSV suppression file is needed without an actual, reviewed
-exception. Do not create empty files or copy upstream defaults wholesale.
-The deterministic gates remain detect-secrets, pip-audit/Bun audit, Ruff, ty,
-actionlint and zizmor. Hosted advisory checks complement these, can use different
-versions, and may be skipped when CodeRabbit detects an existing CI run.
-Ruff is a linter, not a replacement for a dedicated secret scanner or dependency
-advisory database. LanguageTool checks grammar rather than secrets or types.
-Run `ty check` from the root: `ty check packages` alone still respects the
-configured include list and must not be accepted if it reports no Python files.
-The pre-commit type gate also reruns for edits to `ty.toml`, `pyproject.toml`,
-and `uv.lock`, not just changed Python files.
-Python templates are syntax- and convention-checked; the consumer type-checks
-rendered templates with its own framework dependencies.
+Do not add empty Gitleaks/OSV suppression files without a reviewed exception.
+Hosted checks are advisory, may use different versions or skip an existing CI
+run, and do not replace local secrets, audit, lint, type or workflow gates.
+Ruff is not a secret scanner/advisory database; LanguageTool checks grammar.
+Run `ty check` at the root; `ty check packages` reporting no Python files is not
+evidence. The type hook also runs on `ty.toml`, `pyproject.toml` and `uv.lock`.
+Consumers type-check rendered templates with their own framework dependencies.
 
 Sources: [CodeRabbit tool behavior](https://docs.coderabbit.ai/tools/index),
 [LanguageTool](https://docs.coderabbit.ai/tools/languagetool),
@@ -243,26 +169,18 @@ Sources: [CodeRabbit tool behavior](https://docs.coderabbit.ai/tools/index),
 
 ## Python exception contracts
 
-Ruff's selected `TRY` rules include `TRY003` and `TRY004`, without global or
-per-file exemptions for either rule. Exception classes own their diagnostic
-formatting; related domain failures may use a closed enum of invariant violations
-instead of creating one class per message. Do not replace an exclusion with
-`noqa`, arbitrary-message wrappers or local message variables at production raise
-sites.
+`TRY003` and `TRY004` have no exemptions. Exception classes own diagnostics;
+related domain failures may use a closed enum. Do not bypass these rules with
+`noqa`, arbitrary-message wrappers or message variables at production raise sites.
 
-Wrong decoded input types raise `TypeError` subclasses; correctly typed but invalid
-values raise `ValueError` subclasses. The toolkit's `InputTypeError` distinguishes
-expected input failures from unrelated programming errors. Catalog validation
-converts that specific input failure to a finding, and CLI boundaries report it
-with exit status 1. They do not catch every `TypeError` and hide implementation
-bugs. Existing value, filesystem and process failures remain explicit, and
-wrapped failures retain their original cause.
+Wrong input types raise `TypeError`; invalid values raise `ValueError`.
+[InputTypeError](../src/agent_kit/core/errors.py) marks expected input failures:
+catalog validation turns it into a finding and the CLI exits 1. Do not catch
+unrelated `TypeError` bugs; preserve explicit failures and wrapped causes.
 
-Portable skill scripts own their local exception definitions and input handlers;
-they must still run outside this checkout without importing the toolkit.
-Retain malformed-input, nonzero-exit and actionable-diagnostic regressions when
-changing an exception type. A future Copier template should carry these
-conventions, not copy this toolkit's domain-specific exception hierarchy.
+Portable scripts own local exceptions and run without toolkit imports.
+Retain malformed-input, nonzero-exit and diagnostic regressions. Future templates
+carry the conventions, not this toolkit's domain-specific hierarchy.
 
 These choices follow the official
 [TRY003 guidance](https://docs.astral.sh/ruff/rules/raise-vanilla-args/),
@@ -272,46 +190,28 @@ and Python's distinction between
 
 ## JSON and VS Code
 
-VS Code discovers workspace settings at **.vscode/settings.json**. It accepts
-JSON with comments there despite the extension. Renaming that file to
-**settings.jsonc** breaks discovery; it is not an improvement.
-
-This repository uses strict JSON, a valid subset of JSONC, for all four workspace
-files. Keep `check-json` enabled without exclusions. The stock hook selects the
-`json` file type and uses Python's strict JSON parser. Merely changing a
-file's extension to **.jsonc** does not give it comment-aware validation and,
-with the current identify classifier, removes it from that hook's selection.
-
-For a future template that deliberately needs comments, keep VS Code's mandated
-filename, add a real JSONC validator, and exclude only those paths from strict
-JSON checking. Wire the validator into commits and CI and retain malformed-input
-regressions. Do not add that dependency to this strict-JSON repository preemptively.
+The [editor contract](editor.md#workspace-contract) owns recognized filenames.
+Keep **.vscode/settings.json**, strict JSON and `check-json` without exclusions.
+Renaming to **settings.jsonc** breaks discovery and removes current strict-hook
+selection; it does not add JSONC validation. A future template needing comments
+must keep the native filename, add tested JSONC validation in commits/CI and
+exclude only those paths from strict checking.
 
 ## Repository-owned scripts and future Copier templates
 
-Local hooks may call reviewed, tracked scripts. That is the normal pre-commit
-`repo: local` model for repository-specific checks. Task also recommends external
-scripts rather than complex inline shell. Keep these scripts thin and scoped;
-portable installed behavior belongs in the package, not a script that assumes
-it can find the source checkout.
+Keep reviewed local-hook/Task scripts thin. Portable installed behavior belongs
+in the package and must not assume a source checkout.
 
 This repository is not yet a Copier template. When one is built:
 
-1. Render only workflows and toolchains the consumer actually selects; do not
-   copy this capability toolkit's own guards into every application.
-2. Keep a small recurring Task interface and tool-owned configuration. Select
-   pinned Bun/Node/Python requirements explicitly; do not inherit a developer's
-   user-global installation or use a floating `latest`.
-3. Render VS Code's recognized filenames and strict JSON unless comments serve
-   an actual need. Test discovery and validation separately.
-4. Keep trusted template maintenance separate from consumer execution. Copier
-   tasks and migrations can execute code and require reviewed trust; do not
-   enable them automatically or initialize/publish consumer repositories.
-5. Test fresh rendering and supported updates in disposable projects, including
-   filenames, hook installation, tool discovery, lockfiles and the same CI gate.
-   Review update conflicts; do not overwrite consumer-owned facts or credentials.
-
-No Copier scaffolding or additional framework is needed for the present cleanup.
+1. Render only selected workflows/toolchains, not every toolkit guard.
+2. Keep Task small, settings tool-owned and Bun/Node/Python pinned; no global or
+   floating `latest` assumptions.
+3. Keep recognized editor filenames; test discovery separately from validation.
+4. Review trust before executable tasks/migrations. Never auto-enable them or
+   initialize/publish consumer repositories.
+5. Test fresh renders and supported updates in disposable projects: hooks,
+   discovery, locks and CI. Review conflicts; preserve consumer facts/credentials.
 
 ## Primary references
 

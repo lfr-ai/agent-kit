@@ -72,6 +72,16 @@ def test_language_formatters_have_a_declared_provider() -> None:
     assert {"charliermarsh.ruff", "astral-sh.ty", "ms-python.python"} <= set(
         recommended
     )
+    # Ruff and ty own linting, formatting, imports and types; competitors stay off.
+    assert {
+        "ms-python.black-formatter",
+        "ms-python.autopep8",
+        "ms-python.flake8",
+        "ms-python.isort",
+        "ms-python.mypy-type-checker",
+        "ms-python.pylint",
+        "ms-python.vscode-pylance",
+    } <= set(unwanted)
     for language in ("python", "json", "jsonc", "yaml", "toml", "markdown"):
         configuration = settings[f"[{language}]"]
         assert isinstance(configuration, dict)

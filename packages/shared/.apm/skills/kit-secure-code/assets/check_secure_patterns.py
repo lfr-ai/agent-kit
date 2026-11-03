@@ -118,8 +118,8 @@ def resolve(node: ast.expr, aliases: dict[str, str]) -> str | None:
     """Return the qualified name of an expression using import aliases.
 
     Args:
-        node: Callee or argument expression.
-        aliases: Local names mapped to their imported targets.
+        node (ast.expr): Callee or argument expression.
+        aliases (dict[str, str]): Local names mapped to their imported targets.
 
     Returns:
         The dotted name with the first part replaced by its import target.
@@ -135,7 +135,7 @@ def import_aliases(tree: ast.Module) -> dict[str, str]:
     """Map local names to the absolute modules or objects they import.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Local name to dotted target; relative imports are ignored.
@@ -224,9 +224,9 @@ def check_source(
     """Report risky calls in one module.
 
     Args:
-        path: Path used in findings.
-        text: Module source.
-        rules: Rule identifiers to apply.
+        path (str): Path used in findings.
+        text (str): Module source.
+        rules (Sequence[str]): Rule identifiers to apply.
 
     Returns:
         Findings for the module, or one ``syntax`` finding if it cannot parse.
@@ -305,11 +305,7 @@ _SELF_TEST_EXPECTED = (
 
 
 def self_test() -> list[str]:
-    """Run every rule on in-memory risky and safe modules.
-
-    Returns:
-        Unmet expectations; empty when the rules behave as documented.
-    """
+    """Run every rule on in-memory risky and safe modules."""
     risky = [item.render() for item in check_source("risky.py", _SELF_TEST_RISKY)]
     safe = [item.render() for item in check_source("safe.py", _SELF_TEST_SAFE)]
     problems = [
@@ -331,7 +327,7 @@ def python_files(paths: Sequence[Path]) -> list[Path]:
     checkout that itself lives under a folder such as ``venv`` is still scanned.
 
     Args:
-        paths: Files or directories to scan.
+        paths (Sequence[Path]): Files or directories to scan.
 
     Returns:
         Sorted, unique Python file paths.
@@ -384,11 +380,7 @@ def _self_test_status() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Scan paths and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

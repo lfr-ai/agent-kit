@@ -47,7 +47,7 @@ def _bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
     """Collect local names bound to the ``os`` module and to its environment API.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Names that refer to the ``os`` module and names that refer directly to
@@ -64,14 +64,7 @@ def _bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
 
 
 def _module_aliases(node: ast.Import) -> set[str]:
-    """Return local names that an ``import`` statement binds to ``os``.
-
-    Args:
-        node: Import statement.
-
-    Returns:
-        Names bound to the ``os`` module.
-    """
+    """Return local names that an ``import`` statement binds to ``os``."""
     return {
         alias.asname or "os"
         for alias in node.names
@@ -80,14 +73,7 @@ def _module_aliases(node: ast.Import) -> set[str]:
 
 
 def _direct_aliases(node: ast.ImportFrom) -> set[str]:
-    """Return local names that ``from os import`` binds to environment attributes.
-
-    Args:
-        node: ``from os import`` statement.
-
-    Returns:
-        Names bound directly to an environment attribute.
-    """
+    """Return local names that ``from os import`` binds to environment attributes."""
     return {
         alias.asname or alias.name
         for alias in node.names
@@ -99,7 +85,7 @@ def _parents(tree: ast.Module) -> dict[ast.AST, ast.AST]:
     """Map every node to its syntactic parent.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Child-to-parent mapping for the whole tree.
@@ -113,8 +99,8 @@ def _widen(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST:
     """Expand an environment reference to the expression a reviewer recognizes.
 
     Args:
-        node: The ``os.environ`` style reference.
-        parents: Child-to-parent mapping.
+        node (ast.AST): The ``os.environ`` style reference.
+        parents (dict[ast.AST, ast.AST]): Child-to-parent mapping.
 
     Returns:
         The enclosing subscript or call when the reference is used directly.
@@ -135,9 +121,9 @@ def _is_reference(node: ast.AST, modules: set[str], direct: set[str]) -> bool:
     """Return whether a node names the process environment API.
 
     Args:
-        node: Candidate node.
-        modules: Local names bound to ``os``.
-        direct: Local names bound to an environment attribute.
+        node (ast.AST): Candidate node.
+        modules (set[str]): Local names bound to ``os``.
+        direct (set[str]): Local names bound to an environment attribute.
 
     Returns:
         True for ``os.environ``-style attributes and directly imported names.
@@ -155,8 +141,8 @@ def find_env_access(text: str, path: str) -> list[str]:
     """Report environment access in one source file.
 
     Args:
-        text: Python source text.
-        path: Display path used in findings.
+        text (str): Python source text.
+        path (str): Display path used in findings.
 
     Returns:
         Findings formatted as ``path:line: message``, in source order.
@@ -197,8 +183,9 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
     """Return whether a POSIX-style path matches any glob pattern.
 
     Args:
-        path: Path rendered with forward slashes.
-        patterns: Case-sensitive ``fnmatch`` patterns; ``*`` also matches ``/``.
+        path (str): Path rendered with forward slashes.
+        patterns (Iterable[str]): Case-sensitive ``fnmatch`` patterns; ``*`` also
+            matches ``/``.
 
     Returns:
         True when at least one pattern matches the path or ``/`` + path.
@@ -217,8 +204,8 @@ def _python_files(
     """Expand explicit targets into Python files, reporting missing targets.
 
     Args:
-        targets: Files or directories given on the command line.
-        exclude: Glob patterns for paths to skip.
+        targets (Sequence[Path]): Files or directories given on the command line.
+        exclude (Sequence[str]): Glob patterns for paths to skip.
 
     Returns:
         Sorted Python files and findings for missing or linked targets.
@@ -246,9 +233,9 @@ def scan(
     """Scan targets and return every finding.
 
     Args:
-        targets: Files or directories to scan.
-        allow: Globs for settings modules that may read the environment.
-        exclude: Globs for paths that are never scanned.
+        targets (Sequence[Path]): Files or directories to scan.
+        allow (Sequence[str]): Globs for settings modules that may read the environment.
+        exclude (Sequence[str]): Globs for paths that are never scanned.
 
     Returns:
         Findings for disallowed environment access and unreadable sources.
@@ -288,9 +275,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            source: Observed source for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            source (str | None): Observed source for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(source=source, found=found))
 
@@ -361,11 +348,7 @@ def _self_test_globs() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="files or directories")

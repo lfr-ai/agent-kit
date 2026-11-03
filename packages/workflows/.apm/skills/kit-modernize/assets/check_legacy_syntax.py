@@ -110,7 +110,11 @@ class Finding:
 
 
 def _module_aliases(tree: ast.Module) -> dict[str, str]:
-    """Map local names bound by ``import`` statements to their modules."""
+    """Map local names bound by ``import`` statements to their modules.
+
+    Returns:
+        Module names keyed by local alias.
+    """
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -132,8 +136,8 @@ class _Scanner(ast.NodeVisitor):
         """Create a scanner for the enabled rules.
 
         Args:
-            rules: Rules to report.
-            aliases: Local import names mapped to module names.
+            rules (frozenset[Rule]): Rules to report.
+            aliases (dict[str, str]): Local import names mapped to module names.
         """
         self.rules = rules
         self.aliases = aliases
@@ -145,11 +149,7 @@ class _Scanner(ast.NodeVisitor):
             self.hits.append((node.lineno, rule, message))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        """Flag typing aliases, the annotations future import and os.path.
-
-        Args:
-            node: Import statement.
-        """
+        """Flag typing aliases, the annotations future import and os.path."""
         module = node.module or ""
         names = [alias.name for alias in node.names]
         if module in _TYPING_MODULES:
@@ -168,21 +168,13 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        """Flag ``import os.path``.
-
-        Args:
-            node: Import statement.
-        """
+        """Flag ``import os.path``."""
         if any(alias.name == "os.path" for alias in node.names):
             self._hit(node, Rule.OS_PATH, "os.path import; use pathlib.Path")
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        """Flag ``typing.List`` style access and ``os.path`` attribute use.
-
-        Args:
-            node: Attribute expression.
-        """
+        """Flag ``typing.List`` style access and ``os.path`` attribute use."""
         if isinstance(node.value, ast.Name):
             module = self.aliases.get(node.value.id)
             if module in _TYPING_MODULES and node.attr in _TYPING_REPLACEMENTS:
@@ -192,11 +184,7 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
-        """Flag ``%`` formatting of a string literal.
-
-        Args:
-            node: Binary operation.
-        """
+        """Flag ``%`` formatting of a string literal."""
         left = node.left
         if (
             isinstance(node.op, ast.Mod)
@@ -215,9 +203,9 @@ def check_source(source: str, path: str, *, rules: frozenset[Rule]) -> list[Find
     """Return legacy constructs in one source text.
 
     Args:
-        source: Python source code.
-        path: Path used in findings.
-        rules: Rules to report.
+        source (str): Python source code.
+        path (str): Path used in findings.
+        rules (frozenset[Rule]): Rules to report.
 
     Returns:
         Findings sorted by line and rule.
@@ -238,8 +226,8 @@ def collect(paths: Iterable[Path], *, excluded: frozenset[str]) -> list[Path]:
     """Expand files and directories into sorted Python files.
 
     Args:
-        paths: Files or directories given on the command line.
-        excluded: Directory names skipped below a given directory.
+        paths (Iterable[Path]): Files or directories given on the command line.
+        excluded (frozenset[str]): Directory names skipped below a given directory.
 
     Returns:
         Sorted, de-duplicated ``*.py`` files.
@@ -302,7 +290,7 @@ class SelfTestError(RuntimeError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
+            issue (SelfTestIssue): The invariant that failed.
         """
         super().__init__(issue.value)
 
@@ -369,7 +357,11 @@ def _rules(args: argparse.Namespace) -> frozenset[Rule]:
 
 
 def _scan(files: Sequence[Path], *, rules: frozenset[Rule]) -> tuple[list[str], int]:
-    """Return rendered findings and the number of unreadable files."""
+    """Return rendered findings and the number of unreadable files.
+
+    Returns:
+        Rendered findings in file order and the number of unreadable files.
+    """
     lines: list[str] = []
     failures = 0
     for path in files:
@@ -414,11 +406,7 @@ def _run_self_test() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Scan paths and print findings.
 
-    Args:
-        argv: Command-line arguments; ``None`` reads ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 on findings, 2 on missing paths or unreadable files.
+    Returns 0 when clean, 1 on findings, 2 on missing paths or unreadable files.
     """
     parser = _parser()
     args = parser.parse_args(argv)

@@ -39,6 +39,11 @@ class Cache(Protocol):
 
         A non-positive TTL deletes the key instead of storing it.
 
+        Args:
+            key (str): Fully namespaced cache key.
+            value (bytes): Encoded value to store unchanged.
+            ttl_seconds (float): Lifetime in seconds; zero or less deletes the key.
+
         Raises:
             CacheUnavailableError: The store failed or timed out.
         """
@@ -59,6 +64,11 @@ class DistributedLock(Protocol):
     async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
         """Take the lock if it is free; return whether this caller holds it.
 
+        Args:
+            key (str): Fully namespaced advisory-lock key.
+            token (str): Ownership token to check when releasing the lock.
+            ttl_seconds (float): Positive lock lifetime in seconds.
+
         Raises:
             ValueError: ``ttl_seconds`` is not positive.
             CacheUnavailableError: The store failed or timed out.
@@ -67,6 +77,10 @@ class DistributedLock(Protocol):
 
     async def release(self, key: str, token: str) -> bool:
         """Release the lock only if ``token`` still owns it.
+
+        Args:
+            key (str): Advisory-lock key to release.
+            token (str): Ownership token from the successful acquisition.
 
         Raises:
             CacheUnavailableError: The store failed or timed out.

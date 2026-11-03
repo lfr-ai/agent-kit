@@ -29,6 +29,25 @@ DEFAULT_RESULTS: int = 5
 MAX_NOTE_BYTES: int = 64_000
 NOTE_NAME_PATTERN: str = r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$"
 
+NoteQuery = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=MAX_QUERY_LENGTH,
+        description="Case-insensitive text to find in note lines.",
+    ),
+]
+NoteLimit = Annotated[
+    int, Field(ge=1, le=MAX_RESULTS, description="Maximum matches to return.")
+]
+NoteName = Annotated[
+    str,
+    Field(
+        pattern=NOTE_NAME_PATTERN,
+        description="File name returned by search_notes, for example 'setup.md'.",
+    ),
+]
+
 server = MCPServer("project-tools")
 
 
@@ -74,23 +93,13 @@ def notes_root() -> Path:
 
 @server.tool()
 def search_notes(
-    query: Annotated[
-        str,
-        Field(
-            min_length=1,
-            max_length=MAX_QUERY_LENGTH,
-            description="Case-insensitive text to find in note lines.",
-        ),
-    ],
-    limit: Annotated[
-        int, Field(ge=1, le=MAX_RESULTS, description="Maximum matches to return.")
-    ] = DEFAULT_RESULTS,
+    query: NoteQuery, limit: NoteLimit = DEFAULT_RESULTS
 ) -> list[NoteMatch]:
     """Find lines in Markdown notes that contain the query text.
 
     Args:
-        query: Text to find, compared case-insensitively.
-        limit: Maximum number of matches to return.
+        query (NoteQuery): Text to find, compared case-insensitively.
+        limit (NoteLimit): Maximum number of matches to return.
 
     Returns:
         Matches in file-name order; empty when nothing matches.
@@ -109,19 +118,11 @@ def search_notes(
 
 
 @server.tool()
-def read_note(
-    name: Annotated[
-        str,
-        Field(
-            pattern=NOTE_NAME_PATTERN,
-            description="File name returned by search_notes, for example 'setup.md'.",
-        ),
-    ],
-) -> str:
+def read_note(name: NoteName) -> str:
     """Return the text of one note, truncated to a safe size.
 
     Args:
-        name: Note file name inside the notes directory.
+        name (NoteName): Note file name inside the notes directory.
 
     Returns:
         The note text, at most ``MAX_NOTE_BYTES`` bytes.
@@ -138,7 +139,12 @@ def read_note(
 
 
 def _matches(path: Path, needle: str) -> list[NoteMatch]:
-    """Return the matching lines of one note."""
+    """Return the matching lines of one note.
+
+    Args:
+        path (Path): Markdown note to read as UTF-8, replacing invalid bytes.
+        needle (str): Already case-folded search text compared with each line.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     return [
         NoteMatch(name=path.name, line=number, text=line.strip())

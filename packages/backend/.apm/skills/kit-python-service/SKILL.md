@@ -108,8 +108,14 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
   Markdown prose keeps normal CommonMark single-backtick syntax.
 - Keep summaries useful and concise. Expand Google-style sections only for
   caller-relevant semantics, constraints, side effects, and expected failures.
+- Use one line when a callable has at most one parameter, needs no `Returns:`,
+  and has no constraint, effect, or failure worth a section; private and nested
+  helpers may stay one-line. Public callables with two or more parameters need
+  `Args:`. See [docstrings](references/docstrings.md) for the decision table.
+  Structured return docs describe fields/keys, ordering, and empty cases.
 - Google permits descriptive or imperative summaries, consistently within a file,
-  and does not require repeating types already annotated in the signature.
+  and does not require repeating annotated types. The toolkit includes types
+  when `Args:`, `Returns:`, or `Yields:` sections are present.
 - Sphinx/reStructuredText renders double-backtick literals as code. The local
   conventions gate enforces paired double backticks in docstrings; it does not
   change Markdown file syntax.

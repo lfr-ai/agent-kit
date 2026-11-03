@@ -1,8 +1,8 @@
 """Structure-aware chunking that preserves exact source offsets.
 
-Copy to 'retrieval/chunking.py'. The chunker splits on paragraphs first, then
+Copy to ``retrieval/chunking.py``. The chunker splits on paragraphs first, then
 sentences, then whitespace, and packs the pieces into windows no longer than
-'max_chars'. Every chunk keeps the exact '[start_char, end_char)' span of the
+``max_chars``. Every chunk keeps the exact ``[start_char, end_char)`` span of the
 source text so citations can be verified by slicing the original document.
 """
 
@@ -76,11 +76,11 @@ def chunk_id_for(
     idempotent and stale versions are found by version, not by guesswork.
 
     Args:
-        tenant: Owning tenant.
-        source_id: Source identifier.
-        source_version: Source version.
-        start: Inclusive start offset.
-        end: Exclusive end offset.
+        tenant (str): Owning tenant.
+        source_id (str): Source identifier.
+        source_version (str): Source version.
+        start (int): Inclusive start offset.
+        end (int): Exclusive end offset.
 
     Returns:
         A 32-character hexadecimal identifier.
@@ -92,7 +92,18 @@ def chunk_id_for(
 def _hard_split(
     text: str, start: int, end: int, max_chars: int
 ) -> list[tuple[int, int]]:
-    """Split one oversized span at whitespace, or mid-word as a last resort."""
+    """Split one oversized span at whitespace, or mid-word as a last resort.
+
+    Args:
+        text (str): Source text whose offsets must remain unchanged.
+        start (int): Inclusive beginning of the span to split.
+        end (int): Exclusive end of that span.
+        max_chars (int): Positive maximum span length in characters.
+
+    Returns:
+        list[tuple[int, int]]: Source-ordered, half-open offset pairs, each at
+        most ``max_chars`` long; whitespace after each split is skipped.
+    """
     spans: list[tuple[int, int]] = []
     while end - start > max_chars:
         cut = text.rfind(" ", start + 1, start + max_chars)
@@ -110,7 +121,18 @@ def _hard_split(
 def _split_block(
     text: str, start: int, end: int, max_chars: int
 ) -> list[tuple[int, int]]:
-    """Split a paragraph into sentence spans when it exceeds the limit."""
+    """Split a paragraph into sentence spans when it exceeds the limit.
+
+    Args:
+        text (str): Source text used for sentence and whitespace boundaries.
+        start (int): Inclusive paragraph start in the source.
+        end (int): Exclusive paragraph end in the source.
+        max_chars (int): Positive length cap applied to each resulting span.
+
+    Returns:
+        list[tuple[int, int]]: Half-open source offsets in reading order;
+        oversized sentences are split further at whitespace or mid-word.
+    """
     if end - start <= max_chars:
         return [(start, end)]
     spans: list[tuple[int, int]] = []
@@ -123,7 +145,16 @@ def _split_block(
 
 
 def _pieces(text: str, max_chars: int) -> list[tuple[int, int]]:
-    """Return non-blank paragraph or sentence spans, each within the limit."""
+    """Return non-blank paragraph or sentence spans, each within the limit.
+
+    Args:
+        text (str): Full normalized source text.
+        max_chars (int): Positive maximum length of each piece.
+
+    Returns:
+        list[tuple[int, int]]: Non-blank half-open source spans in document
+        order, split first by paragraph and then as needed by sentence or word.
+    """
     spans: list[tuple[int, int]] = []
     cursor = 0
     for match in _PARAGRAPH_BREAK.finditer(text):
@@ -136,7 +167,17 @@ def _pieces(text: str, max_chars: int) -> list[tuple[int, int]]:
 def _pack(
     pieces: list[tuple[int, int]], policy: ChunkingPolicy
 ) -> list[tuple[int, int]]:
-    """Greedily pack pieces into windows with whole-piece overlap."""
+    """Greedily pack pieces into windows with whole-piece overlap.
+
+    Args:
+        pieces (list[tuple[int, int]]): Source-ordered half-open spans, each
+            already within the policy's maximum length.
+        policy (ChunkingPolicy): Window length and whole-piece overlap bounds.
+
+    Returns:
+        list[tuple[int, int]]: Half-open window spans in document order,
+        including gaps between packed pieces; empty when there are no pieces.
+    """
     windows: list[tuple[int, int]] = []
     first = 0
     while first < len(pieces):
@@ -165,7 +206,17 @@ def _pack(
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:
-    """Move offsets inward past surrounding whitespace."""
+    """Move offsets inward past surrounding whitespace.
+
+    Args:
+        text (str): Source text inspected without modifying its contents.
+        start (int): Inclusive span start to advance past leading whitespace.
+        end (int): Exclusive span end to retreat past trailing whitespace.
+
+    Returns:
+        tuple[int, int]: Trimmed inclusive start and exclusive end, in that
+        order; equal offsets represent an empty span.
+    """
     while start < end and text[start].isspace():
         start += 1
     while end > start and text[end - 1].isspace():
@@ -174,7 +225,12 @@ def _trim(text: str, start: int, end: int) -> tuple[int, int]:
 
 
 def _sections(text: str) -> list[tuple[int, str]]:
-    """Return '(offset, heading path)' pairs for Markdown ATX headings."""
+    """Return heading paths for Markdown ATX headings.
+
+    Returns:
+        list[tuple[int, str]]: Source-ordered pairs of heading start offset and
+        hierarchical title path joined by ``" > "``; empty if no headings match.
+    """
     stack: list[tuple[int, str]] = []
     result: list[tuple[int, str]] = []
     for match in _HEADING.finditer(text):
@@ -186,7 +242,13 @@ def _sections(text: str) -> list[tuple[int, str]]:
 
 
 def _section_at(sections: list[tuple[int, str]], offset: int) -> str:
-    """Return the heading path in effect at an offset."""
+    """Return the heading path in effect at an offset.
+
+    Args:
+        sections (list[tuple[int, str]]): Heading start offsets and paths in
+            ascending source order, as returned by ``_sections``.
+        offset (int): Source position whose most recent heading is wanted.
+    """
     current = ""
     for start, path in sections:
         if start > offset:
@@ -201,8 +263,8 @@ def chunk_document(
     """Split a document into citable, permission-carrying chunks.
 
     Args:
-        document: Source version to split.
-        policy: Window limits; defaults to 'ChunkingPolicy()'.
+        document (SourceDocument): Source version to split.
+        policy (ChunkingPolicy | None): Window limits; defaults to ``ChunkingPolicy()``.
 
     Returns:
         Chunks in document order. An all-whitespace document yields none.

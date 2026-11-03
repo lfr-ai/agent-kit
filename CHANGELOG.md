@@ -23,8 +23,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Skill evaluations:** synthetic cases and a result checker distinguish
   complete observations from missing evidence. Model runs remain explicit;
   evaluations never publish changes automatically.
-- **Git guard resource:** an opt-in read-only policy for the existing tool
-  guard. It does not activate hooks or grant a `kit-improve` exception.
+- **Hooks and MCP through APM:** `shared` ships an always-on Git-guard hook
+  (Git read-only outside the kit checkout, no hook bypass, no push) and each
+  package declares its reviewed MCP servers in `apm.yml`. `agent-kit check`
+  validates both against closed schemas and the policy allow list.
+- **Git guard resource:** a Git policy for the existing tool guard, now delivered
+  as the `shared` hook. A kit-checkout exception is scoped by `AGENT_KIT_DIR`.
 - **Developer setup:** dedicated tool configuration, Task and VS Code templates,
   a pinned dev container, and unit, property and integration test tiers with a
   90% branch-coverage gate.
@@ -47,6 +51,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Smaller agent picker:** the main roster is `kit-orchestrator` and
+  `kit-debug`, plus `kit-devops` only with `iac`. `kit-tdd`, `kit-fullstack`,
+  `kit-frontend` and `kit-ai-engineer` were folded into `kit-orchestrator` and
+  its workers; `kit-refactor` is now a worker. The `readonly` tier is removed, so
+  every role can inspect history, diffs and offline checks.
+- **Fewer worker roles:** `kit-plan-architect` merged into `kit-planner`,
+  `kit-solid-review` into `kit-code-reviewer` and `kit-modernization` into
+  `kit-deep-thinking`. The repository-only, shell-less `kit-reviewer` is removed;
+  use `kit-code-reviewer` or the `kit-review-change` prompt instead.
 - **Consumer tooling:** exported type gates use ty. Optional JavaScript MCP
   examples use Bun explicitly and still require review before activation.
 - **Migration required:** Terraform, Bicep and remote-access capabilities moved

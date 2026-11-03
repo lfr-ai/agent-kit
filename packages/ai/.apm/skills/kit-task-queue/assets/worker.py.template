@@ -1,6 +1,6 @@
 """Broker-neutral worker with idempotency, leases, retries, and dead-lettering.
 
-Copy to 'tasks/worker.py'. The worker owns the delivery policy so every broker
+Copy to ``tasks/worker.py``. The worker owns the delivery policy so every broker
 adapter behaves the same:
 
 1. Parse and validate the envelope; malformed messages are dead-lettered.
@@ -114,9 +114,9 @@ def retry_delay(
     """Full-jitter exponential backoff after a failed attempt.
 
     Args:
-        attempt: One-based attempt that just failed.
-        settings: Delay bounds.
-        rng: Uniform [0, 1) source.
+        attempt (int): One-based attempt that just failed.
+        settings (WorkerSettings): Delay bounds.
+        rng (Callable[[], float]): Uniform [0, 1) source.
 
     Returns:
         Seconds before the message becomes visible again.
@@ -129,7 +129,7 @@ def retry_delay(
 
 
 class Worker:
-    """Consume deliveries from a 'Broker' port and apply the delivery policy."""
+    """Consume deliveries from a ``Broker`` port and apply the delivery policy."""
 
     def __init__(
         self,
@@ -144,12 +144,14 @@ class Worker:
         """Wire the worker.
 
         Args:
-            broker: Queue adapter.
-            store: Idempotency store shared by all workers of these task types.
-            handlers: Task type to registration.
-            settings: Bounds; defaults to 'WorkerSettings()'.
-            rng: Jitter source, injected for tests.
-            sleep: Sleep used by lease renewal, injected for tests.
+            broker (Broker): Queue adapter.
+            store (IdempotencyStore): Idempotency store shared by all workers of these
+                task types.
+            handlers (Mapping[str, HandlerSpec]): Task type to registration.
+            settings (WorkerSettings | None): Bounds; defaults to ``WorkerSettings()``.
+            rng (Callable[[], float]): Jitter source, injected for tests.
+            sleep (Callable[[float], Awaitable[None]]): Sleep used by lease renewal,
+                injected for tests.
         """
         self._broker = broker
         self._store = store
@@ -160,11 +162,7 @@ class Worker:
         self._slots = asyncio.Semaphore(self._settings.concurrency)
 
     async def run_once(self) -> list[Outcome]:
-        """Lease one batch and process it with bounded concurrency.
-
-        Returns:
-            One outcome per delivery, in delivery order.
-        """
+        """Lease one batch, process it concurrently, and return outcomes in order."""
         deliveries = await self._broker.receive(
             max_messages=self._settings.batch_size,
             visibility_timeout_s=self._settings.visibility_timeout_s,
@@ -179,11 +177,7 @@ class Worker:
         )
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Process batches until 'stop' is set, then finish in-flight work.
-
-        Args:
-            stop: Set by the shutdown handler (for example on SIGTERM).
-        """
+        """Process batches until ``stop`` is set, then finish in-flight work."""
         while not stop.is_set():
             if not await self.run_once():
                 with contextlib.suppress(TimeoutError):
@@ -192,14 +186,7 @@ class Worker:
                     )
 
     async def process(self, delivery: Delivery) -> Outcome:
-        """Apply the delivery policy to one message.
-
-        Args:
-            delivery: Leased message.
-
-        Returns:
-            What happened to the message.
-        """
+        """Apply the delivery policy to one message."""
         try:
             envelope = parse_envelope(delivery.body)
         except PermanentTaskError as error:
@@ -225,7 +212,13 @@ class Worker:
     async def _execute(
         self, envelope: TaskEnvelope, delivery: Delivery, spec: HandlerSpec
     ) -> Outcome:
-        """Run the handler with a renewed lease and classify the result."""
+        """Run the handler with a renewed lease and classify the result.
+
+        Args:
+            envelope (TaskEnvelope): Parsed task identity, payload and idempotency key.
+            delivery (Delivery): Broker receipt and attempt count for ack or retry.
+            spec (HandlerSpec): Selected handler with its timeout and attempt limit.
+        """
         context = TaskContext(
             task_id=envelope.task_id,
             idempotency_key=envelope.idempotency_key,
@@ -284,7 +277,14 @@ class Worker:
     async def _dead_letter(
         self, delivery: Delivery, *, reason: str, envelope: TaskEnvelope | None = None
     ) -> Outcome:
-        """Move a message to the dead-letter queue with a safe reason."""
+        """Move a message to the dead-letter queue with a safe reason.
+
+        Args:
+            delivery (Delivery): Broker receipt for the message to park.
+            reason (str): Safe failure category sent to the broker and lifecycle log.
+            envelope (TaskEnvelope | None): Parsed identity for log fields, or
+                None when the envelope could not be parsed.
+        """
         await self._broker.dead_letter(delivery, reason=reason)
         logger.error(
             "task.dead_lettered",
@@ -299,7 +299,13 @@ class Worker:
 
     @staticmethod
     def _log(envelope: TaskEnvelope, delivery: Delivery, outcome: Outcome) -> None:
-        """Emit one content-free lifecycle record."""
+        """Emit one content-free lifecycle record.
+
+        Args:
+            envelope (TaskEnvelope): Supplies task, type and correlation identifiers.
+            delivery (Delivery): Supplies the one-based delivery attempt count.
+            outcome (Outcome): Lifecycle result recorded without payload content.
+        """
         logger.info(
             "task.outcome",
             extra={

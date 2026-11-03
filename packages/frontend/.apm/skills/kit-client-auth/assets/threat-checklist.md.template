@@ -24,8 +24,9 @@ Date: <!-- YYYY-MM-DD -->
 
 ## Tokens and session
 
-- [ ] Storage: HTTP-only cookie (BFF) or in memory. No tokens in
-      `localStorage`, `sessionStorage`, IndexedDB, URLs, or logs.
+- [ ] Storage: HTTP-only cookie (BFF), memory, or supported library-managed
+      MSAL cache selected by threat model. No parallel hand-written token
+      cache; no tokens in URLs or logs. Record persistence/XSS trade-offs.
 - [ ] Access token lifetime: <!-- minutes -->; refresh tokens rotate with
       reuse detection, or the BFF renews server-side.
 - [ ] Sender-constrained tokens (DPoP) considered: <!-- yes/no, why -->
@@ -43,6 +44,8 @@ Date: <!-- YYYY-MM-DD -->
 
 - [ ] Every API route authorizes server-side; UI role checks are display only.
 - [ ] 401: one renewal, one retry, then expired-session state.
+- [ ] Unsafe request replay requires pre-effect rejection or destination
+      idempotency; delayed old-token 401s do not renew again.
 - [ ] 403: access message, session kept, no retry.
 - [ ] Guards run before render (loaders); no protected content flash.
 

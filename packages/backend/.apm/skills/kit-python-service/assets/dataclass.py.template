@@ -1,8 +1,8 @@
 """Frozen, keyword-only, slotted record with validated invariants.
 
-Copy into 'src/<package>/core/models.py' (or a sibling module) and rename the
-fields. The record validates in '__post_init__', exposes derived values as
-properties, and changes through 'dataclasses.replace' so every new instance is
+Copy into ``src/<package>/core/models.py`` (or a sibling module) and rename the
+fields. The record validates in ``__post_init__``, exposes derived values as
+properties, and changes through ``dataclasses.replace`` so every new instance is
 validated again.
 """
 
@@ -23,7 +23,7 @@ class LineItem:
         quantity: Number of units; always positive.
         unit_price_minor: Price per unit in minor currency units (for example cents).
         tags: Optional labels; stored as an immutable tuple.
-        note: Free text kept out of 'repr' because it may contain user input.
+        note: Free text kept out of ``repr`` because it may contain user input.
     """
 
     sku: str
@@ -50,9 +50,9 @@ class LineItem:
         """Build a line from untrusted text, normalizing the SKU case.
 
         Args:
-            sku: SKU text in any case; surrounding whitespace is ignored.
-            quantity: Decimal integer text.
-            unit_price_minor: Decimal integer text in minor units.
+            sku (str): SKU text in any case; surrounding whitespace is ignored.
+            quantity (str): Decimal integer text.
+            unit_price_minor (str): Decimal integer text in minor units.
 
         Returns:
             A validated line item.

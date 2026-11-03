@@ -61,9 +61,10 @@ def ref_problems(name: str, *, label: str, ancestry: bool = False) -> list[str]:
     start with ``-``, which Git would read as an option.
 
     Args:
-        name: The proposed branch or base reference name.
-        label: The argument name used in messages.
-        ancestry: Allow ``~`` and ``^`` suffixes such as ``HEAD~2`` in a commit-ish.
+        name (str): The proposed branch or base reference name.
+        label (str): The argument name used in messages.
+        ancestry (bool): Allow ``~`` and ``^`` suffixes such as ``HEAD~2`` in a
+            commit-ish.
 
     Returns:
         Human-readable problems; empty when the name is acceptable.
@@ -102,8 +103,8 @@ def path_problems(path: Path, *, repository: Path) -> list[str]:
     """Describe why a worktree path cannot be used.
 
     Args:
-        path: The proposed worktree directory.
-        repository: The repository working directory.
+        path (Path): The proposed worktree directory.
+        repository (Path): The repository working directory.
 
     Returns:
         Human-readable problems; empty when the path is acceptable.
@@ -128,8 +129,8 @@ def default_path(repository: Path, branch: str) -> Path:
     """Place a worktree beside the repository, named after the branch.
 
     Args:
-        repository: The repository working directory.
-        branch: The validated branch name.
+        repository (Path): The repository working directory.
+        branch (str): The validated branch name.
 
     Returns:
         A sibling directory such as ``../project-agent-docs``.
@@ -145,11 +146,11 @@ def build_plan(
     """Validate inputs and build the command vectors.
 
     Args:
-        repository: The repository working directory.
-        branch: The new branch name.
-        base: The commit-ish to branch from.
-        path: The worktree directory, or None to derive a sibling path.
-        git: The Git executable to place in each command.
+        repository (Path): The repository working directory.
+        branch (str): The new branch name.
+        base (str): The commit-ish to branch from.
+        path (Path | None): The worktree directory, or None to derive a sibling path.
+        git (str): The Git executable to place in each command.
 
     Returns:
         The validated plan.
@@ -187,14 +188,7 @@ def build_plan(
 
 
 def render(commands: Sequence[Sequence[str]]) -> list[str]:
-    """Render argument vectors as POSIX-quoted lines for review.
-
-    Args:
-        commands: The argument vectors.
-
-    Returns:
-        One display line per command.
-    """
+    """Render argument vectors as POSIX-quoted lines for review."""
     return [shlex.join(command) for command in commands]
 
 
@@ -212,8 +206,9 @@ def execute(
     """Run the plan's commands in order and stop at the first failure.
 
     Args:
-        plan: The validated plan.
-        runner: Runs one argument vector and returns its exit status.
+        plan (Plan): The validated plan.
+        runner (Callable[[Sequence[str]], int]): Runs one argument vector and returns
+            its exit status.
 
     Returns:
         The failing exit status and its rendered command, or (0, None).
@@ -246,9 +241,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            good: Observed good for the failing case.
-            bad: Observed bad for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            good (str | None): Observed good for the failing case.
+            bad (str | None): Observed bad for the failing case.
         """
         super().__init__(issue.value.format(good=good, bad=bad))
 
@@ -326,11 +321,7 @@ def _self_test_execute(plan: Plan) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Print or run the worktree plan.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 on success, 1 on validation or Git failure, 2 on usage errors.
+    Returns 0 on success, 1 on validation or Git failure, 2 on usage errors.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--branch", help="new branch, for example 'agent/docs'")

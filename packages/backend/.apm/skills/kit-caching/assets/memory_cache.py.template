@@ -36,8 +36,8 @@ class InMemoryCache:
         """Create an empty cache.
 
         Args:
-            clock: Monotonic clock in seconds; tests pass a fake.
-            max_entries: Upper bound on stored entries, including locks.
+            clock (Callable[[], float]): Monotonic clock in seconds; tests pass a fake.
+            max_entries (int): Upper bound on stored entries, including locks.
 
         Raises:
             ValueError: ``max_entries`` is not positive.
@@ -62,7 +62,13 @@ class InMemoryCache:
         return [await self.get(key) for key in keys]
 
     async def set(self, key: str, value: bytes, *, ttl_seconds: float) -> None:
-        """Store a value for ``ttl_seconds``; a non-positive TTL deletes it."""
+        """Store a value for ``ttl_seconds``; a non-positive TTL deletes it.
+
+        Args:
+            key (str): Cache key to replace and mark most recently used.
+            value (bytes): Encoded value retained until expiry or LRU eviction.
+            ttl_seconds (float): Lifetime from the injected clock's current time.
+        """
         if ttl_seconds <= 0:
             self._entries.pop(key, None)
             return
@@ -83,6 +89,11 @@ class InMemoryCache:
     async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
         """Store ``token`` under ``key`` only if no live entry exists.
 
+        Args:
+            key (str): Advisory-lock key in the same bounded store as cached values.
+            token (str): Ownership token stored as encoded bytes.
+            ttl_seconds (float): Positive lease duration from the current clock time.
+
         Raises:
             ValueError: ``ttl_seconds`` is not positive.
         """
@@ -95,7 +106,12 @@ class InMemoryCache:
         return True
 
     async def release(self, key: str, token: str) -> bool:
-        """Delete the lock only when ``token`` still owns it."""
+        """Delete the lock only when ``token`` still owns it.
+
+        Args:
+            key (str): Advisory-lock key whose live entry should be removed.
+            token (str): Expected ownership token; a mismatch leaves the entry intact.
+        """
         entry = self._live(key)
         if entry is None or entry.value != token.encode():
             return False

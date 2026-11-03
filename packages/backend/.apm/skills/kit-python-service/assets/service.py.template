@@ -24,7 +24,7 @@ class OrderNotFoundError(InvoicingError):
         """Record the identifier that was not found.
 
         Args:
-            order_id: Identifier the caller asked for.
+            order_id (str): Identifier the caller asked for.
         """
         super().__init__(f"order {order_id!r} was not found")
         self.order_id = order_id
@@ -37,8 +37,8 @@ class OrderNotReadyError(InvoicingError):
         """Record why the order cannot be invoiced.
 
         Args:
-            order_id: Identifier of the rejected order.
-            reason: Stable, non-sensitive explanation for callers.
+            order_id (str): Identifier of the rejected order.
+            reason (str): Stable, non-sensitive explanation for callers.
         """
         super().__init__(f"order {order_id!r} cannot be invoiced: {reason}")
         self.order_id = order_id
@@ -70,7 +70,7 @@ class OrderReader(Protocol):
     """Port: look up orders by identifier."""
 
     def get(self, order_id: str, /) -> OrderSnapshot | None:
-        """Return the order or 'None' when it does not exist."""
+        """Return the order or ``None`` when it does not exist."""
         ...
 
 
@@ -115,9 +115,9 @@ class InvoiceService:
         """Bind the service to its ports.
 
         Args:
-            orders: Source of order snapshots.
-            invoices: Invoice storage and number allocation.
-            clock: Source of the issue timestamp.
+            orders (OrderReader): Source of order snapshots.
+            invoices (InvoiceRepository): Invoice storage and number allocation.
+            clock (Clock): Source of the issue timestamp.
         """
         self._orders = orders
         self._invoices = invoices
@@ -130,7 +130,7 @@ class InvoiceService:
         retries after a timeout are safe.
 
         Args:
-            order_id: Identifier of the order to invoice.
+            order_id (str): Identifier of the order to invoice.
 
         Returns:
             The newly issued or previously issued invoice.

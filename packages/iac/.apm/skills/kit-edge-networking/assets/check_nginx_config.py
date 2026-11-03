@@ -81,8 +81,8 @@ class NginxConfigError(ValueError):
         """Describe the syntax problem.
 
         Args:
-            line: One-based line where parsing failed.
-            problem: Short description of the problem.
+            line (int): One-based line where parsing failed.
+            problem (str): Short description of the problem.
         """
         super().__init__(f"line {line}: {problem}")
 
@@ -138,14 +138,7 @@ class Block:
     comments: tuple[str, ...]
 
     def named(self, name: str) -> list[Directive]:
-        """Return the directives called ``name`` directly inside this block.
-
-        Args:
-            name: Directive name to match.
-
-        Returns:
-            Matching directives in source order.
-        """
+        """Return the directives called ``name`` directly inside this block."""
         return [directive for directive in self.directives if directive.name == name]
 
 
@@ -172,7 +165,7 @@ def tokenize(text: str) -> list[Token]:
     """Split configuration text into comments, punctuation, and words.
 
     Args:
-        text: Complete configuration text.
+        text (str): Complete configuration text.
 
     Returns:
         Tokens in source order without whitespace.
@@ -238,9 +231,10 @@ def _parse_block(
     """Parse tokens from ``start`` until the closing brace of ``header``.
 
     Args:
-        tokens: All tokens of the file.
-        start: Index of the first token inside the block.
-        header: Name and arguments of the block; None for the main context.
+        tokens (Sequence[Token]): All tokens of the file.
+        start (int): Index of the first token inside the block.
+        header (Directive | None): Name and arguments of the block; None for the main
+            context.
 
     Returns:
         The parsed block and the index after its closing brace.
@@ -329,7 +323,7 @@ def parse(text: str) -> Block:
     """Parse configuration text into its main-context block.
 
     Args:
-        text: Complete configuration text.
+        text (str): Complete configuration text.
 
     Returns:
         The main context with nested blocks.
@@ -474,14 +468,7 @@ def _buffering_finding(
 
 
 def _credential_signals(chain: Sequence[Block]) -> list[str]:
-    """Return the reasons a proxied location receives credential-bearing requests.
-
-    Args:
-        chain: Blocks from the main context to the location.
-
-    Returns:
-        Short descriptions such as ``proxy_set_header authorization``.
-    """
+    """Return the reasons a proxied location receives credential-bearing requests."""
     headers = _header_names(_effective(chain, "proxy_set_header"))
     signals = [
         f"proxy_set_header {name}" for name in sorted(headers & _CREDENTIAL_HEADERS)
@@ -499,9 +486,9 @@ def _cache_finding(path: Path, chain: Sequence[Block], route: str) -> Finding | 
     """Report a cached location that may store responses to authenticated requests.
 
     Args:
-        path: File that contains the location.
-        chain: Blocks from the main context to the location.
-        route: Location path used in the message.
+        path (Path): File that contains the location.
+        chain (Sequence[Block]): Blocks from the main context to the location.
+        route (str): Location path used in the message.
 
     Returns:
         A finding, or None when caching is off, no credentials are involved, or
@@ -547,14 +534,7 @@ def _location_findings(path: Path, chain: Sequence[Block]) -> list[Finding]:
 
 
 def _upstream_name(target: str) -> str:
-    """Return the host part of a ``proxy_pass`` URL without scheme, port, or path.
-
-    Args:
-        target: First argument of ``proxy_pass``.
-
-    Returns:
-        The host or upstream group name; empty when the URL has no scheme.
-    """
+    """Return the host part of a ``proxy_pass`` URL without scheme, port, or path."""
     _, _, rest = target.partition("://")
     return re.split(r"[/:]", rest, maxsplit=1)[0]
 
@@ -573,8 +553,9 @@ def _keepalive_findings(
     """Report upstream groups reached over HTTP/1.1 or 2 without ``keepalive``.
 
     Args:
-        path: File that contains the blocks.
-        blocks: Checked blocks with their chains.
+        path (Path): File that contains the blocks.
+        blocks (Sequence[tuple[Block, tuple[Block, ...]]]): Checked blocks with their
+            chains.
 
     Returns:
         At most one finding per upstream group, at the group's line.
@@ -623,8 +604,9 @@ def _zone_findings(
     """Report rate and connection limit zones that nothing in the file applies.
 
     Args:
-        path: File that contains the blocks.
-        blocks: Checked blocks with their chains.
+        path (Path): File that contains the blocks.
+        blocks (Sequence[tuple[Block, tuple[Block, ...]]]): Checked blocks with their
+            chains.
 
     Returns:
         One finding per unused zone; none when the file includes other files.
@@ -669,8 +651,8 @@ def scan_text(path: Path, text: str) -> list[Finding]:
     """Check one configuration file and return its findings in line order.
 
     Args:
-        path: Path reported in findings.
-        text: File content.
+        path (Path): Path reported in findings.
+        text (str): File content.
 
     Returns:
         Findings sorted by line number and message.
@@ -704,7 +686,7 @@ class MissingPathError(ValueError):
         """Describe the missing path.
 
         Args:
-            path: The path that was not found.
+            path (Path): The path that was not found.
         """
         super().__init__(f"path does not exist: {path}")
 
@@ -713,8 +695,8 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     """Expand directories into sorted configuration files.
 
     Args:
-        paths: Files or directories supplied by the operator. Directories
-            contribute files ending in ``.conf`` or ``.conf.template``.
+        paths (Iterable[Path]): Files or directories supplied by the operator.
+            Directories contribute files ending in ``.conf`` or ``.conf.template``.
 
     Returns:
         Sorted, de-duplicated file list.
@@ -738,11 +720,7 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
 
 
 def self_test() -> list[str]:
-    """Check the rules on in-memory configurations and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the rules on in-memory configurations and return unmet expectations."""
     headers = "proxy_set_header X-Forwarded-Proto $scheme;\n"
     clean = (
         "http {\nserver_tokens off;\n"
@@ -857,12 +835,8 @@ def _scan(paths: Iterable[Path]) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check nginx files and print one ``path:line: message`` line per finding.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings (or a failed self-test), 2 for missing
-        paths or unreadable or unparsable input.
+    Returns 0 when clean, 1 with findings (or a failed self-test), 2 for missing paths
+    or unreadable or unparsable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

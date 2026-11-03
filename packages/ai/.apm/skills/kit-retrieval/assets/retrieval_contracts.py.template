@@ -1,11 +1,11 @@
 """Framework-neutral retrieval contracts.
 
-Copy to 'retrieval/contracts.py'. This module is the innermost layer: it never
+Copy to ``retrieval/contracts.py``. This module is the innermost layer: it never
 imports a vector store driver, an embedding SDK, LangChain, or LlamaIndex.
 Adapters depend on these types; these types depend on the standard library only.
 
 Access model: every chunk carries a tenant and a non-empty access list of
-principal tokens such as 'user:alice' or 'group:finance'. A chunk is visible
+principal tokens such as ``user:alice`` or ``group:finance``. A chunk is visible
 when the tenant matches and at least one token overlaps. An empty access list
 is visible to nobody (deny by default).
 """
@@ -67,11 +67,7 @@ class Principal:
             raise ValueError("principal subject and tenant are required")
 
     def tokens(self) -> frozenset[str]:
-        """Return the access tokens this principal may match.
-
-        Returns:
-            The user token plus one token per group.
-        """
+        """Return the user token plus one access token per group."""
         return frozenset({f"user:{self.subject}"}) | frozenset(
             f"group:{group}" for group in self.groups
         )
@@ -91,7 +87,7 @@ class Chunk:
         end_char: Exclusive end offset in the source text.
         acl: Principal tokens allowed to read this chunk.
         updated_at: Timezone-aware time the source version was indexed.
-        section: Heading path of the span, for example 'Setup > Install'.
+        section: Heading path of the span, for example ``Setup > Install``.
         metadata: Additional non-secret string attributes used for filtering.
     """
 
@@ -139,14 +135,7 @@ class Citation:
 
     @classmethod
     def from_chunk(cls, chunk: Chunk) -> Self:
-        """Build the citation for a chunk.
-
-        Args:
-            chunk: The retrieved chunk.
-
-        Returns:
-            A citation with the chunk's provenance.
-        """
+        """Build the citation for a chunk."""
         return cls(
             source_id=chunk.source_id,
             source_version=chunk.source_version,
@@ -182,14 +171,7 @@ class Query:
             raise InvalidQueryError(f"top_k must be between 1 and {MAX_TOP_K}")
 
     def with_text(self, text: str) -> Self:
-        """Return the same request with rewritten text.
-
-        Args:
-            text: Replacement query text.
-
-        Returns:
-            A new query that keeps principal, limits and filters.
-        """
+        """Return a copy with new text that keeps principal, limits and filters."""
         return replace(self, text=text)
 
 
@@ -256,8 +238,8 @@ def is_visible_to(chunk: Chunk, principal: Principal) -> bool:
     """Decide whether a principal may read a chunk.
 
     Args:
-        chunk: Candidate chunk.
-        principal: Requesting identity.
+        chunk (Chunk): Candidate chunk.
+        principal (Principal): Requesting identity.
 
     Returns:
         True only for the same tenant and an overlapping access token.
@@ -275,9 +257,9 @@ def chunk_from_mapping(
     world-readable chunk.
 
     Args:
-        text: Chunk text returned by the store.
-        metadata: Flat metadata stored beside the vector.
-        score_key: Metadata key to exclude from the copied attributes.
+        text (str): Chunk text returned by the store.
+        metadata (Mapping[str, object]): Flat metadata stored beside the vector.
+        score_key (str): Metadata key to exclude from the copied attributes.
 
     Returns:
         The validated chunk.
@@ -344,7 +326,7 @@ class Retriever(Protocol):
         """Return visible hits for the query in rank order.
 
         Implementations must apply tenant and access filtering inside the
-        store, before ranking, and raise 'RetrievalUnavailableError' for
+        store, before ranking, and raise ``RetrievalUnavailableError`` for
         transient backend failures.
         """
         ...
@@ -359,7 +341,12 @@ class Embedder(Protocol):
         ...
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed texts in order; the result has one vector per input."""
+        """Embed texts in order.
+
+        Returns:
+            list[list[float]]: One vector per input text, in input order,
+            each containing ``dimensions`` floating-point components.
+        """
         ...
 
 
@@ -369,7 +356,13 @@ class Reranker(Protocol):
     async def rerank(
         self, query: Query, hits: Sequence[ScoredChunk], *, top_n: int
     ) -> list[ScoredChunk]:
-        """Reorder hits by relevance and keep at most 'top_n'."""
+        """Reorder hits by relevance and keep at most ``top_n``.
+
+        Args:
+            query (Query): Query text and visibility constraints for scoring.
+            hits (Sequence[ScoredChunk]): Already visible retrieval candidates.
+            top_n (int): Maximum number of reranked hits to retain.
+        """
         ...
 
 
@@ -377,7 +370,12 @@ class RelevanceGrader(Protocol):
     """Port that judges whether hits can support an answer."""
 
     async def grade(self, query: Query, hits: Sequence[ScoredChunk]) -> Grade:
-        """Grade the hits for the query."""
+        """Grade the hits for the query.
+
+        Args:
+            query (Query): Information need the retrieved evidence must support.
+            hits (Sequence[ScoredChunk]): Visible candidates to assess for relevance.
+        """
         ...
 
 
@@ -385,7 +383,12 @@ class QueryRewriter(Protocol):
     """Port that reformulates a query after a weak retrieval round."""
 
     async def rewrite(self, query: Query, *, feedback: str) -> str:
-        """Return new query text; never widen the principal or filters."""
+        """Return new query text; never widen the principal or filters.
+
+        Args:
+            query (Query): Current query whose text may be reformulated.
+            feedback (str): Grader feedback explaining the weak retrieval round.
+        """
         ...
 
 
@@ -395,17 +398,28 @@ class IndexWriter(Protocol):
     async def upsert(self, chunks: Sequence[Chunk]) -> int:
         """Insert or replace chunks by chunk id; return the count written.
 
-        Implementations raise 'SourceDeletedError' when a chunk belongs to a
+        Implementations raise ``SourceDeletedError`` when a chunk belongs to a
         deleted source, so a lagging ingestion job cannot resurrect content.
         """
         ...
 
     async def delete_source(self, *, tenant: str, source_id: str) -> int:
-        """Remove every chunk of a source and record a tombstone for it."""
+        """Remove every chunk of a source and record a tombstone for it.
+
+        Args:
+            tenant (str): Tenant namespace containing the source.
+            source_id (str): Source to delete and block from later ingestion.
+        """
         ...
 
     async def retain_version(
         self, *, tenant: str, source_id: str, source_version: str
     ) -> int:
-        """Remove chunks of other versions of a source; return the count removed."""
+        """Remove chunks of other versions of a source; return the count removed.
+
+        Args:
+            tenant (str): Tenant namespace containing the source.
+            source_id (str): Source whose obsolete chunks should be removed.
+            source_version (str): Version to preserve.
+        """
         ...

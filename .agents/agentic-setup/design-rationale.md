@@ -183,18 +183,25 @@ not establish command, endpoint, transport or tool equivalence.
 
 Agent roles are authored once as JSON assets inside skills
 (`.apm/skills/<skill>/assets/agents.json`) with a closed schema: `id`, `kind`
-(`primary` or `worker`), `tier` (`readonly`, `implementer` or `coordinator`),
+(`primary` or `worker`), `tier` (`verifier`, `implementer` or `coordinator`),
 `description`, `body`, `workers` and optional `models`. The renderer emits:
 
-- Copilot files under `.github/agents/` (workers in `subagents/`) with `tools`,
-  `agents`, `user-invocable` and `disable-model-invocation` metadata.
-- Claude files under `.claude/agents/` (workers in `subagents/`) with a `tools`
-  string; coordinators receive `Agent(<workers>)`.
+- Copilot files flat in `.github/agents/` (workers too; VS Code does not scan
+  subfolders) with `tools`, `agents` (coordinators only), `user-invocable` and
+  `disable-model-invocation` metadata. Workers are `user-invocable: false`.
+- Claude files flat in `.claude/agents/` with a `tools` string; coordinators
+  receive `Agent(<workers>)`.
 - The identical role body for both hosts.
 
-Tier maps to bounded tools: read-only roles get read/search only; implementers
-add edit and execute; coordinators may delegate only to declared worker IDs,
-which must exist and be workers.
+Tier maps to bounded tools: verifiers get read/search/execute/todo so every
+analysis or review role can inspect history, diffs and offline checks;
+implementers add edit; coordinators add the agent tool and may delegate only to
+declared worker IDs, which must exist and be workers.
+
+Rejected alternative: **a shell-less read-only tier.** Researchers without a shell
+could not run `git diff`, `git log` or offline checks and reported incomplete
+evidence. Source-read-only intent stays in each body; host approvals enforce
+command boundaries.
 
 Because roles live in skills, a profile delivers only the roles of its selected
 bundles. A frontend-only package does not silently receive backend implementers.

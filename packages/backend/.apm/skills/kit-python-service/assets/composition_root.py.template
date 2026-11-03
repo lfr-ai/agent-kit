@@ -1,9 +1,9 @@
 """Composition root: the only module that knows every concrete adapter.
 
-Copy into 'src/<package>/composition.py'. Entry points (ASGI lifespan, CLI
-'main', worker start-up) call 'build_container' once and pass the resulting
-services to the transport. Tests call 'build_container' with fakes through the
-'overrides' argument instead of patching modules.
+Copy into ``src/<package>/composition.py``. Entry points (ASGI lifespan, CLI
+``main``, worker start-up) call ``build_container`` once and pass the resulting
+services to the transport. Tests call ``build_container`` with fakes through the
+``overrides`` argument instead of patching modules.
 """
 
 import logging
@@ -60,8 +60,8 @@ def build_container(
     """Build the object graph and release its resources on exit.
 
     Args:
-        settings: Validated configuration.
-        overrides: Adapters to use instead of the production ones.
+        settings (Settings): Validated configuration.
+        overrides (Overrides | None): Adapters to use instead of the production ones.
 
     Yields:
         The wired container. Resources opened here are closed in reverse order
@@ -94,12 +94,8 @@ def build_container(
 def main(run: Callable[[Container], int]) -> int:
     """Process entry point: load settings, configure logging, wire, and run.
 
-    Args:
-        run: Transport that serves requests with the container, for example an
-            HTTP server start function or a CLI dispatcher. Returns an exit code.
-
-    Returns:
-        The transport's exit code.
+    ``run`` serves requests with the container, for example an HTTP server start
+    function or a CLI dispatcher; its exit code is returned.
     """
     settings = Settings.from_environ()
     configure_logging(level=settings.log_level, json_lines=settings.json_logs)

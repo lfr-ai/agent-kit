@@ -115,14 +115,7 @@ class Finding:
 
 
 def normalize_name(name: str) -> str:
-    """Return a distribution or group name normalized as in PEP 503.
-
-    Args:
-        name: Name as written in a manifest or lock.
-
-    Returns:
-        Lower-case name with runs of ``-``, ``_`` and ``.`` replaced by ``-``.
-    """
+    """Return a distribution or group name normalized as in PEP 503."""
     return _SEPARATORS.sub("-", name).lower()
 
 
@@ -139,7 +132,8 @@ def parse_requirement(text: str) -> Requirement:
     """Reduce one PEP 508 requirement string to its comparable fields.
 
     Args:
-        text: Requirement such as ``"PyYAML[cext] >= 6, < 7; python_version < '4'"``.
+        text (str): Requirement such as
+            ``"PyYAML[cext] >= 6, < 7; python_version < '4'"``.
 
     Returns:
         The normalized requirement.
@@ -172,6 +166,9 @@ def _is_table(value: object) -> TypeGuard[dict[str, object]]:
 
 def _table(parent: Mapping[str, object], key: str, *, where: str) -> dict[str, object]:
     """Return a child table, treating a missing key as empty.
+
+    Returns:
+        The child table with string keys; empty when the key is missing.
 
     Raises:
         LockInputError: The value is not a table.
@@ -268,7 +265,7 @@ def declared_groups(manifest: Mapping[str, object]) -> dict[str, list[Requiremen
     """Return every dependency group with includes expanded.
 
     Args:
-        manifest: Parsed ``pyproject.toml``.
+        manifest (Mapping[str, object]): Parsed ``pyproject.toml``.
 
     Returns:
         Requirements per normalized group name; legacy
@@ -320,6 +317,9 @@ def _compare(
 def _packages(lock: Mapping[str, object]) -> list[dict[str, object]]:
     """Return the lock package tables, rejecting a malformed inventory.
 
+    Returns:
+        Package tables in lock order.
+
     Raises:
         LockInputError: The package list is empty or unnamed.
     """
@@ -335,7 +335,11 @@ def _packages(lock: Mapping[str, object]) -> list[dict[str, object]]:
 def _root_package(
     packages: list[dict[str, object]], project: str
 ) -> dict[str, object] | None:
-    """Return the lock entry of the local root project, if uv recorded one."""
+    """Return the lock entry of the local root project, if uv recorded one.
+
+    Returns:
+        The root project's package table, or None when uv did not record it.
+    """
     for package in packages:
         source = _table(package, "source", where="package")
         if normalize_name(str(package["name"])) == project and any(
@@ -520,9 +524,9 @@ def evaluate(
     """Compare a parsed manifest and lock and return sorted findings.
 
     Args:
-        manifest: Parsed ``pyproject.toml``.
-        lock: Parsed ``uv.lock``.
-        lock_path: Label used for every finding.
+        manifest (Mapping[str, object]): Parsed ``pyproject.toml``.
+        lock (Mapping[str, object]): Parsed ``uv.lock``.
+        lock_path (str): Label used for every finding.
 
     Returns:
         Findings sorted by path and message; empty when the lock is fresh.
@@ -555,7 +559,11 @@ def evaluate(
 
 
 def _load(path: Path) -> dict[str, object]:
-    """Parse one TOML file."""
+    """Parse one TOML file.
+
+    Returns:
+        The parsed top-level table with string keys.
+    """
     with path.open("rb") as handle:
         return tomllib.load(handle)
 
@@ -598,11 +606,7 @@ source = {{ git = "https://example.invalid/tool.git?rev=main#{commit}" }}
 
 
 def self_test() -> list[str]:
-    """Check a fresh synthetic lock and a stale one without hashes.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check a fresh synthetic lock and a stale one without hashes."""
     manifest = tomllib.loads(_SELF_TEST_MANIFEST)
     digest = "a" * _SHA256_HEX_LENGTH
     fresh = tomllib.loads(
@@ -664,11 +668,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Check one manifest and lock pair and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when the lock is fresh and hashed, 1 on findings, 2 on unusable input.
+    Returns 0 when the lock is fresh and hashed, 1 on findings, 2 on unusable input.
     """
     arguments = _parser().parse_args(argv)
     if arguments.self_test:

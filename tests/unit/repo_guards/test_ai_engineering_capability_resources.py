@@ -553,11 +553,9 @@ def test_roles_follow_least_privilege_schema() -> None:
     document = json.loads((_EVAL / "assets/agents.json").read_text(encoding="utf-8"))
     assert document["schema_version"] == 1
     roles = {role["id"]: role for role in document["roles"]}
-    assert set(roles) == {"kit-ai-engineer", "kit-eval-reviewer"}
-    assert roles["kit-ai-engineer"]["kind"] == "primary"
-    assert roles["kit-ai-engineer"]["tier"] == "implementer"
+    assert set(roles) == {"kit-eval-reviewer"}
     assert roles["kit-eval-reviewer"]["kind"] == "worker"
-    assert roles["kit-eval-reviewer"]["tier"] == "readonly"
+    assert roles["kit-eval-reviewer"]["tier"] == "verifier"
     for role in roles.values():
         assert set(role) == {"id", "kind", "tier", "description", "body", "workers"}
         assert role["workers"] == []

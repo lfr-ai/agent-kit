@@ -1,6 +1,6 @@
 """Composition root: the only place that knows every concrete adapter.
 
-Copy to 'app/composition.py'. Read configuration once, construct adapters,
+Copy to ``app/composition.py``. Read configuration once, construct adapters,
 inject them into use cases and hand the result to a driving adapter (CLI, HTTP
 handler, worker). No other module imports adapters, and no module below this
 one reads environment variables.
@@ -48,7 +48,7 @@ class Settings:
         """Read required settings and fail fast with the missing names.
 
         Args:
-            environ: Variable source; tests pass a plain dictionary.
+            environ (Mapping[str, str]): Variable source; tests pass a plain dictionary.
 
         Returns:
             Validated settings.
@@ -84,8 +84,8 @@ def build_settle_invoice(
     """Wire the settle-invoice use case with production adapters.
 
     Args:
-        settings: Validated configuration.
-        address_book: Customer id to e-mail address lookup.
+        settings (Settings): Validated configuration.
+        address_book (Mapping[str, str]): Customer id to e-mail address lookup.
 
     Returns:
         A ready-to-call use case.

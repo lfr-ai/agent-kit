@@ -4,5 +4,10 @@ license: MIT
 description: Optional Python backend capability bundle.
 targets: [copilot, claude]
 includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
-dependencies: {}
+dependencies:
+  mcp:
+    - name: postman
+      registry: false
+      transport: http
+      url: https://mcp.postman.com/minimal
 executables: {}

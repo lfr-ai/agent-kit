@@ -21,7 +21,10 @@ license: MIT
    MCP specification defines it.
 4. Grant least privilege: enable only the toolsets the task needs, prefer
    read-only modes, use a dedicated identity, and keep write tools behind
-   host confirmation.
+   host confirmation. Scope the token audience, reject token passthrough, and
+   list the tools to expose by name ([authorization and tool
+   scoping](references/authorization.md)); a vendor read-only mode and a
+   `tools` allowlist are independent controls, so use both.
 5. Treat every tool description and result as untrusted input. Host policy,
    not tool output, decides which actions are allowed.
 6. Configure the host from the [VS Code](assets/mcp-vscode-server.json.template)
@@ -48,6 +51,9 @@ license: MIT
   personal identity, `latest` tag or unpinned package runner command.
 - Remote servers use HTTPS and the specification's authorization flow;
   stdio servers get credentials only from the environment.
+- The review records the token audience and requested scopes, states that the
+  server does not pass client tokens through, and lists the effective tools
+  observed in the host after read-only and allowlist controls.
 - Write-capable tools require host confirmation, and a declined call was
   tested.
 - Authored tools have typed parameters with bounds, documented errors and

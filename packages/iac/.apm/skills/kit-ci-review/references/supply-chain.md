@@ -67,9 +67,15 @@ and runner that produced it, signed with a short-lived Sigstore certificate.
   lockfile on a schedule, because advisories are published after merge. Use the
   [dependency audit template](../assets/templates/dependency-audit.yml.template)
   and call it from the required CI summary.
-- Audit before installing: install only the hash-locked audit tools, audit the
-  exported lock, then sync. Install dependencies with `--no-build` so a package
-  without a wheel cannot run its build backend on the runner.
+- Audit before installing: for uv projects run `uv audit --locked
+  --preview-features audit-command` (add `json-output` and
+  `--output-format json` to fail on `summary.adverse_statuses`, which does not
+  change the exit code), then sync. `uv audit` does not verify lock hashes
+  against the index; `uv sync --locked` verifies artifact hashes at install, so
+  also review lock diffs and keep dependency review enabled. Use pip-audit or
+  OSV-Scanner only where the project is not uv-managed. Install dependencies
+  with `--no-build` so a package without a wheel cannot run its build backend
+  on the runner.
 - Keep cooldowns for version updates only. A global resolver cutoff such as uv's
   `exclude-newer` also blocks a same-week security fix; prefer Dependabot
   cooldowns plus immediate security updates.
@@ -121,6 +127,8 @@ on files a previous step checked out, and counts as pinned for SHA-pinning polic
 - <https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds>
 - <https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/caching-dependencies-to-speed-up-workflows>
 - <https://github.com/actions/dependency-review-action>
+- <https://docs.astral.sh/uv/reference/cli/#uv-audit>
+- <https://docs.astral.sh/uv/concepts/preview/>
 - <https://github.com/pypa/pip-audit>
 - <https://docs.astral.sh/uv/reference/settings/#no-build>
 - <https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/>

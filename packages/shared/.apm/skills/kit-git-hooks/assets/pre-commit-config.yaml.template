@@ -1,0 +1,113 @@
+# Staged pre-commit configuration. Copy to '.pre-commit-config.yaml'.
+#
+# Stages and budgets
+# - pre-commit : staged-file feedback in seconds; check-only except whitespace.
+# - commit-msg : Conventional Commits validation.
+# - pre-push   : whole-project checks (types, unit tests, lockfile).
+# - manual     : slow or networked checks; the same checks run in CI.
+#
+# Rules
+# - Hook repositories are frozen to full commit SHAs with the version in a
+#   comment. Update only with 'pre-commit autoupdate --freeze' in a reviewed
+#   change, and verify each SHA against the upstream tag.
+# - Local hooks call tools pinned in the project lockfile, so hooks, CI and the
+#   editor run one version.
+# - Hooks never use '--no-verify', 'SKIP' or baseline regeneration to pass.
+# - CI re-runs all of this on all files and is a required status check.
+# - Install with the bootstrap step: 'pre-commit install' (the types below are
+#   installed by default through default_install_hook_types).
+
+minimum_pre_commit_version: "4.4"
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  # Syntax and hygiene; only whitespace fixers may rewrite files.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  # One primary working-tree secret scanner with an audited baseline.
+  # Create the baseline once ('detect-secrets scan > .secrets.baseline'), audit it
+  # ('detect-secrets audit .secrets.baseline') and review every change to it.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: 01886c8a910c64595c47f186ca1ffc0b77fa5458 # frozen: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+
+  - repo: local
+    hooks:
+      # Fast, file-scoped, check-only.
+      - id: format-check
+        name: Formatter (check only)
+        entry: uv run --locked ruff format --check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: lint
+        name: Linter (check only)
+        entry: uv run --locked ruff check
+        language: unsupported
+        types_or: [python, pyi]
+
+      # Message rule; the stage must be installed or this never runs.
+      - id: conventional-commit
+        name: Conventional Commit message
+        entry: uv run --locked cz check --allow-abort --commit-msg-file
+        language: unsupported
+        stages: [commit-msg]
+
+      # Whole-project checks before sharing work.
+      - id: lockfile-current
+        name: Lockfile matches the manifest
+        entry: uv lock --check
+        language: unsupported
+        pass_filenames: false
+        stages: [pre-push]
+      - id: types
+        name: Type check
+        entry: uv run --locked ty check
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]
+      - id: unit-tests
+        name: Unit tests
+        entry: uv run --locked pytest -m unit -q
+        language: unsupported
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]
+
+      # Slow gate; run with 'pre-commit run --hook-stage manual --all-files' and in CI.
+      - id: full-gate
+        name: Full gate (manual)
+        entry: uv run --locked python scripts/run_gate.py --keep-going
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+
+# Alternative scanner for history scans (replace, do not stack, the block above):
+#   - repo: https://github.com/gitleaks/gitleaks
+#     rev: <full commit SHA of the reviewed release>  # frozen: <version>
+#     hooks:
+#       - id: gitleaks

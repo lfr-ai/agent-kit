@@ -79,8 +79,8 @@ def compare(old: Document, new: Document) -> list[Change]:
     """Return client-relevant changes from ``old`` to ``new``, sorted for stable output.
 
     Args:
-        old: Released OpenAPI description.
-        new: Candidate OpenAPI description.
+        old (Document): Released OpenAPI description.
+        new (Document): Candidate OpenAPI description.
 
     Returns:
         Changes sorted by location, severity, and message.
@@ -483,12 +483,8 @@ def _strings(value: Json) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     """Compare two JSON OpenAPI files and print changes.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        One when breaking changes exist (or warnings with ``--strict``), two on
-        unreadable input, otherwise zero.
+    Returns one when breaking changes exist (or warnings with ``--strict``), two on
+    unreadable input, otherwise zero.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -542,8 +538,8 @@ class OpenApiInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            path: Diagnostic path for the invalid input.
+            issue (OpenApiInputIssue): The violated input invariant.
+            path (Path | None): Diagnostic path for the invalid input.
         """
         super().__init__(issue.value.format(path=path))
 
@@ -555,8 +551,8 @@ class OpenApiInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
-            path: Diagnostic path for the invalid input.
+            issue (OpenApiInputIssue): The violated input invariant.
+            path (Path | None): Diagnostic path for the invalid input.
         """
         super().__init__(issue.value.format(path=path))
 

@@ -26,6 +26,7 @@ _SUPPORTED = (
     ("fullstack", ("ai",)),
     ("fullstack", ("workflows",)),
     ("ai", ("terraform", "bicep", "remote-access")),
+    ("backend", ("temporal", "identity")),
     ("terraform", ()),
     ("bicep", ()),
 )

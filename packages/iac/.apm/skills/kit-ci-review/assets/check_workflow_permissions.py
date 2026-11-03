@@ -74,8 +74,8 @@ def check_reference(reference: str, options: Options) -> str | None:
     """Explain why a ``uses:`` reference is unpinned, or return None when acceptable.
 
     Args:
-        reference: Raw value of a ``uses:`` key without quotes.
-        options: Scan configuration.
+        reference (str): Raw value of a ``uses:`` key without quotes.
+        options (Options): Scan configuration.
 
     Returns:
         A finding message, or None for local, self-repository, digest-pinned,
@@ -113,8 +113,8 @@ def _is_mapping(rest: str, following: Sequence[str]) -> bool:
     """Tell a ``defaults: run:`` settings mapping apart from a ``run:`` script.
 
     Args:
-        rest: Text after ``run:`` on the key line.
-        following: Lines after the key line.
+        rest (str): Text after ``run:`` on the key line.
+        following (Sequence[str]): Lines after the key line.
 
     Returns:
         True when the key has no inline value and its first child is a key.
@@ -178,7 +178,12 @@ def _permissions_findings(
 def _run_block_findings(
     path: Path, lines: Sequence[str], index: int, options: Options
 ) -> tuple[list[Finding], int] | None:
-    """Scan a ``run:`` script starting at ``index`` and return its end index."""
+    """Scan a ``run:`` script starting at ``index`` and return its end index.
+
+    Returns:
+        Expression findings in the script and the index just past its last line, or None
+        when the line does not start a ``run:`` script.
+    """
     run = _RUN.match(lines[index])
     if run is None or _is_mapping(run.group("rest"), lines[index + 1 :]):
         return None
@@ -216,9 +221,9 @@ def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
     """Scan one workflow or action file and return its findings in line order.
 
     Args:
-        path: Path reported in findings.
-        text: File content.
-        options: Scan configuration.
+        path (Path): Path reported in findings.
+        text (str): File content.
+        options (Options): Scan configuration.
 
     Returns:
         Findings sorted by line number.
@@ -248,7 +253,7 @@ class WorkflowInputError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            path: Diagnostic path for the failing input.
+            path (Path): Diagnostic path for the failing input.
         """
         super().__init__(f"path does not exist: {path}")
 
@@ -257,7 +262,7 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     """Expand directories into sorted YAML files; keep explicit files as given.
 
     Args:
-        paths: Files or directories supplied by the operator.
+        paths (Iterable[Path]): Files or directories supplied by the operator.
 
     Returns:
         Sorted, de-duplicated file list.
@@ -295,8 +300,8 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            lines: Observed lines for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            lines (list[int] | None): Observed lines for the failing case.
         """
         super().__init__(issue.value.format(lines=lines))
 
@@ -345,11 +350,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Scan workflow files and print one ``path:line: message`` line per finding.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 for unreadable input.
+    Returns 0 when clean, 1 with findings, 2 for unreadable input.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

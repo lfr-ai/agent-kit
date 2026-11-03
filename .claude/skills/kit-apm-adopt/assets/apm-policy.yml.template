@@ -5,15 +5,15 @@ fetch_failure: block
 dependencies:
   allow: []
 mcp:
-  allow: []
-  self_defined: deny
+  allow: [azure, chrome-devtools, context7, github, langfuse-docs, microsoft-learn, playwright, postman, shadcn, storybook, temporal-docs, terraform]
+  self_defined: allow
   trust_transitive: false
+  transport:
+    allow: [http, stdio]
 manifest:
   required_fields: [name, version, includes, license]
   require_explicit_includes: true
   scripts: deny
-executables:
-  deny_all: true
 security:
   integrity:
     require_hashes: true

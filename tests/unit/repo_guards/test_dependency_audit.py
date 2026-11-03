@@ -1,6 +1,7 @@
 """Locked dependency and license audit contracts."""
 
 from collections.abc import Callable
+import json
 from pathlib import Path
 import runpy
 import subprocess
@@ -32,18 +33,42 @@ def _write_lock(root: Path, text: str) -> None:
     (root / "uv.lock").write_text(text, encoding="utf-8")
 
 
+def _report(
+    *, vulnerabilities: int = 0, adverse_statuses: int = 0
+) -> dict[str, object]:
+    return {
+        "schema": {"version": "preview"},
+        "summary": {
+            "audited_packages": 2,
+            "vulnerabilities": vulnerabilities,
+            "adverse_statuses": adverse_statuses,
+        },
+        "vulnerabilities": [
+            {"dependency": {"name": "wheeled", "version": "1.0"}, "id": "TEST-1"}
+            for _ in range(vulnerabilities)
+        ],
+        "adverse_statuses": [
+            {"name": "wheeled", "status": "deprecated", "reason": None}
+            for _ in range(adverse_statuses)
+        ],
+    }
+
+
 def _recorder(
-    calls: list[list[str]], *, export_code: int = 0, audit_code: int = 0
+    calls: list[list[str]], *, audit_code: int = 0, report: str | None = None
 ) -> Callable[..., subprocess.CompletedProcess[str]]:
+    clean = json.dumps(_report())
+
     def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        code = export_code if "export" in command else audit_code
-        return subprocess.CompletedProcess(command, code)
+        return subprocess.CompletedProcess(
+            command, audit_code, stdout=clean if report is None else report
+        )
 
     return run
 
 
-def test_source_only_registry_packages_are_rejected_before_export(
+def test_source_only_registry_packages_are_rejected_before_audit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_lock(
@@ -114,34 +139,231 @@ def test_invalid_lock_encoding_fails_with_a_diagnostic(
     assert "cannot read uv.lock" in capsys.readouterr().err
 
 
-def test_lock_is_exported_with_hashes_and_audited_fail_closed(
+def test_lock_is_audited_locked_with_the_osv_and_status_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_lock(tmp_path, _WHEELED_LOCK)
     calls: list[list[str]] = []
     monkeypatch.setattr(audit.shutil, "which", lambda _name: "uv")
-    monkeypatch.setattr(audit.subprocess, "run", _recorder(calls, audit_code=1))
+    monkeypatch.setattr(audit.subprocess, "run", _recorder(calls))
+
+    assert audit.run(tmp_path) == 0
+    assert calls == [
+        [
+            "uv",
+            "audit",
+            "--locked",
+            "--preview-features",
+            "audit-command,json-output",
+            "--output-format",
+            "json",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("audit_code", "counts"),
+    [(1, (1, 0)), (0, (0, 1)), (0, (1, 0)), (1, (0, 0))],
+    ids=["vulnerable", "adverse-status-only", "vulnerable-exit-zero", "locked-failure"],
+)
+def test_any_audit_finding_or_failure_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    audit_code: int,
+    counts: tuple[int, int],
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    report = json.dumps(_report(vulnerabilities=counts[0], adverse_statuses=counts[1]))
+    monkeypatch.setattr(audit.shutil, "which", lambda _name: "uv")
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder([], audit_code=audit_code, report=report)
+    )
 
     assert audit.run(tmp_path) == 1
-    export, scan = calls
-    assert export[:2] == ["uv", "export"]
-    assert {"--locked", "--all-groups", "--no-emit-project"} <= set(export)
-    assert "--no-hashes" not in export
-    assert scan[1:3] == ["-m", "pip_audit"]
-    assert {"--require-hashes", "--disable-pip", "--strict", "--cache-dir"} <= set(scan)
-    assert "--vulnerability-service" not in scan
+    assert report in capsys.readouterr().err
 
 
-def test_export_failure_stops_before_audit(
+@pytest.mark.parametrize("report", ["", "not json", "[]", '{"summary": {}}'])
+def test_unreadable_audit_report_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report: str
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    monkeypatch.setattr(audit.shutil, "which", lambda _name: "uv")
+    monkeypatch.setattr(audit.subprocess, "run", _recorder([], report=report))
+
+    assert audit.run(tmp_path) == 1
+
+
+@pytest.mark.parametrize(
+    "field", ["audited_packages", "vulnerabilities", "adverse_statuses"]
+)
+@pytest.mark.parametrize("value", [True, False, -1, 0.5, "0", None])
+def test_invalid_report_counts_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    report = _report()
+    report["summary"] = {
+        "audited_packages": 2,
+        "vulnerabilities": 0,
+        "adverse_statuses": 0,
+        field: value,
+    }
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder([], report=json.dumps(report))
+    )
+
+    assert audit.run(tmp_path) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema", None),
+        ("schema", {"version": "unknown"}),
+        ("summary", []),
+        ("vulnerabilities", None),
+        ("vulnerabilities", [{}]),
+        ("adverse_statuses", {}),
+        ("adverse_statuses", "quarantined"),
+        ("adverse_statuses", [None]),
+        ("errors", ["network failure"]),
+        ("error", "status lookup failed"),
+    ],
+)
+def test_malformed_or_contradictory_report_fails_before_bun(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    (tmp_path / "bun.lock").write_text("{}", encoding="utf-8")
+    report = _report()
+    report[field] = value
+    calls: list[list[str]] = []
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder(calls, report=json.dumps(report))
+    )
+
+    assert audit.run(tmp_path) == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "field", ["schema", "summary", "vulnerabilities", "adverse_statuses"]
+)
+def test_incomplete_report_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    report = _report()
+    del report[field]
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder([], report=json.dumps(report))
+    )
+
+    assert audit.run(tmp_path) == 1
+
+
+@pytest.mark.parametrize(
+    "status", ["archived", "deprecated", "quarantined", "unknown", None]
+)
+def test_status_only_report_blocks_even_when_uv_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str | None
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    report = _report(adverse_statuses=1)
+    report["adverse_statuses"] = [{"name": "wheeled", "status": status, "reason": None}]
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder([], report=json.dumps(report))
+    )
+
+    assert audit.run(tmp_path) == 1
+
+
+@pytest.mark.parametrize("audit_code", [1, 2, 7])
+def test_uv_network_or_command_error_preserves_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    audit_code: int,
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess, "run", _recorder([], audit_code=audit_code, report="")
+    )
+
+    assert audit.run(tmp_path) == audit_code
+    assert f"uv audit exit {audit_code}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("tool", ["uv", "bun"])
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError(), PermissionError(), UnicodeError()]
+)
+def test_tool_launch_or_output_failure_has_a_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tool: str,
+    error: OSError | UnicodeError,
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    (tmp_path / "bun.lock").write_text("{}", encoding="utf-8")
+    clean = _recorder([])
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == tool:
+            raise error
+        return clean(command, **kwargs)
+
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(audit.subprocess, "run", run)
+
+    assert audit.run(tmp_path) == 1
+    assert "cannot run audit tool" in capsys.readouterr().err
+
+
+def test_ignore_until_fixed_is_forwarded_only_when_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_lock(tmp_path, _WHEELED_LOCK)
     calls: list[list[str]] = []
-    monkeypatch.setattr(audit.shutil, "which", lambda _name: "uv")
-    monkeypatch.setattr(audit.subprocess, "run", _recorder(calls, export_code=2))
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(audit.subprocess, "run", _recorder(calls))
+    monkeypatch.setattr(audit, "_ROOT", tmp_path)
+    monkeypatch.setattr(
+        audit.sys,
+        "argv",
+        ["audit_dependencies.py", "--ignore-until-fixed", "TEST-1"],
+    )
 
-    assert audit.run(tmp_path) == 2
-    assert len(calls) == 1
+    assert audit.main() == 0
+    assert calls[0][-2:] == ["--ignore-until-fixed", "TEST-1"]
+
+
+def test_explicit_exception_does_not_hide_reported_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_lock(tmp_path, _WHEELED_LOCK)
+    monkeypatch.setattr(audit.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        _recorder([], report=json.dumps(_report(vulnerabilities=1))),
+    )
+
+    assert audit.run(tmp_path, ignore_until_fixed=("TEST-1",)) == 1
 
 
 @pytest.mark.parametrize("lock", [None, "not = [valid"])
@@ -160,10 +382,13 @@ def test_bun_lock_is_audited_after_the_python_lock(
     _write_lock(tmp_path, _WHEELED_LOCK)
     (tmp_path / "bun.lock").write_text("{}", encoding="utf-8")
     calls: list[list[str]] = []
+    clean = _recorder([])
 
-    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        return subprocess.CompletedProcess(command, 3 if command[0] == "bun" else 0)
+        if command[0] == "bun":
+            return subprocess.CompletedProcess(command, 3)
+        return clean(command, **kwargs)
 
     monkeypatch.setattr(audit.shutil, "which", lambda name: name)
     monkeypatch.setattr(audit.subprocess, "run", run)

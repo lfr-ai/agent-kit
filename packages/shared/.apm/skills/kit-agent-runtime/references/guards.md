@@ -1,21 +1,20 @@
-# Opt-in agent guards
+# Agent guards
 
 Guards are small local programs that a runtime calls at a hook point. This skill
-ships three: a pre-tool guard, a license guard, and a review-package gate. They are
+documents three: a pre-tool guard, a license guard, and a review-package gate. They are
 **defense in depth**. They are not an authorization boundary, not a sandbox, and
 not a substitute for native approval modes, permission rules, or managed policy.
 
-Nothing here is active until a consumer copies the assets, reviews the policy, and
-registers the hook in a runtime configuration file they own.
+The pre-tool guard is delivered by the `shared` package as an APM hook, so every
+profile carries it. The license guard and review package stay opt-in assets that a
+consumer copies, reviews and registers in a configuration file they own.
 
-## Why opt-in
+## Delivered Git guard
 
-An earlier toolkit decision removed a deny-everything hook stub because shipping it
-would have implied a safety property it did not have. The guards below keep that
-lesson: they never approve a call, they document their bypasses, and the toolkit
-does not install them. A project that adopts them still relies on native controls
-for enforcement and uses the guard to catch common mistakes earlier and with a
-clearer reason.
+`shared` ships `git-guard.json`, a `preToolUse` hook that runs `tool_guard.py` with
+`git-guard.policy` from its `hooks/` directory. It never approves a
+call, documents its bypasses, and is not a sandbox: a project still relies on
+native controls, and the guard catches common mistakes earlier with a clearer reason.
 
 ## Threat model
 
@@ -25,10 +24,11 @@ clearer reason.
 | Secret file read | agent opens a dotenv or private key file | Yes, for named paths | Permission deny rules, secret store, file mentions off |
 | Prompt-injected instruction from fetched content | page text tells the agent to pipe a script to a shell | Partly: blocks common literal patterns | Native approval, network allow lists, sandbox |
 | Verification bypass | skipping commit hooks, disabling TLS checks | Yes, for known flags | CI enforces checks server side |
-| Hook or workflow tampering | agent edits a hook file that later runs automatically | Asks before known write tools touch it | Code review, protected branches, workspace trust |
+| Hook tampering | agent edits its installed hook | Denies named file-edit tools | Code review, protected branches, workspace trust |
 | Deliberate evasion by a capable agent | variables, aliases, generated scripts, encoded payloads | No | Sandbox, least-privilege tools, review |
 | Malicious MCP server or extension | tool with a new name and arbitrary behavior | Only if the policy names it | Do not install untrusted servers; native tool approval |
-| Hallucinated or malicious package | agent installs a plausible but unreviewed name (slopsquatting) | Yes: `dependency-install` asks before literal installers and package runners | Native deny rules for installers, reviewed lockfile, dependency review and lock audit in CI |
+| Hallucinated or malicious package | agent installs an unreviewed name (slopsquatting) | Denies literal installers, syncing and downloading runners | Audited locks, native permissions and dependency review in CI |
+| Database damage | `DROP TABLE`, migration, Redis flush | Denies named SQL mutations, migration commands and write tools | Read-only identities, isolated test databases, backups and recovery drills |
 | License drift in dependencies | new transitive dependency under a denied license | Yes, at check time | Dependency review in CI, legal review |
 
 The pre-tool guard sees only the tool name and the literal tool input that the
@@ -37,8 +37,9 @@ what a variable expands to, or what a symbolic link points at.
 
 ## What each guard does
 
-- [tool_guard.py](../assets/tool_guard.py) reads one pre-tool hook payload on stdin,
-  evaluates it against [the policy template](../assets/tool_guard_policy.json.template),
+- `tool_guard.py` (the delivered hook engine) reads one pre-tool hook payload on stdin,
+  evaluates it against a policy such as
+  [the policy template](../assets/tool_guard_policy.json.template),
   and prints a `deny` or `ask` decision in the runtime's JSON shape. An unmatched
   call prints nothing, so the runtime's normal permission flow decides.
 - [license_guard.py](../assets/license_guard.py) checks installed Python distribution
@@ -48,45 +49,71 @@ what a variable expands to, or what a symbolic link points at.
   fails when evidence is missing or failing. See
   [subagent-driven development](subagent-driven-development.md).
 
-## Read-only Git for consumer sessions
+## Git scope
 
-The [read-only Git policy](../assets/git_readonly_policy.json.template) uses the
-same guard engine. Register a second hook handler pointing to this policy
-alongside the baseline handler; replacing the baseline would drop its secret,
-dependency and destructive-command checks. Neither handler ever grants access.
+`git-guard.policy` uses the same engine as every other policy and is always on.
 
-The additional policy denies literal Git commands other than `diff`, `status`,
-`log`, `show`, `blame`, `ls-files` and `rev-parse`; it also rejects known output
-and executable-helper options, shell composition, Git metadata writes through
-file tools and named repository-write MCP tools. Fetching, pulling, staging,
-committing and pushing are mutations even when they sound routine.
-Subcommand matches require a complete token, so a custom alias such as
-`diff-custom` is not accepted as `diff`. Output-like long flags and attached
-`-o`/`-c` forms are conservatively denied, including some harmless options.
+- **Everywhere:** deny hook-bypass flags (`--no-verify`, `-n`, abbreviations),
+  unsafe options, shell composition, Git metadata writes (including through file
+  tools), non-read-only GitHub CLI use, and file-tool edits to installed hook and
+  settings files.
+- **Outside the kit checkout:** only `diff`, `status`, `log`, `show`, `blame`,
+  `ls-files` and `rev-parse` are available; staging, commits, branches, fetch, pull
+  and push belong to the operator. The guard's own files cannot be edited or
+  named in shell commands.
+- **Inside the checkout named by `AGENT_KIT_DIR`** (compared with the hook payload's
+  `cwd`): staging, commits, `switch`, `restore`, `fetch`, `pull` and an explicit
+  `git push origin feature/example` pass to native authorization. Force pushes,
+  implicit targets, known default names (`main`, `master`, `trunk`, `HEAD`),
+  refspecs, tags, rebase and reset stay denied. Confirm the remote's actual default
+  branch separately; it can have another name. The guard sources can be maintained.
+  An unset or empty `AGENT_KIT_DIR` never matches, so the kit exception is opt-in per
+  machine. The variable comes from the operator's environment and the `cwd` from the
+  host, not from the agent. Both must identify existing absolute directories;
+  symlinks are resolved before containment checks. Registration is documented in the repository's
+  `scripts/register_checkout.ps1`.
 
-Use the existing templates with a separate policy argument:
+Subcommand matches require a complete token, so an alias such as `diff-custom` is
+not accepted as `diff`. Output-like long flags and attached `-o`/`-c` forms are
+conservatively denied, including some harmless options.
+
+Rules carry optional `only_in` / `except_in` fields naming an upper-case
+environment variable that holds a directory; they are mutually exclusive.
 
 ```text
-python tool_guard.py check-policy git_readonly_policy.json
-python tool_guard.py explain --policy git_readonly_policy.json --tool Bash --command "git add ."
+python tool_guard.py check-policy git-guard.policy
+python tool_guard.py explain --policy git-guard.policy --tool Bash --command "git push" --cwd .
 ```
 
 The second command must report `deny` and exit 1. A registered `hook` handler
 instead emits the runtime's denial JSON and exits 0; exit 0 does not mean allow.
-Test both the standalone script and a real host session before adoption.
+Test both the standalone script and a real host session before relying on it.
+OS-level write restrictions on Git metadata, inaccessible credentials and hosted
+rulesets are required for a stronger boundary.
 
-`kit-improve` is not a trusted hook input. Do not waive this policy because a
-prompt contains that name, because `AGENT_KIT_DIR` points somewhere, or because
-the tool call supplies a `cwd`. For kit maintenance, the operator chooses a
-separate session/configuration using the verified source checkout and the
-repository's native permission rules. A consumer session stays read-only even
-when the user asks it to disable the guard. If the host cannot isolate those
-sessions, hand back the diff and operator commands instead.
+## Safety rules delivered with Git restrictions
 
-This policy is packaged as a reviewed asset, not as an active APM executable.
-No hook is registered automatically. All bypass and timeout limits below still
-apply; OS-level write restrictions on Git metadata, inaccessible credentials and
-hosted rulesets are required for a stronger boundary.
+These are deny rules, not optional approval prompts:
+
+| Category | Examples denied | Safe neighbor |
+| --- | --- | --- |
+| Secret files | `.env`, private keys, cloud credentials, Docker credential config | Sanitized `.env.example` |
+| Dependency installation | `pip install`, `uv sync`, `uv run` without `--no-sync`, `bun install`, downloading runners | `uv add --no-sync`, `uv audit --locked`, `uv run --locked --no-sync pytest` |
+| Recursive deletion and disks | `rm -rf`, `Remove-Item -Recurse`, formatting devices | Deleting one approved leaf file |
+| Remote or hidden execution | Download piped to shell, encoded PowerShell | Downloading source for review |
+| Database writes | SQL write/DDL literals, Alembic migrations, Redis/Mongo writes, named database execution tools | SELECT with a read-only identity |
+| Verification bypass | TLS/certificate verification disabled | Normal verified HTTPS |
+| Secrets and privilege | Dumping all environment variables, `sudo`, `chmod 777` | Inspecting an approved non-secret variable |
+
+This hook does not remember a successful dependency audit. Installation stays
+operator-only: audit the changed locks, then perform a locked sync outside the
+agent. MCP server startup is host-controlled, not a shell tool call; exact server
+pins and host consent remain separate requirements.
+
+Database patterns are deliberately conservative, not a SQL parser. They may also
+match SQL inside a test fixture or documentation command. Generic query tools,
+stored procedures and unknown tool names may evade them; read-only database
+roles, environment isolation and backups are the actual boundary.
 
 ## Policy model
 
@@ -197,12 +224,12 @@ the literal commands; VS Code `chat.tools.terminal.autoApprove` rules set to
 would auto-approve them. Both are matched against command text and can be
 bypassed through other spellings, interpreters, or generated scripts, so CI audits
 remain the authoritative boundary. Pair them with a sandbox or network allowlist
-where the host supports one. The template's `dependency-install` rule asks rather
-than denies, because an approved dependency change is a normal operator action.
+where the host supports one. The optional baseline template uses `ask` for dependency installation. The
+always-delivered safety policy is stricter: installation is operator-only.
 
 ## Rollout
 
-1. Copy `tool_guard.py` and the policy template into a consumer-owned directory such
+1. Copy the delivered `tool_guard.py` and the policy template into a consumer-owned directory such
    as `.agents/hooks/`, rename the policy to `tool_guard_policy.json`, and review
    every rule with the repository owner.
 2. Run `python .agents/hooks/tool_guard.py check-policy .agents/hooks/tool_guard_policy.json`.

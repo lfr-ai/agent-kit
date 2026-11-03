@@ -1,6 +1,6 @@
 """Aggregate root: the only entry point for changing an order and its lines.
 
-Copy into 'src/<package>/core/orders.py' and adapt. The aggregate enforces its
+Copy into ``src/<package>/core/orders.py`` and adapt. The aggregate enforces its
 invariants in command methods, records domain events, compares by identity, and
 carries a version for optimistic concurrency. It imports no framework.
 """
@@ -67,7 +67,7 @@ class Order:
         - All lines share the order currency.
         - A confirmed order has at least one line and a non-negative total.
         - Lines change only while the order is a draft.
-        - At most 'MAX_LINES' lines; one line per SKU.
+        - At most ``MAX_LINES`` lines; one line per SKU.
     """
 
     __slots__ = ("_currency", "_customer_id", "_events", "_id", "_lines", "_status", "_version")
@@ -82,15 +82,15 @@ class Order:
         lines: Iterable[OrderLine],
         version: int,
     ) -> None:
-        """Hold already-validated state; use 'open' or 'restore' to construct.
+        """Hold already-validated state; use ``open`` or ``restore`` to construct.
 
         Args:
-            order_id: Aggregate identity.
-            customer_id: Reference to the customer aggregate by identifier only.
-            currency: ISO 4217 code shared by every line.
-            status: Current lifecycle state.
-            lines: Current lines in insertion order.
-            version: Persisted version for optimistic concurrency.
+            order_id (OrderId): Aggregate identity.
+            customer_id (str): Reference to the customer aggregate by identifier only.
+            currency (str): ISO 4217 code shared by every line.
+            status (OrderStatus): Current lifecycle state.
+            lines (Iterable[OrderLine]): Current lines in insertion order.
+            version (int): Persisted version for optimistic concurrency.
         """
         self._id = order_id
         self._customer_id = customer_id
@@ -102,7 +102,14 @@ class Order:
 
     @classmethod
     def open(cls, *, order_id: OrderId, customer_id: str, currency: str, now: datetime) -> Self:
-        """Start a new draft order and record 'OrderOpened'."""
+        """Start a new draft order and record ``OrderOpened``.
+
+        Args:
+            order_id (OrderId): Identity assigned to the new aggregate and event.
+            customer_id (str): Reference to the owning customer aggregate.
+            currency (str): Three-uppercase-letter currency validated by ``Money``.
+            now (datetime): Occurrence time attached to the opening event.
+        """
         Money.zero(currency)  # Validates the currency code with the value object rule.
         order = cls(
             order_id=order_id,
@@ -126,7 +133,16 @@ class Order:
         lines: Iterable[OrderLine],
         version: int,
     ) -> Self:
-        """Rebuild from storage without re-running creation rules or emitting events."""
+        """Rebuild from storage without re-running creation rules or emitting events.
+
+        Args:
+            order_id (OrderId): Persisted aggregate identity.
+            customer_id (str): Persisted customer reference.
+            currency (str): Stored currency shared by the lines.
+            status (OrderStatus): Stored lifecycle state.
+            lines (Iterable[OrderLine]): Validated stored lines in insertion order.
+            version (int): Loaded version used for optimistic concurrency.
+        """
         return cls(
             order_id=order_id,
             customer_id=customer_id,
@@ -177,6 +193,12 @@ class Order:
     def add_line(self, *, sku: str, quantity: int, unit_price: Money, now: datetime) -> None:
         """Add a line to a draft order.
 
+        Args:
+            sku (str): Non-blank product identifier not already on this order.
+            quantity (int): Positive number of units for the new line.
+            unit_price (Money): Per-unit amount in the order's currency.
+            now (datetime): Occurrence time attached to the line-added event.
+
         Raises:
             OrderStateError: If the order is not a draft.
             OrderLimitError: If the SKU is already present or the line limit is reached.
@@ -196,7 +218,7 @@ class Order:
         )
 
     def confirm(self, *, now: datetime) -> None:
-        """Confirm a non-empty draft and record 'OrderConfirmed'.
+        """Confirm a non-empty draft and record ``OrderConfirmed``.
 
         Raises:
             OrderStateError: If the order is not a draft or has no lines.

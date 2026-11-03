@@ -1,17 +1,17 @@
 """Stream event contract, SSE codec, replay buffer, and SSE parser.
 
-Copy to 'streaming/events.py'. Framework-free: the FastAPI route, a WebSocket
+Copy to ``streaming/events.py``. Framework-free: the FastAPI route, a WebSocket
 handler, or a gRPC servicer can all reuse these types.
 
 Contract:
 
 - Every event has a per-stream sequence number starting at 1; it is the SSE
-  'id' and the value clients send back in 'Last-Event-ID'.
-- Event names are 'start', 'delta', 'progress' and 'end'.
-- Every completed stream ends with exactly one 'end' event whose data has a
-  'status' of 'completed', 'failed', 'cancelled' or 'timeout'.
-- A connection that closes without 'end' is a transport interruption; the
-  client reconnects with 'Last-Event-ID' and receives only later events.
+  ``id`` and the value clients send back in ``Last-Event-ID``.
+- Event names are ``start``, ``delta``, ``progress`` and ``end``.
+- Every completed stream ends with exactly one ``end`` event whose data has a
+  ``status`` of ``completed``, ``failed``, ``cancelled`` or ``timeout``.
+- A connection that closes without ``end`` is a transport interruption; the
+  client reconnects with ``Last-Event-ID`` and receives only later events.
 """
 
 import json
@@ -31,7 +31,7 @@ class EventName(StrEnum):
 
 
 class EndStatus(StrEnum):
-    """Terminal outcomes carried by the 'end' event."""
+    """Terminal outcomes carried by the ``end`` event."""
 
     COMPLETED = "completed"
     FAILED = "failed"
@@ -73,7 +73,7 @@ class StreamEvent:
 
     @property
     def is_terminal(self) -> bool:
-        """True for the single 'end' event."""
+        """True for the single ``end`` event."""
         return self.event is EventName.END
 
     def json(self) -> str:
@@ -86,12 +86,12 @@ class StreamEvent:
 def encode_sse(event: StreamEvent) -> bytes:
     """Encode one event as an SSE frame.
 
-    The payload is single-line JSON, so no 'data' line can smuggle a blank line
+    The payload is single-line JSON, so no ``data`` line can smuggle a blank line
     or extra field into the stream. Event names come from an enum and ids are
     integers, so neither can contain a newline.
 
     Args:
-        event: Event to encode.
+        event (StreamEvent): Event to encode.
 
     Returns:
         UTF-8 bytes ending with the blank line that dispatches the event.
@@ -102,34 +102,23 @@ def encode_sse(event: StreamEvent) -> bytes:
 def encode_comment(text: str = "ping") -> bytes:
     """Encode an SSE comment, used as a heartbeat that clients ignore.
 
-    Args:
-        text: Comment text; newlines are removed.
-
-    Returns:
-        UTF-8 bytes for one comment line and a terminating blank line.
+    Newlines in ``text`` are removed.
     """
     return f": {' '.join(text.splitlines())}\n\n".encode()
 
 
 def encode_retry(milliseconds: int) -> bytes:
-    """Encode the client reconnection delay hint.
-
-    Args:
-        milliseconds: Delay the client should wait before reconnecting.
-
-    Returns:
-        UTF-8 bytes for a 'retry' field.
-    """
+    """Encode the client reconnection delay hint."""
     if milliseconds < 0:
         raise ValueError("retry must be non-negative")
     return f"retry: {milliseconds}\n\n".encode()
 
 
 def parse_last_event_id(raw: str | None) -> int:
-    """Parse a 'Last-Event-ID' header value.
+    """Parse a ``Last-Event-ID`` header value.
 
     Args:
-        raw: Header value, or None when absent.
+        raw (str | None): Header value, or None when absent.
 
     Returns:
         The last sequence the client saw; 0 when absent.
@@ -152,7 +141,7 @@ class ReplayBuffer:
         """Create an empty buffer.
 
         Args:
-            capacity: Maximum number of retained events.
+            capacity (int): Maximum number of retained events.
         """
         if capacity < 1:
             raise ValueError("capacity must be positive")
@@ -167,7 +156,7 @@ class ReplayBuffer:
         """Retain an event; sequence numbers must increase by one.
 
         Args:
-            event: Next event of the stream.
+            event (StreamEvent): Next event of the stream.
 
         Raises:
             ValueError: If the sequence is not contiguous.
@@ -177,10 +166,10 @@ class ReplayBuffer:
         self._events.append(event)
 
     def after(self, seq: int) -> list[StreamEvent]:
-        """Return retained events newer than 'seq'.
+        """Return retained events newer than ``seq``.
 
         Args:
-            seq: Last sequence the client saw.
+            seq (int): Last sequence the client saw.
 
         Returns:
             Events with a larger sequence, oldest first.
@@ -201,7 +190,7 @@ class ParsedEvent:
     """One dispatched SSE event as a client sees it.
 
     Attributes:
-        event: Event name; 'message' when the frame had none.
+        event: Event name; ``message`` when the frame had none.
         data: Data lines joined with newlines.
         id: Last event id in effect, or None.
     """
@@ -214,11 +203,11 @@ class ParsedEvent:
 def parse_sse(text: str) -> Iterator[ParsedEvent]:
     """Parse an SSE body the way the HTML specification's client algorithm does.
 
-    Comments and 'retry' fields are consumed; an event is dispatched at each
+    Comments and ``retry`` fields are consumed; an event is dispatched at each
     blank line when it has data. Use it in contract tests and Python clients.
 
     Args:
-        text: Complete or partial response body.
+        text (str): Complete or partial response body.
 
     Yields:
         Dispatched events in order.

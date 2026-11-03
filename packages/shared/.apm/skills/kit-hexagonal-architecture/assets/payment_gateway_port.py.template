@@ -1,6 +1,6 @@
 """Driven port for charging money through an external payment provider.
 
-Copy to 'app/application/ports/payments.py'. The port speaks the application's
+Copy to ``app/application/ports/payments.py``. The port speaks the application's
 language: an invoice, an amount and an idempotency key. It does not expose URLs,
 HTTP status codes, vendor SDK objects or retry knobs; those stay in adapters.
 """
@@ -39,10 +39,10 @@ class PaymentGateway(Protocol):
         """Capture a payment, or return the earlier receipt for a repeated key.
 
         Args:
-            invoice_id: Invoice being paid; used for provider-side reconciliation.
-            amount: Positive amount to capture.
-            currency: ISO 4217 code of the amount.
-            idempotency_key: Same key means same charge; never charge twice.
+            invoice_id (str): Invoice being paid; used for provider-side reconciliation.
+            amount (Decimal): Positive amount to capture.
+            currency (str): ISO 4217 code of the amount.
+            idempotency_key (str): Same key means same charge; never charge twice.
 
         Returns:
             The receipt for the captured (or previously captured) charge.

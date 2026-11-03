@@ -92,7 +92,12 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 def _sqlite_connect(
     dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
 ) -> None:
-    """Let SQLAlchemy own BEGIN so savepoints work, and enforce foreign keys."""
+    """Let SQLAlchemy own BEGIN so savepoints work, and enforce foreign keys.
+
+    Args:
+        dbapi_connection (DBAPIConnection): Driver connection to configure.
+        connection_record (ConnectionPoolEntry): Required event argument, unused.
+    """
     del connection_record
     dbapi_connection.isolation_level = None
     cursor = dbapi_connection.cursor()

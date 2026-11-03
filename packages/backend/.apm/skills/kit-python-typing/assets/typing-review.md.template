@@ -1,0 +1,13 @@
+# Typing-only review
+
+- Owned paths and all current consumers:
+- Existing runtime tests and baseline result:
+- Input types and validation boundary:
+- Record keys, required/optional status, and concrete field types:
+- Structured output ordering, empty/absent cases, and serialization witness:
+- Predicate true cases, including empty values:
+- Predicate false cases that are still instances of the narrowed type:
+- Choice of `TypeIs` (both branches) or `TypeGuard` (true branch only), and why:
+- Mutable values that could invalidate narrowing:
+- Exact type-check and focused test commands/results:
+- Unverified external consumers or integration requests:

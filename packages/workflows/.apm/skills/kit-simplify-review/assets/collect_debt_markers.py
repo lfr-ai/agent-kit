@@ -117,7 +117,12 @@ def _pattern(markers: tuple[str, ...]) -> re.Pattern[str]:
 
 
 def _metadata(raw: str) -> dict[str, str]:
-    """Parse ``key=value`` pairs separated by commas or semicolons."""
+    """Parse ``key=value`` pairs separated by commas or semicolons.
+
+    Returns:
+        Values keyed by casefolded key; later duplicates win and items without ``=`` are
+        skipped.
+    """
     pairs: dict[str, str] = {}
     for item in re.split(r"[,;]", raw):
         key, separator, value = item.partition("=")
@@ -135,9 +140,9 @@ def scan_text(path: Path, text: str, markers: tuple[str, ...]) -> list[Entry]:
     """Collect markers from one file's text.
 
     Args:
-        path: File path recorded in each entry.
-        text: File contents.
-        markers: Marker keywords to match.
+        path (Path): File path recorded in each entry.
+        text (str): File contents.
+        markers (tuple[str, ...]): Marker keywords to match.
 
     Returns:
         Entries in line order.
@@ -177,8 +182,8 @@ def discover(paths: list[Path], options: Options) -> list[Path]:
     extension and by exclude globs matched against their relative path parts.
 
     Args:
-        paths: Files or directories given on the command line.
-        options: Extension and exclude configuration.
+        paths (list[Path]): Files or directories given on the command line.
+        options (Options): Extension and exclude configuration.
 
     Returns:
         Sorted, de-duplicated file paths.
@@ -206,8 +211,8 @@ def problems(entries: list[Entry], options: Options) -> list[str]:
     """Report malformed, ownerless or expired markers.
 
     Args:
-        entries: Collected markers.
-        options: Expiry date and ownership requirement.
+        entries (list[Entry]): Collected markers.
+        options (Options): Expiry date and ownership requirement.
 
     Returns:
         Deterministic ``path:line: message`` findings.
@@ -250,8 +255,8 @@ def render_ledger(entries: list[Entry], *, title: str) -> str:
     """Render entries as a Markdown ledger with per-marker counts.
 
     Args:
-        entries: Collected markers.
-        title: Level-one heading text.
+        entries (list[Entry]): Collected markers.
+        title (str): Level-one heading text.
 
     Returns:
         Markdown text ending with a newline.
@@ -285,8 +290,8 @@ def collect(paths: list[Path], options: Options) -> list[Entry]:
     """Scan explicit paths and return every marker in path and line order.
 
     Args:
-        paths: Files or directories to scan.
-        options: Scan configuration.
+        paths (list[Path]): Files or directories to scan.
+        options (Options): Scan configuration.
 
     Returns:
         Collected entries.
@@ -315,8 +320,8 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            expected: Observed expected for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            expected (str | None): Observed expected for the failing case.
         """
         super().__init__(issue.value.format(expected=expected))
 
@@ -401,11 +406,7 @@ def _write_ledger(ledger: str, output: Path | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Write the ledger and report findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv`` when omitted.
-
-    Returns:
-        0 when every marker is well formed, 1 on findings, 2 on unusable input.
+    Returns 0 when every marker is well formed, 1 on findings, 2 on unusable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

@@ -446,3 +446,21 @@ def test_missing_command_is_a_usage_error() -> None:
     """Argparse exits with status 2 when no subcommand is supplied."""
     with pytest.raises(SystemExit, match="2"):
         main(_cli_actions(), [])
+
+
+def test_invalid_log_level_environment_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AGENT_KIT_LOG_LEVEL", "chatty")
+
+    assert main(_cli_actions(), ["check"]) == 2
+    assert "AGENT_KIT_LOG_LEVEL must be one of" in capsys.readouterr().err
+
+
+def test_log_level_flag_overrides_environment_and_keeps_stdout_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AGENT_KIT_LOG_LEVEL", "chatty")
+
+    assert main(_cli_actions(), ["--log-level", "debug", "check", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True

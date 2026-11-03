@@ -38,7 +38,7 @@ async def get_container(request: Request) -> Container:
     thread pool for them.
 
     Args:
-        request: Current request.
+        request (Request): Current request.
 
     Returns:
         The process-wide container.
@@ -60,14 +60,7 @@ ContainerDep = Annotated[Container, Depends(get_container)]
 
 
 async def get_catalog(container: ContainerDep) -> ItemCatalog:
-    """Expose only the catalog port to item handlers.
-
-    Args:
-        container: Process-wide container.
-
-    Returns:
-        The catalog port.
-    """
+    """Expose only the catalog port to item handlers."""
     return container.catalog
 
 

@@ -1,11 +1,11 @@
 """Framework-free retrievers, an in-memory index, and test doubles.
 
-Copy to 'retrieval/retrievers.py'. 'InMemoryIndex' implements the
-'IndexWriter' port and backs 'LexicalRetriever' (Okapi BM25) and
-'DenseRetriever' (cosine similarity). 'HybridRetriever' fuses any set of
-'Retriever' ports with reciprocal rank fusion and an optional reranker.
+Copy to ``retrieval/retrievers.py``. ``InMemoryIndex`` implements the
+``IndexWriter`` port and backs ``LexicalRetriever`` (Okapi BM25) and
+``DenseRetriever`` (cosine similarity). ``HybridRetriever`` fuses any set of
+``Retriever`` ports with reciprocal rank fusion and an optional reranker.
 These classes are production-usable for small corpora and are the fakes for
-tests of everything that depends on the 'Retriever' port.
+tests of everything that depends on the ``Retriever`` port.
 """
 
 import asyncio
@@ -43,19 +43,12 @@ _DEFAULT_CANDIDATE_MULTIPLIER = 4
 
 
 def tokenize(text: str) -> list[str]:
-    """Lower-case word tokens; replace with a language-aware analyzer if needed.
-
-    Args:
-        text: Input text.
-
-    Returns:
-        Tokens in order.
-    """
+    """Lower-case word tokens; replace with a language-aware analyzer if needed."""
     return [token.casefold() for token in _TOKEN.findall(text)]
 
 
 class InMemoryIndex:
-    """Dictionary-backed index implementing the 'IndexWriter' port."""
+    """Dictionary-backed index implementing the ``IndexWriter`` port."""
 
     def __init__(self) -> None:
         """Create an empty index."""
@@ -69,7 +62,7 @@ class InMemoryIndex:
         influence ranks, scores, or corpus statistics returned to the caller.
 
         Args:
-            query: Request whose principal and filters apply.
+            query (Query): Request whose principal and filters apply.
 
         Returns:
             Visible chunks in stable id order.
@@ -87,7 +80,7 @@ class InMemoryIndex:
         """Insert or replace chunks by id.
 
         Args:
-            chunks: Chunks to write.
+            chunks (Sequence[Chunk]): Chunks to write.
 
         Returns:
             Number of chunks written.
@@ -113,8 +106,8 @@ class InMemoryIndex:
         """Remove every chunk of a source and remember the deletion.
 
         Args:
-            tenant: Owning tenant.
-            source_id: Source to remove.
+            tenant (str): Owning tenant.
+            source_id (str): Source to remove.
 
         Returns:
             Number of chunks removed.
@@ -135,9 +128,9 @@ class InMemoryIndex:
         """Remove chunks of every other version of a source.
 
         Args:
-            tenant: Owning tenant.
-            source_id: Source whose old versions are removed.
-            source_version: Version to keep.
+            tenant (str): Owning tenant.
+            source_id (str): Source whose old versions are removed.
+            source_version (str): Version to keep.
 
         Returns:
             Number of chunks removed.
@@ -176,8 +169,9 @@ class LexicalRetriever:
         """Bind the retriever to an index.
 
         Args:
-            index: Source of visible candidates.
-            parameters: BM25 tuning; defaults to 'Bm25Parameters()'.
+            index (InMemoryIndex): Source of visible candidates.
+            parameters (Bm25Parameters | None): BM25 tuning; defaults to
+                ``Bm25Parameters()``.
         """
         self._index = index
         self._parameters = parameters or Bm25Parameters()
@@ -194,7 +188,7 @@ class LexicalRetriever:
         caller cannot infer hidden documents from score shifts.
 
         Args:
-            query: Request to execute.
+            query (Query): Request to execute.
 
         Returns:
             Hits with a positive score in rank order.
@@ -245,7 +239,7 @@ class HashingEmbedder:
         """Configure the vector size.
 
         Args:
-            dimensions: Output vector length.
+            dimensions (int): Output vector length.
         """
         if dimensions < 1:
             raise ValueError("dimensions must be positive")
@@ -260,7 +254,7 @@ class HashingEmbedder:
         """Embed each text as an L2-normalized hashed bag of words.
 
         Args:
-            texts: Inputs to embed.
+            texts (Sequence[str]): Inputs to embed.
 
         Returns:
             One vector per input.
@@ -283,8 +277,8 @@ def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     """Cosine similarity of two equal-length vectors.
 
     Args:
-        left: First vector.
-        right: Second vector.
+        left (Sequence[float]): First vector.
+        right (Sequence[float]): Second vector.
 
     Returns:
         Similarity in [-1, 1]; 0.0 when either vector is zero.
@@ -300,7 +294,7 @@ def cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 class DenseRetriever:
-    """Exact cosine search over visible candidates using an 'Embedder' port."""
+    """Exact cosine search over visible candidates using an ``Embedder`` port."""
 
     def __init__(
         self, index: InMemoryIndex, embedder: Embedder, *, min_similarity: float = 0.0
@@ -308,9 +302,9 @@ class DenseRetriever:
         """Bind the retriever to an index and embedder.
 
         Args:
-            index: Source of visible candidates.
-            embedder: Embedding port shared by indexing and querying.
-            min_similarity: Hits at or below this similarity are dropped.
+            index (InMemoryIndex): Source of visible candidates.
+            embedder (Embedder): Embedding port shared by indexing and querying.
+            min_similarity (float): Hits at or below this similarity are dropped.
         """
         self._index = index
         self._embedder = embedder
@@ -323,14 +317,7 @@ class DenseRetriever:
         return "dense"
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Rank visible candidates by cosine similarity to the query.
-
-        Args:
-            query: Request to execute.
-
-        Returns:
-            Hits above the similarity floor in rank order.
-        """
+        """Rank visible candidates above the similarity floor by cosine similarity."""
         candidates = self._index.candidates(query)
         if not candidates:
             return []
@@ -370,10 +357,11 @@ class HybridRetriever:
         """Configure the strategies to fuse.
 
         Args:
-            retrievers: Strategies with unique names.
-            rrf_k: Reciprocal rank fusion constant.
-            candidate_multiplier: Each strategy fetches 'top_k' times this.
-            reranker: Optional reranker applied to the fused candidates.
+            retrievers (Sequence[Retriever]): Strategies with unique names.
+            rrf_k (int): Reciprocal rank fusion constant.
+            candidate_multiplier (int): Each strategy fetches ``top_k`` times this.
+            reranker (Reranker | None): Optional reranker applied to the fused
+                candidates.
         """
         names = [retriever.name for retriever in retrievers]
         if not names or len(set(names)) != len(names):
@@ -398,7 +386,7 @@ class HybridRetriever:
         degraded mode is an accepted product decision.
 
         Args:
-            query: Request to execute.
+            query (Query): Request to execute.
 
         Returns:
             Fused, visible hits in rank order.
@@ -435,8 +423,8 @@ class StaticRetriever:
         """Store the canned ranking.
 
         Args:
-            name: Strategy name to report.
-            chunks: Chunks in the rank order to return.
+            name (str): Strategy name to report.
+            chunks (Sequence[Chunk]): Chunks in the rank order to return.
         """
         self._name = name
         self._chunks = tuple(chunks)
@@ -448,14 +436,7 @@ class StaticRetriever:
         return self._name
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Return visible canned chunks with descending synthetic scores.
-
-        Args:
-            query: Request to record and filter by.
-
-        Returns:
-            Visible hits in canned order.
-        """
+        """Return visible canned chunks with descending synthetic scores."""
         self.calls.append(query)
         visible = [
             chunk for chunk in self._chunks if is_visible_to(chunk, query.principal)

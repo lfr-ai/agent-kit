@@ -31,7 +31,7 @@ class InMemoryItemCatalog:
         """Index the given items.
 
         Args:
-            items: Items served by this adapter.
+            items (tuple[Item, ...]): Items served by this adapter.
         """
         self._items = MappingProxyType({item.item_id: item for item in items})
 
@@ -56,11 +56,7 @@ async def open_container() -> AsyncIterator[Container]:
 
 
 def build_app() -> FastAPI:
-    """Configure logging once, then build the application from settings.
-
-    Returns:
-        The ASGI application served by the process.
-    """
+    """Configure logging once, then build the application from settings."""
     logging.basicConfig(level=logging.INFO)
     return create_app(
         settings=HttpSettings(),

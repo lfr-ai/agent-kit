@@ -31,7 +31,7 @@ class ItemCatalog(Protocol):
         """Return one item.
 
         Args:
-            item_id: Identifier to look up.
+            item_id (str): Identifier to look up.
 
         Returns:
             The matching item.

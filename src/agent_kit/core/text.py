@@ -44,10 +44,11 @@ def markdown_link_targets(text: str) -> Iterator[str]:
     ignores an unclosed fence through the end of the document.
 
     Args:
-        text: Markdown source to inspect.
+        text (str): Markdown source to inspect.
 
     Yields:
-        Targets from the supported inline-link syntax, without angle brackets.
+        str: Targets in source order, preserving duplicates and URL escapes but
+        removing angle brackets. Yields nothing when no supported links occur.
     """
     for match in _MARKDOWN_LINK.finditer("".join(_prose_lines(text))):
         target = match.group("angled") or match.group("bare")

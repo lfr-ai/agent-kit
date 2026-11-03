@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TypeGuard
-
-from agent_kit.core.errors import InputTypeError
+from agent_kit.core.guards import (
+    JsonObject,
+    is_int,
+    require_list,
+    require_object,
+    require_text,
+)
 from agent_kit.core.models import Selection
 
 _SCHEMA_VERSION = 1
@@ -28,26 +32,24 @@ class InvalidSelectionError(ValueError):
         super().__init__(f"selection {field} {rule}")
 
 
-def _mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow decoded JSON to a string-keyed object."""
-    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
-
-
 def _names(value: object, field: str) -> tuple[str, ...]:
     """Require a list of unique, non-empty names.
 
+    A field that is not a list of strings raises ``InputTypeError``.
+
+    Args:
+        value (object): Decoded list field.
+        field (str): Schema field name used in diagnostics.
+
+    Returns:
+        tuple[str, ...]: The names in declaration order.
+
     Raises:
-        InputTypeError: The field is not a list of strings.
         InvalidSelectionError: A name is empty or repeated.
     """
-    if not isinstance(value, list):
-        raise InputTypeError(location=f"selection.{field}", expected="a list")
     names: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise InputTypeError(
-                location=f"selection.{field} entry", expected="a string"
-            )
+    for entry in require_list(value, location=f"selection.{field}"):
+        item = require_text(entry, location=f"selection.{field} entry")
         if not item.strip():
             raise InvalidSelectionError(
                 field=field, rule="must not contain empty names"
@@ -58,11 +60,18 @@ def _names(value: object, field: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _check_header(value: dict[str, object]) -> str:
+def _check_header(value: JsonObject) -> str:
     """Require exactly the known fields, the current version, and a profile.
 
+    A non-string profile raises ``InputTypeError``.
+
+    Args:
+        value (JsonObject): Decoded selection document.
+
+    Returns:
+        str: The non-empty profile name.
+
     Raises:
-        InputTypeError: The profile is not a string.
         InvalidSelectionError: Fields are missing or unknown, or a value is invalid.
     """
     missing = sorted(_REQUIRED - value.keys())
@@ -72,11 +81,9 @@ def _check_header(value: dict[str, object]) -> str:
     if unknown:
         raise InvalidSelectionError(field=", ".join(unknown), rule="is not supported")
     version = value["schema_version"]
-    if type(version) is not int or version != _SCHEMA_VERSION:
+    if not is_int(version) or version != _SCHEMA_VERSION:
         raise InvalidSelectionError(field="schema_version", rule="must be 1")
-    profile = value["profile"]
-    if not isinstance(profile, str):
-        raise InputTypeError(location="selection.profile", expected="a string")
+    profile = require_text(value["profile"], location="selection.profile")
     if not profile.strip():
         raise InvalidSelectionError(field="profile", rule="must not be empty")
     return profile
@@ -85,21 +92,19 @@ def _check_header(value: dict[str, object]) -> str:
 def parse_selection(value: object) -> Selection:
     """Validate a decoded selection document.
 
+    A document or field of the wrong type raises ``InputTypeError``; missing or
+    unknown fields and invalid values raise ``InvalidSelectionError``.
+
     Args:
         value (object): Decoded JSON document.
 
     Returns:
         Selection: The validated selection; omitted lists are empty.
-
-    Raises:
-        InputTypeError: The document or a field has the wrong type.
-        InvalidSelectionError: Fields are missing or unknown, or a value is invalid.
     """
-    if not _mapping(value):
-        raise InputTypeError(location="selection", expected="an object")
-    profile = _check_header(value)
+    document = require_object(value, location="selection")
+    profile = _check_header(document)
     features, runtimes, skills = (
-        _names(value.get(field, []), field) for field in _LISTS
+        _names(document.get(field, []), field) for field in _LISTS
     )
     return Selection(
         profile=profile, features=features, runtimes=runtimes, skills=skills

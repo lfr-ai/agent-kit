@@ -263,10 +263,20 @@ def test_mcp_server_template_exposes_typed_bounded_tools() -> None:
         )
     }
     assert set(tools) == {"search_notes", "read_note"}
+    aliases = {
+        node.targets[0].id: ast.unparse(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+    }
     for function in tools.values():
         assert function.returns is not None
         assert all(argument.annotation for argument in function.args.args)
-        assert "Field(" in ast.unparse(function.args)
+        for argument in function.args.args:
+            assert argument.annotation is not None
+            annotation = ast.unparse(argument.annotation)
+            resolved = aliases.get(annotation, annotation)
+            assert resolved.startswith("Annotated[")
+            assert "Field(" in resolved
     imports = [node.module for node in tree.body if isinstance(node, ast.ImportFrom)]
     assert "mcp.server" in imports
 

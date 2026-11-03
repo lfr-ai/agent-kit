@@ -188,8 +188,8 @@ def missing_files(root: Path, *, skipped: frozenset[str]) -> list[Finding]:
     """Report each community file requirement that no file satisfies.
 
     Args:
-        root: Repository root.
-        skipped: Requirement names the project decided not to meet.
+        root (Path): Repository root.
+        skipped (frozenset[str]): Requirement names the project decided not to meet.
 
     Returns:
         One finding per unmet requirement.
@@ -215,14 +215,7 @@ def _satisfied(root: Path, requirement: Requirement) -> bool:
 
 
 def is_emoji(character: str) -> bool:
-    """Return whether a character is an emoji, pictograph or emoji selector.
-
-    Args:
-        character: A single character.
-
-    Returns:
-        True when its code point is in an emoji or symbol-pictograph block.
-    """
+    """Return whether a character is an emoji, pictograph or emoji selector."""
     point = ord(character)
     return any(low <= point <= high for low, high in _EMOJI_RANGES)
 
@@ -231,8 +224,8 @@ def readme_emojis(path: str, text: str) -> list[Finding]:
     """Report README lines that contain emojis.
 
     Args:
-        path: Path used in findings.
-        text: README content.
+        path (str): Path used in findings.
+        text (str): README content.
 
     Returns:
         One finding per line with at least one emoji.
@@ -256,8 +249,8 @@ def is_placeholder(value: str, *, allowed: frozenset[str] = frozenset()) -> bool
     """Return whether an environment value is an obvious placeholder.
 
     Args:
-        value: Raw value after ``=``, with surrounding quotes allowed.
-        allowed: Extra exact values the project accepts.
+        value (str): Raw value after ``=``, with surrounding quotes allowed.
+        allowed (frozenset[str]): Extra exact values the project accepts.
 
     Returns:
         True for empty, marked, numeric, mode-word and local-URL values.
@@ -302,9 +295,9 @@ def env_findings(
     """Check an environment example for documentation and placeholder values.
 
     Args:
-        path: Path used in findings.
-        text: File content.
-        allowed: Extra exact values the project accepts.
+        path (str): Path used in findings.
+        text (str): File content.
+        allowed (frozenset[str]): Extra exact values the project accepts.
 
     Returns:
         Findings for invalid, duplicate, undocumented or real-looking entries.
@@ -368,10 +361,10 @@ def check(
     """Run every check under a root.
 
     Args:
-        root: Repository root.
-        env_files: Environment example files to check.
-        skipped: Community file requirements to ignore.
-        allowed: Extra exact environment values to accept.
+        root (Path): Repository root.
+        env_files (Iterable[Path]): Environment example files to check.
+        skipped (frozenset[str]): Community file requirements to ignore.
+        allowed (frozenset[str]): Extra exact environment values to accept.
 
     Returns:
         Findings sorted by path, line and message.
@@ -424,11 +417,7 @@ _SELF_TEST_ENV = (
 
 
 def self_test() -> list[str]:
-    """Run the checks on a synthetic temporary repository.
-
-    Returns:
-        Unmet expectations; empty when every rule behaves as documented.
-    """
+    """Run the checks on a synthetic temporary repository."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for relative, text in (
@@ -530,11 +519,7 @@ def _env_files(root: Path, explicit: list[Path]) -> list[Path] | None:
 def main(argv: list[str] | None = None) -> int:
     """Check a repository and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

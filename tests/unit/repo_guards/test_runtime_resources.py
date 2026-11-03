@@ -16,7 +16,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 _SKILL = _ROOT / "packages/shared/.apm/skills/kit-agent-runtime"
 _ASSETS = _SKILL / "assets"
 _POLICY = _ASSETS / "tool_guard_policy.json.template"
-_GUARD = runpy.run_path(str(_ASSETS / "tool_guard.py"))
+_ENGINE = _ROOT / "packages/shared/.apm/hooks/scripts/tool_guard.py"
+_GUARD = runpy.run_path(str(_ENGINE))
 _LICENSE = runpy.run_path(str(_ASSETS / "license_guard.py"))
 _REVIEW = runpy.run_path(str(_ASSETS / "review_package.py"))
 
@@ -359,7 +360,7 @@ def test_explain_exit_codes(tmp_path: Path) -> None:
 
 
 def test_hook_process_end_to_end() -> None:
-    script = str(_ASSETS / "tool_guard.py")
+    script = str(_ENGINE)
     command = [sys.executable, script, "hook", "--policy", str(_POLICY)]
     denied = subprocess.run(  # noqa: S603 - repository-owned asset
         command,
@@ -838,7 +839,8 @@ def test_role_bodies_are_structured_and_valid() -> None:
         ("copilot", "claude"),
     )
     roles = json.loads(content)["roles"]
-    assert len(roles) == 15
+    assert len(roles) == 14
+    assert "kit-devops" not in {role["id"] for role in roles}
     for role in roles:
         body = role["body"]
         assert 15 <= len(body.splitlines()) <= 60, role["id"]

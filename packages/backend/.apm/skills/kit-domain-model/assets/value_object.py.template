@@ -1,7 +1,7 @@
 """Value objects: immutable, compared by value, valid on construction.
 
-Copy into 'src/<package>/core/values.py' and rename. 'Money' shows a composite
-value with arithmetic that refuses to mix units; 'OrderId' shows a validated
+Copy into ``src/<package>/core/values.py`` and rename. ``Money`` shows a composite
+value with arithmetic that refuses to mix units; ``OrderId`` shows a validated
 single-field identifier.
 """
 
@@ -44,6 +44,11 @@ class Money:
     def of(cls, amount: str | int, currency: str) -> Self:
         """Build money from exact text or an integer, rounding half to even.
 
+        Args:
+            amount (str | int): Exact decimal text or whole amount, quantized
+                to cents using half-even rounding.
+            currency (str): Three-uppercase-letter currency code for the amount.
+
         Raises:
             ValueError: If the amount is not a number or the currency is invalid.
         """
@@ -78,7 +83,7 @@ class Money:
         return self.amount < 0
 
     def __str__(self) -> str:
-        """Display form such as '12.50 EUR'."""
+        """Display form such as ``12.50 EUR``."""
         return f"{self.amount} {self.currency}"
 
     def _require_same_currency(self, other: Self) -> None:

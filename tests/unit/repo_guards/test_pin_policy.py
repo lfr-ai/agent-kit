@@ -27,6 +27,32 @@ def test_repository_has_no_floating_versions() -> None:
     assert verify_module._CHECKS["pins"][1].endswith("check_pins.py")
 
 
+def test_isolated_stdlib_audit_needs_no_project_environment(tmp_path: Path) -> None:
+    files = {
+        "Taskfile.yml": "tasks:\n  audit:\n    cmds:\n"
+        "      - uv run --no-project python scripts/audit_dependencies.py\n"
+    }
+
+    assert _scan(tmp_path, files) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run --no-project --with ruff python scripts/audit_dependencies.py",
+        "uv run --no-project ruff check",
+        "uv sync --no-project",
+        "uv run --no-project python scripts/audit_dependencies.py && uv sync",
+    ],
+)
+def test_isolation_does_not_excuse_dependency_resolution(
+    tmp_path: Path, command: str
+) -> None:
+    files = {"Taskfile.yml": f"tasks:\n  audit:\n    cmds:\n      - {command}\n"}
+
+    assert any("may re-resolve" in message for message in _scan(tmp_path, files))
+
+
 @pytest.mark.parametrize(
     ("files", "expected"),
     [

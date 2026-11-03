@@ -62,9 +62,9 @@ class OrderingOptionError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            order: Diagnostic order for the invalid input.
-            scope: Diagnostic scope for the invalid input.
+            issue (OrderingOptionIssue): The violated input invariant.
+            order (str | None): Diagnostic order for the invalid input.
+            scope (str | None): Diagnostic scope for the invalid input.
         """
         super().__init__(issue.value.format(order=order, scope=scope))
 
@@ -80,11 +80,12 @@ def check_source(
     """Return ordering findings for one module's source text.
 
     Args:
-        text: Python source text.
-        path: Display path used as the finding prefix.
-        order: ``after`` requires helpers below their caller; ``before`` above it.
-        scopes: Which scopes to check: ``module``, ``class``, or both.
-        ignore: Helper-name patterns that are never reported.
+        text (str): Python source text.
+        path (str): Display path used as the finding prefix.
+        order (str): ``after`` requires helpers below their caller; ``before`` above it.
+        scopes (frozenset[str]): Which scopes to check: ``module``, ``class``, or both.
+        ignore (tuple[re.Pattern[str], ...]): Helper-name patterns that are never
+            reported.
 
     Returns:
         Findings formatted as ``path:line: message``, sorted by line.
@@ -248,11 +249,7 @@ def _is_private(name: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     """Check helper placement in the given files and directories.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero when every helper is placed correctly, otherwise one.
+    Returns zero when every helper is placed correctly, otherwise one.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)

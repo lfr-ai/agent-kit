@@ -1,6 +1,6 @@
 """Redaction helpers for model-call diagnostics.
 
-Copy to 'llm/redaction.py'. Prompts and completions stay out of normal logs.
+Copy to ``llm/redaction.py``. Prompts and completions stay out of normal logs.
 These helpers cover the remaining paths where text can leak: provider error
 messages, debug previews, and third-party SDK loggers. Patterns are a safety
 net, not a guarantee; do not rely on them to make content loggable.
@@ -11,7 +11,7 @@ import re
 
 _DEFAULT_PREVIEW_LIMIT_CHARS = 80
 
-_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+_PATTERNS = (
     (re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}"), "Bearer [REDACTED]"),
     (
         re.compile(r"\beyJ[a-zA-Z0-9_-]{5,}\.[a-zA-Z0-9_-]{5,}\.[a-zA-Z0-9_-]{5,}\b"),
@@ -28,14 +28,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def redact(text: str) -> str:
-    """Replace credential-like and personal-data-like substrings.
-
-    Args:
-        text: Text that may be logged or shown to operators.
-
-    Returns:
-        The text with known sensitive patterns replaced.
-    """
+    """Replace credential-like and personal-data-like substrings."""
     for pattern, replacement in _PATTERNS:
         text = pattern.sub(replacement, text)
     return text
@@ -45,11 +38,11 @@ def safe_preview(text: str, *, limit: int = _DEFAULT_PREVIEW_LIMIT_CHARS) -> str
     """Return a short, redacted preview for opt-in debug logging.
 
     Args:
-        text: Prompt or completion text.
-        limit: Maximum preview length in characters.
+        text (str): Prompt or completion text.
+        limit (int): Maximum preview length in characters.
 
     Returns:
-        Redacted text truncated to 'limit' characters with a length marker.
+        Redacted text truncated to ``limit`` characters with a length marker.
     """
     redacted = redact(text)
     if len(redacted) <= limit:
@@ -64,14 +57,7 @@ class RedactingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Redact the record in place and keep it.
-
-        Args:
-            record: Record about to be emitted.
-
-        Returns:
-            Always True; the record is kept after redaction.
-        """
+        """Redact the record in place and keep it."""
         record.msg = redact(record.getMessage())
         record.args = None
         return True

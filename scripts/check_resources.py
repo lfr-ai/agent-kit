@@ -5,6 +5,7 @@ import ast
 import json
 from pathlib import Path
 import sys
+from typing import TypedDict
 from urllib.parse import unquote
 
 from agent_kit.core.text import markdown_link_targets
@@ -31,9 +32,33 @@ def _files(directory: Path) -> list[Path]:
     )
 
 
-def inventory(root: Path) -> list[dict[str, str | list[str]]]:
-    """Report real resource paths for each skill, not baseline mapping ratios."""
-    records: list[dict[str, str | list[str]]] = []
+class SkillResources(TypedDict):
+    """One canonical skill's authored resource paths, without validation."""
+
+    skill: str
+    path: str
+    references: list[str]
+    assets: list[str]
+    scripts: list[str]
+
+
+def inventory(root: Path) -> list[SkillResources]:
+    """List authored resources for canonical skills under ``root``.
+
+    Generated runtime copies and files under ``__pycache__`` are not counted.
+    This census does not validate resource containment or discoverability; use
+    ``check`` for those checks.
+
+    Returns:
+        list[SkillResources]: Records sorted by canonical ``SKILL.md`` path;
+        empty if no canonical skills exist. Each record has exactly ``skill``
+        (directory name), ``path`` (root-relative POSIX path to ``SKILL.md``),
+        and ``references``, ``assets``, and ``scripts`` (sorted skill-relative
+        POSIX file paths, empty when absent). References and assets include all
+        files in their respective directories; scripts include every ``.py``
+        file anywhere in the skill, so these lists can overlap.
+    """
+    records: list[SkillResources] = []
     for skill in _skills(root):
         home = skill.parent
         resources = _files(home)
@@ -77,7 +102,15 @@ def _reachable(skill: Path) -> set[Path]:
 
 
 def _linked_files(path: Path, home: Path) -> list[Path]:
-    """Return local files linked from one document that stay inside ``home``."""
+    """Return local files linked from one document that stay inside ``home``.
+
+    Args:
+        path (Path): Markdown document to read.
+        home (Path): Resolved skill directory that linked files must stay inside.
+
+    Returns:
+        list[Path]: Resolved existing files, in link order.
+    """
     linked: list[Path] = []
     for target in markdown_link_targets(path.read_text(encoding="utf-8")):
         if target.startswith(("https://", "http://", "mailto:", "#")):
@@ -89,7 +122,15 @@ def _linked_files(path: Path, home: Path) -> list[Path]:
 
 
 def _python_failures(resources: list[Path], root: Path) -> list[str]:
-    """Parse executable resources without importing or running them."""
+    """Parse executable resources without importing or running them.
+
+    Args:
+        resources (list[Path]): Skill resource files to inspect.
+        root (Path): Repository root used to relativize failure paths.
+
+    Returns:
+        list[str]: One failure per Python resource with a syntax error.
+    """
     failures: list[str] = []
     for path in resources:
         if path.suffix == ".py":
@@ -101,7 +142,14 @@ def _python_failures(resources: list[Path], root: Path) -> list[str]:
 
 
 def check(root: Path) -> list[str]:
-    """Reject checklist-only, undiscoverable, escaping or invalid Python resources."""
+    """Reject checklist-only, undiscoverable, escaping or invalid Python resources.
+
+    Args:
+        root (Path): Repository root that holds the canonical skills.
+
+    Returns:
+        list[str]: Human-readable failures; empty when every skill passes.
+    """
     failures: list[str] = []
     skills = _skills(root)
     if not skills:
@@ -118,7 +166,15 @@ def check(root: Path) -> list[str]:
 
 
 def _contained(root: Path, home: Path) -> bool:
-    """Return whether a skill and every entry stay real and inside their roots."""
+    """Return whether a skill and every entry stay real and inside their roots.
+
+    Args:
+        root (Path): Repository root the skill must stay inside.
+        home (Path): Skill directory.
+
+    Returns:
+        bool: ``True`` when no entry is linked or escapes its root.
+    """
     return home.resolve().is_relative_to(root.resolve()) and not any(
         path.is_symlink()
         or path.is_junction()
@@ -130,7 +186,16 @@ def _contained(root: Path, home: Path) -> bool:
 def _discoverability_failures(
     home: Path, resources: list[Path], reached: set[Path]
 ) -> list[str]:
-    """Require a nonempty, linked reference and asset for one skill."""
+    """Require a nonempty, linked reference and asset for one skill.
+
+    Args:
+        home (Path): Skill directory.
+        resources (list[Path]): Authored files in the skill.
+        reached (set[Path]): Resolved files reachable from ``SKILL.md``.
+
+    Returns:
+        list[str]: One failure per missing or unreachable category.
+    """
     failures: list[str] = []
     for category, label in (("references", "reference"), ("assets", "asset")):
         candidates = [

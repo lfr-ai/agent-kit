@@ -7,12 +7,9 @@ import re
 import pytest
 import scripts.check_native as native_checker
 from scripts.check_native import check
-import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 _FILES = (
-    ".github/agents/kit-reviewer.agent.md",
-    ".claude/agents/kit-reviewer.md",
     ".github/hooks/session-context.json",
     ".claude/settings.json",
     ".vscode/settings.json",
@@ -30,46 +27,8 @@ def native_root(tmp_path: Path) -> Path:
 
 
 def test_approved_native_contract_passes(native_root: Path) -> None:
-    """Known reviewer, permission, and single-hook contracts pass."""
+    """Known permission and single-hook contracts pass."""
     assert check(native_root) == []
-
-
-def test_reviewer_cannot_enable_nested_agents(native_root: Path) -> None:
-    """Changing the explicit empty worker allowlist must fail the contract."""
-    path = native_root / ".github/agents/kit-reviewer.agent.md"
-    text = path.read_text()
-    header, body = text.split("---", 2)[1:]
-    metadata = yaml.safe_load(header)
-    metadata["agents"] = ["*"]
-    path.write_text(f"---\n{yaml.safe_dump(metadata)}---\n{body}", encoding="utf-8")
-
-    assert any("reviewer" in finding for finding in check(native_root))
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("user-invocable", False),
-        ("user-invocable", 1),
-        ("user-invocable", "true"),
-        ("user-invocable", None),
-        ("disable-model-invocation", True),
-        ("disable-model-invocation", 0),
-        ("disable-model-invocation", "false"),
-        ("disable-model-invocation", None),
-    ],
-)
-def test_reviewer_invocation_flags_require_exact_booleans(
-    native_root: Path, field: str, value: object
-) -> None:
-    """Field presence cannot substitute for the reviewed invocation semantics."""
-    path = native_root / ".github/agents/kit-reviewer.agent.md"
-    header, body = path.read_text().split("---", 2)[1:]
-    metadata = yaml.safe_load(header)
-    metadata[field] = value
-    path.write_text(f"---\n{yaml.safe_dump(metadata)}---\n{body}", encoding="utf-8")
-
-    assert any("invocation" in finding for finding in check(native_root))
 
 
 @pytest.mark.parametrize("value", [True, 1, 0, "false", None, [], {}])
@@ -132,29 +91,6 @@ def test_local_session_entrypoint_needs_no_install_or_execution(
     monkeypatch.setattr(native_checker, "_ROOT", native_root)
 
     assert native_checker.main() == 0
-
-
-def test_writable_tools_are_rejected(native_root: Path) -> None:
-    """The read-only reviewer cannot gain an edit tool."""
-    path = native_root / ".claude/agents/kit-reviewer.md"
-    path.write_text(
-        path.read_text().replace("Read, Grep, Glob", "Read, Grep, Glob, Edit"),
-        encoding="utf-8",
-    )
-
-    assert any("Claude reviewer" in finding for finding in check(native_root))
-
-
-def test_unknown_native_reviewer_metadata_is_rejected(native_root: Path) -> None:
-    """An unreviewed native metadata extension cannot silently change behavior."""
-    path = native_root / ".claude/agents/kit-reviewer.md"
-    text = path.read_text()
-    header, body = text.split("---", 2)[1:]
-    metadata = yaml.safe_load(header)
-    metadata["mcpServers"] = ["unapproved-server"]
-    path.write_text(f"---\n{yaml.safe_dump(metadata)}---\n{body}", encoding="utf-8")
-
-    assert any("metadata" in finding for finding in check(native_root))
 
 
 def test_mirrored_hook_double_execution_is_rejected(native_root: Path) -> None:

@@ -45,7 +45,11 @@ _SELF_TEST_LEAKY_FINDINGS = 5
 
 
 def _mapping(value: object) -> Mapping[str, object]:
-    """Return value when it is a JSON object, otherwise an empty mapping."""
+    """Return value when it is a JSON object, otherwise an empty mapping.
+
+    Returns:
+        ``value`` itself when it is a JSON object, otherwise an empty mapping.
+    """
     if isinstance(value, dict):
         return {str(key): item for key, item in value.items()}
     return {}
@@ -149,8 +153,8 @@ class HarInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            path: Diagnostic path for the invalid input.
+            issue (HarInputIssue): The violated input invariant.
+            path (Path | None): Diagnostic path for the invalid input.
         """
         super().__init__(issue.value.format(path=path))
 
@@ -162,8 +166,8 @@ class HarInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
-            path: Diagnostic path for the invalid input.
+            issue (HarInputIssue): The violated input invariant.
+            path (Path | None): Diagnostic path for the invalid input.
         """
         super().__init__(issue.value.format(path=path))
 
@@ -172,8 +176,8 @@ def check(path: Path, *, allow_bodies: bool = False) -> list[str]:
     """Return findings for a HAR file as ``file:entry: message`` strings.
 
     Args:
-        path: HAR file to inspect.
-        allow_bodies: Accept response bodies that match no sensitive field.
+        path (Path): HAR file to inspect.
+        allow_bodies (bool): Accept response bodies that match no sensitive field.
 
     Returns:
         Findings in entry order; empty when the archive looks safe to share.
@@ -230,8 +234,8 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            findings: Observed findings for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            findings (list[str] | None): Observed findings for the failing case.
         """
         super().__init__(issue.value.format(findings=findings))
 
@@ -299,11 +303,7 @@ def _check_all(files: list[Path], *, allow_bodies: bool) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     """Check HAR files or run the self-test; return a process exit code.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when every file is clean, 1 on findings or unreadable input.
+    Returns 0 when every file is clean, 1 on findings or unreadable input.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("files", nargs="*", type=Path)

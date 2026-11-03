@@ -100,7 +100,7 @@ def front_matter(text: str) -> dict[str, str]:
     """Return top-level ``key: value`` pairs of leading front matter.
 
     Args:
-        text: Markdown content.
+        text (str): Markdown content.
 
     Returns:
         Keys mapped to their raw values; empty when there is no front matter.
@@ -119,39 +119,18 @@ def front_matter(text: str) -> dict[str, str]:
 
 
 def is_always_on_instruction(text: str) -> bool:
-    """Return whether an instructions file applies to every file.
-
-    Args:
-        text: Content of a ``*.instructions.md`` file.
-
-    Returns:
-        True when one ``applyTo`` pattern is ``**`` or ``**/*``.
-    """
+    """Return whether an instructions file applies to every file."""
     scope = front_matter(text).get("applyTo", "").strip("\"'")
     return any(item.strip() in _ALWAYS_ON_GLOBS for item in scope.split(","))
 
 
 def is_unscoped_rule(text: str) -> bool:
-    """Return whether a Claude rule has no ``paths`` key and so always loads.
-
-    Args:
-        text: Content of a Markdown file under ``.claude/rules``.
-
-    Returns:
-        True when the front matter has no ``paths`` key.
-    """
+    """Return whether a Claude rule has no ``paths`` key and so always loads."""
     return "paths" not in front_matter(text)
 
 
 def imports(text: str) -> list[str]:
-    """Return ``@path`` import targets outside code spans and fenced blocks.
-
-    Args:
-        text: Content of a ``CLAUDE.md`` file.
-
-    Returns:
-        Import targets in order of appearance, without the ``@``.
-    """
+    """Return ``@path`` import targets outside code spans and fenced blocks."""
     found: list[str] = []
     fence: str | None = None
     for line in text.splitlines():
@@ -199,7 +178,12 @@ def _imported_files(entry: Path, *, root: Path) -> list[Path]:
 def _scoped_files(
     root: Path, *, instruction_dirs: Sequence[str]
 ) -> list[tuple[Path, str]]:
-    """Return always-on instructions and unscoped Claude rules."""
+    """Return always-on instructions and unscoped Claude rules.
+
+    Returns:
+        ``(path, kind)`` pairs, kind ``instruction`` or ``rule``; instructions come
+        first and each group is in sorted path order.
+    """
     instructions = [
         (path, "instruction")
         for directory in instruction_dirs
@@ -220,9 +204,9 @@ def discover(
     """Find always-on context files below ``root`` and measure them.
 
     Args:
-        root: Repository root.
-        instruction_dirs: Folders searched for ``*.instructions.md``.
-        extras: Additional files that a host loads by default.
+        root (Path): Repository root.
+        instruction_dirs (Sequence[str]): Folders searched for ``*.instructions.md``.
+        extras (Iterable[Path]): Additional files that a host loads by default.
 
     Returns:
         Measured files sorted by path, each counted once.
@@ -259,8 +243,8 @@ def evaluate(files: Sequence[ContextFile], *, limits: Limits) -> list[str]:
     """Compare measured files with the limits.
 
     Args:
-        files: Measured always-on files.
-        limits: Per-file and total character limits.
+        files (Sequence[ContextFile]): Measured always-on files.
+        limits (Limits): Per-file and total character limits.
 
     Returns:
         Findings rendered as ``path:1: message``.
@@ -279,14 +263,7 @@ def evaluate(files: Sequence[ContextFile], *, limits: Limits) -> list[str]:
 
 
 def render(files: Sequence[ContextFile]) -> list[str]:
-    """Format measured files as an aligned text table with a total row.
-
-    Args:
-        files: Measured always-on files.
-
-    Returns:
-        Table lines.
-    """
+    """Format measured files as an aligned text table with a total row."""
     lines = [f"{'chars':>{_COLUMN_WIDTH}}  {'kind':<{_KIND_WIDTH}}path"]
     lines.extend(
         f"{item.chars:>{_COLUMN_WIDTH}}  {item.kind:<{_KIND_WIDTH}}{item.path}"
@@ -300,11 +277,7 @@ def render(files: Sequence[ContextFile]) -> list[str]:
 
 
 def self_test() -> list[str]:
-    """Check the parsing and limit rules on in-memory inputs.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the parsing and limit rules on in-memory inputs."""
     failures: list[str] = []
     cases = {
         "applyTo ** is always on": is_always_on_instruction(
@@ -408,11 +381,7 @@ def _usage_error(args: argparse.Namespace) -> str | None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Measure always-on context files and report limit findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 within limits, 1 on findings, 2 on unreadable input or bad arguments.
+    Returns 0 within limits, 1 on findings, 2 on unreadable input or bad arguments.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

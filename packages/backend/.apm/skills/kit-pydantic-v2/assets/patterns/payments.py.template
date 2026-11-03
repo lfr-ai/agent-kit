@@ -1,7 +1,7 @@
 """Payment wire contract: discriminated union, strict fields, JSON serializers.
 
 Copy into the presentation or adapter layer (for example
-'myapp/presentation/contracts/payments.py').
+``myapp/presentation/contracts/payments.py``).
 """
 
 from __future__ import annotations

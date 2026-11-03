@@ -37,14 +37,7 @@ _RENAMED = {
 
 
 def _attribute(node: ast.expr) -> str | None:
-    """Return the attribute name of a method call target.
-
-    Args:
-        node: Call function expression.
-
-    Returns:
-        The attribute name, or None when the call is not a method call.
-    """
+    """Return the attribute name of a method call target."""
     return node.attr if isinstance(node, ast.Attribute) else None
 
 
@@ -52,8 +45,8 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
     """Return a keyword argument value.
 
     Args:
-        call: Call node.
-        name: Keyword name.
+        call (ast.Call): Call node.
+        name (str): Keyword name.
 
     Returns:
         The value node, or None.
@@ -65,8 +58,8 @@ def _classify(call: ast.Call, modules: set[str]) -> str | None:
     """Return a finding for one call, if any.
 
     Args:
-        call: Call node.
-        modules: Local names bound to the ``polars`` module.
+        call (ast.Call): Call node.
+        modules (set[str]): Local names bound to the ``polars`` module.
 
     Returns:
         Message, or None.
@@ -121,8 +114,8 @@ def check_source(text: str, path: str) -> list[str]:
     """Report Polars anti-patterns in one source file.
 
     Args:
-        text: Python source.
-        path: Display path.
+        text (str): Python source.
+        path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -150,7 +143,7 @@ def _polars_bindings(tree: ast.Module) -> tuple[bool, set[str]]:
     """Return whether a module imports Polars and its local module aliases.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Whether any Polars import exists, and names bound to ``polars``.
@@ -172,14 +165,7 @@ def _polars_bindings(tree: ast.Module) -> tuple[bool, set[str]]:
 
 
 def _polars_aliases(node: ast.Import) -> list[ast.alias]:
-    """Return the aliases of an ``import`` statement that name Polars modules.
-
-    Args:
-        node: Import statement.
-
-    Returns:
-        Aliases for ``polars`` or one of its submodules.
-    """
+    """Return the aliases of an ``import`` statement that name Polars modules."""
     return [
         alias
         for alias in node.names
@@ -191,7 +177,7 @@ def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     """Expand targets into Python files.
 
     Args:
-        targets: Files or directories.
+        targets (Sequence[Path]): Files or directories.
 
     Returns:
         Sorted files and findings for missing targets.
@@ -233,9 +219,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            source: Observed source for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            source (str | None): Observed source for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(source=source, found=found))
 
@@ -280,11 +266,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="files or directories")

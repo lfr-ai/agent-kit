@@ -51,11 +51,11 @@ def create_app(
     """Build the application, its routes, middleware, and error handling.
 
     Args:
-        settings: Validated HTTP settings facet.
-        container_factory: Opens the container on startup and closes it on
-            shutdown, after in-flight requests finish.
-        rate_limit_store: Counter backend shared by all workers; the lifespan
-            also exposes it to ``SubjectRateLimit`` dependencies.
+        settings (HttpSettings): Validated HTTP settings facet.
+        container_factory (ContainerFactory): Opens the container on startup and closes
+            it on shutdown, after in-flight requests finish.
+        rate_limit_store (RateLimitStore): Counter backend shared by all workers; the
+            lifespan also exposes it to ``SubjectRateLimit`` dependencies.
 
     Returns:
         The configured ASGI application.
@@ -90,6 +90,13 @@ def _install_middleware(
 
     Resulting order from the outside in: request id, access log, security
     headers, trusted host, CORS, rate limit, body size, GZip, then routing.
+
+    Args:
+        app (FastAPI): Application receiving the middleware registrations.
+        settings (HttpSettings): Validated compression, body, rate, CORS, host
+            and security-header settings.
+        rate_limit_store (RateLimitStore): Shared counter backend injected into
+            the rate-limit middleware.
     """
     app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_bytes)
     app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_body_bytes)

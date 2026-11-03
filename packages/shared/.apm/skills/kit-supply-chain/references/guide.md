@@ -47,7 +47,7 @@ report of the same findings.
 | --- | --- | --- |
 | Committed secrets | detect-secrets or Gitleaks | Reuse the chosen scanner in CI; history and hosting push protection cover other boundaries |
 | Workflow correctness and security | actionlint plus zizmor | Valid syntax and safe workflow behavior are different properties |
-| Locked dependency vulnerabilities | Existing ecosystem audit, such as pip-audit and Bun audit | Do not add Trivy language-package scanning over the same locks by default |
+| Locked dependency vulnerabilities | The project's own lock-aware audit: `uv audit` for uv projects, Bun audit for `bun.lock`; pip-audit for requirements files, OSV-Scanner for several ecosystems | Do not add Trivy language-package scanning over the same locks by default |
 | Dockerfile quality | Hadolint | Lints the recipe, not installed packages |
 | Built-image vulnerabilities | Existing image scanner or opt-in Trivy with `--scanners=vuln` | Inspect OS and library packages in the actual image; `kit-containers` owns the runner |
 | Infrastructure misconfiguration | Trivy configuration scanning or Checkov | Choose one; neither replaces workflow security or the repository secret scanner |

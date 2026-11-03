@@ -29,14 +29,7 @@ class ItemOut(BaseModel):
 
     @classmethod
     def from_domain(cls, item: Item) -> Self:
-        """Map an application record to the wire schema.
-
-        Args:
-            item: Record returned by the catalog port.
-
-        Returns:
-            The response model.
-        """
+        """Map an application record to the wire schema."""
         return cls(id=item.item_id, name=item.name, price_cents=item.price_cents)
 
 
@@ -49,5 +42,11 @@ async def get_item(
     item_id: Annotated[str, Path(min_length=1, max_length=_MAX_ITEM_ID_CHARS)],
     catalog: CatalogDep,
 ) -> ItemOut:
-    """Return one item by identifier."""
+    """Return one item by identifier.
+
+    Args:
+        item_id (Annotated[str, Path(min_length=1, max_length=_MAX_ITEM_ID_CHARS)]):
+            Validated item identifier captured from the URL path.
+        catalog (CatalogDep): Injected application port that loads the domain item.
+    """
     return ItemOut.from_domain(await catalog.get(item_id))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from enum import StrEnum, unique
+import logging
 import ntpath
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent_kit.core.models import CompositionPlan, PlannedFile
 
+_LOGGER = logging.getLogger(__name__)
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
 _WINDOWS_SHARING_CODES = frozenset({5, 32, 33})
@@ -96,6 +98,10 @@ class UnsupportedPublicationError(NotImplementedError):
 def _publish_directory(stage: Path, output: Path) -> None:
     """Publish without replacing an existing directory on supported platforms.
 
+    Args:
+        stage (Path): Fully written staging directory.
+        output (Path): Destination that must not exist.
+
     Raises:
         UnsupportedPublicationError: The platform lacks a no-replace rename.
         OSError: The no-replace rename fails.
@@ -130,6 +136,14 @@ def _publish_directory(stage: Path, output: Path) -> None:
 def _rename_once(stage: Path, output: Path, *, final_attempt: bool) -> bool:
     """Attempt one no-replace rename; ``False`` reports a transient sharing denial.
 
+    Args:
+        stage (Path): Fully written staging directory.
+        output (Path): Destination that must not exist.
+        final_attempt (bool): Whether a sharing denial is raised instead of retried.
+
+    Returns:
+        bool: ``True`` when the rename succeeded, ``False`` for a retryable denial.
+
     Raises:
         OutputExistsError: The output already exists.
         PermissionError: The rename is denied for a non-transient reason.
@@ -151,10 +165,18 @@ def _rename_once(stage: Path, output: Path, *, final_attempt: bool) -> bool:
 
 
 def _publish_windows_directory(stage: Path, output: Path) -> None:
-    """Retry short-lived sharing denials without replacement or path redirection."""
+    """Retry short-lived sharing denials without replacement or path redirection.
+
+    Args:
+        stage (Path): Fully written staging directory.
+        output (Path): Destination that must not exist.
+    """
     for delay in _WINDOWS_RETRY_DELAYS:
         if _rename_once(stage, output, final_attempt=False):
             return
+        _LOGGER.debug(
+            "publication rename denied by a sharing lock; retry in %ss", delay
+        )
         time.sleep(delay)
     _rename_once(stage, output, final_attempt=True)
 
@@ -181,6 +203,19 @@ class OutputAdapter:
     def write(self, plan: CompositionPlan, requested_output: Path) -> Path:
         """Write a validated plan through a sibling staging directory.
 
+        Unsafe destinations or planned paths raise ``OutputPathError``, colliding
+        planned destinations raise ``OutputCollisionError``, and a host without a
+        no-replace rename raises ``UnsupportedPublicationError``.
+
+        Args:
+            plan (CompositionPlan): Files to publish, with source paths used to
+                prevent writing into the source tree.
+            requested_output (Path): New destination; relative paths and ``~``
+                are expanded before containment checks.
+
+        Returns:
+            Path: Resolved absolute destination after no-replace publication.
+
         Raises:
             OutputExistsError: The output already exists.
         """
@@ -203,12 +238,20 @@ class OutputAdapter:
                 with destination.open("xb") as stream:
                     stream.write(item.content)
             _publish_directory(stage, output)
+        _LOGGER.info("published %d files to %s", len(planned_files), output)
         return output
 
     def _validate_files(
         self, files: tuple[PlannedFile, ...]
     ) -> tuple[tuple[PurePosixPath, PlannedFile], ...]:
         """Validate output containment and case-insensitive destination uniqueness.
+
+        Args:
+            files (tuple[PlannedFile, ...]): Planned files in plan order.
+
+        Returns:
+            tuple[tuple[PurePosixPath, PlannedFile], ...]: Each file paired with its
+            parsed relative path, in plan order.
 
         Raises:
             OutputPathError: A planned path is unsafe.
@@ -243,6 +286,10 @@ class OutputAdapter:
 
     def _check_output_location(self, plan: CompositionPlan, output: Path) -> None:
         """Reject destinations that could overwrite source or its ancestors.
+
+        Args:
+            plan (CompositionPlan): Plan naming the source root and bundle paths.
+            output (Path): Resolved destination.
 
         Raises:
             OutputPathError: The output overlaps the source tree.

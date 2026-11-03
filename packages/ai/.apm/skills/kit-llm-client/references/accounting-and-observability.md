@@ -58,6 +58,36 @@ OpenTelemetry generative AI semantic conventions define attribute names for
 operation, model, token usage and finish reasons; their content-capture
 options should stay disabled by default.
 
+### Langfuse and OpenTelemetry
+
+Checked the official masking contract on 2026-11-02. For a current compatible
+Python SDK, prefer `Langfuse(mask_otel_spans=...)` to patch exported OTel
+attributes, including third-party instrumentation. The older `mask` hook
+covers data set through Langfuse SDK APIs; it is not equivalent to export-stage
+masking. Verify the installed SDK's typed hook signature before wiring it in
+the composition root. Do not copy a newer hook into an older SDK.
+
+Use the existing provider port; Langfuse is an optional observability adapter,
+not a reason to add another model client. Disable prompt/completion/tool and
+retrieved-document capture by default. Allow-list safe operation/outcome and
+numeric usage fields; remove content-bearing attributes rather than guessing
+that a regex catches all personal data. Do not hash tokens or user identifiers
+as a substitute for deletion.
+
+`mask_otel_spans` receives a batch, not necessarily a complete trace. It changes
+attributes only, not span names, events, links, resource attributes or IDs, and
+affects only that Langfuse client's export path. Configure safe names and
+content-free events at instrumentation time, and independently sanitize every
+other OTel exporter. Keep the synchronous hook fast and local, with no network
+calls or logging of rejected values.
+
+Acceptance: inject synthetic secrets into input/output, metadata, exception
+events and a third-party span. Inspect captured exporter payloads, not just
+logger output; verify content is absent on Langfuse AND any second exporter,
+while numeric usage remains. Test flushing/shutdown and masking failure for
+the installed version; never silently export the unredacted batch as fallback.
+No Langfuse/OTel vendor runtime was executed in this toolkit change.
+
 ## Prompt versioning
 
 - By default keep prompts in code as `PromptTemplate` values with a name and an
@@ -75,6 +105,7 @@ options should stay disabled by default.
 
 - [LiteLLM token usage and cost](https://docs.litellm.ai/docs/completion/token_usage)
 - [OpenTelemetry semantic conventions for generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+- [Langfuse SDK and OTel masking contracts](https://langfuse.com/docs/observability/features/masking)
 - [Python logging filters](https://docs.python.org/3/library/logging.html#filter-objects)
 - [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)
 - [OWASP Top 10 for LLM applications: prompt injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)

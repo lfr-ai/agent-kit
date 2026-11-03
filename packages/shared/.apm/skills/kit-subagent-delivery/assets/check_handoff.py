@@ -129,7 +129,7 @@ def content_lines(text: str) -> list[tuple[int, str]]:
     """Return numbered lines outside fenced code blocks and HTML comments.
 
     Args:
-        text: Markdown content.
+        text (str): Markdown content.
 
     Returns:
         ``(line number, line)`` pairs with single-line comments removed.
@@ -157,6 +157,9 @@ def _markers(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
 
     Headings are used when any heading names a required section; otherwise
     top-level numbered items are used, all at the same depth.
+
+    Returns:
+        ``(index, depth, title)`` triples in document order.
     """
     headings: list[tuple[int, int, str]] = []
     for index, (_, line) in enumerate(lines):
@@ -177,7 +180,7 @@ def find_sections(lines: list[tuple[int, str]]) -> dict[str, Section]:
     """Locate each required section by its first matching marker.
 
     Args:
-        lines: Content lines from ``content_lines``.
+        lines (list[tuple[int, str]]): Content lines from ``content_lines``.
 
     Returns:
         Section name mapped to its location and body.
@@ -204,7 +207,11 @@ def _text(section: Section) -> str:
 
 
 def _changed_problems(section: Section) -> list[tuple[int, str]]:
-    """Require at least one path or an explicit ``none``."""
+    """Require at least one path or an explicit ``none``.
+
+    Returns:
+        ``(line, message)`` problems; empty when the section is valid.
+    """
     text = _text(section)
     if not text:
         return [(section.line, "section 'changed paths' is empty")]
@@ -223,7 +230,11 @@ def _has_result(line: str) -> bool:
 
 
 def _evidence_problems(section: Section) -> list[tuple[int, str]]:
-    """Require commands in inline code, each with a result on its line."""
+    """Require commands in inline code, each with a result on its line.
+
+    Returns:
+        ``(line, message)`` problems; empty when every command has a result.
+    """
     commands = [
         (number, line, match[0])
         for number, line in section.body
@@ -246,7 +257,11 @@ def _is_placeholder(name: str) -> bool:
 
 
 def _placeholder_problems(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
-    """Report template placeholders that were left unfilled."""
+    """Report template placeholders that were left unfilled.
+
+    Returns:
+        ``(line, message)`` problems, one per unfilled placeholder.
+    """
     return [
         (number, f"unfilled placeholder '{match[0]}'")
         for number, line in lines
@@ -259,8 +274,8 @@ def check_text(text: str, *, shown: str) -> list[Finding]:
     """Check one handoff document.
 
     Args:
-        text: Markdown content.
-        shown: Path printed in findings.
+        text (str): Markdown content.
+        shown (str): Path printed in findings.
 
     Returns:
         Findings sorted by line and message.
@@ -288,11 +303,7 @@ def check_text(text: str, *, shown: str) -> list[Finding]:
 
 
 def self_test() -> list[str]:
-    """Check the rules on in-memory handoffs and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the rules on in-memory handoffs and return unmet expectations."""
     failures: list[str] = []
     for label, document in (
         ("table and list", _SELF_TEST_GOOD),
@@ -341,11 +352,7 @@ def _run_self_test() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Check handoff files and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when every handoff passes, 1 on findings, 2 on unreadable input.
+    Returns 0 when every handoff passes, 1 on findings, 2 on unreadable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

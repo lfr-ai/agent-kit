@@ -58,10 +58,12 @@ def shared_policy(
     """Build a ``public`` Cache-Control value for data identical for all users.
 
     Args:
-        max_age_seconds: Freshness for every cache, including browsers.
-        shared_max_age_seconds: Freshness override for shared caches.
-        stale_while_revalidate_seconds: RFC 5861 background revalidation window.
-        stale_if_error_seconds: RFC 5861 window for serving stale on origin errors.
+        max_age_seconds (int): Freshness for every cache, including browsers.
+        shared_max_age_seconds (int | None): Freshness override for shared caches.
+        stale_while_revalidate_seconds (int | None): RFC 5861 background revalidation
+            window.
+        stale_if_error_seconds (int | None): RFC 5861 window for serving stale on origin
+            errors.
 
     Returns:
         A directive list such as ``public, max-age=60, s-maxage=300``.
@@ -100,7 +102,12 @@ def version_etag(*inputs: str | int) -> str:
 
 
 def etag_matches(if_none_match: str, etag: str) -> bool:
-    """Apply the weak comparison used by ``If-None-Match``."""
+    """Apply the weak comparison used by ``If-None-Match``.
+
+    Args:
+        if_none_match (str): Client header containing entity tags or ``*``.
+        etag (str): Current representation's entity tag, compared without weakness.
+    """
     if if_none_match.strip() == "*":
         return True
     target = _opaque(etag)
@@ -113,6 +120,13 @@ def not_modified_since(
     """Return whether the resource is unchanged since a valid client date.
 
     Invalid dates and dates later than ``now`` are ignored (treated as changed).
+
+    Args:
+        if_modified_since (str): Client-supplied HTTP date header.
+        last_modified (datetime): Resource modification time, converted to UTC
+            and compared at whole-second precision.
+        now (datetime | None): Reference time for rejecting future client dates;
+            defaults to the current UTC time.
     """
     try:
         since = parsedate_to_datetime(if_modified_since)
@@ -139,15 +153,15 @@ def conditional_response(
     """Return 200 with validators, or 304 when the client copy is current.
 
     Args:
-        request: Incoming request; only GET and HEAD can produce 304.
-        body: Rendered representation for a 200.
-        media_type: Content type of ``body``.
-        cache_control: Policy such as ``NO_STORE``, ``PRIVATE_REVALIDATE``, or
+        request (Request): Incoming request; only GET and HEAD can produce 304.
+        body (bytes): Rendered representation for a 200.
+        media_type (str): Content type of ``body``.
+        cache_control (str): Policy such as ``NO_STORE``, ``PRIVATE_REVALIDATE``, or
             ``shared_policy(...)``.
-        etag: Precomputed strong tag; defaults to a hash of ``body``.
-        last_modified: Timezone-aware modification time, if known.
-        vary: Request headers that select the representation.
-        public: Assert that the representation is identical for every user.
+        etag (str | None): Precomputed strong tag; defaults to a hash of ``body``.
+        last_modified (datetime | None): Timezone-aware modification time, if known.
+        vary (Iterable[str]): Request headers that select the representation.
+        public (bool): Assert that the representation is identical for every user.
 
     Returns:
         A 200 response with the body, or a 304 response without it.

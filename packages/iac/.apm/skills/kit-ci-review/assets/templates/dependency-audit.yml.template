@@ -2,7 +2,8 @@
 # Copy to .github/workflows/dependency-audit.yml, then:
 #   1. Replace every PIN_FULL_COMMIT_SHA with the reviewed 40-character commit
 #      SHA of the named release and keep the version comment.
-#   2. Add an "audit" dependency group that contains pip-audit and commit the lock.
+#   2. Keep uv at 0.11.15 or later: `uv audit` is a preview command that needs no
+#      extra dependency group, and its JSON report needs that release.
 #   3. Call it from the required CI job with
 #      `uses: $/.github/workflows/dependency-audit.yml` so pull requests are gated,
 #      while the schedule catches advisories published after merge.
@@ -18,9 +19,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash # adds -eo pipefail
+
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@PIN_FULL_COMMIT_SHA # v7
@@ -30,15 +39,30 @@ jobs:
         with:
           version: "0.13.3"
           enable-cache: false
-      - name: Install only the hash-locked audit tools
-        run: uv sync --locked --only-group audit
       - name: Audit the lock before installing it
+        # uv exits 1 on a vulnerability but 0 on adverse project statuses
+        # (archived, deprecated, quarantined), so gate on the JSON summary too.
+        # jq ships on GitHub-hosted runners. Add `--ignore-until-fixed <ID>` only
+        # for a tracked, time-boxed exception.
         run: |
-          uv export --locked --all-groups --no-emit-project \
-            --format requirements.txt --output-file "$RUNNER_TEMP/requirements.txt"
-          uv run --locked --no-sync pip-audit \
-            --requirement "$RUNNER_TEMP/requirements.txt" \
-            --require-hashes --disable-pip --strict
+          report="$RUNNER_TEMP/uv-audit.json"
+          status=0
+          uv audit --locked --preview-features audit-command,json-output \
+            --output-format json > "$report" || status=$?
+          jq -r '.summary
+            | "uv audit: \(.vulnerabilities) vulnerabilities, \(.adverse_statuses) adverse statuses"' \
+            "$report" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -e '.summary.vulnerabilities == 0 and .summary.adverse_statuses == 0' \
+            "$report" > /dev/null || status=1
+          exit "$status"
+      - name: Keep the audit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@PIN_FULL_COMMIT_SHA # v7
+        with:
+          name: uv-audit
+          path: ${{ runner.temp }}/uv-audit.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Install dependencies from wheels only
         run: uv sync --locked --no-install-project --no-build
       - name: Install the project

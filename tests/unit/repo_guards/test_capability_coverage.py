@@ -131,14 +131,24 @@ def test_active_mcp_host_manifests_must_match(covered_root: Path) -> None:
     assert any("reviewed read-only set" in item for item in check(covered_root))
 
 
-def test_consumer_apm_policy_remains_deny_by_default(covered_root: Path) -> None:
-    """Portable APM examples never authorize MCP without consumer review."""
+def test_consumer_apm_policy_must_name_reviewed_servers(covered_root: Path) -> None:
+    """An empty allow list would park every delivered MCP server."""
     path = covered_root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
     policy = yaml.safe_load(path.read_text())
-    policy["mcp"]["allow"] = ["github"]
+    policy["mcp"]["allow"] = []
     path.write_text(yaml.safe_dump(policy), encoding="utf-8")
 
-    assert any("deny MCP by default" in item for item in check(covered_root))
+    assert any("named and reviewed" in item for item in check(covered_root))
+
+
+def test_consumer_apm_policy_cannot_deny_all_executables(covered_root: Path) -> None:
+    """A blanket executable denial would park every delivered hook and server."""
+    path = covered_root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
+    policy = yaml.safe_load(path.read_text())
+    policy["executables"] = {"deny_all": True}
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+
+    assert any("named and reviewed" in item for item in check(covered_root))
 
 
 def test_broken_template_is_detected_without_rendering_it(covered_root: Path) -> None:

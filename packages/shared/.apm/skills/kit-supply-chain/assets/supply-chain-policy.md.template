@@ -31,8 +31,11 @@ build, test or ship `<project>`.
 
 ## Audit
 
-- Changed locks are audited before installation with `<pip-audit, OSV-Scanner,
-  bun audit>`; the whole lock is audited on a `<daily>` schedule.
+- Changed locks are audited before installation with `<uv audit, pip-audit,
+  OSV-Scanner, bun audit>`; the whole lock is audited on a `<daily>` schedule.
+  `uv audit` is a preview command that queries OSV and does not verify lock
+  hashes; `uv sync --locked`, lock-diff review and dependency review cover that.
+  Adverse project statuses (archived, deprecated, quarantined) fail the gate.
 - Choose one primary scanner per risk and target. Reuse secret scanning in CI;
   keep workflow security and built-image vulnerability checks separate. Add an
   overlapping scanner only for a documented coverage difference.

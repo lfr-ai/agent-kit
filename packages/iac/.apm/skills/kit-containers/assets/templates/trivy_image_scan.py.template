@@ -22,7 +22,12 @@ _JSON_INDENT = 2
 
 
 def _object(text: str) -> dict[str, object]:
-    """Read a JSON object, never silently accept an absent report."""
+    """Read a JSON object, never silently accept an absent report.
+
+    Returns:
+        dict[str, object]: Decoded top-level JSON object preserving its keys
+        and nested JSON values; no report-specific fields are validated here.
+    """
     value: object = json.loads(text)
     if not isinstance(value, dict):
         message = "Expected a JSON object"
@@ -33,7 +38,15 @@ def _object(text: str) -> dict[str, object]:
 def _invoke(
     command: list[str], *, work: Path, evidence: Path, name: str
 ) -> subprocess.CompletedProcess[str]:
-    """Run without a shell and retain stdout/stderr, including failed scans."""
+    """Run without a shell and retain stdout/stderr, including failed scans.
+
+    Args:
+        command (list[str]): Executable followed by explicit argument tokens.
+        work (Path): Working directory also used for isolated home and XDG paths.
+        evidence (Path): Existing directory receiving captured output files.
+        name (str): Evidence basename for ``<name>.json`` stdout and
+            ``<name>.stderr.txt`` diagnostics.
+    """
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("TRIVY_")
     }
@@ -58,7 +71,13 @@ def _invoke(
 
 
 def _scan_command(base: list[str], image_id: str) -> list[str]:
-    """Keep policy explicit; no caller-controlled extra flags or suppressions."""
+    """Keep policy explicit; no caller-controlled extra flags or suppressions.
+
+    Args:
+        base (list[str]): Reviewed scanner executable and isolation options,
+            placed before the image subcommand.
+        image_id (str): Immutable Docker image ID appended as the scan target.
+    """
     return [
         *base,
         "image",
@@ -126,7 +145,15 @@ def _findings_exit(report: dict[str, object]) -> int:
 def _validate_success(
     report: str, version: str, *, image_id: str, scanner_version: str
 ) -> int:
-    """Require actual database evidence and a report bound to the requested ID."""
+    """Require actual database evidence and a report bound to the requested ID.
+
+    Args:
+        report (str): JSON scan output with schema version, image metadata and results.
+        version (str): JSON version output including vulnerability database evidence.
+        image_id (str): Expected immutable ID that the report must identify.
+        scanner_version (str): Reviewed scanner version that the version output
+            must still match.
+    """
     info = _object(version)
     database = info.get("VulnerabilityDB")
     if (
@@ -152,7 +179,15 @@ def _validate_success(
 
 
 def _scan(args: argparse.Namespace, scanner: Path, evidence: Path, work: Path) -> int:
-    """Retain evidence even on a nonzero finding, scanner or database exit."""
+    """Retain evidence even on a nonzero finding, scanner or database exit.
+
+    Args:
+        args (argparse.Namespace): Validated image ID, scanner hash and version
+            used to bind the evidence to reviewed inputs.
+        scanner (Path): Verified consumer-provisioned scanner executable.
+        evidence (Path): Existing output directory for identity, scan and version files.
+        work (Path): Disposable directory for empty config, home paths and scan cache.
+    """
     config = work / "empty.yaml"
     config.write_text("{}\n", encoding="utf-8")
     base = [str(scanner), "--config", str(config), "--cache-dir", str(work / "cache")]

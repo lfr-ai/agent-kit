@@ -41,13 +41,23 @@ class Graph:
     edges: dict[str, dict[str, int]]
 
     def location(self, source: str, target: str) -> str:
-        """Return ``path:line`` of the first import from source to target."""
+        """Return ``path:line`` of the first import from source to target.
+
+        Args:
+            source (str): Importing module name.
+            target (str): Imported module name.
+        """
         line = self.edges.get(source, {}).get(target, 1)
         path = self.files.get(source)
         return f"{path.as_posix() if path else source}:{line}"
 
     def reverse(self) -> dict[str, set[str]]:
-        """Return imported module to the set of its direct importers."""
+        """Return imported module to the set of its direct importers.
+
+        Returns:
+            Direct importers keyed by imported module; modules nobody imports are
+            absent.
+        """
         result: dict[str, set[str]] = {name: set() for name in self.files}
         for source, targets in self.edges.items():
             for target in targets:
@@ -139,7 +149,11 @@ def _imports(
 
 
 def _module_name(package_dir: Path, path: Path) -> tuple[str, bool]:
-    """Map a source file to its dotted module name and package flag."""
+    """Map a source file to its dotted module name and package flag.
+
+    Returns:
+        The dotted module name and whether the file is a package ``__init__``.
+    """
     relative = path.relative_to(package_dir.parent).with_suffix("")
     parts = list(relative.parts)
     is_package = parts[-1] == "__init__"
@@ -155,7 +169,7 @@ class GraphInputError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            package_dir: Diagnostic package dir for the failing input.
+            package_dir (Path): Diagnostic package dir for the failing input.
         """
         super().__init__(f"no Python modules under {package_dir}")
 
@@ -170,10 +184,10 @@ def build_graph(
     """Parse every module under ``package_dir`` and resolve its imports.
 
     Args:
-        package_dir: Directory of the top-level package to analyze.
-        skip_type_checking: Ignore imports under ``if TYPE_CHECKING:``.
-        module_level_only: Ignore imports inside functions and lambdas.
-        include_external: Add top-level external packages as nodes.
+        package_dir (Path): Directory of the top-level package to analyze.
+        skip_type_checking (bool): Ignore imports under ``if TYPE_CHECKING:``.
+        module_level_only (bool): Ignore imports inside functions and lambdas.
+        include_external (bool): Add top-level external packages as nodes.
 
     Returns:
         The import graph.
@@ -220,7 +234,7 @@ class _Tarjan:
         """Prepare empty traversal state.
 
         Args:
-            edges: Forward import edges keyed by module.
+            edges (dict[str, dict[str, int]]): Forward import edges keyed by module.
         """
         self._edges = edges
         self.index: dict[str, int] = {}
@@ -276,7 +290,7 @@ def strongly_connected(graph: Graph) -> list[list[str]]:
     """Return strongly connected components with more than one module.
 
     Args:
-        graph: Import graph.
+        graph (Graph): Import graph.
 
     Returns:
         Sorted components, each sorted by module name.
@@ -294,10 +308,10 @@ def shortest_path(
     """Return the shortest import chain from source to target, if any.
 
     Args:
-        graph: Import graph.
-        source: Starting module.
-        target: Destination module; may equal ``source`` to find a cycle.
-        allowed: Optional set of modules the chain may pass through.
+        graph (Graph): Import graph.
+        source (str): Starting module.
+        target (str): Destination module; may equal ``source`` to find a cycle.
+        allowed (set[str] | None): Optional set of modules the chain may pass through.
 
     Returns:
         Module names from source to target inclusive, or None.
@@ -318,14 +332,7 @@ def shortest_path(
 
 
 def cycle_findings(graph: Graph) -> list[str]:
-    """Describe one shortest cycle per strongly connected component.
-
-    Args:
-        graph: Import graph.
-
-    Returns:
-        Deterministic ``path:line: import cycle: ...`` findings.
-    """
+    """Describe one shortest cycle per strongly connected component."""
     findings: list[str] = []
     for component in strongly_connected(graph):
         start = component[0]
@@ -345,9 +352,10 @@ def reachable(
     """Breadth-first walk returning (depth, module, predecessor) tuples.
 
     Args:
-        adjacency: Forward edges or reverse edges.
-        start: Module to start from.
-        depth: Maximum depth, or None for unlimited.
+        adjacency (dict[str, set[str]] | dict[str, dict[str, int]]): Forward edges or
+            reverse edges.
+        start (str): Module to start from.
+        depth (int | None): Maximum depth, or None for unlimited.
 
     Returns:
         Reached modules ordered by depth then name.
@@ -529,11 +537,7 @@ def _query(graph: Graph, args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Build the graph and run the selected mode.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv`` when omitted.
-
-    Returns:
-        0 on success, 1 when cycles are found, 2 on unusable input.
+    Returns 0 on success, 1 when cycles are found, 2 on unusable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

@@ -90,15 +90,7 @@ class Invocation:
 
 
 def strip_jsonc(text: str) -> str:
-    """Remove comments and trailing commas while preserving line numbers.
-
-    Args:
-        text: JSON text that may contain line comments, block comments and
-            trailing commas before a closing bracket or brace.
-
-    Returns:
-        Strict JSON text with the same number of lines as the input.
-    """
+    """Remove comments and trailing commas while preserving line numbers."""
     output: list[str] = []
     index = 0
     while index < len(text):
@@ -165,7 +157,7 @@ def parse_taskfile(text: str) -> Taskfile:
     double-quoted, and may contain colons such as ``docs:build``.
 
     Args:
-        text: The Taskfile content.
+        text (str): The Taskfile content.
 
     Returns:
         The declared task names and include namespaces.
@@ -192,7 +184,11 @@ def parse_taskfile(text: str) -> Taskfile:
 
 
 def _yaml_content_lines(text: str) -> list[tuple[int, str]]:
-    """Return ``(indent, line)`` pairs for lines that are not blank or comments."""
+    """Return ``(indent, line)`` pairs for lines that are not blank or comments.
+
+    Returns:
+        ``(indent, line)`` pairs in file order.
+    """
     content: list[tuple[int, str]] = []
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -235,7 +231,7 @@ def targets_from_words(words: list[str]) -> tuple[tuple[str, ...], tuple[str, ..
     """Separate Task runner targets from flags, variables and pass-through args.
 
     Args:
-        words: The executable followed by its arguments.
+        words (list[str]): The executable followed by its arguments.
 
     Returns:
         A pair of resolved target names and arguments containing editor
@@ -278,7 +274,7 @@ class TaskInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
+            issue (TaskInputIssue): The violated input invariant.
         """
         super().__init__(issue.value)
 
@@ -290,7 +286,7 @@ class TaskInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
+            issue (TaskInputIssue): The violated input invariant.
         """
         super().__init__(issue.value)
 
@@ -299,7 +295,7 @@ def invocations(text: str) -> list[Invocation]:
     """Find editor tasks, including platform overrides, that call the Task runner.
 
     Args:
-        text: The ``tasks.json`` content, with or without comments.
+        text (str): The ``tasks.json`` content, with or without comments.
 
     Returns:
         Each Task runner invocation with its targets and source line.
@@ -341,7 +337,11 @@ def _task_entries(text: str) -> list[object]:
 
 
 def _platform_variants(task: dict[str, object]) -> list[dict[str, object]]:
-    """Return the task followed by each platform override merged into it."""
+    """Return the task followed by each platform override merged into it.
+
+    Returns:
+        The task first, then one merged copy per platform override in order.
+    """
     variants = [task]
     for key in _PLATFORM_KEYS:
         override = task.get(key)
@@ -380,11 +380,11 @@ def check(
     """Report editor tasks whose Task runner targets are not declared.
 
     Args:
-        tasks_text: The ``tasks.json`` content.
-        taskfile: Names parsed from the Taskfile.
-        tasks_path: Display path used in findings.
-        allow_dynamic: Accept arguments built from editor variables.
-        verify_includes: Reject targets in included namespaces, which cannot
+        tasks_text (str): The ``tasks.json`` content.
+        taskfile (Taskfile): Names parsed from the Taskfile.
+        tasks_path (str): Display path used in findings.
+        allow_dynamic (bool): Accept arguments built from editor variables.
+        verify_includes (bool): Reject targets in included namespaces, which cannot
             be verified without reading the included Taskfile files.
 
     Returns:
@@ -414,7 +414,11 @@ def check(
 
 
 def _finding_order(finding: str) -> tuple[int, str]:
-    """Sort findings by line number, then text."""
+    """Sort findings by line number, then text.
+
+    Returns:
+        The leading line number, or zero when absent, and the finding text.
+    """
     parts = finding.rsplit(": task ", 1)[0].rsplit(":", 1)
     line = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
     return line, finding
@@ -442,9 +446,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            taskfile: Observed taskfile for the failing case.
-            findings: Observed findings for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            taskfile (Taskfile | None): Observed taskfile for the failing case.
+            findings (list[str] | None): Observed findings for the failing case.
         """
         super().__init__(issue.value.format(taskfile=taskfile, findings=findings))
 
@@ -498,11 +502,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Check task wiring for one workspace.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when every target is declared, 1 on findings, 2 on unreadable input.
+    Returns 0 when every target is declared, 1 on findings, 2 on unreadable input.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tasks", type=Path, default=Path(".vscode/tasks.json"))

@@ -256,8 +256,7 @@ def test_frontend_roles_have_structured_bodies_without_tool_names() -> None:
         (_SKILLS / "kit-react-feature/assets/agents.json").read_text(encoding="utf-8")
     )
     roles = {role["id"]: role for role in asset["roles"]}
-    assert set(roles) == {"kit-frontend", "kit-frontend-implementer"}
-    assert roles["kit-frontend"]["kind"] == "primary"
+    assert set(roles) == {"kit-frontend-implementer"}
     assert roles["kit-frontend-implementer"]["kind"] == "worker"
     for role in roles.values():
         body = role["body"]

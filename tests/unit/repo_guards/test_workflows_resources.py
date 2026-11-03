@@ -444,27 +444,17 @@ def test_config_templates_parse() -> None:
     assert types == {"layers", "forbidden", "independence"}
 
 
-def test_fullstack_role_keeps_schema_and_has_procedure_body() -> None:
-    data = json.loads((_FULLSTACK / "assets/agents.json").read_text(encoding="utf-8"))
-    (role,) = data["roles"]
-    assert data["schema_version"] == 1
-    assert list(role) == ["id", "kind", "tier", "description", "body", "workers"]
-    assert (role["id"], role["kind"], role["tier"]) == (
-        "kit-fullstack",
-        "primary",
-        "coordinator",
+def test_fullstack_slices_are_coordinated_by_the_orchestrator() -> None:
+    assert not (_FULLSTACK / "assets/agents.json").exists()
+    shared = _ROOT / "packages/shared/.apm/skills/kit-agent-runtime/assets"
+    data = json.loads((shared / "agents.json").read_text(encoding="utf-8"))
+    roles = {role["id"]: role for role in data["roles"]}
+    orchestrator = roles["kit-orchestrator"]
+    assert "settle the API contract first" in orchestrator["body"]
+    assert {"kit-backend-implementer", "kit-frontend-implementer"} <= set(
+        orchestrator["optional_workers"]
     )
-    assert (
-        role["description"] == "Coordinate a complete backend/frontend vertical slice."
-    )
-    assert role["workers"] == [
-        "kit-backend-implementer",
-        "kit-frontend-implementer",
-        "kit-contract-iac-lint",
-        "kit-code-reviewer",
-        "kit-test-author",
-    ]
-    assert 15 <= len(role["body"].splitlines()) <= 60
+    assert 15 <= len(orchestrator["body"].splitlines()) <= 60
 
 
 @pytest.mark.parametrize(

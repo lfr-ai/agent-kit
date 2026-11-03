@@ -87,17 +87,13 @@ class _Scanner(ast.NodeVisitor):
         """Record a finding.
 
         Args:
-            node: Node providing the line number.
-            message: Finding text.
+            node (ast.AST): Node providing the line number.
+            message (str): Finding text.
         """
         self.hits.append((getattr(node, "lineno", 1), message))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        """Track names imported from pydantic and flag v1 shims.
-
-        Args:
-            node: Import statement.
-        """
+        """Track names imported from pydantic and flag v1 shims."""
         module = node.module or ""
         if module == "pydantic.v1" or module.startswith("pydantic.v1."):
             self._hit(node, "pydantic.v1 compatibility import; migrate to v2 APIs")
@@ -111,24 +107,13 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        """Flag ``import pydantic.v1``.
-
-        Args:
-            node: Import statement.
-        """
+        """Flag ``import pydantic.v1``."""
         if any(alias.name.startswith("pydantic.v1") for alias in node.names):
             self._hit(node, "pydantic.v1 compatibility import; migrate to v2 APIs")
         self.generic_visit(node)
 
     def _resolve(self, node: ast.expr) -> str | None:
-        """Resolve a name or ``pydantic.attr`` to its original pydantic name.
-
-        Args:
-            node: Expression to resolve.
-
-        Returns:
-            Original pydantic name, or None.
-        """
+        """Resolve a name or ``pydantic.attr`` to its original pydantic name."""
         if isinstance(node, ast.Call):
             node = node.func
         if isinstance(node, ast.Name):
@@ -142,11 +127,7 @@ class _Scanner(ast.NodeVisitor):
         return None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Flag v1 validator decorators.
-
-        Args:
-            node: Function definition.
-        """
+        """Flag v1 validator decorators."""
         for decorator in node.decorator_list:
             name = self._resolve(decorator)
             if name in _V1_DECORATORS:
@@ -154,11 +135,7 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Flag inner Config classes, v1 config keys, and ``__root__`` fields.
-
-        Args:
-            node: Class definition.
-        """
+        """Flag inner Config classes, v1 config keys, and ``__root__`` fields."""
         for statement in node.body:
             if isinstance(statement, ast.ClassDef) and statement.name == "Config":
                 self._config_class(statement)
@@ -171,11 +148,7 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _config_class(self, node: ast.ClassDef) -> None:
-        """Flag an inner Config class and the v1 keys it assigns.
-
-        Args:
-            node: The inner ``Config`` class.
-        """
+        """Flag an inner Config class and the v1 keys it assigns."""
         self._hit(node, "inner class Config is v1; use model_config")
         for item in node.body:
             if not isinstance(item, ast.Assign):
@@ -188,11 +161,7 @@ class _Scanner(ast.NodeVisitor):
                     )
 
     def visit_Call(self, node: ast.Call) -> None:
-        """Flag v1 helpers, class methods, dump calls, and keywords.
-
-        Args:
-            node: Call expression.
-        """
+        """Flag v1 helpers, class methods, dump calls, and keywords."""
         name = self._resolve(node)
         if name in _V1_HELPERS:
             self._hit(node, f"{name} is v1; {_V1_HELPERS[name]}")
@@ -205,8 +174,8 @@ class _Scanner(ast.NodeVisitor):
         """Flag v1 keywords passed to ``Field`` or ``ConfigDict``.
 
         Args:
-            node: Call expression.
-            name: Original pydantic name of the callee.
+            node (ast.Call): Call expression.
+            name (str): Original pydantic name of the callee.
         """
         table = _KEYWORD_TABLES.get(name, {})
         for keyword in node.keywords:
@@ -217,11 +186,7 @@ class _Scanner(ast.NodeVisitor):
                 )
 
     def _v1_method(self, node: ast.Call) -> None:
-        """Flag v1 class methods and v1 dump calls with v1 keywords.
-
-        Args:
-            node: Call expression.
-        """
+        """Flag v1 class methods and v1 dump calls with v1 keywords."""
         func = node.func
         if not isinstance(func, ast.Attribute):
             return
@@ -237,8 +202,8 @@ def check_source(text: str, path: str) -> list[str]:
     """Report v1 API usage in one source file.
 
     Args:
-        text: Python source.
-        path: Display path.
+        text (str): Python source.
+        path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -275,7 +240,7 @@ def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     """Expand targets into Python files.
 
     Args:
-        targets: Files or directories.
+        targets (Sequence[Path]): Files or directories.
 
     Returns:
         Sorted files and findings for missing targets.
@@ -317,9 +282,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            source: Observed source for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            source (str | None): Observed source for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(source=source, found=found))
 
@@ -366,11 +331,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="files or directories")

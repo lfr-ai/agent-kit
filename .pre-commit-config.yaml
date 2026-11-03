@@ -143,8 +143,8 @@ repos:
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock)$
       - id: dependency-audit
-        name: Locked dependency vulnerabilities and wheel-only installs
-        entry: uv run --locked --no-sync python scripts/audit_dependencies.py
+        name: Locked dependency vulnerabilities, project statuses and wheel-only installs
+        entry: uv run --no-project python scripts/audit_dependencies.py
         language: unsupported
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock|package\.json|bun\.lock)$

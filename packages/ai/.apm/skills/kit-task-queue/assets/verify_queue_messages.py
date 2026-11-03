@@ -49,8 +49,8 @@ class QueueInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            value: Diagnostic value for the invalid input.
+            issue (QueueInputIssue): The violated input invariant.
+            value (str | None): Diagnostic value for the invalid input.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -59,7 +59,7 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
     """Decode a top-level JSON array, keeping the line of each element.
 
     Args:
-        text: JSON document text.
+        text (str): JSON document text.
 
     Returns:
         Pairs of one-based line number and decoded element.
@@ -97,7 +97,7 @@ def parse_supported(values: list[str]) -> dict[str, set[int]]:
     """Parse ``--supported TYPE:VERSION`` values.
 
     Args:
-        values: Raw option values.
+        values (list[str]): Raw option values.
 
     Returns:
         Task type to supported versions.
@@ -124,10 +124,10 @@ def check_envelope(
     """Return findings for one envelope.
 
     Args:
-        item: Decoded element.
-        where: ``path:line`` prefix.
-        max_bytes: Maximum compact JSON size.
-        supported: Task type to versions; empty means accept any.
+        item (object): Decoded element.
+        where (str): ``path:line`` prefix.
+        max_bytes (int): Maximum compact JSON size.
+        supported (dict[str, set[int]]): Task type to versions; empty means accept any.
 
     Returns:
         Findings for this envelope.
@@ -219,11 +219,7 @@ def _duplicate_findings(
 def main(argv: list[str] | None = None) -> int:
     """Validate each sample file and print findings.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 on unreadable input or bad arguments.
+    Returns 0 when clean, 1 with findings, 2 on unreadable input or bad arguments.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", type=Path, help="JSON envelope samples")

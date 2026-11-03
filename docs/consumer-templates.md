@@ -124,7 +124,10 @@ dependencies:
 ```
 
 After generation, run `apm install` once and commit `apm.yml` and
-`apm.lock.yaml`. CI runs `apm install --frozen`, which refuses a lockfile that
+`apm.lock.yaml`. The packages bring their reviewed MCP servers and the Git-guard
+hook; `mcp` above lists only consumer-owned servers. To require review before
+executables land, add `executables: {allow: {}}` and run `apm approve <package>`.
+CI runs `apm install --frozen`, which refuses a lockfile that
 is missing or out of sync with the manifest, then `apm audit`.
 
 Prefer `_message_after_copy` over `_tasks` for the install step. Copier runs

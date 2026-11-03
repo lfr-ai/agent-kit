@@ -21,7 +21,7 @@ rules are in [gate ordering](gate-ordering.md) and parity rules in
 | 8 | Unit and property tests | behavior of rules and invariants | pytest with Hypothesis | test tiers | pre-push or manual | every push |
 | 9 | Coverage | the tests exercised changed branches | coverage.py with `branch = true` and `fail_under` | full suite | manual | every push |
 | 10 | Integration and contract tests | real boundaries work | pytest with disposable services | integration tier | manual | every push or pre-merge |
-| 11 | Dependency audit | no known-vulnerable locked packages | `pip-audit` or `uv` audit tooling, OSV scanners | lockfiles | manual | every push and scheduled |
+| 11 | Dependency audit | no known-vulnerable locked packages | `uv audit --locked --preview-features audit-command` for uv projects; `pip-audit` for requirements files; OSV-Scanner for several ecosystems | lockfiles | manual | every push and scheduled |
 | 12 | Licenses | dependency licenses are allowed | license allow-list checker over the lockfile | lockfiles | manual | every push |
 | 13 | External links, full-history secrets, mutation tests | slow or network-bound evidence | lychee, history secret scan, mutmut | repository | manual | scheduled or pre-merge |
 | 14 | Build and package | the artifact builds and installs | `uv build`, install from the wheel in a clean environment | project | manual | pre-merge and release |
@@ -77,7 +77,7 @@ at row 7; a library adds rows 8 to 14. Record skipped rows and why.
 - Ruff, [linter](https://docs.astral.sh/ruff/linter/) and [formatter](https://docs.astral.sh/ruff/formatter/)
 - [import-linter](https://import-linter.readthedocs.io/)
 - coverage.py, [branch coverage](https://coverage.readthedocs.io/en/latest/branch.html)
-- [pip-audit](https://github.com/pypa/pip-audit) and [OSV](https://osv.dev/)
+- uv, [`uv audit`](https://docs.astral.sh/uv/reference/cli/#uv-audit), [pip-audit](https://github.com/pypa/pip-audit) and [OSV](https://osv.dev/)
 - [detect-secrets](https://github.com/Yelp/detect-secrets)
 - [lychee](https://lychee.cli.rs/)
 - OpenSSF, [Scorecard checks](https://github.com/ossf/scorecard/blob/main/docs/checks.md)

@@ -28,8 +28,8 @@ class SqlAlchemyUnitOfWork:
         """Store the factory; the session opens in ``__aenter__``.
 
         Args:
-            session_factory: Factory built once by the composition root with
-                ``expire_on_commit=False``.
+            session_factory (async_sessionmaker[AsyncSession]): Factory built once by
+                the composition root with ``expire_on_commit=False``.
         """
         self._session_factory = session_factory
         self._session: AsyncSession | None = None

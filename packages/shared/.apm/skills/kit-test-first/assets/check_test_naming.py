@@ -106,14 +106,7 @@ class Finding(NamedTuple):
 
 
 def words(name: str) -> list[str]:
-    """Split a test name into the words after its ``test`` prefix.
-
-    Args:
-        name: Function name such as ``test_paid_invoice_cannot_be_voided``.
-
-    Returns:
-        [``paid``, ``invoice``, ``cannot``, ``be``, ``voided``].
-    """
+    """Split a test name into the words after its ``test`` prefix."""
     return [part for part in name.removeprefix("test").split("_") if part]
 
 
@@ -121,8 +114,8 @@ def name_problem(name: str, *, options: Options) -> str | None:
     """Describe why a test name is not descriptive, if it is not.
 
     Args:
-        name: Test function name.
-        options: Rule switches.
+        name (str): Test function name.
+        options (Options): Rule switches.
 
     Returns:
         A message, or None for an acceptable name.
@@ -173,9 +166,9 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
     """Check test names in one module, including ``Test*`` classes.
 
     Args:
-        path: POSIX path used in findings.
-        text: Module source.
-        options: Rule switches.
+        path (str): POSIX path used in findings.
+        text (str): Module source.
+        options (Options): Rule switches.
 
     Returns:
         Findings for this module.
@@ -197,8 +190,8 @@ def check_files(
     """Check several test modules.
 
     Args:
-        sources: ``(path, text)`` pairs.
-        options: Rule switches.
+        sources (Iterable[tuple[str, str]]): ``(path, text)`` pairs.
+        options (Options): Rule switches.
 
     Returns:
         Findings sorted by path, line and message.
@@ -247,11 +240,7 @@ class Builder:
 
 
 def self_test() -> list[str]:
-    """Run the rules on an in-memory module and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Run the rules on an in-memory module and return unmet expectations."""
     rendered = "\n".join(
         finding.render()
         for finding in check_files(
@@ -317,11 +306,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Check test names and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     parser = _parser()
     args = parser.parse_args(argv)

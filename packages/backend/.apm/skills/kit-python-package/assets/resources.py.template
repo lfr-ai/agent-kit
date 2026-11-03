@@ -1,7 +1,7 @@
 """Locate packaged resources in installed, editable, and frozen (PyInstaller) runs.
 
-Copy to 'src/order_tools/resources.py'. Package data must be declared for the
-build backend and collected in the PyInstaller spec with 'collect_data_files'.
+Copy to ``src/order_tools/resources.py``. Package data must be declared for the
+build backend and collected in the PyInstaller spec with ``collect_data_files``.
 """
 
 from __future__ import annotations

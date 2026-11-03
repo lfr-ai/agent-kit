@@ -80,7 +80,7 @@ _SUPPORTED_KEYWORDS = frozenset(
         "enum",
     }
 )
-_JSON_TYPES: dict[str, tuple[type, ...]] = {
+_JSON_TYPES = {
     "object": (dict,),
     "array": (list,),
     "string": (str,),
@@ -135,8 +135,8 @@ def load_json(path: Path, duplicates: list[str]) -> object:
     """Parse JSON, recording keys that appear twice in one object.
 
     Args:
-        path: JSON file.
-        duplicates: Receives each duplicated key name.
+        path (Path): JSON file.
+        duplicates (list[str]): Receives each duplicated key name.
 
     Returns:
         The parsed value; for duplicated keys the last value wins.
@@ -160,11 +160,7 @@ def load_json(path: Path, duplicates: list[str]) -> object:
 def canonical_digest(document: object) -> str:
     """Return the digest ``generate_registry.py`` records for a registry.
 
-    Args:
-        document: Parsed registry JSON.
-
-    Returns:
-        SHA-256 hex digest of the sorted, compact JSON serialization.
+    The SHA-256 hex digest covers the sorted, compact JSON serialization.
     """
     serialized = json.dumps(document, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -272,10 +268,10 @@ def validate(
     """Validate a JSON value against a schema node from the supported subset.
 
     Args:
-        value: Parsed JSON value.
-        schema: Schema node, possibly a local ``$ref``.
-        where: Location used in findings.
-        root: Root schema for resolving references.
+        value (object): Parsed JSON value.
+        schema (object): Schema node, possibly a local ``$ref``.
+        where (str): Location used in findings.
+        root (Schema): Root schema for resolving references.
 
     Returns:
         Schema findings for this value and its children.
@@ -308,7 +304,11 @@ def _text(item: dict[str, object], key: str) -> str:
 
 
 def _objects(value: object) -> list[dict[str, object]]:
-    """Return the JSON objects in a list, ignoring anything else."""
+    """Return the JSON objects in a list, ignoring anything else.
+
+    Returns:
+        The dictionary items of ``value`` in order; empty when it is not a list.
+    """
     if not isinstance(value, list):
         return []
     return [
@@ -401,14 +401,7 @@ def _group_findings(
 
 
 def semantic_findings(document: object) -> list[Finding]:
-    """Check registry rules that a JSON Schema cannot express.
-
-    Args:
-        document: Parsed registry JSON.
-
-    Returns:
-        Findings for names, values, patterns and deprecations.
-    """
+    """Check registry rules that a JSON Schema cannot express."""
     if not isinstance(document, dict):
         return []
     root = {str(key): value for key, value in document.items()}
@@ -439,7 +432,12 @@ def semantic_findings(document: object) -> list[Finding]:
 
 
 def _index(document: object) -> dict[tuple[str, str], Snapshot]:
-    """Map ``(group, entry)`` names to their compatibility snapshot."""
+    """Map ``(group, entry)`` names to their compatibility snapshot.
+
+    Returns:
+        Snapshots keyed by ``(group name, entry name)``; empty for a document without
+        groups.
+    """
     root = document if isinstance(document, dict) else {}
     index: dict[tuple[str, str], Snapshot] = {}
     for group in _objects(root.get("groups")):
@@ -462,8 +460,8 @@ def baseline_findings(current: object, baseline: object) -> list[Finding]:
     """Compare a candidate registry with the released one.
 
     Args:
-        current: Candidate registry JSON.
-        baseline: Released registry JSON.
+        current (object): Candidate registry JSON.
+        baseline (object): Released registry JSON.
 
     Returns:
         Findings for unsafe removals, changed values, and a missing version bump.
@@ -503,9 +501,9 @@ def drift_text_findings(
     """Check generated module text against the registry digest and its own body.
 
     Args:
-        text: Content of a module written by the generator.
-        where: Location used in findings.
-        registry_digest: Canonical digest of the current registry.
+        text (str): Content of a module written by the generator.
+        where (str): Location used in findings.
+        registry_digest (str): Canonical digest of the current registry.
 
     Returns:
         Findings for a missing header, a stale module, or a hand-edited body.
@@ -535,8 +533,8 @@ def drift_findings(generated: Path, *, registry_digest: str) -> list[Finding]:
     """Check that a generated module exists, matches the registry, and was not edited.
 
     Args:
-        generated: Python or TypeScript module written by the generator.
-        registry_digest: Canonical digest of the current registry.
+        generated (Path): Python or TypeScript module written by the generator.
+        registry_digest (str): Canonical digest of the current registry.
 
     Returns:
         Findings for a missing, stale, or hand-edited module.
@@ -580,10 +578,11 @@ def check(
     """Run every check and return findings.
 
     Args:
-        registry: Registry JSON file.
-        schema: Schema file; defaults to the registry's relative ``$schema``.
-        outputs: Generated modules to check for drift.
-        baseline: Released registry to compare against.
+        registry (Path): Registry JSON file.
+        schema (Path | None): Schema file; defaults to the registry's relative
+            ``$schema``.
+        outputs (Sequence[Path]): Generated modules to check for drift.
+        baseline (Path | None): Released registry to compare against.
 
     Returns:
         Findings in a stable order.
@@ -621,13 +620,13 @@ class SelfTestError(AssertionError):
     """A documented check did not behave as expected on synthetic input."""
 
 
-_SELF_TEST_SCHEMA: Schema = {
+_SELF_TEST_SCHEMA = {
     "type": "object",
     "required": ["version"],
     "additionalProperties": False,
     "properties": {"version": {"type": "string", "pattern": r"^\d+\.\d+\.\d+$"}},
 }
-_SELF_TEST_REGISTRY: dict[str, object] = {
+_SELF_TEST_REGISTRY = {
     "version": "1.0.0",
     "groups": [
         {
@@ -663,7 +662,7 @@ def self_test() -> None:
     Raises:
         SelfTestError: If a check misses a planted problem or flags clean input.
     """
-    root = _SELF_TEST_SCHEMA
+    root: Schema = dict(_SELF_TEST_SCHEMA)
     clean_schema = validate({"version": "1.0.0"}, root, where="r", root=root)
     _expect(f"clean schema input flagged {clean_schema}", ok=not clean_schema)
     invalid = validate({"version": "one", "extra": 1}, root, where="r", root=root)
@@ -688,12 +687,8 @@ def self_test() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the checks and print findings.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 for unreadable or unsupported input
-        (argparse exits with 2 on invalid arguments).
+    Returns 0 when clean, 1 with findings, 2 for unreadable or unsupported input
+    (argparse exits with 2 on invalid arguments).
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("registry", nargs="?", type=Path, help="registry JSON file")

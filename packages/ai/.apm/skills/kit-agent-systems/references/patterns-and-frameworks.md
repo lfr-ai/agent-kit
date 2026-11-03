@@ -28,23 +28,26 @@ Rules that hold for every shape:
 - Parallel fan-out bounds concurrency and total cost before launch.
 - A handoff transfers explicit, validated state, not the whole transcript by
   default.
-- Durable pauses, resumption and human approval mid-run are workflow
-  orchestration concerns; use the `kit-langgraph` skill for them.
+- Durable pauses, resumption and human approval mid-run are orchestration
+  concerns; use existing `kit-langgraph` guidance or optional `kit-temporal`
+  when the consumer already uses those runtimes. They are not interchangeable
+  persistence formats.
 
 ## Framework selection
 
-Signals observed on 2026-10-23 from public repositories (stars rounded,
-latest release). Popularity is not quality; check release cadence, breaking
-changes and license at adoption time.
+Primary framework documentation rechecked 2026-11-02. Select the existing
+consumer stack first. No toolkit installs, popularity ranking or universal
+framework set is implied.
 
-| Option | Fits | Signals | Lock-in risk |
-| --- | --- | --- | --- |
-| Plain code (loop plus tool registry) | Single agent, small supervisor, full control, easy testing | No dependency | Lowest; you own retries and tracing |
-| LangGraph | Durable, resumable graphs, human-in-the-loop, explicit state | about 44k stars, MIT, frequent releases | Medium; state and checkpoint formats are framework-specific |
-| CrewAI | Role-based crews and event-driven flows, fast prototypes | about 60k stars, MIT, frequent releases | Medium to high; role and task abstractions shape the code |
-| OpenAI Agents SDK | Handoffs, guardrails and tracing with OpenAI-compatible models | about 30k stars, MIT, pre-1.0 versions | Medium; pre-1.0 API changes, provider-shaped features |
-| LlamaIndex agents and workflows | Agents centered on document retrieval and indexes | about 53k stars, MIT | Medium; tied to its data abstractions |
-| MCP tools | Exposing tools to several hosts and clients over a standard protocol | Specification 2026-07-28; Python SDK about 25k stars, MIT | Low for tool contracts; a protocol, not an agent runtime |
+| Existing option | Use for a demonstrated gap | Keep outside it |
+| --- | --- | --- |
+| Plain typed code | Fixed workflow, small tool set, bounded evaluator loop | No need to install an agent framework |
+| LlamaIndex | Existing ingestion/index/retrieval pipeline and provenance | Resource authorization and domain records |
+| DSPy | Optimizing a typed prediction program with a versioned metric/dataset | Production side effects and online train/test leakage |
+| LangChain | Existing model/tool integrations or a standard agent loop | Provider policy, tool authorization and hidden retries |
+| LangGraph | Explicit state, checkpoints, durable interrupts and approval | Non-idempotent effects inside replayed nodes |
+| Temporal | Durable business operations across workers and long waits | Model/network calls in deterministic Workflow code |
+| MCP | Tool interoperability across hosts | Control flow, authorization and durability |
 
 Decision rules:
 
@@ -58,6 +61,18 @@ Decision rules:
   servers as untrusted.
 - Pin framework versions, wrap them in an adapter, and keep the evaluation
   suite framework-independent so a migration can be measured.
+- Start from the baseline dataset in the existing `kit-llm-evaluation` owner
+  for DSPy optimization; use `kit-langgraph` when that runtime is selected. Keep
+  training/validation/holdout separate and compare task success, cost and
+  trajectory regressions before promotion. Do not create a duplicate
+  `kit-evals` owner or add optional packages to this toolkit.
+- Use framework callbacks/decorators only to connect native lifecycle hooks:
+  tracing callbacks emit safe metadata, graph nodes call existing typed tools,
+  DSPy modules express measured signatures. Never move access policy into a
+  tracing callback or invent an abstraction solely to wrap a decorator.
+- Temporal Activities may invoke the existing LLM port or an existing graph;
+  document which layer owns retries and approvals. Durable replay is not
+  exactly-once billing or permission to replay irreversible tool actions.
 
 ## Failure modes
 
@@ -73,6 +88,10 @@ Decision rules:
 - [OpenAI: A practical guide to building agents](https://cdn.openai.com/business-guides-and-resources/a-practical-guide-to-building-agents.pdf)
 - [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) and [handoffs](https://openai.github.io/openai-agents-python/handoffs/)
 - [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview)
+- [LangChain Python overview](https://docs.langchain.com/oss/python/langchain/overview)
+- [DSPy optimization](https://dspy.ai/learn/optimization/overview/)
+- [LlamaIndex framework](https://developers.llamaindex.ai/python/framework/)
+- [Temporal durable AI](https://docs.temporal.io/ai)
 - [LangChain multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent)
 - [CrewAI documentation](https://docs.crewai.com/) and [flows](https://docs.crewai.com/en/concepts/flows)
 - [LlamaIndex agents](https://developers.llamaindex.ai/python/framework/use_cases/agents/)

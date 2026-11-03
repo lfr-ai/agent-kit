@@ -65,8 +65,8 @@ class CliError(Exception):
         """Create the error.
 
         Args:
-            message: Actionable, secret-free message for stderr.
-            exit_code: Process exit status.
+            message (str): Actionable, secret-free message for stderr.
+            exit_code (ExitCode): Process exit status.
         """
         super().__init__(message)
         self.exit_code = exit_code
@@ -95,8 +95,9 @@ def main(
     """Run the CLI and return its exit status instead of exiting.
 
     Args:
-        argv: Arguments without the program name; defaults to ``sys.argv[1:]``.
-        env: Environment mapping; defaults to ``os.environ``.
+        argv (Sequence[str] | None): Arguments without the program name; defaults to
+            ``sys.argv[1:]``.
+        env (Mapping[str, str] | None): Environment mapping; defaults to ``os.environ``.
 
     Returns:
         The process exit status.
@@ -125,11 +126,7 @@ def main(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser with global options and subcommands.
-
-    Returns:
-        The configured parser.
-    """
+    """Build the argument parser with global options and subcommands."""
     parser = argparse.ArgumentParser(prog="shop", description="Shop order tools.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
     parser.add_argument("--json", action="store_true", help="write JSON to stdout")
@@ -164,8 +161,8 @@ def load_config(args: argparse.Namespace, *, env: Mapping[str, str]) -> Config:
     """Apply flags over environment over config file over defaults.
 
     Args:
-        args: Parsed arguments.
-        env: Environment mapping.
+        args (argparse.Namespace): Parsed arguments.
+        env (Mapping[str, str]): Environment mapping.
 
     Returns:
         The effective configuration.
@@ -202,7 +199,18 @@ def load_config(args: argparse.Namespace, *, env: Mapping[str, str]) -> Config:
 def _run_total(
     args: argparse.Namespace, config: Config
 ) -> tuple[dict[str, object], str]:
-    """Sum ``unit_price * quantity`` over the order lines."""
+    """Sum ``unit_price * quantity`` over the order lines.
+
+    Args:
+        args (argparse.Namespace): Parsed total command with an ``order_file`` path.
+        config (Config): Effective currency and decimal precision for the result.
+
+    Returns:
+        tuple[dict[str, object], str]: JSON-ready payload followed by display
+        text. The payload has ``total`` (rounded decimal string), ``currency``
+        (str) and ``lines`` (count); text is the total and currency separated
+        by a space.
+    """
     lines = _read_lines(args.order_file)
     total = sum(
         (_line_amount(line, index) for index, line in enumerate(lines)), Decimal(0)
@@ -222,7 +230,17 @@ def _run_total(
 def _run_config(
     _args: argparse.Namespace, config: Config
 ) -> tuple[dict[str, object], str]:
-    """Report effective settings and their sources; the token only as set or unset."""
+    """Report effective settings and their sources; the token only as set or unset.
+
+    Args:
+        _args (argparse.Namespace): Unused command arguments retained for dispatch.
+        config (Config): Effective settings and their source labels.
+
+    Returns:
+        tuple[dict[str, object], str]: Payload followed by three display lines.
+        ``currency`` and ``precision`` each map to ``value`` and ``source``;
+        ``api_token`` is only ``set`` or ``unset``, never the secret.
+    """
     payload: dict[str, object] = {
         "currency": {"value": config.currency, "source": config.sources["currency"]},
         "precision": {"value": config.precision, "source": config.sources["precision"]},
@@ -239,7 +257,13 @@ def _run_config(
 
 
 def _emit(payload: Mapping[str, object], *, text: str, as_json: bool) -> None:
-    """Write the result to stdout as JSON or as human-readable text."""
+    """Write the result to stdout as JSON or as human-readable text.
+
+    Args:
+        payload (Mapping[str, object]): JSON-serializable command result.
+        text (str): Human-readable rendering used when JSON output is disabled.
+        as_json (bool): Emit the payload with sorted keys instead of display text.
+    """
     print(json.dumps(payload, sort_keys=True) if as_json else text)
     sys.stdout.flush()
 
@@ -265,7 +289,13 @@ def _configure_logging(*, verbosity: int) -> None:
 
 
 def _read_config_file(path: Path | None) -> Mapping[str, object]:
-    """Load a TOML config file, or nothing when no file is configured."""
+    """Load a TOML config file, or nothing when no file is configured.
+
+    Returns:
+        Mapping[str, object]: Parsed TOML values keyed by setting name, retaining
+        nested tables as mappings; an empty map when no path is supplied.
+        ``load_config`` rejects names outside the supported settings.
+    """
     if path is None:
         return {}
     try:
@@ -282,7 +312,13 @@ def _read_config_file(path: Path | None) -> Mapping[str, object]:
 
 
 def _env_values(env: Mapping[str, str]) -> Mapping[str, object]:
-    """Collect ``SHOP_<NAME>`` variables for known settings."""
+    """Collect ``SHOP_<NAME>`` variables for known settings.
+
+    Returns:
+        Mapping[str, object]: Present ``currency`` and ``precision`` settings
+        keyed by lowercase name, with unparsed string values; absent variables
+        are omitted.
+    """
     return {
         name: env[f"{ENV_PREFIX}{name.upper()}"]
         for name in _DEFAULTS
@@ -291,7 +327,12 @@ def _env_values(env: Mapping[str, str]) -> Mapping[str, object]:
 
 
 def _flag_values(args: argparse.Namespace) -> Mapping[str, object]:
-    """Collect settings given as flags on the selected subcommand."""
+    """Collect settings given as flags on the selected subcommand.
+
+    Returns:
+        Mapping[str, object]: Non-None ``currency`` and ``precision`` flag
+        values keyed by setting name; omitted flags produce no entry.
+    """
     return {
         name: getattr(args, name)
         for name in _DEFAULTS
@@ -332,7 +373,14 @@ def _precision(value: object) -> int:
 
 
 def _token(token_file: Path | None, *, env: Mapping[str, str]) -> str | None:
-    """Read the API token from a file or the environment, never from argv."""
+    """Read the API token from a file or the environment, never from argv.
+
+    Args:
+        token_file (Path | None): UTF-8 token file taking precedence over the
+            environment; blank contents return None without falling back.
+        env (Mapping[str, str]): Environment containing the optional ``TOKEN_ENV``
+            value, read only when no file is supplied.
+    """
     if token_file is not None:
         try:
             return token_file.read_text(encoding="utf-8").strip() or None
@@ -365,7 +413,13 @@ def _read_lines(path: Path) -> list[object]:
 
 
 def _line_amount(line: object, index: int) -> Decimal:
-    """Return ``unit_price * quantity`` for one validated line."""
+    """Return ``unit_price * quantity`` for one validated line.
+
+    Args:
+        line (object): Expected mapping with a positive integer ``quantity`` and
+            a finite, non-negative decimal-compatible ``unit_price``.
+        index (int): Zero-based position included in validation error messages.
+    """
     if not isinstance(line, dict):
         raise CliError(f"line {index} must be an object", exit_code=ExitCode.DATA_ERROR)
     quantity = line.get("quantity")

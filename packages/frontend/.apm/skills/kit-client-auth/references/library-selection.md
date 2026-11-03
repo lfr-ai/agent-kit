@@ -23,7 +23,7 @@ login, user, and logout endpoints. Prefer that when the architecture allows.
 | Library | Fits | Notes |
 | --- | --- | --- |
 | `oidc-client-ts` | Any standards-compliant OpenID Connect provider | Version 3.5 (March 2026) uses `crypto.subtle`, so it needs a secure context (HTTPS or localhost). Configure `userStore` with in-memory storage (`InMemoryWebStorage`) and `automaticSilentRenew` with refresh tokens rather than iframes. Companion `react-oidc-context` provides hooks. |
-| MSAL Browser and MSAL React | Microsoft Entra ID and Entra External ID | Provider-maintained. Set `cache.cacheLocation` to `memoryStorage` or `sessionStorage` per the threat model; acquire tokens with `acquireTokenSilent` and fall back to interactive only on `InteractionRequiredAuthError`. Do not mix MSAL with a second OIDC library for the same provider. |
+| MSAL Browser and MSAL React | Microsoft Entra ID and Entra External ID | Provider-maintained. Choose supported `memoryStorage`, `sessionStorage` (documented default), or `localStorage` by threat model. Use `acquireTokenSilent`; interactive fallback only on `InteractionRequiredAuthError`. Do not mix MSAL with a second OIDC library for the same provider. |
 | Provider SDKs from other identity vendors | That vendor only | Accept only when maintained by the vendor and configurable as above |
 
 ## Adoption checks
@@ -36,6 +36,9 @@ login, user, and logout endpoints. Prefer that when the architecture allows.
    the context interface, not the library.
 4. Test callback errors, renewal failure, and logout with a fake provider; run
    one flow against a non-production tenant before release.
+5. Keep the provider-managed cache and callback transaction state intact. Do not
+   extract refresh tokens into an application cache. Supported persistent cache
+   is an explicit risk choice, not XSS protection.
 
 ## Primary sources
 

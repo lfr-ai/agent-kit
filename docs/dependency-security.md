@@ -16,14 +16,33 @@ and branch rules are the enforcement boundary.
    `task verify -- licenses` and `task verify`.
 5. Open a pull request. Dependency review checks the diff again server side.
 
-`task bootstrap` applies the same order on a new checkout: it installs only the
-hash-locked `audit` dependency group, audits `uv.lock` and `bun.lock`, then syncs
+`task bootstrap` applies the same order on a new checkout: it audits `uv.lock` and
+`bun.lock` with only uv and Bun (no Python audit tool is installed), then syncs
 the project, installs the locked JavaScript tools and installs Git hooks.
 
-The `task verify` wrapper uses `uv run --locked --no-sync`, so selecting
-`dependencies` cannot install a changed lock before auditing it. Audit tools must
-already be provisioned; missing tools fail explicitly. The default deterministic
-gate separately checks lock consistency with `uv lock --check`.
+The audit runs
+`uv audit --locked --preview-features audit-command,json-output --output-format json`.
+uv queries OSV for advisories and the package index for archived, deprecated and
+quarantined project statuses. The wrapper blocks every reported vulnerability
+and adverse status, even when uv exits zero. It also fails closed on a nonzero
+exit, missing tools, process failures, network failures surfaced by uv, unreadable
+JSON, unsupported schemas, explicit errors, missing finding arrays, and
+inconsistent or malformed counts (including booleans and negative numbers).
+Bun runs only after Python passes. This does not guarantee a complete status scan:
+uv can silently omit failed per-project status lookups; see residual risks.
+
+The audit does not need the project environment. Bootstrap runs it with
+`uv run --no-project python scripts/audit_dependencies.py`; the verification
+wrapper uses `uv run --locked --no-sync`, so selecting `dependencies` cannot
+install a changed lock before auditing it. The default deterministic gate
+separately checks lock consistency with `uv lock --check`.
+
+The gate requires uv `>=0.12.0,<0.14` (`required-version` in `pyproject.toml`) for
+JSON reports and the selected preview-feature spelling. The command already
+existed, hidden, in uv 0.10.8 and became visible in CLI help in 0.10.12.
+uv 0.11.9 added adverse statuses, but status-only findings still exited zero and
+JSON output was unavailable until 0.11.15. A 0.11.9 floor is therefore insufficient
+for this JSON-based gate.
 
 ## Synthetic secret-scan fixtures
 
@@ -42,8 +61,8 @@ baseline, and protected-branch checks remain enabled for commits.
 
 | Risk | Control | Where it runs |
 | --- | --- | --- |
-| Known vulnerable package | `pip-audit` on the exported, hashed `uv.lock` and `bun audit` on `bun.lock`, failing closed when a package cannot be audited | Bootstrap, lock-changing commits, required CI job, daily schedule |
-| Tampered lock entry | `--require-hashes` against PyPI validates locked hashes | Same as above |
+| Known vulnerable or adverse-status package | `uv audit --locked` (OSV advisories plus archived, deprecated and quarantined statuses) and `bun audit` on `bun.lock`, failing closed on any finding or unreadable report | Bootstrap, lock-changing commits, required CI job, daily schedule |
+| Tampered lock entry | uv verifies each locked artifact hash when `uv sync --locked` installs it; `uv audit` does not compare lock hashes with the index, so review lock diffs and keep dependency review enabled | Install, pull-request review |
 | Source-only registry package | Registry packages must have wheel records; missing, empty or malformed package inventories fail before audit tools run | Same as above |
 | Disallowed or unknown license | [License policy](../license-allowlist.json) evaluated by the shared license guard; unknown metadata fails unless a reviewed, expiring exception matches it | `task verify`, lock-changing commits, required CI job |
 | New vulnerable or unlicensed package in a PR | Dependency review fails on any severity in runtime, development, and unknown scopes, with an SPDX allowlist | Public pull requests |
@@ -64,7 +83,7 @@ not reasons to introduce another secret-scanning engine.
 | Committed credentials | detect-secrets with its reviewed baseline | A separate history or hosting-platform check adds coverage |
 | Workflow correctness | actionlint | Another tool proves a different property |
 | Workflow security | zizmor | Generic image or secret scanning does not replace this analysis |
-| Locked package vulnerabilities | pip-audit and Bun audit for their respective ecosystems | Another scanner covers an otherwise unexamined artifact |
+| Locked package vulnerabilities | `uv audit` and Bun audit for their respective ecosystems | Another scanner covers an otherwise unexamined artifact |
 | Dockerfile quality | Hadolint in consumer container review | A built-image scan is needed; lint does not inspect installed packages |
 
 This toolkit does not add a general Trivy hook or duplicate its existing package
@@ -88,7 +107,7 @@ is the shared [check_pins.py](../packages/shared/.apm/skills/kit-verify-change/a
 
 | Surface | Pin | Updater |
 | --- | --- | --- |
-| Development and audit tools | `==` in `pyproject.toml` dependency groups, hashed in `uv.lock` | Dependabot `uv` |
+| Development tools | `==` in `pyproject.toml` dependency groups, hashed in `uv.lock` | Dependabot `uv` |
 | Published dependency (PyYAML) | Bounded range for consumers; `uv.lock` pins the tested build | Dependabot `uv` |
 | Build backend | `hatchling==1.27.0` plus `build-constraint-dependencies` for its closure | Manual review: edit both pins, run `uv lock`. Dependabot ignores it because it cannot update the lock's build constraint |
 | tox provisioning | `==` matching the lock | Manual with the lock |
@@ -104,9 +123,8 @@ is the shared [check_pins.py](../packages/shared/.apm/skills/kit-verify-change/a
 
 The published PyYAML range is deliberate: exact pins in package metadata would
 force conflicts on consumers and stop them from receiving security fixes. The
-interpreter minor version is also deliberate. The build-constraint hashes that
-newer uv releases support are not used until the minimum supported uv is raised;
-uv 0.10 rejects that table form.
+interpreter minor version is also deliberate. Build constraints currently pin
+versions, not artifact hashes; do not treat them as a second hashed lock.
 
 Wheel records prove that a binary artifact exists, not that it matches every
 interpreter/platform. The preflight is not an installer sandbox. Consumers that
@@ -127,14 +145,22 @@ templates use the same minimum. Cooldown controls release age, not the polling
 schedule: with weekly checks, a version update may be proposed later than day 14.
 GitHub excludes security updates from cooldowns.
 
-uv's built-in `uv audit` command and sync-time malware check are preview features
-in the pinned uv line, so they are not part of the required gate.
+uv's `uv audit` command is still classified as a preview feature by Astral, so the
+gate passes `--preview-features audit-command,json-output` explicitly and the
+`required-version` floor guards the behavior it relies on. The sync-time malware
+check remains outside the required gate.
 
 ## Vulnerability exceptions
 
 There are no accepted vulnerabilities. If a fix is unavailable, open a tracked
-issue, assess reachability, and add a time-boxed `--ignore-vuln <ID>` to the
-audit command with that reference. Remove it as soon as a fixed version exists.
+issue, assess reachability, and obtain approval for a time-boxed exception.
+An operator can then explicitly pass
+`uv run --no-project python scripts/audit_dependencies.py --ignore-until-fixed <ID>`
+(repeat the option for multiple IDs). The wrapper forwards these IDs to uv;
+uv stops ignoring an advisory as soon as a fixed version exists. No advisory is
+ignored by default, and this option does not exempt adverse project statuses.
+An exceptional run does not change the required gate's policy; any standing
+exception needs a separately reviewed policy change and tracked expiry.
 
 ## Agent limits
 
@@ -148,6 +174,13 @@ unaudited dependency from merging.
 
 ## Residual risks
 
+- uv's project-status audit drops per-project lookup and status-deserialization
+  failures at trace level, including network and not-found errors. This behavior
+  is present in 0.11.9, the tested 0.12.5, and current upstream source. Such failures
+  do not appear in the JSON report and cannot be distinguished from a clean
+  status scan by this wrapper. Fully fail-closed status coverage needs an upstream
+  strict/error-reporting mode or a separately approved control; parsing trace logs
+  is not a stable security contract.
 - Upstream pre-commit hook environments (for example detect-secrets, cspell and
   markdownlint) install their own dependencies from the frozen hook commit; their
   transitive versions are resolved by pre-commit, not by this repository's locks.
@@ -162,7 +195,17 @@ unaudited dependency from merging.
 
 ## Sources
 
-- [pip-audit](https://github.com/pypa/pip-audit)
+- [uv audit CLI reference](https://docs.astral.sh/uv/reference/cli/#uv-audit)
+- [uv preview features](https://docs.astral.sh/uv/concepts/preview/#audit-command)
+- [uv 0.10.8 hidden audit command](https://github.com/astral-sh/uv/blob/0.10.8/crates/uv-cli/src/lib.rs)
+- [uv 0.10.12: audit shown in CLI help](https://github.com/astral-sh/uv/releases/tag/0.10.12)
+- [uv 0.11.9: adverse project statuses](https://github.com/astral-sh/uv/releases/tag/0.11.9)
+- [uv 0.11.9 audit exit behavior](https://github.com/astral-sh/uv/blob/0.11.9/crates/uv/src/commands/project/audit.rs)
+- [uv 0.11.15: JSON audit output](https://github.com/astral-sh/uv/releases/tag/0.11.15)
+- [uv 0.12.0 preview feature names](https://github.com/astral-sh/uv/blob/0.12.0/crates/uv-preview/src/lib.rs)
+- [uv 0.12.5 JSON audit schema](https://github.com/astral-sh/uv/blob/0.12.5/crates/uv/src/commands/project/audit/json.rs)
+- [uv 0.12.5 status lookup error handling](https://github.com/astral-sh/uv/blob/0.12.5/crates/uv-audit/src/service/project_status.rs)
+- [Current upstream status lookup error handling](https://github.com/astral-sh/uv/blob/main/crates/uv-audit/src/service/project_status.rs)
 - [uv settings: `exclude-newer` and `no-build`](https://docs.astral.sh/uv/reference/settings/)
 - [Dependency review action](https://github.com/actions/dependency-review-action)
 - [Dependabot options and cooldowns](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)

@@ -16,7 +16,7 @@ output. Reviewed 2026-10-23.
 | Dead code | Vulture | Ruff `F401`/`F841`, coverage reports | Low confidence for dynamic code; confirm by search |
 | Dependency hygiene | deptry (`DEP001` missing, `DEP002` unused, `DEP003` transitive, `DEP004` misplaced dev) | manual manifest review | Configure known plugins and extras first |
 | Duplication | jscpd through `kit-duplication-review` | Pylint `duplicate-code` | Judge clones by reason to change, not size |
-| Known vulnerabilities | pip-audit or OSV-Scanner through `kit-supply-chain` | platform advisories | OSV-Scanner reads many lockfile formats and emits SARIF |
+| Known vulnerabilities | `uv audit` for uv projects, through `kit-supply-chain` | pip-audit (requirements files), OSV-Scanner (many lockfile formats, SARIF), platform advisories | `uv audit` is a preview command (OSV only); adverse statuses need the JSON `summary.adverse_statuses` check |
 | Spelling in code and docs | CSpell with a project dictionary | codespell | Add terms to the dictionary, not inline ignores |
 
 ## How to judge a tool
@@ -55,7 +55,8 @@ Latest releases observed on PyPI on 2026-10-23. Re-check before relying on them.
 | Package | Latest release | Release date | Reading |
 | --- | --- | --- | --- |
 | import-linter | 2.15 | 2026-09 | active |
-| pip-audit | 2.10.1 | 2026-06 | active, PyPA project |
+| pip-audit | 2.10.1 | 2026-06 | active, PyPA project; for non-uv projects |
+| uv (`uv audit`) | 0.13.6 | 2026-10-27 | active, Astral; `audit` is a preview feature, JSON output since 0.11.15 |
 | vulture | 2.16 | 2026-03 | active, single lead maintainer |
 | deptry | 0.25.1 | 2026-03 | active, pre-1.0 |
 | xenon | 0.9.3 | 2024-10 | slow |
@@ -73,6 +74,7 @@ versions because rule sets and diagnostics change between minor versions.
 
 ## Primary sources
 
+- [uv audit CLI reference](https://docs.astral.sh/uv/reference/cli/#uv-audit) and [uv releases](https://github.com/astral-sh/uv/releases)
 - [PyPI JSON API](https://docs.pypi.org/api/json/)
 - [pypistats](https://pypistats.org/)
 - [deps.dev](https://deps.dev/)

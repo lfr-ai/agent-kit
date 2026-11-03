@@ -1,7 +1,7 @@
 """PostgreSQL and pgvector adapter for the retrieval ports.
 
-Copy to 'retrieval/adapters/pgvector.py'. Requires 'psycopg[binary]>=3.2',
-'psycopg-pool' and 'pgvector'. Only this module imports the driver; the
+Copy to ``retrieval/adapters/pgvector.py``. Requires ``psycopg[binary]>=3.2``,
+``psycopg-pool`` and ``pgvector``. Only this module imports the driver; the
 import-linter contract keeps it out of the core. Tenant, access-list and
 metadata filters run inside SQL, before ranking, for both strategies.
 """
@@ -79,14 +79,7 @@ ON CONFLICT (chunk_id) DO UPDATE SET
 
 
 async def open_pool(settings: RetrievalSettings) -> AsyncConnectionPool:
-    """Open a connection pool with the vector type registered.
-
-    Args:
-        settings: Retrieval settings carrying the database URL.
-
-    Returns:
-        An open pool; close it on application shutdown.
-    """
+    """Open a pool with the vector type registered; close it at shutdown."""
     pool = AsyncConnectionPool(
         settings.database_url,
         configure=register_vector_async,
@@ -100,7 +93,13 @@ async def open_pool(settings: RetrievalSettings) -> AsyncConnectionPool:
 
 
 def _to_hit(row: DictRow, *, strategy: str, rank: int) -> ScoredChunk:
-    """Convert a result row into a validated hit."""
+    """Convert a result row into a validated hit.
+
+    Args:
+        row (DictRow): Selected chunk columns plus the numeric ``score`` column.
+        strategy (str): Retriever label attached to the hit.
+        rank (int): Position assigned by the caller in the ranked results.
+    """
     stored = row["metadata"] if isinstance(row["metadata"], Mapping) else {}
     chunk = chunk_from_mapping(
         text=str(row["body"]),
@@ -132,6 +131,12 @@ async def _lock_source(
 
     Without the lock, an upsert could pass the tombstone check just before a
     concurrent delete commits and then resurrect the deleted source.
+
+    Args:
+        connection (psycopg.AsyncConnection): Connection with the active write
+            transaction that will hold the advisory lock.
+        tenant (str): Tenant namespace included in the lock key.
+        source_id (str): Source identifier to serialize within that tenant.
     """
     await connection.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
@@ -146,8 +151,9 @@ class _PgBase:
         """Bind to an open pool.
 
         Args:
-            pool: Pool from 'open_pool'.
-            settings: Settings supplying timeouts and search configuration.
+            pool (AsyncConnectionPool): Pool from ``open_pool``.
+            settings (RetrievalSettings): Settings supplying timeouts and search
+                configuration.
         """
         self._pool = pool
         self._settings = settings
@@ -156,6 +162,11 @@ class _PgBase:
         self, sql: str, params: Mapping[str, object], *, vector: bool
     ) -> list[DictRow]:
         """Run one bounded read inside a transaction.
+
+        Args:
+            sql (str): Parameterized retrieval statement to execute.
+            params (Mapping[str, object]): Named SQL parameter values.
+            vector (bool): Enable relaxed iterative HNSW scans for a vector read.
 
         Raises:
             RetrievalUnavailableError: On connection, pool or timeout failures.
@@ -181,7 +192,12 @@ class _PgBase:
 
     @staticmethod
     def _filters(query: Query) -> dict[str, object]:
-        """Build the shared tenant, access and metadata parameters."""
+        """Build the shared tenant, access and metadata parameters.
+
+        Returns:
+            dict[str, object]: SQL parameters ``tenant`` (str), ``tokens``
+            (sorted principal-token list), and ``filters`` (JSONB metadata map).
+        """
         return {
             "tenant": query.principal.tenant,
             "tokens": sorted(query.principal.tokens()),
@@ -201,9 +217,9 @@ class PgVectorRetriever(_PgBase):
         """Bind to a pool and an embedder.
 
         Args:
-            pool: Pool from 'open_pool'.
-            settings: Retrieval settings.
-            embedder: Must be the model used at indexing time.
+            pool (AsyncConnectionPool): Pool from ``open_pool``.
+            settings (RetrievalSettings): Retrieval settings.
+            embedder (Embedder): Must be the model used at indexing time.
         """
         super().__init__(pool, settings)
         self._embedder = embedder
@@ -219,7 +235,7 @@ class PgVectorRetriever(_PgBase):
         Iterative index scans use relaxed ordering, so rows are re-sorted.
 
         Args:
-            query: Request to execute.
+            query (Query): Request to execute.
 
         Returns:
             Hits in rank order.
@@ -240,7 +256,7 @@ class PgVectorRetriever(_PgBase):
 class PgFullTextRetriever(_PgBase):
     """Lexical retrieval with PostgreSQL full-text search.
 
-    'ts_rank_cd' is a cover-density ranking, not BM25; evaluate it on your
+    ``ts_rank_cd`` is a cover-density ranking, not BM25; evaluate it on your
     golden set before assuming parity with a BM25 engine.
     """
 
@@ -250,14 +266,7 @@ class PgFullTextRetriever(_PgBase):
         return "lexical"
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Return visible hits matching the web-search style query.
-
-        Args:
-            query: Request to execute.
-
-        Returns:
-            Hits in rank order.
-        """
+        """Return visible hits matching the web-search style query."""
         rows = await self._fetch(
             _LEXICAL_SQL,
             {
@@ -275,7 +284,7 @@ class PgFullTextRetriever(_PgBase):
 
 
 class PgIndexWriter(_PgBase):
-    """'IndexWriter' implementation with tombstones and version retention."""
+    """``IndexWriter`` implementation with tombstones and version retention."""
 
     def __init__(
         self,
@@ -288,10 +297,10 @@ class PgIndexWriter(_PgBase):
         """Bind to a pool and an embedder.
 
         Args:
-            pool: Pool from 'open_pool'.
-            settings: Retrieval settings.
-            embedder: Embedding port; its dimensions must match the schema.
-            batch_size: Chunks embedded and written per round trip.
+            pool (AsyncConnectionPool): Pool from ``open_pool``.
+            settings (RetrievalSettings): Retrieval settings.
+            embedder (Embedder): Embedding port; its dimensions must match the schema.
+            batch_size (int): Chunks embedded and written per round trip.
         """
         super().__init__(pool, settings)
         if embedder.dimensions != settings.embedding_dimensions:
@@ -303,7 +312,7 @@ class PgIndexWriter(_PgBase):
         """Embed and write chunks, refusing deleted sources.
 
         Args:
-            chunks: Chunks to write.
+            chunks (Sequence[Chunk]): Chunks to write.
 
         Returns:
             Number of chunks written.
@@ -360,8 +369,8 @@ class PgIndexWriter(_PgBase):
         """Delete a source's chunks and tombstone it in one transaction.
 
         Args:
-            tenant: Owning tenant.
-            source_id: Source to delete.
+            tenant (str): Owning tenant.
+            source_id (str): Source to delete.
 
         Returns:
             Number of chunks removed.
@@ -385,9 +394,9 @@ class PgIndexWriter(_PgBase):
         """Delete chunks of every other version of a source.
 
         Args:
-            tenant: Owning tenant.
-            source_id: Source to prune.
-            source_version: Version to keep.
+            tenant (str): Owning tenant.
+            source_id (str): Source to prune.
+            source_version (str): Version to keep.
 
         Returns:
             Number of chunks removed.

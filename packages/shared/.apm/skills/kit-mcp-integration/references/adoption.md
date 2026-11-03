@@ -46,6 +46,8 @@ Consequences for adopters:
   input or environment variable.
 - Never let a server pass the client's token through to another API
   ("token passthrough"); the server must obtain its own downstream token.
+- Resource indicators, audience checks, scope challenges and the `tools`
+  allowlist are detailed in [authorization](authorization.md).
 
 ## Least privilege and consent
 

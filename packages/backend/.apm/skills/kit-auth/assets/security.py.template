@@ -43,7 +43,7 @@ async def get_token_verifier(request: Request) -> TokenVerifier:
     """Return the verifier placed in lifespan state.
 
     Args:
-        request: Current request.
+        request (Request): Current request.
 
     Returns:
         The process-wide verifier.
@@ -65,8 +65,8 @@ def authenticate(credentials: BearerCredentials, verifier: VerifierDep) -> Princ
     """Verify the bearer token; sync because key fetching can block.
 
     Args:
-        credentials: Parsed ``Authorization`` header, if any.
-        verifier: Token verifier port.
+        credentials (BearerCredentials): Parsed ``Authorization`` header, if any.
+        verifier (VerifierDep): Token verifier port.
 
     Returns:
         The authenticated principal.
@@ -107,7 +107,7 @@ def require(permission: Permission) -> Callable[[Principal], Awaitable[Principal
     """Build a dependency that admits only principals holding a permission.
 
     Args:
-        permission: Permission the route requires.
+        permission (Permission): Permission the route requires.
 
     Returns:
         An async dependency that returns the principal or raises 403.

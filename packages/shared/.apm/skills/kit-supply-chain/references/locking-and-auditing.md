@@ -1,6 +1,6 @@
 # Locking, pinning, auditing and updates
 
-Review date: 2026-10-23.
+Review date: 2026-11-02.
 
 ## Lockfiles and hashes
 
@@ -15,8 +15,10 @@ install from it with a flag that fails instead of re-resolving.
 | npm | `package-lock.json` | `integrity` (SHA-512) | `npm ci` | `npm ci` fails on mismatch |
 | Bun | `bun.lock` | `integrity` per package | `bun install --frozen-lockfile` | same command |
 
-`uv export --format requirements.txt` writes hashes by default, which lets
-`pip-audit --require-hashes` audit exactly what is locked.
+`uv export --format requirements.txt` writes hashes by default. Use it only for
+tools that need a requirements file, for example `pip-audit --require-hashes`
+in a project that is not uv-managed; uv projects audit `uv.lock` directly with
+`uv audit`.
 
 ## Exact pins or ranges
 
@@ -39,12 +41,31 @@ owned by `kit-verify-change`); run both.
 1. Change the manifest and lock without installing (`uv add --no-sync`,
    `uv lock`, `uv remove --no-sync`).
 2. Run the lock freshness checker.
-3. Install only the hash-locked audit tool group, then audit the lock:
-   - Python: `uv export --locked --all-groups --no-emit-project --format requirements.txt --output-file req.txt`
-     then `pip-audit --requirement req.txt --require-hashes --disable-pip --strict`.
-   - Any lockfile OSV-Scanner understands: `osv-scanner scan source --lockfile uv.lock`
-     (also `package-lock.json`, `bun.lock` and others); `--format sarif` for code
-     scanning upload.
+3. Audit the lock without installing the project, then install from it:
+   - Python with uv: `uv audit --locked --preview-features audit-command`.
+     `uv audit` is a preview command; the flag silences the warning. It reads
+     `uv.lock`, queries OSV only, audits all groups and extras by default
+     (`--no-dev`, `--no-group`, `--only-group` narrow it) and needs network
+     access. It exits 1 on a vulnerability. Adverse project statuses
+     (PEP 792 archived, deprecated, quarantined; reported since uv 0.11.9) do
+     not change the exit code, so gate on the JSON report:
+     `uv audit --locked --preview-features audit-command,json-output --output-format json`
+     (JSON needs uv 0.11.15 or later) and fail when `summary.vulnerabilities`
+     or `summary.adverse_statuses` is nonzero. `--output-format sarif` is also
+     available; check `uv audit --help` for the installed release.
+     `--service-url` with `--service-format osv` points at an OSV-protocol
+     mirror.
+   - Hash-integrity limitation: `uv audit` does not compare lock hashes with
+     the index. Compensate with `uv sync --locked`, which verifies each
+     artifact hash at install, review of lock diffs, and the dependency-review
+     action on pull requests.
+   - Python without uv (requirements files): `pip-audit --requirement req.txt
+     --require-hashes --disable-pip --strict`; export hashes with
+     `uv export --locked --all-groups --no-emit-project --format requirements.txt --output-file req.txt`
+     only when a uv project must feed such a tool.
+   - Multi-ecosystem or any lockfile OSV-Scanner understands:
+     `osv-scanner scan source --lockfile uv.lock` (also `package-lock.json`,
+     `bun.lock` and others); `--format sarif` for code scanning upload.
    - JavaScript: `bun audit` or `npm audit --audit-level=low`; `npm audit signatures`
      verifies registry signatures and provenance for installed packages.
 4. Install from the audited lock (`uv sync --locked`, `npm ci`,
@@ -88,14 +109,27 @@ cooldown alone would.
 
 When no fixed version exists: record the advisory identifier, the affected
 code path and whether it is reachable, a tracked issue, an owner and an expiry
-date; add the narrowest ignore (`pip-audit --ignore-vuln <ID>`, an OSV-Scanner
-config entry with `ignoreUntil` and a reason) and remove it when a fix ships.
+date; add the narrowest ignore and remove it when a fix ships. With uv use
+`uv audit --ignore-until-fixed <ID>`: it suppresses the advisory (aliases
+included) only while no fix version exists and reports it again once one does;
+plain `--ignore <ID>` never expires, so reserve it for a documented
+not-affected decision. Every ignore carries a comment or config note naming the
+tracked issue, owner and expiry; an ignore without a tracked issue is rejected.
+Other tools: `pip-audit --ignore-vuln <ID>`, or an OSV-Scanner config entry
+with `ignoreUntil` and a reason.
 
 ## Failure modes
 
-- **Hashes stripped on export.** `--no-hashes` or a requirements file without hashes
-  lets a tampered artifact install. The audit command fails closed with
-  `--require-hashes`.
+- **Hashes stripped on export.** In a requirements-file audit, `--no-hashes` or
+  a file without hashes lets a tampered artifact install. That audit command
+  fails closed with `--require-hashes`.
+- **Adverse statuses ignored.** `uv audit` exits 0 for an archived, deprecated
+  or quarantined project; without the JSON `summary.adverse_statuses` check
+  they pass silently.
+- **Audit mistaken for integrity proof.** `uv audit` checks advisories, not
+  lock hashes; install with `uv sync --locked` and review lock diffs.
+- **Preview drift.** `uv audit` is a preview feature; pin uv, keep the
+  `--preview-features` flags explicit and re-check `uv audit --help` on upgrade.
 - **Lock regenerated with unrelated upgrades.** Use
   `uv lock --upgrade-package <name>`, not a blanket `--upgrade`, in a
   single-purpose change.
@@ -106,10 +140,12 @@ config entry with `ignoreUntil` and a reason) and remove it when a fix ships.
 
 ## Primary sources
 
-Reviewed 2026-10-23.
+Reviewed 2026-11-02.
 
 - uv, [Locking and syncing](https://docs.astral.sh/uv/concepts/projects/sync/)
 - uv, [Exporting a lockfile](https://docs.astral.sh/uv/concepts/projects/export/)
+- uv, [CLI reference: `uv audit`](https://docs.astral.sh/uv/reference/cli/#uv-audit) and [preview features](https://docs.astral.sh/uv/concepts/preview/)
+- uv, [Release notes](https://github.com/astral-sh/uv/releases)
 - uv, [Settings: `exclude-newer`, `no-build`](https://docs.astral.sh/uv/reference/settings/)
 - PyPA, [Dependency groups specification](https://packaging.python.org/en/latest/specifications/dependency-groups/)
 - PyPA, [Secure installs with pip](https://pip.pypa.io/en/stable/topics/secure-installs/)

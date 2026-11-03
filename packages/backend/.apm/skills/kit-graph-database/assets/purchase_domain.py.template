@@ -20,7 +20,7 @@ class GraphUnavailableError(Exception):
         """Record which port operation failed.
 
         Args:
-            operation: Name of the port method that could not complete.
+            operation (str): Name of the port method that could not complete.
         """
         super().__init__(f"graph store unavailable during {operation}")
         self.operation = operation
@@ -64,7 +64,12 @@ class PurchaseGraph(Protocol):
     async def products_bought_together(
         self, sku: str, *, limit: int = _DEFAULT_LIMIT
     ) -> list[ProductAffinity]:
-        """Return products most often bought together with ``sku``."""
+        """Return products most often bought together with ``sku``.
+
+        Args:
+            sku (str): Starting product whose co-purchase relationships are queried.
+            limit (int): Maximum number of product affinities to return.
+        """
         ...
 
     async def customer_products(
@@ -74,5 +79,11 @@ class PurchaseGraph(Protocol):
         after_sku: str | None = None,
         limit: int = _DEFAULT_LIMIT,
     ) -> list[str]:
-        """Return one keyset page of SKUs a customer bought."""
+        """Return one keyset page of SKUs a customer bought.
+
+        Args:
+            customer_id (str): Customer whose purchase history is queried.
+            after_sku (str | None): Exclusive SKU cursor, or None for the first page.
+            limit (int): Maximum number of SKUs in the page.
+        """
         ...

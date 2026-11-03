@@ -83,8 +83,8 @@ def is_secret_like(name: str, *, prefixes: Sequence[str]) -> bool:
     """Return whether a prefixed variable name suggests a secret.
 
     Args:
-        name: Variable name such as ``VITE_API_TOKEN``.
-        prefixes: Public prefixes; the matching prefix is removed first.
+        name (str): Variable name such as ``VITE_API_TOKEN``.
+        prefixes (Sequence[str]): Public prefixes; the matching prefix is removed first.
 
     Returns:
         True when any underscore-separated segment after the prefix is a
@@ -99,19 +99,17 @@ def is_secret_like(name: str, *, prefixes: Sequence[str]) -> bool:
 
 
 def is_env_file(path: Path) -> bool:
-    """Return whether a file name is a dotenv file (``.env`` or ``.env.*``).
-
-    Args:
-        path: Candidate file.
-
-    Returns:
-        True for ``.env``, ``.env.local``, ``.env.example`` and similar.
-    """
+    """Return whether a file name is a dotenv file (``.env`` or ``.env.*``)."""
     return path.name == ".env" or path.name.startswith(".env.")
 
 
 def _patterns(prefixes: Sequence[str]) -> tuple[re.Pattern[str], re.Pattern[str]]:
-    """Build the dotenv assignment and source identifier patterns."""
+    """Build the dotenv assignment and source identifier patterns.
+
+    Returns:
+        The dotenv assignment pattern and the source identifier pattern, in that order,
+        both restricted to ``prefixes``.
+    """
     alternatives = "|".join(re.escape(prefix) for prefix in prefixes)
     assignment = re.compile(rf"^\s*(?:export\s+)?((?:{alternatives})[A-Za-z0-9_]*)\s*=")
     identifier = re.compile(rf"(?<![A-Za-z0-9_$])((?:{alternatives})[A-Za-z0-9_]+)")
@@ -124,10 +122,10 @@ def scan_text(
     """Return secret-like public names in one file.
 
     Args:
-        text: File content.
-        path: Path used in findings.
-        env_file: Parse dotenv assignments instead of source identifiers.
-        prefixes: Public prefixes to check.
+        text (str): File content.
+        path (str): Path used in findings.
+        env_file (bool): Parse dotenv assignments instead of source identifiers.
+        prefixes (Sequence[str]): Public prefixes to check.
 
     Returns:
         Findings in line order, one per name per line.
@@ -166,7 +164,7 @@ def iter_files(paths: Sequence[Path]) -> Iterator[Path]:
     """Yield dotenv and source files in deterministic order.
 
     Args:
-        paths: Files or directories to scan.
+        paths (Sequence[Path]): Files or directories to scan.
 
     Yields:
         Candidate files outside dependency and build output directories.
@@ -192,9 +190,9 @@ def scan_paths(
     """Scan files and directories for secret-like public names.
 
     Args:
-        paths: Files or directories to scan.
-        prefixes: Public prefixes to check.
-        allow: Exact names accepted as publishable.
+        paths (Sequence[Path]): Files or directories to scan.
+        prefixes (Sequence[str]): Public prefixes to check.
+        allow (Sequence[str]): Exact names accepted as publishable.
 
     Returns:
         Findings sorted by path and line.
@@ -282,12 +280,8 @@ def self_test() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the scan and print findings.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 for usage or input errors (argparse
-        exits with 2 on invalid arguments).
+    Returns 0 when clean, 1 with findings, 2 for usage or input errors (argparse exits
+    with 2 on invalid arguments).
     """
     parser = _parser()
     args = parser.parse_args(argv)

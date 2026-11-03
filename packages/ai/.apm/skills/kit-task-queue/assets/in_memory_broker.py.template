@@ -1,7 +1,7 @@
 """In-memory broker and idempotency store with real lease semantics.
 
-Copy to 'tasks/memory.py'. Both classes implement the ports in
-'tasks.contracts' with an injected clock, so tests can expire leases and
+Copy to ``tasks/memory.py``. Both classes implement the ports in
+``tasks.contracts`` with an injected clock, so tests can expire leases and
 delays deterministically. They are also handy for local development; they
 are not durable and must not be used across processes.
 """
@@ -46,7 +46,7 @@ class InMemoryBroker:
         """Create an empty queue.
 
         Args:
-            clock: Monotonic clock in seconds.
+            clock (Callable[[], float]): Monotonic clock in seconds.
         """
         self._clock = clock
         self._messages: dict[int, _Message] = {}
@@ -62,8 +62,8 @@ class InMemoryBroker:
         """Publish a message.
 
         Args:
-            body: Serialized envelope.
-            delay_s: Seconds before the message becomes visible.
+            body (bytes): Serialized envelope.
+            delay_s (float): Seconds before the message becomes visible.
         """
         self._next_id += 1
         self._messages[self._next_id] = _Message(
@@ -76,8 +76,8 @@ class InMemoryBroker:
         """Lease visible messages in arrival order.
 
         Args:
-            max_messages: Upper bound on returned deliveries.
-            visibility_timeout_s: Lease length.
+            max_messages (int): Upper bound on returned deliveries.
+            visibility_timeout_s (float): Lease length.
 
         Returns:
             Deliveries with fresh receipts.
@@ -126,17 +126,33 @@ class InMemoryBroker:
         del self._messages[self._leased(delivery).message_id]
 
     async def retry(self, delivery: Delivery, *, delay_s: float) -> None:
-        """Make the message visible again after a delay."""
+        """Make the message visible again after a delay.
+
+        Args:
+            delivery (Delivery): Current receipt whose lease must still be valid.
+            delay_s (float): Seconds from now until the next delivery is eligible.
+        """
         message = self._leased(delivery)
         message.visible_at = self._clock() + delay_s
         message.receipt = None
 
     async def extend(self, delivery: Delivery, *, visibility_timeout_s: float) -> None:
-        """Extend the lease of a message still being processed."""
+        """Extend the lease of a message still being processed.
+
+        Args:
+            delivery (Delivery): Current receipt whose lease must still be valid.
+            visibility_timeout_s (float): New lease duration measured from now.
+        """
         self._leased(delivery).visible_at = self._clock() + visibility_timeout_s
 
     async def dead_letter(self, delivery: Delivery, *, reason: str) -> None:
-        """Move the message to the dead-letter list."""
+        """Move the message to the dead-letter list.
+
+        Args:
+            delivery (Delivery): Current receipt for the message to remove.
+            reason (str): Safe explanation stored alongside the original bytes
+                and delivery count for operator review.
+        """
         message = self._leased(delivery)
         del self._messages[message.message_id]
         self.dead_letters.append(
@@ -146,11 +162,7 @@ class InMemoryBroker:
         )
 
     async def redrive(self) -> int:
-        """Re-enqueue every dead letter, for operator replay after a fix.
-
-        Returns:
-            Number of messages re-enqueued.
-        """
+        """Re-enqueue every dead letter for operator replay; return the count."""
         parked, self.dead_letters = self.dead_letters, []
         for letter in parked:
             await self.enqueue(letter.body)
@@ -158,13 +170,13 @@ class InMemoryBroker:
 
 
 class InMemoryIdempotencyStore:
-    """Idempotency keys with leases; 'done' keys never run again."""
+    """Idempotency keys with leases; ``done`` keys never run again."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         """Create an empty store.
 
         Args:
-            clock: Monotonic clock in seconds.
+            clock (Callable[[], float]): Monotonic clock in seconds.
         """
         self._clock = clock
         self._done: set[str] = set()
@@ -174,8 +186,8 @@ class InMemoryIdempotencyStore:
         """Claim a key unless it is done or leased by someone else.
 
         Args:
-            key: Idempotency key.
-            lease_s: How long the claim blocks duplicates.
+            key (str): Idempotency key.
+            lease_s (float): How long the claim blocks duplicates.
 
         Returns:
             The claim outcome.

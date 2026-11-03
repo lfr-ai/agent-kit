@@ -46,15 +46,17 @@ selected bundles. Session compositions (`--skill`) deliver none.
 
 | Role source (bundle, skill) | Roles | Delivered by |
 | --- | --- | --- |
-| shared, `kit-agent-runtime` | Primary: `kit-debug`, `kit-deep-thinking`, `kit-devops`, `kit-modernization`, `kit-orchestrator`, `kit-refactor`. Workers: `kit-codebase-researcher`, `kit-code-reviewer`, `kit-planner`, `kit-plan-architect`, `kit-solid-review`, `kit-security-reviewer`, `kit-devops-implementer`, `kit-docs-writer`, `kit-test-author` | every profile |
-| backend, `kit-python-service` | Primary: `kit-ddd`, `kit-sdd`, `kit-tdd`, `kit-testing`. Workers: `kit-backend-implementer`, `kit-contract-iac-lint` | backend, fullstack, ai |
-| frontend, `kit-react-feature` | Primary: `kit-frontend`. Worker: `kit-frontend-implementer` | frontend, fullstack |
-| coordination, `kit-fullstack-workflow` | Coordinator: `kit-fullstack` (delegates to backend and frontend implementers, contract lint, code review and test authoring) | fullstack |
-| iac, `kit-infra-review` | Worker: `kit-infra-reviewer` (read-only) | iac |
-| ai, `kit-llm-evaluation` | Primary: `kit-ai-engineer`. Worker: `kit-eval-reviewer` (read-only) | ai |
+| shared, `kit-agent-runtime` | Primary: `kit-debug`, `kit-orchestrator`. Workers (hidden from the picker): `kit-deep-thinking` (adviser for architecture decisions and upgrade plans), `kit-codebase-researcher`, `kit-code-reviewer` (correctness and coupling), `kit-planner` (including placement and reuse checks), `kit-security-reviewer`, `kit-refactor`, `kit-devops-implementer`, `kit-docs-writer`, `kit-test-author` (test design and authoring) | every profile |
+| backend, `kit-python-service` | Workers: `kit-ddd` and `kit-sdd` (advisers), `kit-backend-implementer`, `kit-contract-iac-lint` | backend, fullstack, ai |
+| frontend, `kit-react-feature` | Worker: `kit-frontend-implementer` | frontend, fullstack |
+| iac, `kit-infra-review` | Coordinator: `kit-devops`. Worker: `kit-infra-reviewer` (verifier: no edit tools) | iac |
+| ai, `kit-llm-evaluation` | Worker: `kit-eval-reviewer` (verifier: no edit tools) | ai |
 
-A coordinator's workers must resolve inside the same selection, which is why
-`kit-fullstack` is only delivered with both stacks present.
+A coordinator's required workers must resolve inside the same selection, which
+is why `kit-devops` ships with the IaC bundle. Every role has offline shell
+access; advisers and reviewers make no source edits. Full-stack, frontend and
+model-backed work runs through `kit-orchestrator`, which links the optional
+workers of the selected bundles.
 
 ## Intended combinations
 

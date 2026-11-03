@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import TypeGuard
 
+from agent_kit.core.executables import hook_issues
+from agent_kit.core.guards import JsonObject, is_int, is_json_object
 from agent_kit.core.models import CheckReport, ComposedSnapshot, Finding, SourceDocument
 
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -22,13 +25,27 @@ _DELIVERY_ROOTS = (
     ".github/instructions/",
 )
 _POST_INSTALL_METADATA = frozenset(
-    {"apm.lock.yaml", ".gitignore", "AGENTS.md", "CLAUDE.md"}
+    {
+        "apm.lock.yaml",
+        ".gitignore",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".mcp.json",
+        ".github/mcp.json",
+        ".claude/settings.json",
+        ".claude/apm-hooks.json",
+    }
 )
+_HOOK_SCRIPT = re.compile(
+    r"(?:\.github/hooks/scripts|\.claude/hooks)/[^/]+/scripts/([^/]+)"
+)
+_HOOK_REGISTRATION = re.compile(r"\.github/hooks/[^/]+\.json")
 
 
-def _mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow decoded provenance objects to string-keyed mappings."""
-    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+def _selected_targets(manifest: object) -> list[object]:
+    """Return the ``targets`` list of a decoded manifest, or empty when absent."""
+    targets = manifest.get("targets") if is_json_object(manifest) else None
+    return targets if isinstance(targets, list) else []
 
 
 def _path_is_relative(value: str) -> bool:
@@ -61,12 +78,24 @@ def _prompt_source(relative: str) -> str | None:
 
 
 def _finding(findings: list[Finding], code: str, message: str, path: str) -> None:
-    """Append one safe provenance diagnostic."""
+    """Append one safe provenance diagnostic.
+
+    Args:
+        findings (list[Finding]): Collector extended in place.
+        code (str): Stable finding code.
+        message (str): Safe, value-free description.
+        path (str): Source- or output-relative location.
+    """
     findings.append(Finding(code=code, message=message, path=path))
 
 
 def _check_composed_links(snapshot: ComposedSnapshot, findings: list[Finding]) -> None:
-    """Report a symlinked composed root or provenance file."""
+    """Report a symlinked composed root or provenance file.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+    """
     if snapshot.root_is_symlink:
         _finding(findings, "provenance.symlink", "composed root is a symlink", ".")
     if snapshot.provenance_is_symlink:
@@ -80,8 +109,17 @@ def _check_composed_links(snapshot: ComposedSnapshot, findings: list[Finding]) -
 
 def _provenance_mapping(
     snapshot: ComposedSnapshot, findings: list[Finding]
-) -> dict[str, object] | None:
-    """Return a readable provenance object with exactly the expected fields."""
+) -> JsonObject | None:
+    """Return a readable provenance object with exactly the expected fields.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        JsonObject | None: The decoded provenance document, or ``None`` after a
+        finding when it is unreadable or has missing or unknown fields.
+    """
     if snapshot.provenance_error or snapshot.provenance is None:
         _finding(
             findings,
@@ -91,7 +129,7 @@ def _provenance_mapping(
         )
         return None
     provenance = snapshot.provenance
-    if not _mapping(provenance) or set(provenance) != _PROVENANCE_FIELDS:
+    if not is_json_object(provenance) or set(provenance) != _PROVENANCE_FIELDS:
         _finding(
             findings,
             "provenance.schema",
@@ -102,12 +140,15 @@ def _provenance_mapping(
     return provenance
 
 
-def _check_schema_version(
-    provenance: dict[str, object], findings: list[Finding]
-) -> None:
-    """Require the integer provenance schema version 1."""
+def _check_schema_version(provenance: JsonObject, findings: list[Finding]) -> None:
+    """Require the integer provenance schema version 1.
+
+    Args:
+        provenance (JsonObject): Decoded provenance document.
+        findings (list[Finding]): Collector extended in place.
+    """
     schema_version = provenance.get("schema_version")
-    if schema_version != 1 or type(schema_version) is not int:
+    if not is_int(schema_version) or schema_version != 1:
         _finding(
             findings,
             "provenance.schema",
@@ -117,7 +158,15 @@ def _check_schema_version(
 
 
 def _valid_file_hash(digest: object, relative: str) -> TypeGuard[str]:
-    """Accept a contained, non-ledger path with a lowercase SHA-256 digest."""
+    """Accept a contained, non-ledger path with a lowercase SHA-256 digest.
+
+    Args:
+        digest (object): Recorded digest value.
+        relative (str): Recorded relative path.
+
+    Returns:
+        bool: Whether both are acceptable; narrows ``digest`` to ``str``.
+    """
     return (
         _path_is_relative(relative)
         and relative != "provenance.json"
@@ -126,10 +175,17 @@ def _valid_file_hash(digest: object, relative: str) -> TypeGuard[str]:
     )
 
 
-def _expected_hashes(
-    expected: dict[str, object], findings: list[Finding]
-) -> dict[str, str]:
-    """Return valid recorded hashes and report invalid or missing entries."""
+def _expected_hashes(expected: JsonObject, findings: list[Finding]) -> dict[str, str]:
+    """Return valid recorded hashes and report invalid or missing entries.
+
+    Args:
+        expected (JsonObject): Decoded ``files`` object mapping path to digest.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        dict[str, str]: Lowercase SHA-256 hex digest keyed by relative path, for
+        valid entries only.
+    """
     hashes: dict[str, str] = {}
     for relative, digest in expected.items():
         if _valid_file_hash(digest, relative):
@@ -162,7 +218,17 @@ def _native_digest(document: SourceDocument) -> str:
 def _actual_hashes(
     snapshot: ComposedSnapshot, findings: list[Finding]
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Hash captured bytes, not unreadable placeholders or parsed YAML values."""
+    """Hash captured bytes, not unreadable placeholders or parsed YAML values.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        tuple[dict[str, str], dict[str, str]]: Two SHA-256 hex digest maps keyed
+        by relative path: exact byte digests, then native digests with normalized
+        line endings. Links, directories, and unreadable files are excluded.
+    """
     actual: dict[str, str] = {}
     native_actual: dict[str, str] = {}
     for document in snapshot.files:
@@ -192,7 +258,13 @@ def _actual_hashes(
 def _check_delivery_drift(
     delivery: dict[str, str], native_actual: dict[str, str], findings: list[Finding]
 ) -> None:
-    """Report native files whose bytes differ from the APM ledger."""
+    """Report native files whose bytes differ from the APM ledger.
+
+    Args:
+        delivery (dict[str, str]): Ledger digest keyed by relative path.
+        native_actual (dict[str, str]): Observed native digest keyed by relative path.
+        findings (list[Finding]): Collector extended in place.
+    """
     for relative, digest in delivery.items():
         if native_actual.get(relative) != digest:
             _finding(
@@ -203,13 +275,271 @@ def _check_delivery_drift(
             )
 
 
+def _check_hook_source(native_actual: dict[str, str], findings: list[Finding]) -> None:
+    """Bind installed hook scripts to source, even if a ledger hash is rewritten.
+
+    Args:
+        native_actual (dict[str, str]): Observed native digest keyed by relative path.
+        findings (list[Finding]): Collector extended in place.
+    """
+    for relative, digest in native_actual.items():
+        match = _HOOK_SCRIPT.fullmatch(relative)
+        if match is not None and digest != native_actual.get(
+            f".apm/hooks/scripts/{match.group(1)}"
+        ):
+            _finding(
+                findings,
+                "provenance.hook-source",
+                "installed hook script differs from its authored source",
+                relative,
+            )
+
+
+def _json_value(document: SourceDocument | None) -> object:
+    """Decode captured JSON; return ``None`` for absent or invalid configuration."""
+    try:
+        return json.loads(document.text or "") if document is not None else None
+    except ValueError:
+        return None
+
+
+def _hook_projections(
+    document: SourceDocument, package: str
+) -> tuple[JsonObject, list[JsonObject]]:
+    """Project the closed hook schema into the two pinned APM native formats.
+
+    Args:
+        document (SourceDocument): Authored, already validated hook registration.
+        package (str): Package name embedded in native script paths.
+
+    Returns:
+        tuple[JsonObject, list[JsonObject]]: The Copilot registration document,
+        then the Claude ``PreToolUse`` handler entries, both in source order.
+    """
+    data = _json_value(document)
+    hooks = data.get("hooks") if is_json_object(data) else None
+    entries = hooks.get("preToolUse") if is_json_object(hooks) else None
+    copilot: list[JsonObject] = []
+    claude: list[JsonObject] = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not is_json_object(entry):
+            continue
+        script = str(entry["bash"]).removeprefix("python3 ./")
+        base = f".claude/hooks/{package}/{script}"
+        copilot.append(
+            {
+                **entry,
+                "bash": f"python3 .github/hooks/scripts/{package}/{script}",
+                "powershell": f"python .github/hooks/scripts/{package}/{script}",
+            }
+        )
+        claude.append(
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f'python3 "${{CLAUDE_PROJECT_DIR}}/{base}"',
+                        "powershell": f"python $env:CLAUDE_PROJECT_DIR/{base}",
+                        "timeout": entry["timeoutSec"],
+                    }
+                ],
+            }
+        )
+    return {"version": 1, "hooks": {"preToolUse": copilot}}, claude
+
+
+def _expected_hooks(
+    documents: dict[str, SourceDocument], package: str, findings: list[Finding]
+) -> tuple[JsonObject, list[JsonObject]]:
+    """Build expected registrations only from validated, authored hook sources.
+
+    Args:
+        documents (dict[str, SourceDocument]): Captured files keyed by relative path.
+        package (str): Package name embedded in native script paths.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        tuple[JsonObject, list[JsonObject]]: Expected Copilot registration documents
+        keyed by relative path, then the Claude handler entries in source order.
+    """
+    copilot: JsonObject = {}
+    claude: list[JsonObject] = []
+    scripts = {
+        PurePosixPath(path).name
+        for path in documents
+        if path.startswith(".apm/hooks/scripts/")
+    }
+    for path, document in sorted(documents.items()):
+        if (
+            document.is_directory
+            or PurePosixPath(path).suffix != ".json"
+            or PurePosixPath(path).parent != PurePosixPath(".apm/hooks")
+        ):
+            continue
+        if hook_issues(document.text or "", scripts):
+            _finding(findings, "provenance.hooks", "authored hook is invalid", path)
+            continue
+        native, handlers = _hook_projections(document, package)
+        copilot[f".github/hooks/{package}-{PurePosixPath(path).name}"] = native
+        claude.extend(handlers)
+    return copilot, claude
+
+
+def _check_hook_configuration(
+    snapshot: ComposedSnapshot, findings: list[Finding]
+) -> None:
+    """Bind effective hook events, commands and disabling settings to source.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+    """
+    documents = {item.relative_path: item for item in snapshot.files}
+    if "apm.lock.yaml" not in documents:
+        return
+    manifest = documents.get("apm.yml")
+    value = manifest.yaml_value if manifest is not None else None
+    package = str(value.get("name", "")) if is_json_object(value) else ""
+    selected = _selected_targets(value)
+    copilot, claude = _expected_hooks(documents, package, findings)
+    for relative, expected in copilot.items():
+        if ("copilot" in selected or relative in documents) and _json_value(
+            documents.get(relative)
+        ) != expected:
+            _finding(
+                findings,
+                "provenance.hooks",
+                "hook registration differs from source",
+                relative,
+            )
+    _check_claude_hooks(documents, claude, package, selected, findings)
+
+
+def _check_claude_hooks(
+    documents: dict[str, SourceDocument],
+    handlers: list[JsonObject],
+    package: str,
+    targets: list[object],
+    findings: list[Finding],
+) -> None:
+    """Check both effective Claude settings and APM's hook ownership receipt.
+
+    Args:
+        documents (dict[str, SourceDocument]): Captured files keyed by relative path.
+        handlers (list[JsonObject]): Expected Claude ``PreToolUse`` handler entries.
+        package (str): Package name recorded as the local ownership source.
+        targets (list[object]): Runtime targets selected by the manifest.
+        findings (list[Finding]): Collector extended in place.
+    """
+    relative = ".claude/settings.json"
+    settings = _json_value(documents.get(relative))
+    expected: JsonObject = {"PreToolUse": handlers} if handlers else {}
+    required = "claude" in targets and bool(handlers)
+    if required or relative in documents:
+        actual = settings.get("hooks", {}) if is_json_object(settings) else None
+        disabled = is_json_object(settings) and (
+            settings.get("disableAllHooks") is True
+            or settings.get("allowManagedHooksOnly") is True
+        )
+        if actual != expected or disabled:
+            _finding(
+                findings,
+                "provenance.hooks",
+                "effective Claude hooks differ from source",
+                relative,
+            )
+    receipt = ".claude/apm-hooks.json"
+    if receipt in documents:
+        owned = [{**entry, "_apm_source": f"_local/{package}"} for entry in handlers]
+        if _json_value(documents[receipt]) != ({"PreToolUse": owned} if owned else {}):
+            _finding(
+                findings,
+                "provenance.hooks",
+                "Claude hook ownership receipt differs from source",
+                receipt,
+            )
+
+
+def _mcp_projection(entries: object, *, copilot: bool) -> JsonObject:
+    """Project validated server declarations into APM's native configuration shape.
+
+    Args:
+        entries (object): Decoded ``dependencies.mcp`` value.
+        copilot (bool): Whether to emit the Copilot shape, with local type and tools.
+
+    Returns:
+        JsonObject: Native server definition keyed by server name; empty when
+        ``entries`` is not a list. Entries without a string name are skipped.
+    """
+    result: JsonObject = {}
+    if not isinstance(entries, list):
+        return result
+    for entry in entries:
+        if not is_json_object(entry) or not isinstance(entry.get("name"), str):
+            continue
+        server = {
+            key: value
+            for key, value in entry.items()
+            if key not in {"name", "registry", "transport"}
+        }
+        transport = entry.get("transport")
+        server["type"] = "local" if copilot and transport == "stdio" else transport
+        if copilot:
+            server.update({"tools": ["*"], "id": ""})
+        result[str(entry["name"])] = server
+    return result
+
+
+def _check_mcp_configuration(
+    snapshot: ComposedSnapshot, findings: list[Finding]
+) -> None:
+    """Require installed MCP definitions to match the authored package manifest.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+    """
+    documents = {item.relative_path: item for item in snapshot.files}
+    if "apm.lock.yaml" not in documents:
+        return
+    manifest = documents.get("apm.yml")
+    value = manifest.yaml_value if manifest is not None else None
+    dependencies = value.get("dependencies") if is_json_object(value) else None
+    entries = dependencies.get("mcp") if is_json_object(dependencies) else None
+    selected = _selected_targets(value)
+    for relative, target in ((".mcp.json", "claude"), (".github/mcp.json", "copilot")):
+        expected = _mcp_projection(entries, copilot=relative.startswith(".github/"))
+        document = documents.get(relative)
+        if document is None and (not expected or target not in selected):
+            continue
+        actual = _json_value(document)
+        servers = actual.get("mcpServers", {}) if is_json_object(actual) else None
+        if servers != expected or (
+            is_json_object(actual) and set(actual) - {"mcpServers"}
+        ):
+            _finding(
+                findings,
+                "provenance.mcp",
+                "installed MCP configuration differs from the authored manifest",
+                relative,
+            )
+
+
 def _check_recorded_files(
     expected: dict[str, str],
     actual: dict[str, str],
     permitted: set[str],
     findings: list[Finding],
 ) -> None:
-    """Report missing, unrecorded, and drifted composed files."""
+    """Report missing, unrecorded, and drifted composed files.
+
+    Args:
+        expected (dict[str, str]): Recorded digest keyed by relative path.
+        actual (dict[str, str]): Observed digest keyed by relative path.
+        permitted (set[str]): Relative paths allowed to exist without a record.
+        findings (list[Finding]): Collector extended in place.
+    """
     for relative in sorted(expected.keys() - actual.keys()):
         _finding(
             findings,
@@ -235,8 +565,17 @@ def _check_recorded_files(
 
 
 def _source_version(source: object, *, source_valid: bool) -> str | None:
-    """Return the recorded catalog version of valid source metadata."""
-    if not source_valid or not _mapping(source):
+    """Return the recorded catalog version of valid source metadata.
+
+    Args:
+        source (object): Decoded ``source`` value.
+        source_valid (bool): Whether the source metadata passed validation.
+
+    Returns:
+        str | None: The ``catalog_version`` string, or ``None`` when the source is
+        invalid or lacks a string version.
+    """
+    if not source_valid or not is_json_object(source):
         return None
     candidate = source.get("catalog_version")
     return candidate if isinstance(candidate, str) else None
@@ -245,7 +584,17 @@ def _source_version(source: object, *, source_valid: bool) -> str | None:
 def _ledger_deployments(
     snapshot: ComposedSnapshot, findings: list[Finding]
 ) -> list[object] | None:
-    """Return APM ledger deployments, or ``None`` when absent or invalid."""
+    """Return APM ledger deployments, or ``None`` when absent or invalid.
+
+    Args:
+        snapshot (ComposedSnapshot): Captured composed workspace.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        list[object] | None: Decoded ``deployments`` list in ledger order, or
+        ``None`` without a finding when there is no ledger and with one when the
+        ledger is malformed.
+    """
     lock = next(
         (item for item in snapshot.files if item.relative_path == "apm.lock.yaml"),
         None,
@@ -253,7 +602,7 @@ def _ledger_deployments(
     if lock is None:
         return None
     value = lock.yaml_value
-    if not _mapping(value) or value.get("lockfile_version") != "1":
+    if not is_json_object(value) or value.get("lockfile_version") != "1":
         _finding(
             findings, "provenance.delivery", "APM ledger is invalid", "apm.lock.yaml"
         )
@@ -270,10 +619,44 @@ def _ledger_deployments(
     return deployments
 
 
+def _hook_authored(relative: str, authored: dict[str, str]) -> bool:
+    """Tie a delivered hook script or registration to authored hook source.
+
+    Args:
+        relative (str): Delivered relative path.
+        authored (dict[str, str]): Recorded digest keyed by authored relative path.
+
+    Returns:
+        bool: Whether the path is a hook script or registration with a source.
+    """
+    script = _HOOK_SCRIPT.fullmatch(relative)
+    if script is not None:
+        return f".apm/hooks/scripts/{script.group(1)}" in authored
+    if _HOOK_REGISTRATION.fullmatch(relative) is None:
+        return False
+    return any(
+        path.startswith(".apm/hooks/")
+        and path.endswith(".json")
+        and PurePosixPath(path).parent == PurePosixPath(".apm/hooks")
+        and relative.endswith(f"-{PurePosixPath(path).name}")
+        for path in authored
+    )
+
+
 def _approved_delivery(
-    item: dict[str, object], relative: str, digest: str, authored: dict[str, str]
+    item: JsonObject, relative: str, digest: str, authored: dict[str, str]
 ) -> bool:
-    """Accept only project-owned first-party deliveries with SHA-256 digests."""
+    """Accept only project-owned first-party deliveries with SHA-256 digests.
+
+    Args:
+        item (JsonObject): Decoded ledger deployment entry.
+        relative (str): Delivered relative path.
+        digest (str): Ledger digest, expected as ``sha256:`` plus 64 hex digits.
+        authored (dict[str, str]): Recorded digest keyed by authored relative path.
+
+    Returns:
+        bool: Whether the entry is an approved delivery.
+    """
     prompt_source = _prompt_source(relative)
     return (
         item.get("kind") == "project-relative"
@@ -284,6 +667,7 @@ def _approved_delivery(
         and (
             relative.startswith(_DELIVERY_ROOTS)
             or (prompt_source is not None and prompt_source in authored)
+            or _hook_authored(relative, authored)
         )
         and digest.startswith("sha256:")
         and _HASH.fullmatch(digest.removeprefix("sha256:")) is not None
@@ -293,8 +677,18 @@ def _approved_delivery(
 def _delivery_entry(
     item: object, authored: dict[str, str], findings: list[Finding]
 ) -> tuple[str, str] | None:
-    """Return one approved ledger path and digest, reporting rejected entries."""
-    if not _mapping(item):
+    """Return one approved ledger path and digest, reporting rejected entries.
+
+    Args:
+        item (object): Decoded ledger deployment entry.
+        authored (dict[str, str]): Recorded digest keyed by authored relative path.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        tuple[str, str] | None: Relative path and bare hex digest, or ``None`` for
+        an entry without a content hash or one that is rejected with a finding.
+    """
+    if not is_json_object(item):
         _finding(
             findings, "provenance.delivery", "APM entry is invalid", "apm.lock.yaml"
         )
@@ -320,7 +714,7 @@ def _delivery_entry(
 
 def _bundle_name(item: object) -> str | None:
     """Return the name of a well-formed, contained source bundle identity."""
-    if not _mapping(item) or set(item) != {"name", "path"}:
+    if not is_json_object(item) or set(item) != {"name", "path"}:
         return None
     name = item.get("name")
     path = item.get("path")
@@ -333,8 +727,16 @@ def _bundle_name(item: object) -> str | None:
     return name
 
 
-def _source_identity_valid(source: dict[str, object], findings: list[Finding]) -> bool:
-    """Require a semantic catalog version and a non-empty profile name."""
+def _source_identity_valid(source: JsonObject, findings: list[Finding]) -> bool:
+    """Require a semantic catalog version and a non-empty profile name.
+
+    Args:
+        source (JsonObject): Decoded ``source`` object.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        bool: Whether the identity is valid.
+    """
     version = source.get("catalog_version")
     profile = source.get("profile")
     valid = (
@@ -354,7 +756,15 @@ def _source_identity_valid(source: dict[str, object], findings: list[Finding]) -
 
 
 def _source_bundles_valid(bundles: list[object], findings: list[Finding]) -> bool:
-    """Require well-formed, uniquely named source bundle identities."""
+    """Require well-formed, uniquely named source bundle identities.
+
+    Args:
+        bundles (list[object]): Decoded bundle identity entries.
+        findings (list[Finding]): Collector extended in place.
+
+    Returns:
+        bool: Whether every identity is well formed and no name repeats.
+    """
     valid = True
     names: set[str] = set()
     for item in bundles:
@@ -397,8 +807,8 @@ class ProvenanceService:
         source = provenance.get("source")
         source_valid = self._validate_source(source, findings)
         expected = provenance.get("files")
-        if not _mapping(expected):
-            self._add(
+        if not is_json_object(expected):
+            _finding(
                 findings,
                 "provenance.schema",
                 "provenance files must be an object",
@@ -412,6 +822,9 @@ class ProvenanceService:
             snapshot, findings, authored=expected_hashes
         )
         _check_delivery_drift(delivery, native_actual, findings)
+        _check_hook_source(native_actual, findings)
+        _check_hook_configuration(snapshot, findings)
+        _check_mcp_configuration(snapshot, findings)
         permitted = expected_hashes.keys() | delivery.keys() | metadata_paths
         _check_recorded_files(expected_hashes, actual, permitted, findings)
         return CheckReport(
@@ -429,7 +842,19 @@ class ProvenanceService:
         *,
         authored: dict[str, str],
     ) -> tuple[dict[str, str], set[str]]:
-        """Permit exact first-party native entries, not arbitrary runtime trees."""
+        """Permit exact first-party native entries, not arbitrary runtime trees.
+
+        Args:
+            snapshot (ComposedSnapshot): Captured composed workspace.
+            findings (list[Finding]): Collector extended in place.
+            authored (dict[str, str]): Recorded digest keyed by authored relative path.
+
+        Returns:
+            tuple[dict[str, str], set[str]]: Approved ledger digests keyed by
+            relative path, then the post-installation metadata paths permitted
+            without a record. Both are empty when no ledger exists or it is invalid
+            (the metadata set is empty only in that case).
+        """
         deployments = _ledger_deployments(snapshot, findings)
         if deployments is None:
             return {}, set()
@@ -444,9 +869,17 @@ class ProvenanceService:
         return hashes, set(_POST_INSTALL_METADATA)
 
     def _validate_source(self, value: object, findings: list[Finding]) -> bool:
-        """Require relative source provenance with explicit bundle ownership."""
-        if not _mapping(value) or set(value) != _SOURCE_FIELDS:
-            self._add(
+        """Require relative source provenance with explicit bundle ownership.
+
+        Args:
+            value (object): Decoded ``source`` value.
+            findings (list[Finding]): Collector extended in place.
+
+        Returns:
+            bool: Whether the identity and every bundle are valid.
+        """
+        if not is_json_object(value) or set(value) != _SOURCE_FIELDS:
+            _finding(
                 findings,
                 "provenance.source",
                 "provenance source metadata has missing or unknown fields",
@@ -456,7 +889,7 @@ class ProvenanceService:
         identity_valid = _source_identity_valid(value, findings)
         bundles = value.get("bundles")
         if not isinstance(bundles, list) or not bundles:
-            self._add(
+            _finding(
                 findings,
                 "provenance.source",
                 "provenance must list selected source bundles",
@@ -464,7 +897,3 @@ class ProvenanceService:
             )
             return False
         return _source_bundles_valid(bundles, findings) and identity_valid
-
-    def _add(self, findings: list[Finding], code: str, message: str, path: str) -> None:
-        """Append one safe provenance diagnostic."""
-        _finding(findings, code, message, path)

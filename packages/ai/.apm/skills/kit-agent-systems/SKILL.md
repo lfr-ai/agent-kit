@@ -14,8 +14,9 @@ license: MIT
    router, fan-out, evaluator loop), single agent with tools, then
    supervisor with workers or handoffs
    ([patterns-and-frameworks.md](references/patterns-and-frameworks.md)).
-3. Keep delegation depth at one; workers never delegate. Use `kit-langgraph`
-   when runs need durable pauses, resumption or mid-run approval.
+3. Keep delegation depth at one; workers never delegate. Reuse an existing
+   LangGraph runtime for graph checkpoints/approval, or Temporal for durable
+   external operations. Pick one durable owner, not nested retry engines.
 4. Design narrow, typed, documented tools with stable error codes, timeouts,
    bounded results and idempotency keys for side effects
    ([agent_tool_contract.py.template](assets/agent_tool_contract.py.template)).
@@ -34,7 +35,10 @@ license: MIT
 10. Evaluate task success and trajectories with `kit-llm-evaluation` against
     a non-agent baseline, with repeated runs.
 11. Select a framework only when a needed feature outweighs its lock-in;
-    keep tools and policies framework-independent. The asset map and adapter
+    keep tools and policies framework-independent. Reuse installed LlamaIndex,
+    DSPy, LangChain or LangGraph only for the measured gap; do not install all.
+    The evaluation owner is `kit-llm-evaluation`, not `kit-evals`.
+    The asset map and adapter
     notes are in [references/guide.md](references/guide.md).
 
 ## Acceptance gates

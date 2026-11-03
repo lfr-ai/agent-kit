@@ -59,7 +59,13 @@ def _link_failures(entry: str, path: Path, base: Path, text: str) -> list[str]:
 
 
 def check(root: Path, *, entries: tuple[str, ...] = _DEFAULT_ENTRIES) -> list[str]:
-    """Validate nonempty contained entries and links, not their factual accuracy."""
+    """Validate nonempty contained entries and links, not their factual accuracy.
+
+    Args:
+        root (Path): Repository root that contains the context entries.
+        entries (tuple[str, ...]): Root-relative entry files to require and scan for
+            links.
+    """
     failures: list[str] = []
     base = root.resolve()
     for entry in entries:
@@ -92,7 +98,7 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
+            issue (SelfTestIssue): The invariant that failed.
         """
         super().__init__(issue.value)
 

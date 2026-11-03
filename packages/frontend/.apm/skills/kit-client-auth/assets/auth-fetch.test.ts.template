@@ -1,7 +1,7 @@
 // src/shared/api/auth-fetch.test.ts
 // Behavior of the auth fetch wrapper with a scripted fake transport: trusted
 // origins only, single-flight renewal, one retry, and 403 left to the caller.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import { createAuthFetch, type AuthFetchOptions } from "./auth-fetch";
 
 const API = "https://api.example.test";
@@ -9,17 +9,27 @@ const OTHER = "https://cdn.example.test";
 
 function scriptedFetch(statuses: number[]) {
   const requests: Request[] = [];
-  const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push(new Request(input, init));
+  const options: RequestInit[] = [];
+  const fetchImpl = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    // Bun 1.3.11 ignores Request(Request, init) header overrides. Normalize only
+    // the fake transport's view; production delegates native Request handling to fetch.
+    if (input instanceof Request && init?.headers !== undefined) {
+      const headers = new Headers(init.headers);
+      for (const name of Array.from(request.headers.keys())) request.headers.delete(name);
+      headers.forEach((value, name) => request.headers.set(name, value));
+    }
+    requests.push(request);
+    options.push(init ?? {});
     return new Response(null, { status: statuses.shift() ?? 200 });
   });
-  return { fetchImpl, requests };
+  return { fetchImpl, requests, options };
 }
 
 function setup(statuses: number[], overrides: Partial<AuthFetchOptions> = {}) {
   const transport = scriptedFetch(statuses);
-  const renew = vi.fn(async () => true);
-  const onSessionExpired = vi.fn();
+  const renew = mock(async () => true);
+  const onSessionExpired = mock(() => {});
   const authFetch = createAuthFetch({
     allowedOrigins: [API],
     renew,
@@ -32,13 +42,15 @@ function setup(statuses: number[], overrides: Partial<AuthFetchOptions> = {}) {
 
 describe("createAuthFetch", () => {
   it("adds CSRF protection and credentials only for trusted origins", async () => {
-    const { authFetch, requests } = setup([200, 200]);
+    const { authFetch, requests, options } = setup([200, 200]);
     await authFetch(`${API}/orders`, { method: "POST", body: "{}" });
     await authFetch(`${OTHER}/logo.svg`);
     expect(requests[0]?.headers.get("X-CSRF")).toBe("1");
-    expect(requests[0]?.credentials).toBe("include");
+    // Bun 1.3.11 Request.credentials reports "include" even for "omit".
+    // Assert the fetch boundary's actual init, not that unsupported getter.
+    expect(options[0]?.credentials).toBe("include");
     expect(requests[1]?.headers.get("X-CSRF")).toBeNull();
-    expect(requests[1]?.credentials).toBe("omit");
+    expect(options[1]?.credentials).toBe("omit");
   });
 
   it("sends an in-memory bearer token to trusted origins only", async () => {
@@ -52,33 +64,34 @@ describe("createAuthFetch", () => {
   it("renews once for concurrent 401 responses and retries each request once", async () => {
     const { authFetch, renew, requests } = setup([401, 401, 200, 200]);
     const responses = await Promise.all([authFetch(`${API}/a`), authFetch(`${API}/b`)]);
-    expect(renew).toHaveBeenCalledOnce();
+    expect(renew).toHaveBeenCalledTimes(1);
     expect(responses.map((response) => response.status)).toEqual([200, 200]);
     expect(requests).toHaveLength(4);
   });
 
   it("returns a second 401 to the caller without another renewal", async () => {
-    const { authFetch, renew } = setup([401, 401]);
+    const { authFetch, renew, onSessionExpired } = setup([401, 401]);
     const response = await authFetch(`${API}/orders`);
     expect(response.status).toBe(401);
-    expect(renew).toHaveBeenCalledOnce();
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
   it("reports expiry once when renewal fails", async () => {
-    const { authFetch, onSessionExpired } = setup([401, 401], { renew: vi.fn(async () => false) });
+    const { authFetch, onSessionExpired } = setup([401, 401], { renew: mock(async () => false) });
     const responses = await Promise.all([authFetch(`${API}/a`), authFetch(`${API}/b`)]);
     expect(responses.map((response) => response.status)).toEqual([401, 401]);
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
   it("treats a rejected renewal as expiry", async () => {
     const { authFetch, onSessionExpired } = setup([401], {
-      renew: vi.fn(async () => {
+      renew: mock(async () => {
         throw new Error("network");
       }),
     });
     expect((await authFetch(`${API}/orders`)).status).toBe(401);
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
   it("leaves 403 to the caller without renewing or signing out", async () => {
@@ -92,5 +105,37 @@ describe("createAuthFetch", () => {
     const { authFetch, renew } = setup([401]);
     expect((await authFetch(`${OTHER}/feed`)).status).toBe(401);
     expect(renew).not.toHaveBeenCalled();
+  });
+
+  it("strips supplied credentials on an untrusted request and blocks redirects", async () => {
+    const { authFetch, requests, options } = setup([200]);
+    await authFetch(`${OTHER}/feed`, {
+      headers: { Authorization: "synthetic-token", "X-CSRF": "1" },
+      credentials: "include",
+    });
+    expect(requests[0]?.headers.get("Authorization")).toBeNull();
+    expect(requests[0]?.headers.get("X-CSRF")).toBeNull();
+    expect(options[0]?.credentials).toBe("omit");
+    expect(options[0]?.redirect).toBe("error");
+  });
+
+  it("reuses renewed credentials when an old-token 401 arrives late", async () => {
+    let release: ((response: Response) => void) | undefined;
+    const delayed = new Promise<Response>((resolve) => { release = resolve; });
+    const attempts = new Map<string, number>();
+    const fetchImpl = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      const attempt = attempts.get(path) ?? 0;
+      attempts.set(path, attempt + 1);
+      if (attempt > 0) return new Response(null, { status: 200 });
+      if (path === "/slow") return delayed;
+      return new Response(null, { status: 401 });
+    });
+    const { authFetch, renew } = setup([], { fetchImpl });
+    const slow = authFetch(`${API}/slow`);
+    expect((await authFetch(`${API}/fast`)).status).toBe(200);
+    release?.(new Response(null, { status: 401 }));
+    expect((await slow).status).toBe(200);
+    expect(renew).toHaveBeenCalledTimes(1);
   });
 });

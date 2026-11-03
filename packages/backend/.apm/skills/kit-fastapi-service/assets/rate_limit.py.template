@@ -78,7 +78,12 @@ type RateMetricHook = Callable[[str, RateOutcome], None]
 
 
 def ignore_metric(policy_name: str, outcome: RateOutcome) -> None:
-    """Default metric hook; replace it with a counter keyed by both labels."""
+    """Default metric hook; replace it with a counter keyed by both labels.
+
+    Args:
+        policy_name (str): Policy label intentionally discarded by this no-op hook.
+        outcome (RateOutcome): Admission outcome intentionally discarded.
+    """
     del policy_name, outcome
 
 
@@ -108,9 +113,9 @@ class RateLimitStore(Protocol):
         """Count one request for a key and decide whether it is allowed.
 
         Args:
-            key: Policy-qualified caller identity.
-            limit: Requests allowed per window (the burst size).
-            window_seconds: Window length.
+            key (str): Policy-qualified caller identity.
+            limit (int): Requests allowed per window (the burst size).
+            window_seconds (int): Window length.
 
         Returns:
             The decision for this request.
@@ -168,8 +173,8 @@ class RouteRule:
         """Return whether the rule applies to a request.
 
         Args:
-            method: Request method.
-            path: Request path without query string.
+            method (str): Request method.
+            path (str): Request path without query string.
 
         Returns:
             ``True`` when the method and path both match.
@@ -187,13 +192,19 @@ class InMemoryRateLimitStore:
         """Create an empty store.
 
         Args:
-            clock: Monotonic seconds source; tests pass a fake.
+            clock (Callable[[], float]): Monotonic seconds source; tests pass a fake.
         """
         self._clock = clock
         self._windows: dict[str, tuple[int, int]] = {}
 
     async def hit(self, key: str, *, limit: int, window_seconds: int) -> RateDecision:
-        """Count one request; no ``await`` inside keeps the update atomic."""
+        """Count one request; no ``await`` inside keeps the update atomic.
+
+        Args:
+            key (str): Policy-qualified caller identity for the counter.
+            limit (int): Positive request quota in one fixed window.
+            window_seconds (int): Positive window length used to bucket clock time.
+        """
         now = self._clock()
         window = int(now // window_seconds)
         if len(self._windows) >= _MAX_TRACKED_KEYS:
@@ -217,11 +228,7 @@ class InMemoryRateLimitStore:
 def client_address_key(scope: Scope) -> str:
     """Return the client address the server resolved, or a shared bucket.
 
-    Args:
-        scope: ASGI connection scope.
-
-    Returns:
-        A key such as ``ip:203.0.113.7``.
+    Keys look like ``ip:203.0.113.7``.
     """
     client = scope.get("client")
     return f"ip:{client[0]}" if client else "ip:unknown"
@@ -235,7 +242,7 @@ def authenticated_user_key(scope: Scope) -> str:
     unverified token claim, which a caller can rotate to escape the limit.
 
     Args:
-        scope: ASGI connection scope.
+        scope (Scope): ASGI connection scope.
 
     Returns:
         A key such as ``sub:user-42`` or ``ip:203.0.113.7``.
@@ -257,8 +264,8 @@ def draft_ratelimit_headers(
     key is sent, so caller identifiers never leave the service.
 
     Args:
-        policy: Policy that counted the request.
-        decision: Store decision for the request.
+        policy (RatePolicy): Policy that counted the request.
+        decision (RateDecision): Store decision for the request.
 
     Returns:
         Header names mapped to field values.
@@ -310,11 +317,11 @@ class RateLimitEnforcer:
         """Configure the enforcer.
 
         Args:
-            failure_mode: ``OPEN`` admits requests while the store is down;
-                ``CLOSED`` rejects them with 503. There is no default: choose.
-            emit_draft_headers: Add the draft ``RateLimit`` headers.
-            metric_hook: Called once per counted request with the policy
-                name and outcome.
+            failure_mode (FailureMode): ``OPEN`` admits requests while the store is
+                down; ``CLOSED`` rejects them with 503. There is no default: choose.
+            emit_draft_headers (bool): Add the draft ``RateLimit`` headers.
+            metric_hook (RateMetricHook): Called once per counted request with the
+                policy name and outcome.
         """
         self._failure_mode = failure_mode
         self._emit_draft_headers = emit_draft_headers
@@ -326,9 +333,9 @@ class RateLimitEnforcer:
         """Count one request against a policy.
 
         Args:
-            store: Counter backend.
-            key: Caller key without the policy name.
-            policy: Policy that applies to the request.
+            store (RateLimitStore): Counter backend.
+            key (str): Caller key without the policy name.
+            policy (RatePolicy): Policy that applies to the request.
 
         Returns:
             The verdict and the headers to send.
@@ -351,7 +358,12 @@ class RateLimitEnforcer:
         return RateVerdict(outcome=outcome, headers=headers)
 
     def _store_failed(self, policy: RatePolicy, error: OSError) -> RateVerdict:
-        """Apply the failure mode; log the error type, never the caller key."""
+        """Apply the failure mode; log the error type, never the caller key.
+
+        Args:
+            policy (RatePolicy): Supplies the policy name for logs and metrics.
+            error (OSError): Counter-store failure whose type alone is logged.
+        """
         failed_open = self._failure_mode is FailureMode.OPEN
         outcome = RateOutcome.FAILED_OPEN if failed_open else RateOutcome.FAILED_CLOSED
         logger.warning(
@@ -372,12 +384,8 @@ class RateLimitEnforcer:
 def rejection_response(verdict: RateVerdict) -> JSONResponse:
     """Build the problem response for a rejected verdict.
 
-    Args:
-        verdict: A verdict whose ``rejected`` property is true.
-
-    Returns:
-        429 problem details for an exceeded quota (RFC 6585) or 503 when the
-        store failed closed, both with ``Retry-After`` (RFC 9110).
+    Returns 429 problem details for an exceeded quota (RFC 6585) or 503 when the store
+    failed closed, both with ``Retry-After`` (RFC 9110).
     """
     limited = verdict.outcome is RateOutcome.LIMITED
     return problem_response(
@@ -412,15 +420,18 @@ class RateLimitMiddleware:
         """Wrap an ASGI application.
 
         Args:
-            app: Next application in the chain.
-            store: Counter backend shared by all workers.
-            default_policy: Policy for requests no rule matches.
-            failure_mode: Behavior while the store is failing.
-            rules: Route policies; the longest matching prefix wins.
-            key_func: Derives the caller key from the scope.
-            exempt_paths: Exact paths never counted, such as health probes.
-            emit_draft_headers: Add the draft ``RateLimit`` headers.
-            metric_hook: Receives the policy name and outcome per request.
+            app (ASGIApp): Next application in the chain.
+            store (RateLimitStore): Counter backend shared by all workers.
+            default_policy (RatePolicy): Policy for requests no rule matches.
+            failure_mode (FailureMode): Behavior while the store is failing.
+            rules (Sequence[RouteRule]): Route policies; the longest matching prefix
+                wins.
+            key_func (Callable[[Scope], str]): Derives the caller key from the scope.
+            exempt_paths (Collection[str]): Exact paths never counted, such as health
+                probes.
+            emit_draft_headers (bool): Add the draft ``RateLimit`` headers.
+            metric_hook (RateMetricHook): Receives the policy name and outcome per
+                request.
         """
         self._app = app
         self._store = store
@@ -460,7 +471,13 @@ class RateLimitMiddleware:
         await self._app(scope, receive, send_with_headers)
 
     def _policy_for(self, *, method: str, path: str) -> RatePolicy:
-        """Return the policy of the longest matching rule or the default."""
+        """Return the policy of the longest matching rule or the default.
+
+        Args:
+            method (str): Uppercase request method matched against rule methods.
+            path (str): Request path matched by prefix on segment boundaries,
+                without the query string.
+        """
         for rule in self._rules:
             if rule.matches(method=method, path=path):
                 return rule.policy
@@ -474,8 +491,9 @@ class RateLimitRejectedError(StarletteHTTPException):
         """Create the rejection.
 
         Args:
-            status: 429 or 503.
-            headers: ``Retry-After`` and optional draft headers to keep.
+            status (HTTPStatus): 429 or 503.
+            headers (Mapping[str, str]): ``Retry-After`` and optional draft headers to
+                keep.
         """
         super().__init__(
             status_code=int(status),
@@ -490,7 +508,7 @@ def rate_limit_store_from(request: Request) -> RateLimitStore:
     """Return the store the lifespan placed in the request state.
 
     Args:
-        request: Current request.
+        request (Request): Current request.
 
     Returns:
         The process-wide store.
@@ -538,10 +556,11 @@ class SubjectRateLimit:
         """Configure the limit.
 
         Args:
-            policy: Quota applied per verified subject.
-            failure_mode: Behavior while the store is failing.
-            emit_draft_headers: Add the draft ``RateLimit`` headers.
-            metric_hook: Receives the policy name and outcome per request.
+            policy (RatePolicy): Quota applied per verified subject.
+            failure_mode (FailureMode): Behavior while the store is failing.
+            emit_draft_headers (bool): Add the draft ``RateLimit`` headers.
+            metric_hook (RateMetricHook): Receives the policy name and outcome per
+                request.
         """
         self._policy = policy
         self._enforcer = RateLimitEnforcer(
@@ -556,9 +575,9 @@ class SubjectRateLimit:
         """Count one request for a verified subject.
 
         Args:
-            request: Current request; its state holds the store.
-            response: Response whose headers receive the draft fields.
-            subject: Verified, stable subject identifier.
+            request (Request): Current request; its state holds the store.
+            response (Response): Response whose headers receive the draft fields.
+            subject (str): Verified, stable subject identifier.
 
         Raises:
             RateLimitRejectedError: The quota is exhausted or the store

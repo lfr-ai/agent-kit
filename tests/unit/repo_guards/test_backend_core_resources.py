@@ -533,8 +533,6 @@ def test_native_roles_are_structured_procedures() -> None:
     assert set(roles) == {
         "kit-ddd",
         "kit-sdd",
-        "kit-tdd",
-        "kit-testing",
         "kit-backend-implementer",
         "kit-contract-iac-lint",
     }

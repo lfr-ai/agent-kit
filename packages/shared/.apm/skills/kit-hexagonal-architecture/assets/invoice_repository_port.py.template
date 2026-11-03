@@ -1,6 +1,6 @@
 """Driven ports for storing invoices and bounding a transaction.
 
-Copy to 'app/application/ports/invoices.py'. The repository behaves like an
+Copy to ``app/application/ports/invoices.py``. The repository behaves like an
 in-memory collection of domain objects; the unit of work owns the transaction.
 Neither exposes SQL, sessions, cursors or ORM rows.
 """
@@ -20,7 +20,7 @@ class InvoiceNotFoundError(LookupError):
         """Remember which identifier was missing.
 
         Args:
-            invoice_id: The identifier that was looked up.
+            invoice_id (str): The identifier that was looked up.
         """
         super().__init__(f"invoice {invoice_id} not found")
         self.invoice_id = invoice_id
@@ -34,28 +34,33 @@ class InvoiceRepository(Protocol):
     """Collection-like access to invoices inside one unit of work."""
 
     def get(self, invoice_id: str) -> Invoice:
-        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        """Return the invoice or raise ``InvoiceNotFoundError``."""
         ...
 
     def add(self, invoice: Invoice) -> None:
-        """Stage a new invoice; raise 'DuplicateInvoiceError' if the id exists."""
+        """Stage a new invoice; raise ``DuplicateInvoiceError`` if the id exists."""
         ...
 
     def save(self, invoice: Invoice) -> None:
-        """Stage a changed invoice; raise 'InvoiceNotFoundError' if it is unknown."""
+        """Stage a changed invoice; raise ``InvoiceNotFoundError`` if it is unknown."""
         ...
 
     def list_open(
         self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
     ) -> list[Invoice]:
-        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        """Return up to ``limit`` open invoices for a customer, oldest id first.
+
+        Args:
+            customer_id (str): Customer whose open invoices should be listed.
+            limit (int): Maximum invoices to return in ascending invoice-ID order.
+        """
         ...
 
 
 class UnitOfWork(Protocol):
     """One atomic change set: commit makes it visible, anything else discards it.
 
-    Leaving the 'with' block without calling 'commit' rolls back. That makes
+    Leaving the ``with`` block without calling ``commit`` rolls back. That makes
     "forgot to commit" a visible test failure instead of a silent partial write.
     """
 

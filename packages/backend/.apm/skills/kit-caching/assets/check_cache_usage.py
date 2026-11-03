@@ -313,10 +313,11 @@ def check_source(
     """Check one module's source text.
 
     Args:
-        path: Display path; also matched against ``allow_unbounded``.
-        source: Python source text.
-        rules: Rules to report.
-        allow_unbounded: Globs of files where unbounded caches are accepted.
+        path (str): Display path; also matched against ``allow_unbounded``.
+        source (str): Python source text.
+        rules (frozenset[str]): Rules to report.
+        allow_unbounded (Sequence[str]): Globs of files where unbounded caches are
+            accepted.
 
     Returns:
         Findings sorted by line and rule, minus reviewed suppressions.
@@ -346,8 +347,8 @@ def collect(paths: Sequence[Path], *, excluded: Sequence[str]) -> list[Path]:
     """Expand files and directories into Python files.
 
     Args:
-        paths: Files or directories.
-        excluded: Directory or file names, or globs, to skip.
+        paths (Sequence[Path]): Files or directories.
+        excluded (Sequence[str]): Directory or file names, or globs, to skip.
 
     Returns:
         Sorted Python files.
@@ -471,11 +472,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 without findings, 1 with findings, 2 for usage or input errors.
+    Returns 0 without findings, 1 with findings, 2 for usage or input errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

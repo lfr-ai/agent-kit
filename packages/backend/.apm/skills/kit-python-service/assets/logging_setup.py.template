@@ -1,8 +1,8 @@
 """Process-wide logging configuration: JSON lines plus a correlation identifier.
 
-Copy into 'src/<package>/logging_setup.py'. Call 'configure_logging' once from
+Copy into ``src/<package>/logging_setup.py``. Call ``configure_logging`` once from
 the composition root or entry point. Transport middleware calls
-'bind_correlation_id' at the start of each request or job.
+``bind_correlation_id`` at the start of each request or job.
 """
 
 import json
@@ -28,7 +28,7 @@ class CorrelationFilter(logging.Filter):
     """Attach the current correlation identifier to every record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Add 'correlation_id' and keep the record."""
+        """Add ``correlation_id`` and keep the record."""
         record.correlation_id = _CORRELATION_ID.get()
         return True
 
@@ -59,9 +59,9 @@ def configure_logging(
     """Install one root handler; repeated calls replace it instead of duplicating.
 
     Args:
-        level: Root level name such as 'INFO'.
-        json_lines: Emit JSON lines when true, a readable text format otherwise.
-        stream: Destination stream; defaults to standard error.
+        level (str): Root level name such as ``INFO``.
+        json_lines (bool): Emit JSON lines when true, a readable text format otherwise.
+        stream (TextIO | None): Destination stream; defaults to standard error.
 
     Returns:
         The installed handler, which tests can inspect or remove.
@@ -87,7 +87,7 @@ def bind_correlation_id(correlation_id: str) -> Iterator[None]:
     """Set the correlation identifier for the current task or thread context.
 
     Args:
-        correlation_id: Request or job identifier; must not contain personal data.
+        correlation_id (str): Request or job identifier; must not contain personal data.
 
     Yields:
         Nothing; the previous identifier is restored on exit.

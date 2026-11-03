@@ -96,9 +96,78 @@ for VS Code Local, and MCP autostart at `never`. Workspace terminal rules set
 package installers and package runners (`pip install`, `uv add`, `uvx`, `npx` and
 similar) to `false`, so they always require approval even when another rule
 would auto-approve them; see [dependency security](dependency-security.md).
-Native Claude keeps its own adapter. Current Copilot harness discovery differs from Local and does not use
-deprecated custom-location settings; this workspace does not pretend those
-settings isolate a harness.
+Native Claude keeps its own adapter. Current Copilot harness discovery differs
+from Local. The supported `chat.agentFilesLocations` setting is not an isolation
+boundary and is not inherited by other Copilot clients; this workspace uses
+standard native folders instead. Only the older `chat.modeFilesLocations` is
+deprecated.
+
+### Native discovery and menu
+
+The renderer emits every role as a flat file directly in `.github/agents/` and
+`.claude/agents/`; there is no `subagents/` folder. VS Code's default
+`chat.agentFilesLocations` scan reads only direct children of `.github/agents`
+(and `.claude/agents`), unlike its recursive instruction-file scan, so a nested
+worker would be undiscoverable and a coordinator's `agents:` entry would fail with
+"Unknown agent ... will be ignored". `agents:` entries are matched against the
+`name:` frontmatter of the target file (case-sensitive), which the renderer sets to
+the role ID. Claude Code scans `.claude/agents` recursively, but APM flattens agent
+file names to the stem on deployment, so same-named files in subfolders would
+collide; flat output avoids both problems.
+
+Copilot frontmatter per tier (checked against the VS Code custom-agent and
+file-reference pages, GitHub Copilot custom-agent docs and the Claude Code
+sub-agent docs on 2026-11-02):
+
+- `tools` uses the Copilot aliases `read`, `search`, `edit`, `execute`, `agent`,
+  `web` and `todo`. Verifiers (every analysis, review and check role) get
+  `read, search, execute, todo` for offline inspection; implementers get `read, search, edit, execute,
+  todo`; coordinators add `agent`. Unknown tool names are silently dropped, so a
+  Claude-style name in a Copilot file would lose that tool; omitting `tools`
+  would instead fall back to whatever the picker has enabled.
+- `agents:` is written only on coordinators and lists exact worker names. The key
+  is omitted elsewhere (Local treats an omitted list as "all agents", but roles
+  without the `agent` tool cannot delegate anyway). `agents`, `handoffs` and
+  `argument-hint` are not supported by the github.com cloud agent.
+- Primaries set `user-invocable: true` and `disable-model-invocation: true`.
+  Workers set `user-invocable: false`, which hides them from the picker while
+  keeping them available as subagents, and `disable-model-invocation: false`
+  (the replacement for the deprecated `infer`). The two flags are independent.
+- Claude files carry `name`, `description` and a scoped `tools` string
+  (`Read, Grep, Glob`, plus `Bash` and `Edit, Write` by tier). The `Agent(a, b)`
+  allowlist on coordinators only takes effect when that agent runs as the main
+  thread (`claude --agent`); sub-agents cannot spawn sub-agents.
+
+The picker roster is `kit-orchestrator`, `kit-debug` and `kit-devops` (only with
+the iac bundle). Specialist advisers (`kit-ddd`, `kit-sdd`, `kit-deep-thinking`),
+`kit-refactor` and all other helpers are hidden workers that coordinators can
+call. Every role
+has offline shell access to inspect history, diffs and checks. Source-read-only intent is not a
+read-only shell sandbox: verifiers can still write files or use the network, and
+host permissions and approvals remain necessary. See the canonical
+[native-role contract](../packages/shared/.apm/skills/kit-agent-runtime/references/native-roles.md).
+
+There is no documented workspace setting to hide arbitrary built-in and
+extension-contributed agents while retaining custom agents. `chat.agent.enabled`
+disables agent functionality, not just unwanted picker entries; organization
+agent discovery settings do not hide built-ins or extension agents. No speculative
+hide setting or user-global extension mutation is installed here.
+
+Use **Configure Custom Agents** in the picker to identify an entry's source
+(hover for its location), and **Chat > Diagnostics** to inspect discovery errors.
+For a custom agent you own, `user-invocable: false` is the supported picker-hide
+control, and changes the shared definition for everyone. As of the public docs
+checked on 2026-11-02, the Customizations editor has no custom-agent eye-icon
+show/hide control in Local or Copilot; do not rely on older picker instructions.
+For an extension-contributed agent, the documented fallback is to manage its
+contributing extension. An operator can choose **Disable (Workspace)** where
+offered, affecting all that extension's features; this kit does not do so.
+Built-in entries can remain, so a kit-only picker cannot be promised.
+
+After source changes, audit drift with `python -m scripts.render_native` before
+an explicit `--write`. Reload the selected harness and verify discovery and a
+bounded worker call after generation; file tests alone do not certify runtime
+behavior.
 
 Do not add unreviewed plugin rosters, legacy `chat.mcp.autoStart`, duplicate
 Claude hook locations or trust/approval shortcuts. The configured servers and
@@ -127,6 +196,10 @@ file rather than assuming folder settings override them.
 
 ## Primary sources
 
+- [VS Code custom-agent discovery and picker controls](https://code.visualstudio.com/docs/copilot/customization/custom-agents)
+- [VS Code subagent invocation and allowlists](https://code.visualstudio.com/docs/copilot/agents/subagents)
+- [VS Code AI settings](https://code.visualstudio.com/docs/agents/reference/ai-settings)
+- [VS Code agent-folder scan implementation](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/chat/common/promptSyntax/utils/promptFilesLocator.ts#L660-L695)
 - [VS Code settings and scopes](https://code.visualstudio.com/docs/configure/settings)
 - [Python interpreter and testing settings](https://code.visualstudio.com/docs/python/settings-reference)
 - [Python debugging](https://code.visualstudio.com/docs/python/debugging)

@@ -1,0 +1,161 @@
+"""Behavior and signature tests for the central policies module.
+
+Copy into ``tests/unit/test_policies.py``. Replace ``shop.policies`` with the
+module that holds the copied template. Each case checks observable behavior;
+``assert_type`` lines are verified by the type checker, not at runtime.
+"""
+
+import asyncio
+import inspect
+import logging
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
+from typing import assert_type
+
+import pytest
+from shop.policies import Policy, deprecated, log_calls, timed, translate_errors
+
+
+class StorageError(Exception):
+    pass
+
+
+def to_storage_error(error: Exception) -> Exception:
+    return StorageError(type(error).__name__)
+
+
+@translate_errors((OSError,), to=to_storage_error)
+def read_size(path: str, *, strict: bool = False) -> int:
+    if strict:
+        raise OSError(path)
+    return len(path)
+
+
+@translate_errors((OSError,), to=to_storage_error)
+async def read_size_async(path: str) -> int:
+    if not path:
+        raise OSError(path)
+    await asyncio.sleep(0)
+    return len(path)
+
+
+class Repository:
+    @log_calls()
+    def count(self, prefix: str) -> int:
+        return len(prefix)
+
+
+def test_sync_wrapper_preserves_signature_and_result_type() -> None:
+    assert str(inspect.signature(read_size)) == (
+        "(path: str, *, strict: bool = False) -> int"
+    )
+    assert read_size.__name__ == "read_size"
+    assert_type(read_size("abc"), int)
+    assert read_size("abc") == 3
+
+
+def test_async_wrapper_stays_a_coroutine_function() -> None:
+    assert inspect.iscoroutinefunction(read_size_async)
+    result = read_size_async("abcd")
+    assert_type(result, Awaitable[int])
+    assert asyncio.run(_await(result)) == 4
+
+
+def test_sync_error_is_translated_and_chained() -> None:
+    with pytest.raises(StorageError) as caught:
+        read_size("x", strict=True)
+    assert isinstance(caught.value.__cause__, OSError)
+
+
+def test_async_error_is_translated() -> None:
+    with pytest.raises(StorageError):
+        asyncio.run(_await(read_size_async("")))
+
+
+def test_unlisted_errors_pass_through() -> None:
+    @translate_errors((OSError,), to=to_storage_error)
+    def broken() -> None:
+        raise KeyError("missing")
+
+    with pytest.raises(KeyError):
+        broken()
+
+
+def test_decorated_method_binds_self() -> None:
+    assert Repository().count("abcde") == 5
+
+
+def test_log_calls_reports_outcome_without_arguments(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG):
+        Repository().count("secret-prefix")
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "Repository.count started",
+        "Repository.count finished",
+    ]
+
+
+def test_log_calls_marks_failure_and_reraises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @log_calls()
+    def boom() -> None:
+        raise ValueError("bad")
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(ValueError):
+        boom()
+    assert caplog.records[-1].getMessage().endswith("failed")
+
+
+def test_timed_logs_duration_for_async(caplog: pytest.LogCaptureFixture) -> None:
+    @timed
+    async def work() -> str:
+        return "done"
+
+    with caplog.at_level(logging.DEBUG):
+        assert asyncio.run(_await(work())) == "done"
+    assert any(" took " in record.getMessage() for record in caplog.records)
+
+
+def test_generators_are_rejected_at_decoration_time() -> None:
+    def numbers() -> object:
+        yield 1
+
+    with pytest.raises(TypeError):
+        timed(numbers)
+
+
+def test_policy_order_outer_runs_first() -> None:
+    events: list[str] = []
+
+    def recorder(label: str) -> Policy:
+        @contextmanager
+        def scope(name: str) -> Iterator[None]:
+            events.append(f"enter {label}")
+            yield
+            events.append(f"exit {label}")
+
+        return Policy(scope=scope)
+
+    @recorder("outer")
+    @recorder("inner")
+    def target() -> None:
+        events.append("call")
+
+    target()
+    assert events == ["enter outer", "enter inner", "call", "exit inner", "exit outer"]
+
+
+def test_deprecated_emits_a_runtime_warning() -> None:
+    @deprecated("use new_function")
+    def old_function() -> int:
+        return 1
+
+    with pytest.warns(DeprecationWarning, match="use new_function"):
+        assert old_function() == 1
+
+
+async def _await[T](awaitable: Awaitable[T]) -> T:
+    return await awaitable

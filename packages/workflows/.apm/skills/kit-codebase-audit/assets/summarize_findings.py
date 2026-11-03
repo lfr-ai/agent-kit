@@ -101,8 +101,8 @@ class ReportError(ValueError):
         """Describe an invalid report value.
 
         Args:
-            issue: The violated input invariant.
-            where: Location of the value inside the report.
+            issue (ReportIssue): The violated input invariant.
+            where (str): Location of the value inside the report.
         """
         super().__init__(issue.value.format(where=where))
 
@@ -114,8 +114,8 @@ class ReportTypeError(TypeError):
         """Describe a report value of the wrong type.
 
         Args:
-            issue: The violated input invariant.
-            where: Location of the value inside the report.
+            issue (ReportIssue): The violated input invariant.
+            where (str): Location of the value inside the report.
         """
         super().__init__(issue.value.format(where=where))
 
@@ -166,7 +166,12 @@ class RuleGroup:
         return max((item.level for item in self.findings), key=lambda lvl: lvl.rank)
 
     def sort_key(self) -> tuple[int, int, str, str]:
-        """Return the ranking key: level, count, tool, rule."""
+        """Return the ranking key: level, count, tool, rule.
+
+        Returns:
+            Negated severity rank, negated finding count, tool and rule; smaller sorts
+            first.
+        """
         return (-self.level.rank, -len(self.findings), self.tool, self.rule)
 
 
@@ -185,6 +190,9 @@ class Options:
 
 def _object(value: object, where: str) -> dict[str, object]:
     """Return a JSON object or raise a located type error.
+
+    Returns:
+        The object with string keys.
 
     Raises:
         ReportTypeError: The value is not an object.
@@ -244,8 +252,8 @@ def normalize_path(raw: str, *, root: str) -> str:
     """Return a forward-slash path relative to ``root`` when it is a prefix.
 
     Args:
-        raw: Path or ``file://`` URI as written by the tool.
-        root: Prefix to remove; an empty string keeps the path unchanged.
+        raw (str): Path or ``file://`` URI as written by the tool.
+        root (str): Prefix to remove; an empty string keeps the path unchanged.
 
     Returns:
         The normalized path.
@@ -260,7 +268,11 @@ def normalize_path(raw: str, *, root: str) -> str:
 
 
 def _sarif_location(result: dict[str, object], where: str) -> tuple[str, int]:
-    """Return the first physical location of a SARIF result."""
+    """Return the first physical location of a SARIF result.
+
+    Returns:
+        The artifact URI and one-based start line.
+    """
     locations = _list(result.get("locations", []), f"{where}.locations")
     if not locations:
         return _NO_LOCATION, 0
@@ -286,7 +298,11 @@ def _level(raw: object, table: dict[str, Level], where: str) -> Level:
 
 
 def _sarif_rule_levels(driver: dict[str, object], where: str) -> dict[str, str]:
-    """Return the default level declared for each SARIF rule identifier."""
+    """Return the default level declared for each SARIF rule identifier.
+
+    Returns:
+        Default levels keyed by rule identifier; empty when no rule declares one.
+    """
     levels: dict[str, str] = {}
     for index, raw in enumerate(_list(driver.get("rules", []), f"{where}.rules")):
         rule = _object(raw, f"{where}.rules[{index}]")
@@ -323,8 +339,8 @@ def parse_sarif(data: dict[str, object], *, options: Options) -> list[Finding]:
     """Normalize every failing result of a SARIF 2.1.0 log.
 
     Args:
-        data: Parsed SARIF log.
-        options: Normalization settings.
+        data (dict[str, object]): Parsed SARIF log.
+        options (Options): Normalization settings.
 
     Returns:
         Findings in report order.
@@ -399,9 +415,9 @@ def parse_list_report(
     """Normalize a Ruff JSON or GitLab Code Quality list, detected per item.
 
     Args:
-        data: Parsed JSON list.
-        tool: Tool name used for GitLab Code Quality items.
-        options: Normalization settings.
+        data (list[object]): Parsed JSON list.
+        tool (str): Tool name used for GitLab Code Quality items.
+        options (Options): Normalization settings.
 
     Returns:
         Findings in report order.
@@ -426,9 +442,9 @@ def parse_document(data: object, *, tool: str, options: Options) -> list[Finding
     """Normalize one parsed report document of any accepted format.
 
     Args:
-        data: Parsed JSON document.
-        tool: Tool name used for GitLab Code Quality items.
-        options: Normalization settings.
+        data (object): Parsed JSON document.
+        tool (str): Tool name used for GitLab Code Quality items.
+        options (Options): Normalization settings.
 
     Returns:
         Findings in report order.
@@ -447,8 +463,8 @@ def load_report(path: Path, *, options: Options) -> list[Finding]:
     """Read one report file and normalize its findings.
 
     Args:
-        path: SARIF, Ruff JSON or GitLab Code Quality file.
-        options: Normalization settings.
+        path (Path): SARIF, Ruff JSON or GitLab Code Quality file.
+        options (Options): Normalization settings.
 
     Returns:
         Findings in report order.
@@ -461,8 +477,8 @@ def rank(findings: Iterable[Finding], *, min_level: Level) -> list[RuleGroup]:
     """Group findings by tool and rule and rank the groups.
 
     Args:
-        findings: Normalized findings from every report.
-        min_level: Least severe level kept.
+        findings (Iterable[Finding]): Normalized findings from every report.
+        min_level (Level): Least severe level kept.
 
     Returns:
         Groups ordered by level, count, tool and rule.
@@ -504,8 +520,8 @@ def render(groups: Sequence[RuleGroup], *, max_locations: int) -> str:
     """Render ranked groups as a Markdown table followed by a summary line.
 
     Args:
-        groups: Ranked groups from ``rank``.
-        max_locations: Distinct locations listed per group.
+        groups (Sequence[RuleGroup]): Ranked groups from ``rank``.
+        max_locations (int): Distinct locations listed per group.
 
     Returns:
         Markdown text ending with a newline.
@@ -605,8 +621,8 @@ class SelfTestError(RuntimeError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            case: Input that exposed the failure, when relevant.
+            issue (SelfTestIssue): The invariant that failed.
+            case (str): Input that exposed the failure, when relevant.
         """
         super().__init__(issue.value.format(case=case))
 
@@ -705,11 +721,7 @@ def _run_self_test() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Merge reports and print or write the ranked table.
 
-    Args:
-        argv: Command-line arguments; ``None`` reads ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 when findings remain, 2 on usage or input errors.
+    Returns 0 when clean, 1 when findings remain, 2 on usage or input errors.
     """
     parser = _parser()
     args = parser.parse_args(argv)

@@ -76,7 +76,11 @@ _COMMAND_RULES = (
         "install without a frozen lockfile",
     ),
     (
-        re.compile(r"\buv\s+(sync|run)\b(?!.*(--locked|--frozen|--no-sync))"),
+        # A plain interpreter outside a project cannot synchronize its dependencies.
+        re.compile(
+            r"\buv\s+(sync|run)\b(?!.*(--locked|--frozen|--no-sync))"
+            r"(?!\s+--no-project\s+python[0-9.]*(?:\.exe)?\s+[\w./\\-]+\.py\s*$)"
+        ),
         "uv command without --locked or --frozen may re-resolve dependencies",
     ),
     (
@@ -152,11 +156,7 @@ def _requirements(value: object) -> list[str]:
 
 
 def check_pyproject(path: Path) -> list[Finding]:
-    """Require exact tool pins and bounded published dependencies.
-
-    Args:
-        path: ``pyproject.toml`` file.
-    """
+    """Require exact tool pins and bounded dependencies in ``pyproject.toml``."""
     text = path.read_text(encoding="utf-8")
     data = tomllib.loads(text)
     findings = [
@@ -223,11 +223,7 @@ def _table_requirements(table: object) -> list[str]:
 
 
 def check_tox(path: Path) -> list[Finding]:
-    """Require exact tox provisioning requirements.
-
-    Args:
-        path: ``tox.ini`` file.
-    """
+    """Require exact tox provisioning requirements in ``tox.ini``."""
     text = path.read_text(encoding="utf-8")
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string(text)
@@ -246,7 +242,11 @@ def check_tox(path: Path) -> list[Finding]:
 def _dependency_items(
     lines: list[str], index: int, inline: str
 ) -> list[tuple[int, str]]:
-    """Return ``additional_dependencies`` items with their line numbers."""
+    """Return ``additional_dependencies`` items with their line numbers.
+
+    Returns:
+        ``(line, item)`` pairs in order; empty when no items are listed.
+    """
     if inline.startswith("["):
         return [
             (index + 1, item.strip().strip("\"'"))
@@ -267,11 +267,7 @@ def _dependency_items(
 
 
 def check_precommit(path: Path) -> list[Finding]:
-    """Require frozen hook revisions, digests and exact hook dependencies.
-
-    Args:
-        path: ``.pre-commit-config.yaml`` file.
-    """
+    """Require frozen hook revisions, digests and exact hook dependencies."""
     lines = path.read_text(encoding="utf-8").splitlines()
     findings: list[Finding] = []
     for index, raw in enumerate(lines):
@@ -316,11 +312,7 @@ def check_precommit(path: Path) -> list[Finding]:
 
 
 def check_package_json(path: Path) -> list[Finding]:
-    """Require exact JavaScript dependency versions and a committed lockfile.
-
-    Args:
-        path: ``package.json`` file.
-    """
+    """Require exact JavaScript dependency versions and a committed lockfile."""
     text = path.read_text(encoding="utf-8")
     data: object = json.loads(text)
     findings: list[Finding] = []
@@ -353,11 +345,7 @@ def check_package_json(path: Path) -> list[Finding]:
 
 
 def check_dockerfile(path: Path) -> list[Finding]:
-    """Require every external base image to carry a digest.
-
-    Args:
-        path: Dockerfile or Containerfile.
-    """
+    """Require every external base image to carry a digest."""
     findings: list[Finding] = []
     stages: set[str] = set()
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -410,11 +398,7 @@ def _json_document(path: Path) -> object:
 
 
 def check_devcontainer(path: Path) -> list[Finding]:
-    """Require digest-pinned images and digest-locked, exact features.
-
-    Args:
-        path: ``devcontainer.json`` file.
-    """
+    """Require digest-pinned images and digest-locked, exact features."""
     data = _json_document(path)
     if not isinstance(data, dict):
         return [Finding(path=path, line=1, message="dev container must be an object")]
@@ -479,11 +463,7 @@ def _is_digest_locked(entry: object) -> bool:
 
 
 def check_commands(path: Path) -> list[Finding]:
-    """Reject floating installs in workflow and task command files.
-
-    Args:
-        path: Workflow, action or Taskfile.
-    """
+    """Reject floating installs in workflow, action and Taskfile commands."""
     findings: list[Finding] = []
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = _COMMENT.sub("", raw)
@@ -496,11 +476,7 @@ def check_commands(path: Path) -> list[Finding]:
 
 
 def check_mcp(path: Path) -> list[Finding]:
-    """Require exact versions or digests for command-based MCP servers.
-
-    Args:
-        path: ``.mcp.json`` or ``.vscode/mcp.json`` file.
-    """
+    """Require exact versions or digests for command-based MCP servers."""
     data = _json_document(path)
     text = path.read_text(encoding="utf-8")
     servers: object = None
@@ -550,11 +526,7 @@ def _server_problem(server: dict[str, object]) -> str | None:
 
 
 def scan(root: Path) -> list[Finding]:
-    """Scan every supported file under one repository root.
-
-    Args:
-        root: Repository root directory.
-    """
+    """Scan every supported file under one repository root."""
     findings: list[Finding] = []
     single = (
         ("pyproject.toml", check_pyproject),

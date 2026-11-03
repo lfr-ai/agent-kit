@@ -70,14 +70,7 @@ _STATIC_FIELDS = (
 
 
 def normalize(name: str) -> str:
-    """Normalize a distribution name as described in PEP 503.
-
-    Args:
-        name: Distribution or requirement name.
-
-    Returns:
-        Lowercase name with runs of ``-``, ``_`` and ``.`` replaced by ``-``.
-    """
+    """Normalize a distribution name per PEP 503 (lower-case, ``-`` separators)."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
@@ -88,7 +81,7 @@ class _Locator:
         """Index table headers.
 
         Args:
-            text: TOML source.
+            text (str): TOML source.
         """
         self.lines = text.splitlines()
         self.headers: dict[str, int] = {}
@@ -101,8 +94,8 @@ class _Locator:
         """Return the line of a table header or a key inside that table.
 
         Args:
-            table: Dotted table name such as ``project`` or ``project.scripts``.
-            key: Optional key within the table.
+            table (str): Dotted table name such as ``project`` or ``project.scripts``.
+            key (str | None): Optional key within the table.
 
         Returns:
             One-based line number, or 1 when not found.
@@ -128,8 +121,8 @@ def _check_build_system(
     """Validate the PEP 517/518 build-system table.
 
     Args:
-        data: Parsed TOML document.
-        locate: Line locator.
+        data (dict[str, object]): Parsed TOML document.
+        locate (_Locator): Line locator.
 
     Returns:
         Line-numbered messages.
@@ -156,8 +149,8 @@ def _check_identity(
     """Validate name, version, dynamic, and requires-python.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
 
     Returns:
         Line-numbered messages.
@@ -197,14 +190,7 @@ def _check_identity(
 
 
 def _dynamic_fields(project: dict[str, object]) -> list[str] | None:
-    """Return the ``dynamic`` field names, or None when the value is malformed.
-
-    Args:
-        project: The ``[project]`` table.
-
-    Returns:
-        Declared dynamic field names, or None for a non-list or non-string entry.
-    """
+    """Return the ``dynamic`` field names, or None when the value is malformed."""
     dynamic = project.get("dynamic", [])
     if not isinstance(dynamic, list):
         return None
@@ -218,9 +204,9 @@ def _check_version(
     """Validate the version and requires-python fields.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
-        dynamic: Field names declared dynamic.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
+        dynamic (list[str]): Field names declared dynamic.
 
     Returns:
         Line-numbered messages.
@@ -251,9 +237,9 @@ def _check_license(
     """Validate PEP 639 license metadata.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
-        allow_legacy: Accept the deprecated table form.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
+        allow_legacy (bool): Accept the deprecated table form.
 
     Returns:
         Line-numbered messages.
@@ -298,9 +284,9 @@ def _check_readme(
     """Check that a declared readme file exists.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
-        root: Directory containing ``pyproject.toml``.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
+        root (Path): Directory containing ``pyproject.toml``.
 
     Returns:
         Line-numbered messages.
@@ -320,10 +306,11 @@ def _requirement_issues(
     """Validate one list of PEP 508 requirement strings.
 
     Args:
-        requirements: Requirement strings.
-        label: Field label used in messages.
-        line: Line to report.
-        dev_tools: Normalized names that do not belong in runtime dependencies.
+        requirements (Iterable[object]): Requirement strings.
+        label (str): Field label used in messages.
+        line (int): Line to report.
+        dev_tools (frozenset[str]): Normalized names that do not belong in runtime
+            dependencies.
 
     Returns:
         Line-numbered messages.
@@ -355,10 +342,11 @@ def _requirement_risks(
     """Return publication risks for one parsed requirement.
 
     Args:
-        requirement: Requirement string.
-        name: Normalized requirement name.
-        label: Field label used in messages.
-        dev_tools: Normalized names that do not belong in runtime dependencies.
+        requirement (str): Requirement string.
+        name (str): Normalized requirement name.
+        label (str): Field label used in messages.
+        dev_tools (frozenset[str]): Normalized names that do not belong in runtime
+            dependencies.
 
     Returns:
         Messages for development tools and local direct references.
@@ -381,9 +369,9 @@ def _check_dependencies(
     """Validate runtime and optional dependencies.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
-        dev_tools: Normalized development tool names.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
+        dev_tools (frozenset[str]): Normalized development tool names.
 
     Returns:
         Line-numbered messages.
@@ -422,8 +410,8 @@ def _check_entry_points(
     """Validate console, GUI, and plugin entry-point object references.
 
     Args:
-        project: The ``[project]`` table.
-        locate: Line locator.
+        project (dict[str, object]): The ``[project]`` table.
+        locate (_Locator): Line locator.
 
     Returns:
         Line-numbered messages.
@@ -444,7 +432,7 @@ def _entry_point_groups(project: dict[str, object]) -> dict[str, object]:
     """Collect script and plugin entry-point tables by group label.
 
     Args:
-        project: The ``[project]`` table.
+        project (dict[str, object]): The ``[project]`` table.
 
     Returns:
         Group labels mapped to their raw tables.
@@ -465,9 +453,9 @@ def _entry_point_issue(group: str, name: object, reference: object) -> str | Non
     """Return the problem with one entry-point object reference, if any.
 
     Args:
-        group: Group label such as ``scripts``.
-        name: Entry-point name.
-        reference: Declared object reference.
+        group (str): Group label such as ``scripts``.
+        name (object): Entry-point name.
+        reference (object): Declared object reference.
 
     Returns:
         Message, or None for a valid reference.
@@ -490,11 +478,12 @@ def check_pyproject(
     """Check one ``pyproject.toml`` document.
 
     Args:
-        text: TOML source.
-        path: Display path.
-        root: Directory used to resolve relative files such as the readme.
-        dev_tools: Distribution names that must not be runtime dependencies.
-        allow_legacy_license: Accept the deprecated license table form.
+        text (str): TOML source.
+        path (str): Display path.
+        root (Path): Directory used to resolve relative files such as the readme.
+        dev_tools (Iterable[str]): Distribution names that must not be runtime
+            dependencies.
+        allow_legacy_license (bool): Accept the deprecated license table form.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -543,9 +532,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            fragment: Observed fragment for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            fragment (str | None): Observed fragment for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(fragment=fragment, found=found))
 
@@ -606,11 +595,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="pyproject.toml files")

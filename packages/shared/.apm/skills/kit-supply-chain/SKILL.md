@@ -35,10 +35,16 @@ which routes each concern to the skill that owns it.
    to prove the lock matches the manifest and every artifact has a hash. Run
    the pin checker owned by the `kit-verify-change` skill (`check_pins.py`)
    for floating versions in hooks, workflows, images and package runners.
-6. Audit the changed lock before installing it: `pip-audit` on the hashed
-   export or OSV-Scanner on the lockfile, and `bun audit` or `npm audit` for
-   JavaScript. Install only from the lock (`uv sync --locked`, `npm ci`,
-   `bun install --frozen-lockfile`), preferring wheels over source builds.
+6. Audit the changed lock before installing it. For uv projects run
+   `uv audit --locked --preview-features audit-command`; it reads `uv.lock`
+   without installing and queries OSV. Fail closed on archived, deprecated or
+   quarantined projects too (see
+   [locking and auditing](references/locking-and-auditing.md)). Use pip-audit
+   or OSV-Scanner only for non-uv lockfiles, and `bun audit` or `npm audit` for
+   JavaScript. `uv audit` does not verify lock hashes against the index:
+   install only from the lock (`uv sync --locked` verifies artifact hashes,
+   `npm ci`, `bun install --frozen-lockfile`), preferring wheels, and review
+   lock diffs.
 7. Check licenses after installation with the license guard owned by the
    `kit-agent-runtime` skill, and mirror the same allow-list in pull-request
    dependency review.

@@ -39,8 +39,10 @@ class Neo4jPurchaseGraph:
         """Bind the adapter to a shared driver and an explicit database.
 
         Args:
-            driver: Process-wide async driver owned by the composition root.
-            database: Target database name; passing it avoids a home-database lookup.
+            driver (AsyncDriver): Process-wide async driver owned by the composition
+                root.
+            database (str): Target database name; passing it avoids a home-database
+                lookup.
         """
         self._driver = driver
         self._database = database
@@ -49,7 +51,8 @@ class Neo4jPurchaseGraph:
         """Merge purchases in batches; recording the same purchases twice is a no-op.
 
         Args:
-            purchases: Purchases to record; an empty sequence does nothing.
+            purchases (Sequence[Purchase]): Purchases to record; an empty sequence does
+                nothing.
 
         Raises:
             GraphUnavailableError: If the database stays unreachable after retries.
@@ -69,8 +72,8 @@ class Neo4jPurchaseGraph:
         """Return products most often bought by customers who bought ``sku``.
 
         Args:
-            sku: Product to start from.
-            limit: Maximum number of products to return.
+            sku (str): Product to start from.
+            limit (int): Maximum number of products to return.
 
         Returns:
             Products ordered by shared customers, then by SKU.
@@ -96,9 +99,10 @@ class Neo4jPurchaseGraph:
         """Return one keyset page of SKUs a customer bought, in SKU order.
 
         Args:
-            customer_id: Customer whose purchases are listed.
-            after_sku: Last SKU of the previous page; ``None`` starts at the beginning.
-            limit: Maximum number of SKUs to return.
+            customer_id (str): Customer whose purchases are listed.
+            after_sku (str | None): Last SKU of the previous page; ``None`` starts at
+                the beginning.
+            limit (int): Maximum number of SKUs to return.
 
         Returns:
             SKUs greater than ``after_sku``; fewer than ``limit`` means the last page.
@@ -125,7 +129,8 @@ class Neo4jPurchaseGraph:
         """Count nodes of an allow-listed kind.
 
         Args:
-            kind: Node kind; the enum selects a constant query, never a formatted label.
+            kind (NodeKind): Node kind; the enum selects a constant query, never a
+                formatted label.
 
         Returns:
             Number of nodes with the kind's label.
@@ -165,7 +170,13 @@ def _check_limit(limit: int) -> None:
 async def _merge_purchases(
     tx: AsyncManagedTransaction, rows: list[_PurchaseRow]
 ) -> None:
-    """Merge one batch; safe to retry because every write is a keyed ``MERGE``."""
+    """Merge one batch; safe to retry because every write is a keyed ``MERGE``.
+
+    Args:
+        tx (AsyncManagedTransaction): Driver-managed write transaction.
+        rows (list[_PurchaseRow]): Batch of parameter maps containing ``customerId``,
+            ``sku``, ``orderId`` and ``purchasedAt``.
+    """
     result = await tx.run(RECORD_PURCHASES, rows=rows)
     await result.consume()
 
@@ -174,7 +185,13 @@ async def _merge_purchases(
 async def _bought_together(
     tx: AsyncManagedTransaction, sku: str, limit: int
 ) -> list[ProductAffinity]:
-    """Run the co-purchase query and map records to domain values inside the transaction."""
+    """Run the co-purchase query and map records inside the transaction.
+
+    Args:
+        tx (AsyncManagedTransaction): Driver-managed read transaction.
+        sku (str): Starting product used by the co-purchase query.
+        limit (int): Validated maximum number of product affinities to return.
+    """
     result = await tx.run(PRODUCTS_BOUGHT_TOGETHER, sku=sku, limit=limit)
     return [
         ProductAffinity(sku=str(record["sku"]), together=int(record["together"]))

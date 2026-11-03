@@ -1,6 +1,6 @@
 """Driven adapter: implement the payment port over HTTPS with JSON.
 
-Copy to 'app/adapters/payments/http_payment_gateway.py'. This adapter owns the
+Copy to ``app/adapters/payments/http_payment_gateway.py``. This adapter owns the
 wire format, authentication header, timeout and error translation. The transport
 is injected so contract tests can drive every branch without a network.
 
@@ -40,8 +40,9 @@ def urllib_transport(request: urllib.request.Request, timeout: float) -> bytes:
     """Send one request with the standard library and return the body.
 
     Args:
-        request: Fully built request including method, headers and body.
-        timeout: Seconds to wait for connect and for each read.
+        request (urllib.request.Request): Fully built request including method, headers
+            and body.
+        timeout (float): Seconds to wait for connect and for each read.
 
     Returns:
         The raw response body of a 2xx response.
@@ -69,10 +70,12 @@ class HttpPaymentGateway(PaymentGateway):
         """Validate configuration once; no request is made here.
 
         Args:
-            base_url: Provider API root, for example 'https://payments.example/v1'.
-            token: Returns a current bearer token; called per request.
-            timeout: Per-request timeout in seconds.
-            transport: Sends a request and returns the body; injected in tests.
+            base_url (str): Provider API root, for example
+                ``https://payments.example/v1``.
+            token (TokenProvider): Returns a current bearer token; called per request.
+            timeout (float): Per-request timeout in seconds.
+            transport (Transport): Sends a request and returns the body; injected in
+                tests.
 
         Raises:
             ValueError: If the base URL is not HTTPS or the timeout is not positive.
@@ -97,10 +100,10 @@ class HttpPaymentGateway(PaymentGateway):
         """Capture a payment; see the port for the full contract.
 
         Args:
-            invoice_id: Invoice being paid.
-            amount: Positive amount to capture.
-            currency: ISO 4217 code of the amount.
-            idempotency_key: Forwarded so the provider deduplicates retries.
+            invoice_id (str): Invoice being paid.
+            amount (Decimal): Positive amount to capture.
+            currency (str): ISO 4217 code of the amount.
+            idempotency_key (str): Forwarded so the provider deduplicates retries.
 
         Returns:
             The provider receipt mapped to the port's value type.
@@ -130,7 +133,19 @@ class HttpPaymentGateway(PaymentGateway):
     def _translate(
         error: urllib.error.HTTPError, *, invoice_id: str
     ) -> PaymentDeclinedError | PaymentUnavailableError | PaymentProtocolError:
-        """Map an HTTP error response to the port's exception vocabulary."""
+        """Map an HTTP error response to the port's exception vocabulary.
+
+        Args:
+            error (urllib.error.HTTPError): Provider status, headers and error
+                body used to classify the failure.
+            invoice_id (str): Invoice identity attached to declined or unavailable errors.
+
+        Returns:
+            PaymentDeclinedError | PaymentUnavailableError | PaymentProtocolError:
+            Declined errors carry the invoice ID and a parsed or fallback reason;
+            unavailable errors carry the ID and optional numeric Retry-After
+            seconds; other statuses produce a protocol error naming the status.
+        """
         if error.code in _DECLINED:
             return PaymentDeclinedError(
                 invoice_id=invoice_id, reason=_decline_reason(error.read())
@@ -147,7 +162,12 @@ class HttpPaymentGateway(PaymentGateway):
 
 
 def _json_object(raw: bytes) -> Mapping[str, object]:
-    """Decode a JSON object or raise the port's protocol error."""
+    """Decode a JSON object or raise the port's protocol error.
+
+    Returns:
+        Mapping[str, object]: Provider JSON fields with nested values preserved.
+        This validates only the top-level object, not required receipt fields.
+    """
     try:
         decoded: object = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -158,7 +178,14 @@ def _json_object(raw: bytes) -> Mapping[str, object]:
 
 
 def _field(data: Mapping[str, object], name: str, *, default: str | None = None) -> str:
-    """Read a required (or defaulted) string field from a provider object."""
+    """Read a required (or defaulted) string field from a provider object.
+
+    Args:
+        data (Mapping[str, object]): Decoded provider object to inspect.
+        name (str): Field whose value must be a non-empty string.
+        default (str | None): Fallback only when the field is absent; None
+            leaves an absent field invalid.
+    """
     value = data.get(name, default)
     if not isinstance(value, str) or not value:
         raise PaymentProtocolError(f"provider field {name!r} is missing or not text")

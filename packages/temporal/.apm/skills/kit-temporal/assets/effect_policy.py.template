@@ -1,0 +1,87 @@
+"""Pure deduplication decision for a destination transaction, not a distributed lock."""
+
+from dataclasses import dataclass
+from enum import StrEnum
+import hashlib
+
+
+class InvalidEffectRequestError(ValueError):
+    """The operation has no usable business idempotency key."""
+
+
+class IdempotencyConflictError(ValueError):
+    """A stored receipt belongs to a different operation or payload."""
+
+
+class EffectDisposition(StrEnum):
+    """Closed decision values for an Activity's destination adapter."""
+
+    EXECUTE = "execute"
+    REUSE = "reuse"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EffectRecord:
+    """Previously committed receipt, loaded under destination concurrency control.
+
+    Args:
+        operation_key: Stable business-operation key, not an attempt/run number.
+        payload_digest: SHA-256 digest of the canonical effect payload.
+        result_ref: Opaque reference to the committed result; no sensitive body.
+    """
+
+    operation_key: str
+    payload_digest: str
+    result_ref: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EffectDecision:
+    """Validated decision; persistence and effect execution belong to the adapter.
+
+    Args:
+        operation_key: Unchanged business-operation key.
+        payload_digest: Canonical payload digest for conflict detection.
+        disposition: Execute when absent, otherwise reuse the saved receipt.
+        result_ref: Prior committed result reference, or None for new work.
+    """
+
+    operation_key: str
+    payload_digest: str
+    disposition: EffectDisposition
+    result_ref: str | None
+
+
+def decide_effect(
+    *, operation_key: str, payload: bytes, previous: EffectRecord | None
+) -> EffectDecision:
+    """Decide whether an Activity retry may reuse a committed destination receipt.
+
+    Args:
+        operation_key (str): Nonblank stable key, scoped by tenant/resource/action.
+        payload (bytes): Canonical bytes produced identically across retries.
+        previous (EffectRecord | None): Receipt loaded atomically with the destination's
+            effect policy.
+
+    Returns:
+        Execute/reuse decision with a digest and optional saved result reference.
+
+    Raises:
+        InvalidEffectRequestError: The business-operation key is blank.
+        IdempotencyConflictError: Existing operation key or payload does not match.
+    """
+    if not operation_key.strip():
+        raise InvalidEffectRequestError
+    digest = hashlib.sha256(payload).hexdigest()
+    if previous is not None and (
+        previous.operation_key != operation_key or previous.payload_digest != digest
+    ):
+        raise IdempotencyConflictError
+    return EffectDecision(
+        operation_key=operation_key,
+        payload_digest=digest,
+        disposition=(
+            EffectDisposition.EXECUTE if previous is None else EffectDisposition.REUSE
+        ),
+        result_ref=None if previous is None else previous.result_ref,
+    )

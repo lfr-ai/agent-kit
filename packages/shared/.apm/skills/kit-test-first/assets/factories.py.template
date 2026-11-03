@@ -1,6 +1,6 @@
 """Test data factories: valid by default, explicit about what each test varies.
 
-Copy to 'tests/factories.py'. A factory returns a fully valid object; a test
+Copy to ``tests/factories.py``. A factory returns a fully valid object; a test
 overrides only the fields its behavior depends on, so the reader sees the
 relevant input and nothing else. Prefer plain functions with keyword-only
 overrides over factory libraries until you need sequences or relationships.
@@ -15,14 +15,7 @@ _SEQUENCE = itertools.count(1)
 
 
 def next_id(prefix: str) -> str:
-    """Return a unique, readable identifier such as 'inv-0007'.
-
-    Args:
-        prefix: Short entity prefix.
-
-    Returns:
-        An identifier unique within the test session.
-    """
+    """Return a session-unique, readable identifier such as ``inv-0007``."""
     return f"{prefix}-{next(_SEQUENCE):04d}"
 
 
@@ -38,12 +31,12 @@ def build_invoice(
     """Build a valid invoice; pass only the fields the test is about.
 
     Args:
-        invoice_id: Identifier; a fresh unique one when omitted.
-        customer_id: Owning customer.
-        amount: Positive amount.
-        currency: ISO 4217 code.
-        status: Lifecycle state; 'PAID' gets a reference automatically.
-        payment_reference: Explicit reference for paid invoices.
+        invoice_id (str | None): Identifier; a fresh unique one when omitted.
+        customer_id (str): Owning customer.
+        amount (Decimal): Positive amount.
+        currency (str): ISO 4217 code.
+        status (InvoiceStatus): Lifecycle state; ``PAID`` gets a reference.
+        payment_reference (str | None): Explicit reference for paid invoices.
 
     Returns:
         A domain object that satisfies every invariant.
@@ -64,8 +57,8 @@ def build_invoices(count: int, *, customer_id: str = "cus-0001") -> list[Invoice
     """Build several open invoices for one customer with distinct identifiers.
 
     Args:
-        count: Number of invoices.
-        customer_id: Owning customer shared by all of them.
+        count (int): Number of invoices.
+        customer_id (str): Owning customer shared by all of them.
 
     Returns:
         Invoices in creation order.

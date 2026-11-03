@@ -84,8 +84,8 @@ class DuplicationInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            where: Diagnostic where for the invalid input.
+            issue (DuplicationInputIssue): The violated input invariant.
+            where (str | None): Diagnostic where for the invalid input.
         """
         super().__init__(issue.value.format(where=where))
 
@@ -99,8 +99,8 @@ class DuplicationInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
-            where: Diagnostic where for the invalid input.
+            issue (DuplicationInputIssue): The violated input invariant.
+            where (str | None): Diagnostic where for the invalid input.
         """
         super().__init__(issue.value.format(where=where))
 
@@ -186,7 +186,7 @@ def parse_report(payload: object) -> tuple[list[Clone], float | None]:
     """Validate a decoded report and return clones and total percentage.
 
     Args:
-        payload: Decoded JSON document.
+        payload (object): Decoded JSON document.
 
     Returns:
         Clone pairs and the overall duplicated-lines percentage, if reported.
@@ -247,9 +247,9 @@ def select(
     """Drop small clones and pairs whose both sides match an ignore glob.
 
     Args:
-        clones: Parsed clone pairs.
-        min_lines: Smallest clone size to keep.
-        ignore: Glob patterns matched against report paths.
+        clones (list[Clone]): Parsed clone pairs.
+        min_lines (int): Smallest clone size to keep.
+        ignore (tuple[str, ...]): Glob patterns matched against report paths.
 
     Returns:
         Remaining clones, largest first, then by path and line.
@@ -277,14 +277,7 @@ def select(
 
 
 def to_markdown(clones: list[Clone]) -> str:
-    """Render clones as a Markdown evidence table.
-
-    Args:
-        clones: Selected clone pairs.
-
-    Returns:
-        Markdown text ending with a newline.
-    """
+    """Render clones as a Markdown evidence table."""
     lines = [
         "| First | Second | Lines | Tokens | Format | Decision |",
         "| --- | --- | --- | --- | --- | --- |",
@@ -344,8 +337,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            broken: Observed broken for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            broken (dict[str, list[dict[str, int]]] | None): Observed broken for the
+                failing case.
         """
         super().__init__(issue.value.format(broken=broken))
 
@@ -424,12 +418,8 @@ def _report_over(report: Path, percentage: float | None, maximum: float | None) 
 def main(argv: list[str] | None = None) -> int:
     """Summarize the report and apply the gates.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv`` when omitted.
-
-    Returns:
-        0 when no clone remains and the percentage gate holds, 1 on findings,
-        2 on a missing or malformed report.
+    Returns 0 when no clone remains and the percentage gate holds, 1 on findings, 2 on a
+    missing or malformed report.
     """
     parser = _parser()
     args = parser.parse_args(argv)

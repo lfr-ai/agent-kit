@@ -1,6 +1,6 @@
 """Application service (driving port): settle one invoice.
 
-Copy to 'app/application/use_cases/settle_invoice.py'. The use case is an
+Copy to ``app/application/use_cases/settle_invoice.py``. The use case is an
 ordinary class with one public call; that call *is* the driving port, so no
 separate inbound Protocol is required. It depends only on domain types and
 driven ports, and it owns the transaction boundary and the order of effects.
@@ -61,9 +61,10 @@ class SettleInvoice:
         """Receive driven ports; construction happens in the composition root.
 
         Args:
-            unit_of_work: Returns a fresh unit of work per call.
-            payments: Payment gateway port.
-            notifier: Customer notification port.
+            unit_of_work (Callable[[], UnitOfWork]): Returns a fresh unit of work per
+                call.
+            payments (PaymentGateway): Payment gateway port.
+            notifier (InvoiceNotifier): Customer notification port.
         """
         self._unit_of_work = unit_of_work
         self._payments = payments

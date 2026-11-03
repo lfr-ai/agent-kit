@@ -42,7 +42,7 @@ Time box: <hours or days>
 | Dead code | vulture | `<version>` | yes / no | `<evidence>` | `audit/vulture.txt` |
 | Dependencies | deptry | `<version>` | yes / no | `<evidence>` | `audit/deptry.json` |
 | Duplication | jscpd | `<version>` | yes / no | `<evidence>` | `audit/jscpd-report.json` |
-| Vulnerabilities | `<pip-audit or osv-scanner>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.<json or sarif>` |
+| Vulnerabilities | `<uv audit, pip-audit or osv-scanner>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.<json or sarif>` |
 | Spelling | cspell | `<version>` | yes / no | `<evidence>` | `audit/cspell.txt` |
 
 ## Manual review sample

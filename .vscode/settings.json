@@ -110,6 +110,11 @@
   "chat.useClaudeMdFile": false,
   "chat.useClaudeHooks": false,
   "chat.mcp.autostart": "never",
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Write a Conventional Commits 1.0 message accepted by 'cz check': '<type>(<optional scope>)[!]: <imperative summary>', summary at most 72 characters, no trailing period. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scope is the touched package or area, e.g. 'fix(catalog): reject unknown profile fields'. Add a body only to explain why; use a 'BREAKING CHANGE:' footer with '!'."
+    }
+  ],
   "chat.tools.terminal.autoApprove": {
     "/^(pip|pip3|pipx|uvx|npx|bunx)(\\s|$)/": false,
     "/^python[0-9.]*(\\.exe)?\\s+-m\\s+pip\\s+install\\b/": false,

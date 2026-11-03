@@ -67,6 +67,13 @@ task apm:smoke
   for uv, Bun, GitHub Actions, pre-commit hooks, the dev container image, and
   dev container features.
 - `task apm:smoke`: real released APM CLI boundary in disposable packages.
+- `task eval:harness`: imports `AGENTS.md` plus toolkit skills into a sibling
+  `pi-harness-lab` checkout (`HARNESS_LAB` overrides) and
+  reports the context cost against a baseline with its free scripted model.
+  Pass-rate claims need the lab's paid provider run; see
+  [harness evaluation](.apm/skills/kit-config-review/references/harness-evaluation.md).
+- `agent-kit --log-level DEBUG <command>` (or `AGENT_KIT_LOG_LEVEL`) writes
+  diagnostics to stderr; stdout stays the command result.
 - `task apm:smoke -- --session`: actual one-skill delivery with no native roles.
 - `compose --skill`: explicit task procedures; `.apm/selection.json` records the
   delivered roster and character footprint without token/cost claims.

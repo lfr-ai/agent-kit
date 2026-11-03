@@ -91,8 +91,8 @@ def strip_comments(text: str, *, suffix: str) -> str:
     """Blank out comments without changing line or column positions.
 
     Args:
-        text: File content.
-        suffix: File suffix; ``//`` comments are removed only outside ``.css``.
+        text (str): File content.
+        suffix (str): File suffix; ``//`` comments are removed only outside ``.css``.
 
     Returns:
         Text of the same length with comment characters replaced by spaces.
@@ -142,10 +142,10 @@ def scan_text(
     """Return findings for one file's content.
 
     Args:
-        text: File content.
-        path: Path used in findings.
-        suffix: File suffix that selects comment syntax.
-        allowed_px: Pixel magnitudes that are not reported.
+        text (str): File content.
+        path (str): Path used in findings.
+        suffix (str): File suffix that selects comment syntax.
+        allowed_px (frozenset[float]): Pixel magnitudes that are not reported.
 
     Returns:
         Findings in line and column order.
@@ -177,9 +177,9 @@ def iter_files(
     """Yield scannable files in deterministic order.
 
     Args:
-        paths: Files or directories to scan.
-        suffixes: File suffixes to include.
-        token_files: Glob patterns of token files to skip.
+        paths (Sequence[Path]): Files or directories to scan.
+        suffixes (Sequence[str]): File suffixes to include.
+        token_files (Sequence[str]): Glob patterns of token files to skip.
 
     Yields:
         Every explicitly named file, plus matching files below each directory
@@ -223,10 +223,10 @@ def scan_paths(
     """Scan files and directories and return sorted findings.
 
     Args:
-        paths: Files or directories to scan.
-        suffixes: File suffixes to include.
-        token_files: Glob patterns of token files to skip.
-        allowed_px: Pixel magnitudes that are not reported.
+        paths (Sequence[Path]): Files or directories to scan.
+        suffixes (Sequence[str]): File suffixes to include.
+        token_files (Sequence[str]): Glob patterns of token files to skip.
+        allowed_px (Sequence[float]): Pixel magnitudes that are not reported.
 
     Returns:
         Findings sorted by path, line, and column.
@@ -279,7 +279,7 @@ class SelfTestError(AssertionError):
     """A documented rule did not behave as expected on synthetic input."""
 
 
-_SELF_TEST_CASES: tuple[tuple[str, str, list[str]], ...] = (
+_SELF_TEST_CASES = (
     (
         ".tsx",
         'export const A = () => <p className="bg-[#1d4ed8] w-[37px]" />;\n',
@@ -322,12 +322,8 @@ def self_test() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the scan and print findings.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 for unreadable input (argparse exits
-        with 2 on invalid arguments).
+    Returns 0 when clean, 1 with findings, 2 for unreadable input (argparse exits with 2
+    on invalid arguments).
     """
     parser = _parser()
     args = parser.parse_args(argv)

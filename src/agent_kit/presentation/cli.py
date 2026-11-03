@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import logging
+import os
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, TextIO
@@ -19,6 +21,10 @@ if TYPE_CHECKING:
 _MAX_CONTEXT_CHARS = 1_000_000
 _JSON_INDENT = 2
 _USAGE_ERROR = 2
+_LOG_LEVEL_ENV = "AGENT_KIT_LOG_LEVEL"
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+_DEFAULT_LOG_LEVEL = "WARNING"
+_LOG_FORMAT = "%(levelname)s %(name)s: %(message)s"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -41,6 +47,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-kit",
         description="Validate and compose first-party Agent Kit capabilities.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=_LOG_LEVELS,
+        help=f"stderr diagnostics; defaults to ${_LOG_LEVEL_ENV} or {_DEFAULT_LOG_LEVEL}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -86,7 +98,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _emit_findings(report: CheckReport, stream: TextIO) -> None:
-    """Write safe source-relative findings to a text stream."""
+    """Write safe source-relative findings to a text stream.
+
+    Args:
+        report (CheckReport): Report whose findings are written, one per line.
+        stream (TextIO): Destination stream.
+    """
     stream.writelines(
         f"{finding.path}: {finding.message} [{finding.code}]\n"
         for finding in report.findings
@@ -94,7 +111,16 @@ def _emit_findings(report: CheckReport, stream: TextIO) -> None:
 
 
 def _report_dict(report: CheckReport) -> dict[str, object]:
-    """Build the stable JSON-facing validation report."""
+    """Build the stable JSON-facing validation report.
+
+    Args:
+        report (CheckReport): Validation result to render.
+
+    Returns:
+        dict[str, object]: ``valid`` flag, ``version``, ``findings`` as a list of
+        ``code``/``message``/``path`` objects, and ``profiles`` keyed by profile name
+        with count fields and a ``limits`` mapping.
+    """
     return {
         "valid": report.valid,
         "version": report.version,
@@ -116,7 +142,7 @@ def _report_dict(report: CheckReport) -> dict[str, object]:
 
 
 def _context(actions: CliActions) -> int:
-    """Emit bounded advisory context without authorizing or denying tool calls."""
+    """Write advisory SessionStart context; ``1`` if stdin is oversized or invalid."""
     raw = sys.stdin.read(_MAX_CONTEXT_CHARS + 1)
     if len(raw) > _MAX_CONTEXT_CHARS:
         sys.stderr.write("session context input is too large\n")
@@ -141,7 +167,15 @@ def _context(actions: CliActions) -> int:
 
 
 def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
-    """Validate the source catalog and print a text or JSON report."""
+    """Validate the source catalog and print a text or JSON report.
+
+    Args:
+        actions (CliActions): Injected operations.
+        arguments (argparse.Namespace): Parsed ``check`` options.
+
+    Returns:
+        int: ``0`` when the catalog is valid, otherwise ``1``.
+    """
     report = actions.check(arguments.root or actions.default_root())
     if arguments.json:
         rendered = json.dumps(
@@ -158,7 +192,17 @@ def _check(actions: CliActions, arguments: argparse.Namespace) -> int:
 def _requested_selection(
     actions: CliActions, arguments: argparse.Namespace
 ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
-    """Return profile, features, runtimes, and skills from one input source."""
+    """Resolve the composition request from flags or a selection file.
+
+    Args:
+        actions (CliActions): Injected operations; ``load_selection`` reads the file.
+        arguments (argparse.Namespace): Parsed ``compose`` options.
+
+    Returns:
+        tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None: Profile,
+        features, runtimes, and skills, or ``None`` after a usage message when the
+        input sources conflict or no profile is given.
+    """
     flags = (arguments.feature, arguments.runtimes, arguments.skill)
     if arguments.selection is None:
         if arguments.profile is None:
@@ -186,7 +230,15 @@ def _requested_selection(
 
 
 def _compose(actions: CliActions, arguments: argparse.Namespace) -> int:
-    """Refuse invalid sources, then write one profile workspace."""
+    """Refuse invalid sources, then write one profile workspace.
+
+    Args:
+        actions (CliActions): Injected operations.
+        arguments (argparse.Namespace): Parsed ``compose`` options.
+
+    Returns:
+        int: ``0`` on success, ``1`` for invalid sources, ``2`` for a usage error.
+    """
     requested = _requested_selection(actions, arguments)
     if requested is None:
         return _USAGE_ERROR
@@ -211,7 +263,15 @@ def _compose(actions: CliActions, arguments: argparse.Namespace) -> int:
 
 
 def _provenance(actions: CliActions, arguments: argparse.Namespace) -> int:
-    """Verify composed output integrity."""
+    """Verify composed output integrity.
+
+    Args:
+        actions (CliActions): Injected operations.
+        arguments (argparse.Namespace): Parsed ``provenance`` options.
+
+    Returns:
+        int: ``0`` when provenance verifies, otherwise ``1``.
+    """
     report = actions.provenance(arguments.root)
     if not report.valid:
         _emit_findings(report, sys.stderr)
@@ -221,7 +281,15 @@ def _provenance(actions: CliActions, arguments: argparse.Namespace) -> int:
 
 
 def _apm_check(actions: CliActions, arguments: argparse.Namespace) -> int:
-    """Run the pinned APM policy and audit commands after provenance passes."""
+    """Run the pinned APM policy and audit commands after provenance passes.
+
+    Args:
+        actions (CliActions): Injected operations.
+        arguments (argparse.Namespace): Parsed ``apm-check`` options.
+
+    Returns:
+        int: ``0`` when every check passes, otherwise ``1``.
+    """
     report = actions.apm_check(arguments.root)
     if report is not None and not report.valid:
         _emit_findings(report, sys.stderr)
@@ -238,9 +306,29 @@ _COMMANDS = {
 }
 
 
+def _configure_logging(requested: str | None) -> bool:
+    """Send diagnostics to stderr; ``False`` when the environment level is invalid."""
+    level = requested or os.environ.get(_LOG_LEVEL_ENV, _DEFAULT_LOG_LEVEL).upper()
+    if level not in _LOG_LEVELS:
+        sys.stderr.write(f"{_LOG_LEVEL_ENV} must be one of {', '.join(_LOG_LEVELS)}\n")
+        return False
+    logging.basicConfig(level=level, format=_LOG_FORMAT, stream=sys.stderr)
+    return True
+
+
 def main(actions: CliActions, argv: list[str] | None = None) -> int:
-    """Parse one command, dispatch its injected operation, and report results."""
+    """Parse one command, dispatch its injected operation, and report results.
+
+    Args:
+        actions (CliActions): Injected operations.
+        argv (list[str] | None): Command-line arguments; ``None`` reads ``sys.argv``.
+
+    Returns:
+        int: Process exit status: ``0`` success, ``1`` failure, ``2`` usage error.
+    """
     arguments = _parser().parse_args(argv)
+    if not _configure_logging(arguments.log_level):
+        return _USAGE_ERROR
     if arguments.command == "context":
         return _context(actions)
     try:

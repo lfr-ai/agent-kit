@@ -85,14 +85,7 @@ def _sensitive(key: str) -> bool:
 
 
 def secret_findings(document: Mapping[str, object]) -> list[str]:
-    """Report literal credentials and key-like strings.
-
-    Args:
-        document (Mapping[str, object]): Decoded LiteLLM configuration.
-
-    Returns:
-        list[str]: Findings with locations only.
-    """
+    """Report literal credentials and key-like strings by location only."""
     findings: list[str] = []
     for path, key, value in _walk(document, ""):
         if not isinstance(value, str):
@@ -149,14 +142,7 @@ def _model_problem(model: object) -> str | None:
 
 
 def deployment_findings(document: Mapping[str, object]) -> list[str]:
-    """Report missing aliases, missing timeouts and unpinned models.
-
-    Args:
-        document (Mapping[str, object]): Decoded LiteLLM configuration.
-
-    Returns:
-        list[str]: Findings with locations only.
-    """
+    """Report missing aliases, missing timeouts and unpinned models."""
     has_global_timeout = _positive_number(
         _section(document, "router_settings").get("timeout")
     ) or _positive_number(_section(document, "litellm_settings").get("request_timeout"))
@@ -253,14 +239,7 @@ def _image_problem(image: str) -> str | None:
 
 
 def image_findings(document: Mapping[str, object]) -> list[str]:
-    """Report compose images that are not pinned by digest or a fixed tag.
-
-    Args:
-        document (Mapping[str, object]): Decoded, resolved compose document.
-
-    Returns:
-        list[str]: Findings with locations only.
-    """
+    """Report compose images that are not pinned by digest or a fixed tag."""
     findings: list[str] = []
     for name, service in sorted(_section(document, "services").items()):
         image = service.get("image") if isinstance(service, Mapping) else None
@@ -345,11 +324,7 @@ def _self_test_cases() -> list[tuple[str, Mapping[str, object], str | None]]:
 
 
 def self_test() -> list[str]:
-    """Run built-in synthetic cases and return unmet expectations.
-
-    Returns:
-        list[str]: One message per case whose findings did not match.
-    """
+    """Run built-in synthetic cases and return unmet expectations."""
     failures: list[str] = []
     for label, document, expected in _self_test_cases():
         findings = check(
@@ -375,11 +350,7 @@ def _run_self_test() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv (Sequence[str] | None): Arguments; defaults to ``sys.argv``.
-
-    Returns:
-        int: 0 clean, 1 findings, 2 invalid input or arguments.
+    Returns 0 clean, 1 findings, 2 invalid input or arguments.
     """
     parser = argparse.ArgumentParser(description="Check model gateway configuration.")
     parser.add_argument(

@@ -99,7 +99,7 @@ class WorkflowError(ValueError):
         """Describe the parse failure.
 
         Args:
-            problem: Parser message, including the position when known.
+            problem (str): Parser message, including the position when known.
         """
         super().__init__(problem)
 
@@ -111,7 +111,7 @@ class MissingPathError(ValueError):
         """Describe the missing path.
 
         Args:
-            path: The path that was not found.
+            path (Path): The path that was not found.
         """
         super().__init__(f"path does not exist: {path}")
 
@@ -137,14 +137,7 @@ class Node:
     items: tuple[Node, ...] = ()
 
     def get(self, key: str) -> Node | None:
-        """Return the value stored under ``key`` in a mapping.
-
-        Args:
-            key: Mapping key to look up.
-
-        Returns:
-            The value node, or None when the key is absent or this is not a map.
-        """
+        """Return the value stored under ``key`` in a mapping."""
         for name, _, value in self.entries:
             if name == key:
                 return value
@@ -220,11 +213,7 @@ def default_options() -> Options:
 
 
 def load_yaml() -> ModuleType | None:
-    """Import PyYAML when it is installed.
-
-    Returns:
-        The ``yaml`` module, or None when it cannot be imported.
-    """
+    """Import PyYAML when it is installed."""
     try:
         module = importlib.import_module("yaml")
     except ImportError:
@@ -248,7 +237,11 @@ def _convert(raw: object) -> Node:
 
 
 def _entry(key: object, value: object) -> tuple[str, int, Node]:
-    """Convert one mapping pair into a key, key line, and value node."""
+    """Convert one mapping pair into a key, key line, and value node.
+
+    Returns:
+        The key text, the one-based key line, and the value node.
+    """
     converted = _convert(key)
     return converted.text, converted.line, _convert(value)
 
@@ -257,8 +250,8 @@ def parse(text: str, yaml_module: ModuleType) -> Node | None:
     """Compose workflow text into nodes that keep line numbers.
 
     Args:
-        text: Complete workflow file content.
-        yaml_module: The imported PyYAML module.
+        text (str): Complete workflow file content.
+        yaml_module (ModuleType): The imported PyYAML module.
 
     Returns:
         The root node, or None for an empty document.
@@ -426,7 +419,12 @@ def _line_at(node: Node, offset: int) -> int:
 
 
 def _rebuild_in_step(step: Node, options: Options) -> tuple[int, str] | None:
-    """Return the line and description of a build inside one step."""
+    """Return the line and description of a build inside one step.
+
+    Returns:
+        The one-based line and a description of the build, or None when the step builds
+        nothing.
+    """
     uses = _action(step)
     if uses is not None and _action_name(uses) in _BUILD_ACTIONS:
         return uses.line, _action_name(uses)
@@ -481,11 +479,7 @@ def _looks_like_registry(segment: str) -> bool:
 def is_mutable_reference(word: str) -> bool:
     """Tell whether a word is an image reference pinned by tag, not digest.
 
-    Args:
-        word: One whitespace-free word, with expressions already masked.
-
-    Returns:
-        True for ``name:latest`` and for ``registry/name:tag`` without a digest.
+    Matches ``name:latest`` and ``registry/name:tag`` without a digest.
     """
     if "://" in word or _WINDOWS_DRIVE.match(word):
         return False
@@ -551,9 +545,9 @@ def scan_workflow(path: Path, root: Node | None, options: Options) -> list[Findi
     """Check one parsed workflow and return its findings in line order.
 
     Args:
-        path: Path reported in findings.
-        root: Parsed root node, or None for an empty file.
-        options: Checker configuration.
+        path (Path): Path reported in findings.
+        root (Node | None): Parsed root node, or None for an empty file.
+        options (Options): Checker configuration.
 
     Returns:
         Findings sorted by line, rule, and message, without ignored rules.
@@ -574,10 +568,10 @@ def scan_text(
     """Parse and check one workflow file.
 
     Args:
-        path: Path reported in findings.
-        text: Workflow file content.
-        yaml_module: The imported PyYAML module.
-        options: Checker configuration.
+        path (Path): Path reported in findings.
+        text (str): Workflow file content.
+        yaml_module (ModuleType): The imported PyYAML module.
+        options (Options): Checker configuration.
 
     Returns:
         Findings in line order.
@@ -592,8 +586,8 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     """Expand directories into sorted workflow files.
 
     Args:
-        paths: Files or directories. Directories contribute files ending in
-            ``.yml``, ``.yaml``, ``.yml.template``, or ``.yaml.template``.
+        paths (Iterable[Path]): Files or directories. Directories contribute files
+            ending in ``.yml``, ``.yaml``, ``.yml.template``, or ``.yaml.template``.
 
     Returns:
         Sorted, de-duplicated file list.
@@ -660,14 +654,7 @@ jobs:
 
 
 def self_test(yaml_module: ModuleType) -> list[str]:
-    """Check the rules on in-memory workflows and return unmet expectations.
-
-    Args:
-        yaml_module: The imported PyYAML module.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the rules on in-memory workflows and return unmet expectations."""
     options = default_options()
     failures: list[str] = []
     if scan_text(Path("clean.yml"), _SELF_TEST_CLEAN, yaml_module, options):
@@ -791,12 +778,8 @@ def _scan(paths: Iterable[Path], yaml_module: ModuleType, options: Options) -> i
 def main(argv: list[str] | None = None) -> int:
     """Check workflow files and print one finding per line.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings or a failed self-test, 2 for usage
-        errors, unreadable or invalid input, or missing PyYAML.
+    Returns 0 when clean, 1 with findings or a failed self-test, 2 for usage errors,
+    unreadable or invalid input, or missing PyYAML.
     """
     parser = _parser()
     args = parser.parse_args(argv)

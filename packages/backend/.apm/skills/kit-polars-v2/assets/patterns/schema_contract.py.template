@@ -1,7 +1,7 @@
 """Schema contract for order events: validate the plan, conform ingress, check keys.
 
 Copy into the consumer's data-processing adapter (for example
-'myapp/infrastructure/analytics/order_events.py').
+``myapp/infrastructure/analytics/order_events.py``).
 """
 
 from __future__ import annotations
@@ -41,7 +41,13 @@ class KeyReport:
 def schema_violations(
     actual: pl.Schema, expected: pl.Schema, *, allow_extra: bool = False
 ) -> list[str]:
-    """List every difference between two schemas in a stable order."""
+    """List every difference between two schemas in a stable order.
+
+    Args:
+        actual (pl.Schema): Observed column names and data types.
+        expected (pl.Schema): Contract defining required columns and exact types.
+        allow_extra (bool): Permit columns absent from the contract when True.
+    """
     problems = [f"missing column {name!r}" for name in expected if name not in actual]
     problems.extend(
         f"column {name!r} is {actual[name]}, expected {dtype}"
@@ -56,7 +62,13 @@ def schema_violations(
 
 
 def require_schema(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
-    """Fail before execution when the plan's schema breaks the contract."""
+    """Fail before execution when the plan's schema breaks the contract.
+
+    Args:
+        frame (pl.LazyFrame): Plan whose resolved schema is checked without
+            collecting its rows; returned unchanged when valid.
+        expected (pl.Schema): Required column names and exact types, with no extras.
+    """
     problems = schema_violations(frame.collect_schema(), expected)
     if problems:
         raise SchemaContractError("; ".join(problems))
@@ -64,7 +76,13 @@ def require_schema(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
 
 
 def conform(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
-    """Cast strictly to the contract and order columns; extra columns are dropped."""
+    """Cast strictly to the contract and order columns; extra columns are dropped.
+
+    Args:
+        frame (pl.LazyFrame): Input plan containing every required column.
+        expected (pl.Schema): Output column order and target types used by the
+            strict casts; value conversion happens when the plan executes.
+    """
     available = frame.collect_schema()
     missing = [name for name in expected if name not in available]
     if missing:
@@ -75,7 +93,13 @@ def conform(frame: pl.LazyFrame, expected: pl.Schema) -> pl.LazyFrame:
 
 
 def key_report(frame: pl.LazyFrame, key: str) -> KeyReport:
-    """Count null and duplicated key values with a single lazy aggregate."""
+    """Count null and duplicated key values with a single lazy aggregate.
+
+    Args:
+        frame (pl.LazyFrame): Input plan evaluated to collect the aggregate counts.
+        key (str): Column to check; duplicate counts include every occurrence
+            of a repeated non-null value, not just occurrences after the first.
+    """
     counts = frame.select(
         pl.col(key).null_count().alias("null_keys"),
         pl.col(key).drop_nulls().is_duplicated().sum().alias("duplicate_keys"),

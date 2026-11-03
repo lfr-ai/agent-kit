@@ -83,26 +83,12 @@ class Options(NamedTuple):
 
 
 def is_snake_case(name: str) -> bool:
-    """Return whether ``name`` is lower snake_case without double underscores.
-
-    Args:
-        name: A module stem or directory name.
-
-    Returns:
-        True for names such as ``invoice_repository`` or ``_private``.
-    """
+    """Return whether ``name`` is lower snake_case without double underscores."""
     return _SNAKE.fullmatch(name) is not None
 
 
 def is_kebab_case(name: str) -> bool:
-    """Return whether ``name`` is lower-case words joined by single hyphens.
-
-    Args:
-        name: A directory name.
-
-    Returns:
-        True for names such as ``getting-started`` or ``v2``.
-    """
+    """Return whether ``name`` is lower-case words joined by single hyphens."""
     return _KEBAB.fullmatch(name) is not None
 
 
@@ -176,8 +162,8 @@ def check_tree(files: Iterable[PurePosixPath], *, options: Options) -> list[Find
     """Check relative file paths and the directories they imply.
 
     Args:
-        files: File paths relative to the scanned root.
-        options: Naming policy.
+        files (Iterable[PurePosixPath]): File paths relative to the scanned root.
+        options (Options): Naming policy.
 
     Returns:
         Findings sorted by path and message.
@@ -215,8 +201,8 @@ def collect(root: Path, *, excludes: Sequence[str]) -> list[PurePosixPath]:
     """List files below ``root`` as relative POSIX paths, skipping excluded names.
 
     Args:
-        root: Directory to scan.
-        excludes: fnmatch patterns matched against each path component.
+        root (Path): Directory to scan.
+        excludes (Sequence[str]): fnmatch patterns matched against each path component.
 
     Returns:
         Sorted relative file paths.
@@ -238,11 +224,7 @@ def collect(root: Path, *, excludes: Sequence[str]) -> list[PurePosixPath]:
 
 
 def self_test() -> list[str]:
-    """Check the rules on an in-memory tree and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the rules on an in-memory tree and return unmet expectations."""
     tree = [
         PurePosixPath(item)
         for item in (
@@ -342,11 +324,7 @@ def _run_self_test() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Scan a tree and print naming findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 when the root is unusable.
+    Returns 0 when clean, 1 when findings exist, 2 when the root is unusable.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

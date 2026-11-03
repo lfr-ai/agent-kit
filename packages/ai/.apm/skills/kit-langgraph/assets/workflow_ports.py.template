@@ -1,6 +1,6 @@
 """Ports, value objects and errors for an approval workflow.
 
-Copy to 'workflows/ports.py'. The graph module depends on these protocols; the
+Copy to ``workflows/ports.py``. The graph module depends on these protocols; the
 model client and the side-effecting gateway are injected, so the graph can be
 tested deterministically with fakes and never imports a provider SDK.
 """
@@ -62,9 +62,9 @@ class ReviewDecision:
     """Validated human decision supplied when resuming an interrupt.
 
     Attributes:
-        action: 'approve', 'reject' or 'edit'.
+        action: ``approve``, ``reject`` or ``edit``.
         reviewer: Identifier of the reviewer, for audit.
-        edited_text: Replacement text, required when 'action' is 'edit'.
+        edited_text: Replacement text, required when ``action`` is ``edit``.
         note: Optional short reason.
     """
 
@@ -89,7 +89,7 @@ class DraftModel(Protocol):
     """Port to a language model that proposes an action."""
 
     async def draft(self, *, request: str) -> Draft:
-        """Return a proposal; raise 'TransientError' or 'PermanentError'."""
+        """Return a proposal; raise ``TransientError`` or ``PermanentError``."""
         ...
 
 
@@ -97,5 +97,11 @@ class ActionGateway(Protocol):
     """Port to the system that performs the approved side effect."""
 
     async def apply(self, *, idempotency_key: str, text: str) -> Receipt:
-        """Apply once per key; repeated calls return the original receipt."""
+        """Apply once per key; repeated calls return the original receipt.
+
+        Args:
+            idempotency_key (str): Stable key identifying the approved side effect
+                across retries and checkpoint replays.
+            text (str): Final approved content to send to the downstream system.
+        """
         ...

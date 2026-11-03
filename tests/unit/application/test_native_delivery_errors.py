@@ -68,7 +68,7 @@ def test_role_description_text_validations_trigger_errors(
     role = {
         "id": "kit-worker",
         "kind": "worker",
-        "tier": "readonly",
+        "tier": "verifier",
         "description": description,
         "body": "body",
         "workers": [],
@@ -114,7 +114,7 @@ def test_invalid_identifier_and_multiline_description_raise(
             {
                 "id": "kit-x",
                 "kind": "primary",
-                "tier": "readonly",
+                "tier": "verifier",
                 "description": "d",
                 "body": "b",
                 "workers": "not-a-list",
@@ -237,7 +237,7 @@ def test_wrong_role_field_types_are_distinct_from_invalid_values(
     role: dict[str, object] = {
         "id": "kit-reader",
         "kind": "worker",
-        "tier": "readonly",
+        "tier": "verifier",
         "description": "Read the source.",
         "body": "Inspect files.",
         "workers": [],

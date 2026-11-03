@@ -108,7 +108,7 @@ def test_hooks_use_commit_stages_and_bun_without_redundant_defaults() -> None:
         "lycheeverse/lychee:0.24.2@sha256:"
     )
     assert hooks["dependency-audit"]["entry"] == (
-        "uv run --locked --no-sync python scripts/audit_dependencies.py"
+        "uv run --no-project python scripts/audit_dependencies.py"
     )
     assert hooks["dependency-audit"]["files"] == (
         r"^(pyproject\.toml|uv\.lock|package\.json|bun\.lock)$"
@@ -125,13 +125,13 @@ def test_dependency_audit_precedes_every_syncing_local_hook() -> None:
     config = load_config(str(_ROOT / ".pre-commit-config.yaml"))
     local = next(repo for repo in config["repos"] if repo["repo"] == "local")
     entries = [hook["entry"] for hook in local["hooks"]]
-    audit = entries.index(
-        "uv run --locked --no-sync python scripts/audit_dependencies.py"
-    )
+    audit = entries.index("uv run --no-project python scripts/audit_dependencies.py")
     syncing = [
         index
         for index, entry in enumerate(entries)
-        if entry.startswith("uv run") and "--no-sync" not in entry
+        if entry.startswith("uv run")
+        and "--no-sync" not in entry
+        and "--no-project" not in entry
     ]
     assert syncing
     assert audit < min(syncing)
@@ -311,9 +311,10 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
     ]
     bootstrap = tasks["bootstrap"]["cmds"]
     assert bootstrap.index(
-        "uv run --locked --no-sync python scripts/audit_dependencies.py"
+        "uv run --no-project python scripts/audit_dependencies.py"
     ) < bootstrap.index("uv sync --locked")
-    assert bootstrap[0] == "uv sync --locked --inexact --only-group audit"
+    assert bootstrap[0] == "uv run --no-project python scripts/audit_dependencies.py"
+    assert all("--only-group audit" not in str(command) for command in bootstrap)
     assert bootstrap[-1] == {
         "cmd": '"{{.TASK_EXE}}" checkout:register',
         "platforms": ["windows"],
@@ -428,6 +429,34 @@ def _conventions_root(tmp_path: Path) -> Path:
     for relative in ("src", "scripts", "tests", ".agents/guard", ".apm", "packages"):
         (tmp_path / relative).mkdir(parents=True, exist_ok=True)
     return tmp_path
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "packages/example/assets/check.py",
+        "packages/example/assets/service.py.template",
+    ],
+)
+def test_conventions_gate_enforces_docstring_contract_in_assets(
+    tmp_path: Path, relative: str
+) -> None:
+    root = _conventions_root(tmp_path)
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    signature = '"""Module."""\n\n\ndef pair(first: int, second: int) -> int:\n'
+    path.write_text(
+        f'{signature}    """Add."""\n    return first + second\n', encoding="utf-8"
+    )
+
+    assert conventions_module.run(root) == 1
+    path.write_text(
+        f'{signature}    """Add two counts.\n\n    Args:\n'
+        "        first (int): Left operand.\n        second (int): Right operand.\n"
+        '    """\n    return first + second\n',
+        encoding="utf-8",
+    )
+    assert conventions_module.run(root) == 0
 
 
 def test_conventions_gate_treats_terminated_checker_as_failure(

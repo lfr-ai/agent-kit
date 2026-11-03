@@ -6,12 +6,13 @@ from functools import partial
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, NoReturn, TypeGuard, override
+from typing import TYPE_CHECKING, NoReturn, override
 
 import yaml
 import yaml.constructor
 
 from agent_kit.core.errors import DuplicateJsonFieldError, UnreadableDocumentError
+from agent_kit.core.guards import is_json_object
 from agent_kit.core.models import (
     BundleSource,
     CatalogSnapshot,
@@ -86,11 +87,6 @@ class _DuplicateYamlKeyError(yaml.constructor.ConstructorError):
         )
 
 
-def _string_mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow decoded mappings to string keys and object values."""
-    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
-
-
 def _is_link(path: Path) -> bool:
     """Recognize filesystem symlinks and Windows junctions."""
     return path.is_symlink() or path.is_junction()
@@ -132,6 +128,12 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
 def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     """Build a JSON object and reject repeated property names.
 
+    Args:
+        pairs (list[tuple[str, object]]): Decoded property pairs in source order.
+
+    Returns:
+        dict[str, object]: The object with each property once.
+
     Raises:
         DuplicateJsonFieldError: A property name is repeated.
     """
@@ -144,7 +146,15 @@ def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _decode_json(text: str) -> tuple[object | None, bool]:
-    """Parse JSON while rejecting overwritten properties and hiding excerpts."""
+    """Parse JSON while rejecting overwritten properties and hiding excerpts.
+
+    Args:
+        text (str): JSON source text.
+
+    Returns:
+        tuple[object | None, bool]: Decoded value and an error flag; ``(None, True)``
+        when the text is invalid, repeats a property, or nests too deeply.
+    """
     try:
         return json.loads(text, object_pairs_hook=_unique_json_pairs), False
     except (ValueError, RecursionError):
@@ -152,7 +162,15 @@ def _decode_json(text: str) -> tuple[object | None, bool]:
 
 
 def _decode_mapping(text: str) -> tuple[object | None, bool]:
-    """Parse YAML without returning parser excerpts that may contain secrets."""
+    """Parse YAML without returning parser excerpts that may contain secrets.
+
+    Args:
+        text (str): YAML source text.
+
+    Returns:
+        tuple[object | None, bool]: Decoded value and an error flag; ``(None, True)``
+        when parsing fails.
+    """
     loader = _UniqueKeySafeLoader(text)
     try:
         return loader.get_single_data(), False
@@ -169,7 +187,17 @@ def _unread_document(
     is_symlink: bool = False,
     parse_error: bool = False,
 ) -> SourceDocument:
-    """Describe a path whose bytes are deliberately or necessarily not read."""
+    """Describe a path whose bytes are deliberately or necessarily not read.
+
+    Args:
+        relative_path (str): Source-relative POSIX path.
+        is_directory (bool): Whether the path is a real directory.
+        is_symlink (bool): Whether the path is a link or junction.
+        parse_error (bool): Whether the path could not be read.
+
+    Returns:
+        SourceDocument: Empty-content document carrying only the given flags.
+    """
     return SourceDocument(
         content=b"",
         frontmatter=None,
@@ -192,7 +220,16 @@ def _decode_utf8(content: bytes) -> str | None:
 
 
 def _decode_frontmatter(text: str) -> tuple[object | None, bool]:
-    """Parse leading ``---`` frontmatter, flagging an unterminated block."""
+    """Parse leading ``---`` frontmatter, flagging an unterminated block.
+
+    Args:
+        text (str): Decoded document text.
+
+    Returns:
+        tuple[object | None, bool]: Decoded frontmatter and an error flag. Without
+        frontmatter the value is ``None`` and the flag is false; an unterminated
+        block yields ``None`` and a true flag.
+    """
     lines = text.splitlines()
     if lines[:1] != ["---"]:
         return None, False
@@ -203,7 +240,16 @@ def _decode_frontmatter(text: str) -> tuple[object | None, bool]:
 
 
 def _decoded_document(path: Path, relative_path: str, content: bytes) -> SourceDocument:
-    """Decode captured bytes as text, YAML, and Markdown frontmatter."""
+    """Decode captured bytes as text, YAML, and Markdown frontmatter.
+
+    Args:
+        path (Path): Filesystem path, used only for its suffix.
+        relative_path (str): Source-relative POSIX path.
+        content (bytes): Captured file bytes.
+
+    Returns:
+        SourceDocument: Document with decoded text, YAML value, and frontmatter.
+    """
     text = _decode_utf8(content)
     yaml_value: object | None = None
     parse_error = False
@@ -226,7 +272,16 @@ def _decoded_document(path: Path, relative_path: str, content: bytes) -> SourceD
 
 
 def _decode_document(path: Path, relative_path: str) -> SourceDocument:
-    """Capture one file while refusing to read a symlink target."""
+    """Capture one file while refusing to read a symlink target.
+
+    Args:
+        path (Path): Filesystem path to capture.
+        relative_path (str): Source-relative POSIX path.
+
+    Returns:
+        SourceDocument: Decoded document, or an unread one for a link, a
+        directory, or an unreadable file.
+    """
     try:
         is_symlink = _is_link(path)
         is_directory = path.is_dir() and not is_symlink
@@ -242,6 +297,10 @@ def _decode_document(path: Path, relative_path: str) -> SourceDocument:
 
 def _raise_enumeration_error(error: OSError, *, base: Path) -> NoReturn:
     """Abort capture instead of accepting an incomplete directory census.
+
+    Args:
+        error (OSError): Enumeration failure reported by ``os.walk``.
+        base (Path): Walk root used to relativize the failing path.
 
     Raises:
         UnreadableDocumentError: A directory could not be enumerated.
@@ -264,7 +323,19 @@ def _walk_documents(
     excluded_directories: frozenset[str] = frozenset(),
     excluded_suffixes: frozenset[str] = frozenset(),
 ) -> Iterator[SourceDocument]:
-    """Decode files in sorted order, capturing linked directories unfollowed."""
+    """Decode files deterministically without following linked directories.
+
+    Args:
+        base (Path): Directory to walk.
+        exclude (Path | None): Single file to omit.
+        excluded_directories (frozenset[str]): Directory names not descended into.
+        excluded_suffixes (frozenset[str]): File suffixes omitted unless linked.
+
+    Yields:
+        SourceDocument: Linked directories before sorted files in each directory,
+        then descendants in directory-name order. Paths are relative to ``base``;
+        excluded entries are omitted and an empty tree yields nothing.
+    """
     for current, directories, filenames in os.walk(
         base,
         topdown=True,
@@ -291,12 +362,29 @@ def _walk_documents(
 def _include_file(
     path: Path, *, exclude: Path | None, excluded_suffixes: frozenset[str]
 ) -> bool:
-    """Skip source bytecode without hiding linked files from validation."""
+    """Skip source bytecode without hiding linked files from validation.
+
+    Args:
+        path (Path): Candidate file.
+        exclude (Path | None): Single file to omit.
+        excluded_suffixes (frozenset[str]): Suffixes omitted unless the file is linked.
+
+    Returns:
+        bool: Whether the file should be captured.
+    """
     return path != exclude and (path.suffix not in excluded_suffixes or _is_link(path))
 
 
 def _read_provenance(path: Path) -> tuple[object | None, bool]:
-    """Read and decode provenance JSON, flagging any read or decode failure."""
+    """Read and decode provenance JSON, flagging any read or decode failure.
+
+    Args:
+        path (Path): Provenance file path.
+
+    Returns:
+        tuple[object | None, bool]: Decoded value and an error flag; ``(None, True)``
+        when the file cannot be read or decoded.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -305,8 +393,16 @@ def _read_provenance(path: Path) -> tuple[object | None, bool]:
 
 
 def _bundle_declaration(definition: object) -> tuple[str, str] | None:
-    """Return a declared bundle's safe relative path and kind, if usable."""
-    if not _string_mapping(definition):
+    """Return a declared bundle's safe relative path and kind, if usable.
+
+    Args:
+        definition (object): Decoded bundle declaration.
+
+    Returns:
+        tuple[str, str] | None: Safe relative path and kind (empty when not a
+        string), or ``None`` when the declaration or its path is unusable.
+    """
+    if not is_json_object(definition):
         return None
     relative = _safe_relative_bundle_path(definition.get("path"))
     if relative is None:
@@ -318,7 +414,17 @@ def _bundle_declaration(definition: object) -> tuple[str, str] | None:
 def _retained_directories(
     current: Path, directories: list[str], root: Path, symlinks: list[str]
 ) -> list[str]:
-    """Record linked directories and return the non-generated ones to descend."""
+    """Record linked directories and return the non-generated ones to descend.
+
+    Args:
+        current (Path): Directory being walked.
+        directories (list[str]): Child directory names reported by ``os.walk``.
+        root (Path): Source root used to relativize recorded links.
+        symlinks (list[str]): Collector extended with root-relative linked paths.
+
+    Returns:
+        list[str]: Sorted child names that are neither links nor generated output.
+    """
     retained: list[str] = []
     for name in sorted(directories):
         path = current / name
@@ -330,7 +436,15 @@ def _retained_directories(
 
 
 def _has_symlink_component(root: Path, relative: str) -> bool:
-    """Find symlinks in a declared source path without resolving through them."""
+    """Find symlinks in a declared source path without resolving through them.
+
+    Args:
+        root (Path): Source catalog root.
+        relative (str): Slash-separated declared path beneath ``root``.
+
+    Returns:
+        bool: Whether any component of the path is a link or junction.
+    """
     current = root
     parts = PurePosixPath(relative).parts
     for part in parts:
@@ -380,15 +494,17 @@ class FileCatalogAdapter(CatalogPort):
     def load(self, root: Path) -> CatalogSnapshot:
         """Capture the catalog tree and each safely declared bundle.
 
+        An enumeration failure raises ``UnreadableDocumentError``; no partial
+        snapshot is returned.
+
         Args:
             root (Path): Source catalog root to capture without following links.
 
         Returns:
-            CatalogSnapshot: Captured source inputs and document error flags.
-
-        Raises:
-            UnreadableDocumentError: A source directory cannot be enumerated;
-                no partial snapshot is returned.
+            CatalogSnapshot: Decoded catalog/policy and their error flags, bundles
+            in declaration order, and root documents sorted by filename. Invalid
+            bundle declarations are omitted; a linked root has no captured
+            documents or bundles and its catalog/policy error flags are true.
         """
         root_is_symlink = _is_link(root)
         resolved_root = root.resolve(strict=False)
@@ -441,15 +557,17 @@ class FileCatalogAdapter(CatalogPort):
     def load_composed(self, root: Path) -> ComposedSnapshot:
         """Capture composed files and provenance without following symlinks.
 
+        An enumeration failure raises ``UnreadableDocumentError``; no partial
+        snapshot is returned.
+
         Args:
             root (Path): Composed workspace to capture.
 
         Returns:
-            ComposedSnapshot: Captured output bytes and document error flags.
-
-        Raises:
-            UnreadableDocumentError: An output directory cannot be enumerated;
-                no partial snapshot is returned.
+            ComposedSnapshot: Decoded provenance with read/parse error flags and
+            files in deterministic directory traversal order, excluding
+            ``provenance.json``. Files are empty for a missing or linked root;
+            provenance is ``None`` when it cannot be decoded safely.
         """
         root_is_symlink = _is_link(root)
         resolved_root = root.resolve(strict=False)
@@ -501,9 +619,18 @@ class FileCatalogAdapter(CatalogPort):
     def _load_bundles(
         self, root: Path, catalog: object | None
     ) -> tuple[BundleSource, ...]:
-        """Capture every bundle the decoded catalog declares at a safe path."""
-        raw_bundles = catalog.get("bundles") if _string_mapping(catalog) else None
-        if not _string_mapping(raw_bundles):
+        """Capture every bundle the decoded catalog declares at a safe path.
+
+        Args:
+            root (Path): Resolved source catalog root.
+            catalog (object | None): Decoded ``catalog.json``, when readable.
+
+        Returns:
+            tuple[BundleSource, ...]: Captured bundles in declaration order; empty
+            when the catalog has no usable ``bundles`` object.
+        """
+        raw_bundles = catalog.get("bundles") if is_json_object(catalog) else None
+        if not is_json_object(raw_bundles):
             return ()
         bundles: list[BundleSource] = []
         for name, definition in raw_bundles.items():
@@ -516,7 +643,17 @@ class FileCatalogAdapter(CatalogPort):
     def _load_bundle(
         self, root: Path, name: str, relative: str, kind: str
     ) -> BundleSource:
-        """Capture a bundle's manifest and .apm files without following links."""
+        """Capture a bundle's manifest and .apm files without following links.
+
+        Args:
+            root (Path): Resolved source catalog root.
+            name (str): Bundle name declared in the catalog.
+            relative (str): Safe slash-separated bundle path beneath ``root``.
+            kind (str): Declared bundle kind; empty when not a string.
+
+        Returns:
+            BundleSource: Captured manifest, files, and link/existence flags.
+        """
         bundle_root = (
             root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
         )
@@ -585,7 +722,15 @@ class FileCatalogAdapter(CatalogPort):
         return tuple(documents)
 
     def _list_root_paths(self, root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """List source paths and symlinks without traversing linked directories."""
+        """List source paths and symlinks without traversing linked directories.
+
+        Args:
+            root (Path): Resolved source catalog root.
+
+        Returns:
+            tuple[tuple[str, ...], tuple[str, ...]]: Root-relative POSIX paths of
+            regular files, then of links; both empty when ``root`` is not a directory.
+        """
         if not root.is_dir():
             return (), ()
         paths: list[str] = []

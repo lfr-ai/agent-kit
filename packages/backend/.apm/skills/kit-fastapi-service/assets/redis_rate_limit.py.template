@@ -88,9 +88,9 @@ class RedisRateLimitStore:
         """Create an unbound store; ``bind`` attaches the lifespan's client.
 
         Args:
-            key_prefix: Namespace for every key; keep it unique per service
+            key_prefix (str): Namespace for every key; keep it unique per service
                 and environment when a server is shared.
-            command_timeout_seconds: Upper bound for one decision, including
+            command_timeout_seconds (float): Upper bound for one decision, including
                 a script reload; exceeding it is a store failure.
         """
         self._key_prefix = key_prefix
@@ -106,7 +106,7 @@ class RedisRateLimitStore:
         the middleware applies its failure mode.
 
         Args:
-            client: Connected or lazily connecting ``redis.asyncio`` client.
+            client (Redis): Connected or lazily connecting ``redis.asyncio`` client.
 
         Yields:
             Nothing; the store is usable inside the block.
@@ -121,9 +121,9 @@ class RedisRateLimitStore:
         """Count one request atomically on the server.
 
         Args:
-            key: Policy-qualified caller key.
-            limit: Burst size, also the requests per window.
-            window_seconds: Window length.
+            key (str): Policy-qualified caller key.
+            limit (int): Burst size, also the requests per window.
+            window_seconds (int): Window length.
 
         Returns:
             The decision for this request.
@@ -150,11 +150,7 @@ class RedisRateLimitStore:
     def storage_key(self, key: str) -> str:
         """Return the prefixed, hashed key stored on the server.
 
-        Args:
-            key: Policy-qualified caller key.
-
-        Returns:
-            ``<prefix><hex digest>``; the raw key never reaches the server.
+        The raw key never reaches the server.
         """
         digest = hashlib.blake2b(key.encode(), digest_size=_KEY_DIGEST_BYTES)
         return f"{self._key_prefix}{digest.hexdigest()}"

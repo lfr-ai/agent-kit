@@ -52,7 +52,7 @@ class ImportRuleError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            text: Diagnostic text for the failing input.
+            text (str): Diagnostic text for the failing input.
         """
         super().__init__(f"rule must look like 'source:target[,target]', got {text!r}")
 
@@ -61,8 +61,8 @@ def parse_rule(text: str, *, absolute: bool = False) -> Rule:
     """Parse ``SOURCE:TARGET[,TARGET...]`` into a rule.
 
     Args:
-        text: Rule text from the command line.
-        absolute: Treat targets as absolute module prefixes.
+        text (str): Rule text from the command line.
+        absolute (bool): Treat targets as absolute module prefixes.
 
     Returns:
         The parsed rule.
@@ -78,7 +78,12 @@ def parse_rule(text: str, *, absolute: bool = False) -> Rule:
 
 
 def module_name(path: Path, root: Path) -> str:
-    """Return the dotted module name of ``path`` relative to the source root."""
+    """Return the dotted module name of ``path`` relative to the source root.
+
+    Args:
+        path (Path): Python source file under ``root``.
+        root (Path): Source root that anchors the dotted name.
+    """
     parts = list(path.relative_to(root).with_suffix("").parts)
     if parts and parts[-1] == "__init__":
         parts.pop()
@@ -98,13 +103,13 @@ def check_module(
     """Report forbidden imports in one module.
 
     Args:
-        text: Python source text.
-        path: Display path used as the finding prefix.
-        module: Dotted name of the module.
-        is_package: Whether the module is a package ``__init__``.
-        packages: Top-level package names whose layers are checked.
-        rules: Forbidden dependencies.
-        ignore_type_checking: Skip imports guarded by ``if TYPE_CHECKING:``.
+        text (str): Python source text.
+        path (str): Display path used as the finding prefix.
+        module (str): Dotted name of the module.
+        is_package (bool): Whether the module is a package ``__init__``.
+        packages (frozenset[str]): Top-level package names whose layers are checked.
+        rules (Iterable[Rule]): Forbidden dependencies.
+        ignore_type_checking (bool): Skip imports guarded by ``if TYPE_CHECKING:``.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -209,11 +214,7 @@ def _violated_target(imported: str, rule: Rule, packages: frozenset[str]) -> str
 def main(argv: list[str] | None = None) -> int:
     """Check every module under the source roots against the layer rules.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero when no forbidden import exists, one on findings, two on usage errors.
+    Returns zero when no forbidden import exists, one on findings, two on usage errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

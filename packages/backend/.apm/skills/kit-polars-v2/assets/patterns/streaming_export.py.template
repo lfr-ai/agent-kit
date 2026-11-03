@@ -31,7 +31,15 @@ def export_settled_totals(
     *,
     storage_options: Mapping[str, str] | None = None,
 ) -> None:
-    """Scan partitioned source files and sink the result in streaming batches."""
+    """Scan partitioned source files and sink the result in streaming batches.
+
+    Args:
+        source (str): Parquet path or glob scanned with Hive partition discovery.
+        target (Path): Local Parquet output path; missing parent directories are
+            created before executing the aggregation.
+        storage_options (Mapping[str, str] | None): Optional source-storage
+            credentials and options passed to the Parquet scan.
+    """
     events = pl.scan_parquet(
         source,
         hive_partitioning=True,

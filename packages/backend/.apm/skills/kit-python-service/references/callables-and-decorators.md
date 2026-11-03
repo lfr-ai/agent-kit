@@ -53,6 +53,9 @@ types with `ParamSpec` and the result type. The
 [typed synchronous example](python-idioms.md#functions-and-decorators) is the
 canonical example; do not maintain a second divergent copy.
 
+Require at least two current consumers before extracting a decorator; a
+hypothetical second use is not evidence. Keep one-off behavior explicit.
+
 `wraps`/`update_wrapper` copy metadata and add `__wrapped__`; they do not validate
 arguments, make blocking code asynchronous or prove that behavior is preserved.
 Do not add a wrapper or call `update_wrapper` merely to make introspection

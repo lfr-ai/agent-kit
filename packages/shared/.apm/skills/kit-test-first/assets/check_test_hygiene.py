@@ -86,14 +86,7 @@ class Finding(NamedTuple):
 
 
 def is_test_file(name: str) -> bool:
-    """Return whether a file name is a pytest test module or conftest.
-
-    Args:
-        name: File name without directories.
-
-    Returns:
-        True for ``test_x.py``, ``x_test.py`` and ``conftest.py``.
-    """
+    """Return whether a file name is a pytest test module or conftest."""
     return any(fnmatch.fnmatch(name, pattern) for pattern in _TEST_PATTERNS)
 
 
@@ -114,7 +107,11 @@ def _import_time_statements(body: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
 
 
 def _import_time_blocks(node: ast.stmt) -> list[Sequence[ast.stmt]]:
-    """Return nested statement blocks that run when ``node`` runs at import time."""
+    """Return nested statement blocks that run when ``node`` runs at import time.
+
+    Returns:
+        Statement blocks in source order; empty for a simple statement.
+    """
     if isinstance(node, ast.If):
         return [node.orelse] if _is_type_checking(node) else [node.body, node.orelse]
     if isinstance(node, ast.Try | ast.TryStar):
@@ -152,7 +149,12 @@ def _heavy_imports(tree: ast.Module, path: str, heavy: frozenset[str]) -> list[F
 
 
 def _aliases(tree: ast.Module) -> tuple[set[str], set[str], set[str], set[str]]:
-    """Return local names bound to time, time.sleep, asyncio and asyncio.sleep."""
+    """Return local names bound to time, time.sleep, asyncio and asyncio.sleep.
+
+    Returns:
+        Names bound to ``time``, ``time.sleep``, ``asyncio`` and ``asyncio.sleep``, in
+        that order.
+    """
     time_modules: set[str] = set()
     time_sleeps: set[str] = set()
     asyncio_modules: set[str] = set()
@@ -233,9 +235,9 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
     """Apply the per-file rules to one test module.
 
     Args:
-        path: POSIX path used in findings.
-        text: Module source.
-        options: Rule switches.
+        path (str): POSIX path used in findings.
+        text (str): Module source.
+        options (Options): Rule switches.
 
     Returns:
         Findings for this module.
@@ -251,14 +253,7 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
 
 
 def duplicate_basenames(paths: Iterable[str]) -> list[Finding]:
-    """Report test modules whose file names repeat in other directories.
-
-    Args:
-        paths: POSIX paths of scanned files.
-
-    Returns:
-        One finding per repeated module, pointing at the first occurrence.
-    """
+    """Report test modules whose file names repeat in other directories."""
     groups: dict[str, list[str]] = defaultdict(list)
     for path in sorted(paths):
         name = PurePosixPath(path).name
@@ -282,8 +277,8 @@ def check_files(
     """Check several test modules, including the cross-file duplicate rule.
 
     Args:
-        sources: ``(path, text)`` pairs of test files.
-        options: Rule switches.
+        sources (Sequence[tuple[str, str]]): ``(path, text)`` pairs of test files.
+        options (Options): Rule switches.
 
     Returns:
         Findings sorted by path, line and message.
@@ -339,11 +334,7 @@ _SELF_TEST_SOURCES = (
 
 
 def self_test() -> list[str]:
-    """Run the rules on in-memory files and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Run the rules on in-memory files and return unmet expectations."""
     rendered = "\n".join(
         finding.render()
         for finding in check_files(_SELF_TEST_SOURCES, options=Options())
@@ -412,11 +403,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Check test files and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

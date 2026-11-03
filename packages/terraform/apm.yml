@@ -4,5 +4,16 @@ license: MIT
 description: Optional Terraform and OpenTofu authoring and plan review for any cloud.
 targets: [copilot, claude]
 includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
-dependencies: {}
+dependencies:
+  mcp:
+    - name: terraform
+      registry: false
+      transport: stdio
+      command: docker
+      args:
+        - run
+        - -i
+        - --rm
+        - hashicorp/terraform-mcp-server:1.3.0@sha256:423a6b8e2ee06affcf090892f40c86469caba45fd2448ffa8ca5d717a174f7d5
+        - --toolsets=registry
 executables: {}

@@ -4,6 +4,8 @@
 // each request at most once. Pass the result as fetchImpl to createHttpClient
 // from kit-state-data; that client already maps 403 and other errors to typed
 // ApiError values, so 403 is returned unchanged here and never signs anyone out.
+// Use only with APIs that reject unauthorized unsafe requests before effects,
+// or require a destination idempotency key before enabling automatic replay.
 
 export type AuthFetchOptions = Readonly<{
   /** Origins that may receive cookies, CSRF headers, or tokens, e.g. "https://app.example.test". */
@@ -15,7 +17,7 @@ export type AuthFetchOptions = Readonly<{
   renew: () => Promise<boolean>;
   /** Called once per expiry, for example AuthContextValue.markExpired. */
   onSessionExpired: () => void;
-  /** Browser-based OIDC clients only: in-memory access token. Omit with a BFF. */
+  /** Browser OIDC clients: token from the provider-managed cache. Omit with a BFF. */
   getAccessToken?: () => string | null;
   /** Header the server requires on unsafe methods. */
   csrfHeader?: string;
@@ -31,15 +33,23 @@ export function createAuthFetch(options: AuthFetchOptions): typeof fetch {
   const csrfHeader = options.csrfHeader ?? "X-CSRF";
   let renewal: Promise<boolean> | null = null;
   let expiryReported = false;
+  let credentialGeneration = 0;
 
   function isTrusted(request: Request): boolean {
     return options.allowedOrigins.includes(new URL(request.url).origin);
   }
 
   // Single flight: every 401 that arrives during a renewal waits for the same promise.
-  function renewOnce(): Promise<boolean> {
+  function renewOnce(observedGeneration: number): Promise<boolean> {
+    if (observedGeneration !== credentialGeneration) {
+      return Promise.resolve(true);
+    }
     renewal ??= options
       .renew()
+      .then((renewed) => {
+        if (renewed) credentialGeneration += 1;
+        return renewed;
+      })
       .catch(() => false)
       .finally(() => {
         renewal = null;
@@ -47,9 +57,20 @@ export function createAuthFetch(options: AuthFetchOptions): typeof fetch {
     return renewal;
   }
 
+  function reportExpiry(): void {
+    if (!expiryReported) {
+      expiryReported = true;
+      options.onSessionExpired();
+    }
+  }
+
   function send(request: Request): Promise<Response> {
     const trusted = isTrusted(request);
     const headers = new Headers(request.headers);
+    if (!trusted) {
+      headers.delete("Authorization");
+      headers.delete(csrfHeader);
+    }
     if (trusted && UNSAFE_METHODS.has(request.method)) {
       headers.set(csrfHeader, "1");
     }
@@ -58,26 +79,31 @@ export function createAuthFetch(options: AuthFetchOptions): typeof fetch {
       headers.set("Authorization", `Bearer ${token}`);
     }
     // Untrusted origins never receive cookies or tokens.
-    return baseFetch(new Request(request, { headers, credentials: trusted ? "include" : "omit" }));
+    // Keep the native body source (string/FormData/etc.) and keepalive metadata.
+    // Passing request.body as a new body would turn ordinary POSTs into streams.
+    return baseFetch(request, {
+      headers,
+      credentials: trusted ? "include" : "omit",
+      redirect: "error",
+    });
   }
 
   return async (input, init) => {
     const request = new Request(input, init);
     // A request body can be read once; keep a copy for the single retry.
     const retry = request.clone();
+    const observedGeneration = credentialGeneration;
     const response = await send(request);
     if (response.status !== HTTP_UNAUTHORIZED || !isTrusted(request)) {
       return response;
     }
-    if (await renewOnce()) {
+    if (await renewOnce(observedGeneration)) {
       expiryReported = false;
-      // A second 401 is returned to the caller; no retry loop.
-      return send(retry);
+      const retried = await send(retry);
+      if (retried.status === HTTP_UNAUTHORIZED) reportExpiry();
+      return retried;
     }
-    if (!expiryReported) {
-      expiryReported = true;
-      options.onSessionExpired();
-    }
+    reportExpiry();
     return response;
   };
 }

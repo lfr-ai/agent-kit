@@ -52,5 +52,12 @@ class OrderRepository(Protocol):
         after: OrderCursor | None = None,
         limit: int = _DEFAULT_PAGE_SIZE,
     ) -> OrderPage:
-        """Return one keyset page of a customer's orders, oldest first."""
+        """Return one keyset page of a customer's orders, oldest first.
+
+        Args:
+            customer_id (uuid.UUID): Customer whose orders are selected.
+            after (OrderCursor | None): Exclusive ``(created_at, id)`` position,
+                or None for the first page.
+            limit (int): Maximum orders to include in the page.
+        """
         ...

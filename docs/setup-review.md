@@ -1,100 +1,81 @@
 # Existing setup review and capability disposition
 
-Reviewed 2026-10-09 against the committed capability inventory and repository
-checks.
-The original baseline contained 74 skills, 31 instructions, 24 agent roles,
-24 prompt facades, 22 skill scripts, 11 MCP integrations, five asset bundles,
-and three hooks. The initial read-only inventory missed three script identities;
-they are now explicitly tracked.
+Use the [coverage manifest](../.agents/agentic-setup/coverage.json) for each
+original capability's replacement or exclusion, [sources](sources.md) for dated
+inventory/research, and the [adoption walkthrough](setup-completeness.md) for steps.
 
 ## Resource-depth refresh, 2026-10-19
 
-Identity mapping alone did not establish comparable capability depth. The
-library now has a structural contract requiring each skill's reachable reference
-and asset, task-specific acceptance/failure guidance, a real resource census,
-and regression checks for losing those resources. Consumer knowledge, context
-entry checking and actual native-certification worksheets are delivered as
-resources rather than fabricated application facts.
-
-All 11 MCP integrations have both native example shapes and explicit adoption,
-tool-selection, source/license, identity and removal review. The repository
-workspace configures only three reviewed remote servers; portable APM defaults
-remain inactive. See the [systematic walkthrough](setup-completeness.md) for
-acceptance and operator work.
+Identity mapping is not resource depth. The
+[resource gate](../scripts/check_resources.py) checks reachable references/assets,
+guidance and script paths; [sources](sources.md#resource-depth-refresh-2026-10-19)
+records the refresh. Native certification and consumer facts still need evidence.
 
 ## Why the first toolkit was incomplete
 
-It intentionally had eight short skills, one repository reviewer, a compact
-catalog, and only an advisory session hook. That was a minimal architecture pilot,
-not a full extraction. It lacked a complete inventory/disposition contract.
-Calling that a replacement for the original capabilities was inaccurate.
+The architecture pilot lacked the inventory/disposition and resource-depth
+contracts required by the [current acceptance plan](setup-completeness.md#1-acceptance-plan).
+It was not a complete replacement.
 
 ## Current ownership
 
 | Original surface | New owner | Difference |
 | --- | --- | --- |
-| agentic-setup selection | Root catalog plus this directory's coverage index | One selection schema, not another profiles mirror |
+| agentic-setup selection | [Root catalog](../catalog.json) and coverage manifest | One selection schema |
 | reusable skills | Package `.apm/skills/` | Original procedures; consolidated overlapping workflows |
 | scoped instructions | Package `.apm/instructions/` | Generated native rules with selected scope |
 | agents/subagents | Selected skill role assets | Shared bodies, separately rendered native permissions |
 | static guard | Installed validation plus `.agents/guard/` facade | No duplicate giant guard implementation |
 | editor commands | Thin Task wrappers and reusable editor assets | No application-specific commands or personal shortcuts |
-| MCP | Three reviewed remote services in native root manifests; inactive templates for all 11 integrations | No committed credentials, project identities, or default APM activation |
-| hooks | Advisory session health and native authorization contract | No claimed universal shell sandbox |
+| MCP | [Native manifests and package `apm.yml`](mcp-adoption.md) | Reviewed delivery, optional startup; no committed credentials or project identities |
+| hooks | Advisory session health plus a delivered Git-guard hook (`shared`) | No claimed universal shell sandbox |
 | project facts/knowledge | Consumer remains owner | Toolkit has its own facts; consumer context is not copied |
 
-The [coverage manifest](../.agents/agentic-setup/coverage.json) gives every original
-skill, instruction, and agent an actual replacement or explicit exclusion.
-`uv run --locked python -m scripts.check_coverage --source-root <original-checkout>` compares the live
-source identities to the recorded baseline without reading secrets.
+Compare an available original checkout with the recorded baseline:
+`uv run --locked python -m scripts.check_coverage --source-root <original-checkout>`.
+This compares capability identities, not secrets.
 
 ## Consolidation, not hidden deletion
 
-- Twelve OpenSpec procedures map to one lifecycle workflow. Native commands must
-  be checked against the installed tool; there is no copied/generated upstream
-  command set or promise of byte-identical templates.
-- Six graph procedures map to one impact/context workflow; indexing stays local
-  to the consumer and is not required for every small edit.
-- Five Ponytail modes map to original simplification/debt guidance, not a
-  redistributed third-party plugin or brand.
-- Language/domain/browser/AI/operations procedures retain separate task triggers.
+- OpenSpec maps to one lifecycle workflow; verify commands against the installed
+  tool, not a copied upstream command set or byte-identical template promise.
+- Graph procedures map to one impact/context workflow; local consumer indexing
+  is optional for small edits. Ponytail maps to original simplification/debt
+  guidance, not redistributed plugin bodies.
+- Language/domain/browser/AI/operations procedures retain separate triggers.
 - Pydantic v2 and Polars 2 procedures are backend-only and opt-in; validation and
   analytics types remain outside domain Core.
-- The full native role roster is retained, but only the selected stack's roles
-  are delivered. Read-only workers cannot gain edit, shell, or delegation tools.
+- `kit-testing` merges into `kit-test-author`; `kit-tdd` into the `kit-test-first`
+  skill plus `kit-test-author`; `kit-fullstack`, `kit-frontend` and
+  `kit-ai-engineer` into `kit-orchestrator`. Only selected-stack roles ship.
+  [Native permissions](editor.md#native-discovery-and-menu) keep workers hidden;
+  verifiers get an offline shell but no edit or delegation tools.
 
 ## Deliberate exclusions
 
-- Copier/scaffolding integration remains outside scope as requested.
-- Company pipeline IDs and medical prompt publication remain consumer-specific.
-- Full application blueprints, migrations, deployment identities, and dependency
-  license rules are not fabricated generic production defaults.
-- Existing application DI/port/migration checks stay in the owning app until a
-  separately tested portable validator supports its schema.
-- Read-only plan-output reviewers support explicitly documented Terraform and
-  Azure what-if shapes; they neither replace application guards nor authorize apply.
-- Command facades are superseded by descriptive skill invocation, not arbitrary
-  shell commands that could bypass operator-controlled release/deployment.
+- Copier/scaffolding, company pipeline IDs and medical publication stay outside
+  portable scope; application facts, migrations, deployment identities and license
+  policy remain consumer-owned.
+- App DI/port/migration guards stay in the app until a tested portable validator
+  supports its schema. Terraform/Azure what-if reviewers accept only documented
+  input shapes and never authorize apply.
+- Descriptive skill invocation replaces command facades, not operator-controlled
+  release/deployment approval.
 
 ## Guard changes and limits
 
-The original giant guard checked many structural parity conventions. The new
-checks validate source metadata, profiles, budget, resources, coverage, native
-roles, task wiring, provenance, policy and APM-owned output separately.
-The reusable Python checker preserves concrete AST invariants while Ruff, ty,
-and import contracts enforce the established toolchain checks.
-
-These checks are not equivalent to all original app-specific guards or proof of
-live IDE/cloud behavior. They do not start MCP, run infrastructure applies, or
-make arbitrary shell code safe. Post-action license hooks cannot undo an install;
-consumer-owned locked license gates are the authoritative enforcement.
+[scripts/verify.py](../scripts/verify.py) owns separate source, budget, resource,
+coverage, role, provenance, policy and toolchain gates.
+The [verification contract](verification.md) distinguishes static checks from
+live IDE/cloud behavior. No check authorizes apply or makes arbitrary shell safe.
+Post-action hooks cannot undo installation; consumer locked-license gates enforce
+adoption/publication policy.
 
 ## Provenance and public redistribution
 
-Procedures were written originally. No proprietary application prompts or
-unverified upstream skill/resource bodies were copied.
-The original graph/OpenSpec/Ponytail families have separate upstream histories;
-function mapping is not permission to strip their attribution or licenses.
-Provider documentation was checked for native frontmatter and activation.
+The [provenance record](sources.md) owns authorship and upstream research.
+Function mapping does not permit stripping graph/OpenSpec/Ponytail attribution
+or licenses; proprietary prompts and unverified upstream bodies are not portable
+source.
 
 Existing applications and user-global configuration remain unchanged.

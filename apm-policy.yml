@@ -6,11 +6,24 @@ dependencies:
   allow: []
 mcp:
   allow:
+    - azure
+    - chrome-devtools
     - context7
     - github
+    - langfuse-docs
     - microsoft-learn
-  self_defined: deny
+    - playwright
+    - postman
+    - shadcn
+    - storybook
+    - temporal-docs
+    - terraform
+  self_defined: allow
   trust_transitive: false
+  transport:
+    allow:
+      - http
+      - stdio
 manifest:
   required_fields:
     - name
@@ -19,8 +32,6 @@ manifest:
     - license
   require_explicit_includes: true
   scripts: deny
-executables:
-  deny_all: true
 security:
   integrity:
     require_hashes: true

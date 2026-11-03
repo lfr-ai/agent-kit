@@ -247,11 +247,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Validate recorded observations without running or trusting a model judge.
 
-    Args:
-        argv (list[str] | None): CLI arguments, or the process arguments.
-
-    Returns:
-        int: Zero for all passes, one for regressions, two for incomplete inputs.
+    Returns zero for all passes, one for regressions, two for incomplete inputs.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--self-test", action="store_true")

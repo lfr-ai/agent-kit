@@ -17,7 +17,7 @@ class ServiceError(Exception):
         """Create an error with a caller-safe message.
 
         Args:
-            message: Description that may appear in a problem ``detail``.
+            message (str): Description that may appear in a problem ``detail``.
         """
         super().__init__(message)
         self.message = message

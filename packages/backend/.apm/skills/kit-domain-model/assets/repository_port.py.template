@@ -1,6 +1,6 @@
 """Repository port for the order aggregate, declared in domain language.
 
-Copy into 'src/<package>/core/ports.py'. Infrastructure provides adapters
+Copy into ``src/<package>/core/ports.py``. Infrastructure provides adapters
 (SQL, document store) and tests use the in-memory adapter; both satisfy this
 Protocol structurally and run the same contract tests.
 """
@@ -18,7 +18,7 @@ class OrderNotFoundError(LookupError):
         """Record the missing identifier.
 
         Args:
-            order_id: Identifier that was looked up.
+            order_id (OrderId): Identifier that was looked up.
         """
         super().__init__(f"order {order_id.value!r} was not found")
         self.order_id = order_id
@@ -31,9 +31,9 @@ class ConcurrencyError(Exception):
         """Record both versions for diagnostics.
 
         Args:
-            order_id: Aggregate whose save was rejected.
-            expected: Version the caller loaded.
-            actual: Version currently stored.
+            order_id (OrderId): Aggregate whose save was rejected.
+            expected (int): Version the caller loaded.
+            actual (int): Version currently stored.
         """
         super().__init__(
             f"order {order_id.value!r} is at version {actual}, expected {expected}"
@@ -47,7 +47,7 @@ class OrderRepository(Protocol):
     """Collection-like access to order aggregates."""
 
     def get(self, order_id: OrderId, /) -> Order | None:
-        """Return the order or 'None' when it does not exist."""
+        """Return the order or ``None`` when it does not exist."""
         ...
 
     def add(self, order: Order, /) -> None:
@@ -63,7 +63,7 @@ class OrderRepository(Protocol):
 
         Raises:
             OrderNotFoundError: If the order was never added.
-            ConcurrencyError: If the stored version differs from 'order.version'.
+            ConcurrencyError: If the stored version differs from ``order.version``.
         """
         ...
 
@@ -74,6 +74,10 @@ class OrderRepository(Protocol):
 
 def require(repository: OrderRepository, order_id: OrderId, /) -> Order:
     """Load an order or raise a documented error.
+
+    Args:
+        repository (OrderRepository): Aggregate store to query.
+        order_id (OrderId): Identity that must exist in the store.
 
     Raises:
         OrderNotFoundError: If the order does not exist.

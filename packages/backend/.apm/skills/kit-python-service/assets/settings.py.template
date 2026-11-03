@@ -1,7 +1,7 @@
 """Typed, immutable settings loaded once from the environment.
 
-Copy into 'src/<package>/settings.py'. Only the composition root calls
-'Settings.from_environ'; everything else receives the built record. The loader
+Copy into ``src/<package>/settings.py``. Only the composition root calls
+``Settings.from_environ``; everything else receives the built record. The loader
 takes a mapping so tests never mutate the real process environment.
 """
 
@@ -35,7 +35,7 @@ class Settings:
 
     Attributes:
         environment: Deployment environment.
-        database_dsn: Connection string; excluded from 'repr'.
+        database_dsn: Connection string; excluded from ``repr``.
         request_timeout_seconds: Outbound HTTP timeout, greater than zero.
         log_level: Root log level name.
         json_logs: Whether logs are emitted as JSON lines.
@@ -52,7 +52,8 @@ class Settings:
         """Build settings from environment variables with the project prefix.
 
         Args:
-            environ: Variables to read; defaults to the process environment.
+            environ (Mapping[str, str] | None): Variables to read; defaults to the
+                process environment.
 
         Returns:
             Validated settings.

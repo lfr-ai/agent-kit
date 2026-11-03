@@ -1,0 +1,80 @@
+// Run: bun test ./auth-fetch.standards.test.ts
+// Enforce the Fetch boundary without relying on Bun's incomplete Request getters.
+// No network/provider is contacted; real browser keepalive execution is unverified.
+import { expect, test } from "bun:test";
+import { createAuthFetch } from "./auth-fetch";
+
+const API = "https://api.example.test";
+
+for (const kind of ["string", "FormData"] as const) {
+  for (const keepalive of [false, true]) {
+    test(`${kind} POST and retry preserve native body handling; keepalive=${keepalive}`, async () => {
+      const body = kind === "string" ? "synthetic request" : new FormData();
+      if (body instanceof FormData) {
+        body.set("title", "synthetic form");
+        body.set("file", new Blob(["synthetic upload"], { type: "text/plain" }), "upload.txt");
+      }
+      let attempts = 0;
+      let renewals = 0;
+      const requests: Request[] = [];
+      const fetchImpl: typeof fetch = async (input, init) => {
+        // Never materialize Request.body into init.body: that changes ordinary
+        // string/FormData bodies to streams, requiring duplex and rejecting keepalive.
+        expect(init?.body).toBeUndefined();
+        expect(init).not.toHaveProperty("duplex");
+        expect(init).not.toHaveProperty("keepalive");
+        if (!(input instanceof Request)) {
+          throw new TypeError("fetch must receive the native Request, not a rebuilt URL/body");
+        }
+        const request = input;
+        requests.push(request);
+        expect(request.bodyUsed).toBe(false);
+        expect(request.method).toBe("POST");
+        // Bun 1.3.11 has no Request.keepalive getter. Delegate it to the native
+        // Request rather than pretending a Bun test certifies browser keepalive.
+        expect(init?.credentials).toBe("include");
+        expect(init?.redirect).toBe("error");
+        const headers = new Headers(init?.headers ?? request.headers);
+        expect(headers.get("X-CSRF")).toBe("1");
+        expect(headers.get("Authorization")).toBe("Bearer synthetic-token");
+        expect(headers.get("Idempotency-Key")).toBe("synthetic-operation");
+        if (kind === "string") {
+          expect(await request.text()).toBe("synthetic request");
+          expect(headers.get("Content-Type")).toMatch(/^text\/plain/);
+        } else {
+          expect(headers.get("Content-Type")).toMatch(/^multipart\/form-data; boundary=/);
+          const form = await request.formData();
+          expect(form.get("title")).toBe("synthetic form");
+          const upload = form.get("file");
+          if (!(upload instanceof Blob)) throw new TypeError("multipart upload must remain a Blob");
+          expect(await upload.text()).toBe("synthetic upload");
+        }
+        attempts += 1;
+        return new Response(null, { status: attempts === 1 ? 401 : 200 });
+      };
+      const authFetch = createAuthFetch({
+        allowedOrigins: [API],
+        fetchImpl,
+        getAccessToken: () => "synthetic-token",
+        renew: async () => { renewals += 1; return true; },
+        onSessionExpired: () => { throw new Error("successful renewal must not expire the session"); },
+      });
+      const response = await authFetch(`${API}/orders`, {
+        method: "POST",
+        body,
+        keepalive,
+        headers: {
+          "Idempotency-Key": "synthetic-operation",
+          // Bun does not infer a string Request's Content-Type as browsers do.
+          // Make it explicit here; FormData must retain its generated boundary.
+          ...(kind === "string" ? { "Content-Type": "text/plain;charset=UTF-8" } : {}),
+        },
+      });
+      expect(response.status).toBe(200);
+      expect(attempts).toBe(2);
+      expect(renewals).toBe(1);
+      expect(requests[0]).not.toBe(requests[1]);
+      expect(requests.map((request) => request.bodyUsed)).toEqual([true, true]);
+    });
+  }
+}

@@ -39,7 +39,9 @@ license: MIT
 10. Log and trace metadata only; keep prompts, completions and provider
     messages out of normal logs and attach redaction to remaining paths
     ([accounting-and-observability.md](references/accounting-and-observability.md),
-    [redaction.py.template](assets/redaction.py.template)).
+    [redaction.py.template](assets/redaction.py.template)). With Langfuse,
+    redact at OTel export as well as SDK input/output; log filters alone do
+    not protect third-party spans, events or other exporters.
 11. Send only data required for the task and apply the application's
     retention, residency and privacy policy to every provider.
 12. Test timeout, refusal, malformed output, rate limiting, outage, budget and

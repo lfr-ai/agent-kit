@@ -35,7 +35,7 @@ class FeatureAliasError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            value: Diagnostic value for the failing input.
+            value (str): Diagnostic value for the failing input.
         """
         super().__init__(f"alias must look like PREFIX=DIRECTORY: {value}")
 
@@ -44,7 +44,7 @@ def _parse_aliases(values: Sequence[str]) -> list[tuple[str, PurePosixPath]]:
     """Parse ``PREFIX=DIRECTORY`` alias declarations into ordered pairs.
 
     Args:
-        values: Alias declarations such as ``@/=src/``.
+        values (Sequence[str]): Alias declarations such as ``@/=src/``.
 
     Returns:
         Pairs of import prefix and root-relative directory, longest prefix first.
@@ -69,9 +69,9 @@ def _resolve(
     """Resolve a relative or aliased specifier to a root-relative path.
 
     Args:
-        specifier: The import string from source text.
-        source: Root-relative path of the importing file.
-        aliases: Parsed alias pairs.
+        specifier (str): The import string from source text.
+        source (PurePosixPath): Root-relative path of the importing file.
+        aliases (Sequence[tuple[str, PurePosixPath]]): Parsed alias pairs.
 
     Returns:
         A normalized root-relative path, or None for package imports.
@@ -93,8 +93,8 @@ def _feature_of(
     """Split a path below the features directory into feature name and remainder.
 
     Args:
-        path: Root-relative path to classify.
-        features: Root-relative features directory.
+        path (PurePosixPath): Root-relative path to classify.
+        features (PurePosixPath): Root-relative features directory.
 
     Returns:
         The feature name and the parts below it, or None outside features.
@@ -138,11 +138,12 @@ def check(
     """Collect boundary findings as sorted ``path:line: message`` strings.
 
     Args:
-        root: Project directory that contains the source tree.
-        features_dir: Root-relative directory holding one folder per feature.
-        shared_dirs: Root-relative directories that must not import features.
-        aliases: Import alias declarations such as ``@/=src/``.
-        extensions: Source file suffixes to scan.
+        root (Path): Project directory that contains the source tree.
+        features_dir (str): Root-relative directory holding one folder per feature.
+        shared_dirs (Sequence[str]): Root-relative directories that must not import
+            features.
+        aliases (Sequence[str]): Import alias declarations such as ``@/=src/``.
+        extensions (tuple[str, ...]): Source file suffixes to scan.
 
     Returns:
         Deterministically ordered findings; empty when boundaries hold.
@@ -243,9 +244,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            expected: Observed expected for the failing case.
-            findings: Observed findings for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            expected (int | None): Observed expected for the failing case.
+            findings (list[str] | None): Observed findings for the failing case.
         """
         super().__init__(issue.value.format(expected=expected, findings=findings))
 
@@ -291,11 +292,7 @@ def self_test() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the boundary check or its self-test and return a process exit code.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when no findings exist, 1 when findings or input errors exist.
+    Returns 0 when no findings exist, 1 when findings or input errors exist.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=Path.cwd())

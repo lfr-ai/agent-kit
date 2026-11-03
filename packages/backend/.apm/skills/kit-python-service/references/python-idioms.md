@@ -169,6 +169,22 @@ The type checker then reports a method that no longer overrides anything after
 the base class renames it. Use it on every intentional override, including
 `Protocol` implementations that subclass the protocol explicitly.
 
+### Bidirectional predicates versus partial validation
+
+On Python 3.13, use `TypeIs[T]` for a predicate that returns true **if and only
+if** the argument is a `T`. Both branches narrow, and `T` must be compatible
+with the input type. An `isinstance(value, str)` predicate qualifies; a nonempty
+string check does not, because `""` is still a string.
+
+Use `TypeGuard[T]` for a partial validator that only guarantees `T` on success,
+or an invariant transformation such as `list[object]` to `list[str]`.
+Neither construct performs validation itself. Do not infer the predicate kind
+from its name or mechanically replace every `TypeGuard`.
+
+Sources: [Python 3.13 typing](https://docs.python.org/3.13/library/typing.html#typing.TypeIs),
+[canonical narrowing guide](https://typing.python.org/en/latest/guides/type_narrowing.html),
+and [PEP 742](https://peps.python.org/pep-0742/).
+
 ### `Annotated` (PEP 593)
 
 ```python
@@ -290,6 +306,8 @@ function wrappers, but do not confuse copied metadata with actual invocation
 semantics: this synchronous example does not make an async target's wrapper
 an `async def`. Use the [callable decision guide](callables-and-decorators.md)
 for partial application, descriptor binding, decorator order and async cases.
+Extract a decorator only when at least two current callers need the same
+behavior. A one-off wrapper or a plain function is simpler otherwise.
 
 ## Errors, docstrings, and logging
 

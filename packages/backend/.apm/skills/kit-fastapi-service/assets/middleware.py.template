@@ -39,7 +39,7 @@ class RequestIdMiddleware:
         """Wrap an ASGI application.
 
         Args:
-            app: Next application in the chain.
+            app (ASGIApp): Next application in the chain.
         """
         self._app = app
 
@@ -72,7 +72,7 @@ class AccessLogMiddleware:
         """Wrap an ASGI application.
 
         Args:
-            app: Next application in the chain.
+            app (ASGIApp): Next application in the chain.
         """
         self._app = app
 
@@ -110,6 +110,13 @@ def _log_access(
 
     The server logs the traceback of a failure; this record adds only the
     exception type so the request identifier joins both.
+
+    Args:
+        scope (Scope): HTTP scope supplying the method and path, never the query.
+        status_code (int): Observed response status, or the initial 500 fallback.
+        started (float): Request start time from ``time.perf_counter``.
+        failure (str | None): Exception type name for an error-level record;
+            None produces an informational success record.
     """
     duration_ms = (time.perf_counter() - started) * _MILLISECONDS_PER_SECOND
     access_logger.log(
@@ -143,10 +150,10 @@ class SecurityHeadersMiddleware:
         """Wrap an ASGI application.
 
         Args:
-            app: Next application in the chain.
-            hsts_max_age_seconds: ``Strict-Transport-Security`` max age; ``None``
-                omits the header, for example behind plain HTTP in development.
-            content_security_policy: Policy for API responses; documentation
+            app (ASGIApp): Next application in the chain.
+            hsts_max_age_seconds (int | None): ``Strict-Transport-Security`` max age;
+                ``None`` omits the header, for example behind plain HTTP in development.
+            content_security_policy (str): Policy for API responses; documentation
                 pages under ``/docs`` and ``/redoc`` are left to their defaults.
         """
         self._app = app
@@ -201,8 +208,8 @@ class BodySizeLimitMiddleware:
         """Wrap an ASGI application.
 
         Args:
-            app: Next application in the chain.
-            max_body_bytes: Largest accepted request body.
+            app (ASGIApp): Next application in the chain.
+            max_body_bytes (int): Largest accepted request body.
         """
         self._app = app
         self._max = max_body_bytes

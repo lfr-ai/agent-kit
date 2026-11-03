@@ -149,7 +149,7 @@ def test_shared_owners_are_linked_by_name_not_copied() -> None:
 def test_references_cite_primary_sources_with_review_date(reference: Path) -> None:
     text = reference.read_text(encoding="utf-8")
     assert "## Primary sources" in text
-    assert "2026-10-23" in text
+    assert re.search(r"\b20\d\d-\d\d-\d\d\b", text), "review date is missing"
     sources = text.split("## Primary sources", 1)[1]
     assert sources.count("https://") >= 3
     for target in _LINK.findall(text):

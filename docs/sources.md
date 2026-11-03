@@ -2,9 +2,26 @@
 
 APM/source baseline reviewed 2026-10-08; repository governance reviewed 2026-10-09;
 live GitHub settings rechecked 2026-10-21; agentic capability research refreshed
-2026-10-28.
+2026-11-02.
 Source content was written for this toolkit; no company
 application files, proprietary prompts, or third-party skill bodies were copied.
+
+## Modernization refresh, 2026-11-02
+
+The owning references record concrete contracts and unverified runtime checks:
+
+- [Python documentation and narrowing](../packages/backend/.apm/skills/kit-python-service/SKILL.md):
+  concise contracts, structured returns, `TypeIs` versus `TypeGuard`, and typed decorators.
+- [Temporal](../packages/temporal/.apm/skills/kit-temporal/references/guide.md):
+  deterministic Workflows, Activity idempotency, replay/cancellation tests and worker versioning.
+- [Identity](../packages/identity/.apm/skills/kit-identity/references/guide.md):
+  Entra token validation, OAuth code flow/PKCE, scopes and roles.
+- [Client authentication](../packages/frontend/.apm/skills/kit-client-auth/references/guide.md):
+  supported MSAL caches, bounded renewal, safe replay and credential isolation.
+- [Dependency auditing](dependency-security.md):
+  uv command/version evidence, artifact-hash limits and status-lookup limitations.
+- [Runtime guard](../packages/shared/.apm/skills/kit-agent-runtime/references/guards.md):
+  literal-input defenses, scoped Git networking and native host failure semantics.
 
 ## Agentic review and enforcement refresh, 2026-10-28
 
@@ -48,7 +65,7 @@ not always-on policy or the profile description budgets.
 | --- | --- |
 | [Agent Skills specification](https://agentskills.io/specification) | Metadata, activated procedure and on-demand resources are separate context levels; this toolkit keeps stricter local budgets |
 | [VS Code skills](https://code.visualstudio.com/docs/agent-customization/agent-skills) | Repository and personal discovery layers coexist; selected source does not isolate a session |
-| [VS Code agents](https://code.visualstudio.com/docs/agent-customization/custom-agents) | Review effective tool access and retain read-only roles for sensitive analysis |
+| [VS Code agents](https://code.visualstudio.com/docs/agent-customization/custom-agents) | Review effective tool access; analysis roles keep source-read-only intent without edit tools |
 | [VS Code MCP](https://code.visualstudio.com/docs/agent-customization/mcp-servers) | Local servers can execute arbitrary code; review publisher/configuration, trust, authentication and tool exposure |
 | [Claude skills](https://code.claude.com/docs/en/skills) | Host-specific invocation/tool extensions are not portable authorization guarantees |
 | [Claude subagents](https://code.claude.com/docs/en/sub-agents) | Native tools/model metadata needs its own projection and live test |

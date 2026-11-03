@@ -171,12 +171,12 @@ class LicenseInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            label: Diagnostic label for the invalid input.
-            name: Diagnostic name for the invalid input.
-            field: Diagnostic field for the invalid input.
-            identifier: Diagnostic identifier for the invalid input.
-            token: Diagnostic token for the invalid input.
+            issue (LicenseInputIssue): The violated input invariant.
+            label (str | None): Diagnostic label for the invalid input.
+            name (str | None): Diagnostic name for the invalid input.
+            field (str | None): Diagnostic field for the invalid input.
+            identifier (str | None): Diagnostic identifier for the invalid input.
+            token (str | None): Diagnostic token for the invalid input.
         """
         super().__init__(
             issue.value.format(
@@ -198,9 +198,9 @@ class LicenseInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
-            label: Diagnostic label for the invalid input.
-            name: Diagnostic name for the invalid input.
+            issue (LicenseInputIssue): The violated input invariant.
+            label (str | None): Diagnostic label for the invalid input.
+            name (str | None): Diagnostic name for the invalid input.
         """
         super().__init__(issue.value.format(label=label, name=name))
 
@@ -284,6 +284,9 @@ def _check_schema_version(data: dict[object, object]) -> None:
 def _exceptions(raw: object) -> dict[str, Waiver]:
     """Validate exception entries keyed by canonical distribution name.
 
+    Returns:
+        Waivers keyed by canonical distribution name; empty when none are listed.
+
     Raises:
         LicenseInputTypeError: The exceptions value is not an object.
     """
@@ -345,8 +348,8 @@ class _ExpressionParser:
         """Prepare to evaluate one expression.
 
         Args:
-            tokens: Expression tokens, with parentheses as separate tokens.
-            allowlist: Allowed and denied identifiers that decide each leaf.
+            tokens (list[str]): Expression tokens, with parentheses as separate tokens.
+            allowlist (Allowlist): Allowed and denied identifiers that decide each leaf.
         """
         self._tokens = tokens
         self._allowlist = allowlist
@@ -432,6 +435,10 @@ class _ExpressionParser:
 def classify(expression: str, allowlist: Allowlist) -> str:
     """Return ``allowed``, ``denied``, or ``unknown`` for an SPDX expression.
 
+    Args:
+        expression (str): SPDX license expression to classify.
+        allowlist (Allowlist): Allowed and denied license identifiers.
+
     Raises:
         LicenseInputError: The expression is empty or malformed.
     """
@@ -460,7 +467,12 @@ def _mapped_classifiers(classifiers: Iterable[str]) -> list[str]:
 
 
 def _classifier_evidence(mapped: list[str]) -> tuple[str | None, str]:
-    """Combine mapped classifiers with AND, or report unmapped classifiers."""
+    """Combine mapped classifiers with AND, or report unmapped classifiers.
+
+    Returns:
+        The combined expression and ``Classifier``, or None and a description naming the
+        unmapped classifiers.
+    """
     unique = list(dict.fromkeys(mapped))
     if any(item.startswith("LicenseRef-Unmapped") for item in unique):
         return None, "Classifier (unmapped: " + "; ".join(unique) + ")"
@@ -471,7 +483,17 @@ def _classifier_evidence(mapped: list[str]) -> tuple[str | None, str]:
 def license_evidence(
     expression: str | None, classifiers: Iterable[str], license_field: str | None
 ) -> tuple[str | None, str]:
-    """Choose the strongest available license statement and name its source."""
+    """Choose the strongest available license statement and name its source.
+
+    Args:
+        expression (str | None): ``License-Expression`` metadata, if present.
+        classifiers (Iterable[str]): Trove classifiers declared by the distribution.
+        license_field (str | None): Free-text ``License`` metadata, if present.
+
+    Returns:
+        The license statement, or None when nothing usable exists, and its source:
+        ``License-Expression``, ``Classifier``, ``License`` or ``none``.
+    """
     if expression and expression.strip():
         return expression.strip(), "License-Expression"
     mapped = _mapped_classifiers(classifiers)
@@ -485,7 +507,13 @@ def license_evidence(
 
 
 def evaluate(record: Record, allowlist: Allowlist, today: date) -> Result:
-    """Evaluate one distribution, honoring only unexpired, matching exceptions."""
+    """Evaluate one distribution, honoring only unexpired, matching exceptions.
+
+    Args:
+        record (Record): Installed distribution and its license evidence.
+        allowlist (Allowlist): Allowed licenses and per-distribution exceptions.
+        today (date): Date used to expire exceptions.
+    """
     exception = allowlist.exceptions.get(canonical_name(record.name))
     observed = record.expression or "UNKNOWN"
     if exception is not None:
@@ -543,7 +571,13 @@ def installed_records(paths: list[str] | None) -> list[Record]:
 
 
 def report(results: list[Result], stream: TextIO, output_format: str) -> int:
-    """Write findings and return 1 when any distribution is not acceptable."""
+    """Write findings and return 1 when any distribution is not acceptable.
+
+    Args:
+        results (list[Result]): Evaluated distributions in report order.
+        stream (TextIO): Destination of the report.
+        output_format (str): ``json`` writes JSON; any other value writes text.
+    """
     failing = [item for item in results if item.status not in {"allowed", "excepted"}]
     if output_format == "json":
         payload = [

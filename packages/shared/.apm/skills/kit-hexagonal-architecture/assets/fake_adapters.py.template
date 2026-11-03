@@ -1,6 +1,6 @@
 """In-memory fakes for the invoice, payment and notification ports.
 
-Copy to 'tests/fakes.py' (or 'app/adapters/memory/' if production also uses
+Copy to ``tests/fakes.py`` (or ``app/adapters/memory/`` if production also uses
 them). A fake is a real, simplified implementation, not a mock: it keeps state,
 enforces the port's documented errors and passes the same contract tests as the
 production adapter. Use it to test application services quickly and offline.
@@ -40,12 +40,12 @@ class InMemoryInvoiceRepository(InvoiceRepository):
         """Operate on the given mapping; the unit of work decides visibility.
 
         Args:
-            rows: Mutable staging copy owned by the unit of work.
+            rows (dict[str, Invoice]): Mutable staging copy owned by the unit of work.
         """
         self._rows = rows
 
     def get(self, invoice_id: str) -> Invoice:
-        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        """Return the invoice or raise ``InvoiceNotFoundError``."""
         try:
             return self._rows[invoice_id]
         except KeyError:
@@ -66,7 +66,12 @@ class InMemoryInvoiceRepository(InvoiceRepository):
     def list_open(
         self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
     ) -> list[Invoice]:
-        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        """Return up to ``limit`` open invoices for a customer, oldest id first.
+
+        Args:
+            customer_id (str): Customer identifier used to filter staged invoices.
+            limit (int): Maximum results retained after sorting by invoice ID.
+        """
         matches = sorted(
             (
                 invoice
@@ -91,7 +96,8 @@ class InMemoryUnitOfWork(UnitOfWork):
         """Seed committed state.
 
         Args:
-            initial: Invoices that exist before the first unit of work.
+            initial (Iterable[Invoice]): Invoices that exist before the first unit of
+                work.
         """
         self.committed: dict[str, Invoice] = {item.invoice_id: item for item in initial}
         self.commit_count = 0
@@ -135,7 +141,7 @@ class FakePaymentGateway(PaymentGateway):
         declined_invoices: Invoice ids whose charges are declined.
         unavailable_attempts: Number of next calls that fail as transient.
         charges: Every successful charge, keyed by idempotency key.
-        calls: Number of 'charge' calls, including failures.
+        calls: Number of ``charge`` calls, including failures.
     """
 
     declined_invoices: set[str] = field(default_factory=set)
@@ -151,7 +157,15 @@ class FakePaymentGateway(PaymentGateway):
         currency: str,
         idempotency_key: str,
     ) -> PaymentReceipt:
-        """Follow the script, then return a stable receipt per key."""
+        """Follow the script, then return a stable receipt per key.
+
+        Args:
+            invoice_id (str): Invoice checked against the configured decline set.
+            amount (Decimal): Amount recorded when a key first succeeds.
+            currency (str): Currency recorded with that first successful amount.
+            idempotency_key (str): Receipt lookup key; repeated successful calls
+                reuse the original receipt rather than record another charge.
+        """
         self.calls += 1
         if self.unavailable_attempts > 0:
             self.unavailable_attempts -= 1
@@ -175,7 +189,7 @@ class RecordingNotifier(InvoiceNotifier):
 
     Attributes:
         sent: Notices delivered so far, in order.
-        fail: When true, every delivery raises 'NotificationError'.
+        fail: When true, every delivery raises ``NotificationError``.
     """
 
     sent: list[InvoicePaidNotice] = field(default_factory=list)

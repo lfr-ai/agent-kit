@@ -41,12 +41,18 @@ and must not be used.
 | --- | --- | --- | --- |
 | HTTP-only cookie set by a BFF | No | Yes | Preferred |
 | In-memory variable (closure, worker) | Indirectly, while the page runs | No | Acceptable for short-lived access tokens |
-| `sessionStorage` | Yes | Per tab | Avoid for tokens |
-| `localStorage` or IndexedDB | Yes | Yes | Never for refresh tokens; avoid for access tokens |
+| Library-managed `sessionStorage` | Yes | Per tab | Supported MSAL default; choose by threat model |
+| Library-managed `localStorage` | Yes | Yes | Supported MSAL option; assess persistence and cross-tab trade-offs |
+| Hand-written web storage or IndexedDB cache | Yes | Varies | Do not extract tokens into a parallel cache |
 
 No storage choice survives a cross-site scripting compromise: an attacker can
 act as the user while the page is open. Content Security Policy, output
 encoding, and dependency hygiene remain the primary defense.
+
+MSAL Browser also supports `memoryStorage`. Keep its provider-managed token and
+temporary transaction caches consistent with the installed version; do not
+blanket-ban supported caching or override callback state/nonce handling by
+hand. Cache encryption does not protect against active same-origin script.
 
 ## Renewal, rotation, and expiry
 
@@ -83,12 +89,40 @@ encoding, and dependency hygiene remain the primary defense.
 | Situation | Client behavior | Server responsibility |
 | --- | --- | --- |
 | Unauthenticated navigation | Redirect to sign-in with validated `returnTo` | Reject API calls with 401 |
-| 401 from API | One coordinated renewal, retry once, else signed-out state | Validate token or session on every request |
+| 401 from API | One coordinated renewal, retry once, second 401 means expired | Validate token or session on every request |
 | 403 from API | Show "no access" with a way back; keep the session | Authorize per resource and action |
 | Role-based UI | Hide or disable actions as a convenience | Enforce the same rule; never trust client roles |
 | Expired session during form entry | Keep input; prompt to sign in again | Idempotent retry support where possible |
 
 Roles in an ID token are claims for display decisions, not authorization.
+The API validates an access token for its exact issuer and audience, including
+signature, allowed algorithm, expiry/not-before and tenant policy, then enforces
+scopes, application roles and resource ownership. Backend `kit-auth` remains
+the API owner; optional `kit-identity` adds Entra/provider guidance.
+
+The fetch template tracks credential generations so a delayed 401 from the old
+token does not trigger a second renewal after another request already renewed.
+It strips caller-supplied Authorization/CSRF headers for untrusted origins and
+disables automatic redirect following. Retry safety still depends on the API:
+an unsafe request must be rejected before effects or carry destination
+idempotency before using this template's automatic replay.
+
+Copy the fetch and both test templates without `.template`, then run
+`bun test ./auth-fetch.test.ts ./auth-fetch.standards.test.ts`. These
+fake-transport tests check renewal, credential/redirect isolation and native
+string/FormData POST bodies on both attempts, with keepalive requested on/off.
+The wrapper forwards the native `Request` and its cloned retry, never
+`request.body` as a new streaming body; it must not add `duplex` or override
+native keepalive. Unsafe replay still requires the API guarantees above.
+
+Bun 1.3.11 reports `Request.credentials` as `include` even for `omit`, lacks a
+`Request.keepalive` getter and ignores header overrides in
+`new Request(existingRequest, init)`. Workarounds stay in the fake transport:
+inspect actual fetch options and normalize only its header view. These tests
+reject body materialization, not certify browser cookies/keepalive. The original
+four native Request POST/keepalive cases also passed once using installed Node
+22.20 as a standards test oracle; no Node runner, product runtime or new
+configuration is required. Real browser/MSAL runtime remains unverified.
 
 ## Failure modes
 
@@ -104,6 +138,7 @@ Roles in an ID token are claims for display decisions, not authorization.
 ## Primary sources
 
 - RFC 10017, OAuth 2.0 for Browser-Based Applications: <https://www.rfc-editor.org/info/rfc10017>
+- MSAL Browser caching: <https://learn.microsoft.com/en-us/entra/msal/javascript/browser/caching>
 - RFC 9700, Best Current Practice for OAuth 2.0 Security: <https://www.rfc-editor.org/rfc/rfc9700>
 - RFC 7636, Proof Key for Code Exchange: <https://www.rfc-editor.org/rfc/rfc7636>
 - RFC 9449, DPoP: <https://www.rfc-editor.org/rfc/rfc9449>

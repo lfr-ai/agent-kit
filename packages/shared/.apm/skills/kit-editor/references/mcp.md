@@ -1,7 +1,8 @@
 # Optional integrations
 
-The assets are configuration starting points, **not active delivery**.
-Composition includes templates as resources and does not start or authorize
+Packages deliver the reviewed servers (see below). The templates are native
+configuration starting points for servers the kit does not ship, **not active
+delivery**: composition includes them as resources and does not start or authorize
 their servers.
 
 ## Select, do not activate the inventory
@@ -47,25 +48,29 @@ file does not magically satisfy the current deny-by-default APM policy.
 
 ## Carry MCP guidance into APM projects
 
-This toolkit keeps `dependencies.mcp` out of portable package manifests because
-APM materializes those dependencies into each detected host during installation.
-This shared capability includes inactive native examples so a consumer can
-select only what its project needs. Keep the consumer
-policy's `mcp.allow` empty until the corresponding native definition and identity
-have been reviewed. For a consumer that adopts the read-only documentation and
-repository examples, the matching policy section is:
+Reviewed servers are delivered by the packages: each `apm.yml` declares them under
+`dependencies.mcp`, and `apm install` writes them to each host's native file. The
+templates below cover only servers the kit does not ship. The consumer policy
+template already allows the shipped names with `self_defined: allow`.
 
-```yaml
-mcp:
-  allow:
-    - context7
-    - github
-  self_defined: deny
-  trust_transitive: false
-```
+| Package | Delivered servers |
+| --- | --- |
+| `shared` | context7, microsoft-learn, github (read-only toolsets, lockdown) |
+| `backend` | postman |
+| `temporal` | temporal-docs |
+| `frontend` | playwright, chrome-devtools, shadcn, storybook (local) |
+| `bicep` | azure (read-only namespaces) |
+| `terraform` | terraform (registry toolset, digest-pinned image) |
+| `ai` | langfuse-docs |
 
-This allowlist grants no credentials and does not authorize write-capable tools.
-Keep it empty in projects that have not reviewed matching native definitions.
+Not shipped, so keep them consumer-owned: `azure-devops` (organization-specific),
+`gitnexus` (non-commercial license), a Temporal server MCP and database servers
+(they need your endpoint and credentials). Add one through the templates below
+and extend `mcp.allow` in your own policy.
+
+Delivered servers never carry credentials. Hosted ones use OAuth through the host;
+`X-MCP-*` headers only restrict tools. Pins are exact and reviewed manually, because
+Dependabot cannot bump `apm.yml`.
 
 Context7 uses its OAuth endpoint in the example. Microsoft Learn serves public
 Microsoft documentation. GitHub is limited to the `repos`, `issues`,

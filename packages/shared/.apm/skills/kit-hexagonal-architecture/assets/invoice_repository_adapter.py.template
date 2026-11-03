@@ -1,8 +1,8 @@
 """Driven adapter: persist invoices in SQLite with explicit transactions.
 
-Copy to 'app/adapters/persistence/sqlite_invoices.py'. Mapping between rows and
-domain objects lives here and nowhere else. Connections use 'autocommit=False'
-(Python 3.12+), so a transaction is open until 'commit' or 'rollback' is called.
+Copy to ``app/adapters/persistence/sqlite_invoices.py``. Mapping between rows and
+domain objects lives here and nowhere else. Connections use ``autocommit=False``
+(Python 3.12+), so a transaction is open until ``commit`` or ``rollback`` is called.
 """
 
 import sqlite3
@@ -39,11 +39,8 @@ _COLUMNS = "invoice_id, customer_id, amount, currency, status, payment_reference
 def connect(database: str) -> sqlite3.Connection:
     """Open a connection with PEP 249 transaction semantics and the schema.
 
-    Args:
-        database: File path, or ':memory:' for a private in-memory database.
-
-    Returns:
-        A connection whose changes are invisible to others until committed.
+    Pass ``:memory:`` for a private in-memory database. Changes stay invisible to other
+    connections until committed.
     """
     connection = sqlite3.connect(database, autocommit=False)
     connection.execute(_SCHEMA)
@@ -52,7 +49,13 @@ def connect(database: str) -> sqlite3.Connection:
 
 
 def _to_row(invoice: Invoice) -> tuple[str, str, str, str, str, str | None]:
-    """Map a domain object to column values; Decimal is stored as exact text."""
+    """Map a domain object to column values; Decimal is stored as exact text.
+
+    Returns:
+        tuple[str, str, str, str, str, str | None]: Values in schema order:
+        invoice ID, customer ID, decimal amount text, currency, status value
+        and optional payment reference.
+    """
     return (
         invoice.invoice_id,
         invoice.customer_id,
@@ -83,12 +86,12 @@ class SqliteInvoiceRepository(InvoiceRepository):
         """Use a connection owned by the unit of work; never commit here.
 
         Args:
-            connection: Connection with an open transaction.
+            connection (sqlite3.Connection): Connection with an open transaction.
         """
         self._connection = connection
 
     def get(self, invoice_id: str) -> Invoice:
-        """Return the invoice or raise 'InvoiceNotFoundError'."""
+        """Return the invoice or raise ``InvoiceNotFoundError``."""
         row = self._connection.execute(
             f"SELECT {_COLUMNS} FROM invoices WHERE invoice_id = ?",  # noqa: S608 - constant column list
             (invoice_id,),
@@ -107,7 +110,7 @@ class SqliteInvoiceRepository(InvoiceRepository):
             raise DuplicateInvoiceError(invoice.invoice_id) from error
 
     def save(self, invoice: Invoice) -> None:
-        """Update an existing invoice or raise 'InvoiceNotFoundError'."""
+        """Update an existing invoice or raise ``InvoiceNotFoundError``."""
         invoice_id, *values = _to_row(invoice)
         cursor = self._connection.execute(
             "UPDATE invoices SET customer_id = ?, amount = ?, currency = ?, "
@@ -120,7 +123,12 @@ class SqliteInvoiceRepository(InvoiceRepository):
     def list_open(
         self, *, customer_id: str, limit: int = _DEFAULT_OPEN_INVOICE_LIMIT
     ) -> list[Invoice]:
-        """Return up to 'limit' open invoices for a customer, oldest id first."""
+        """Return up to ``limit`` open invoices for a customer, oldest id first.
+
+        Args:
+            customer_id (str): Customer identifier bound to the SQL filter.
+            limit (int): Maximum invoices returned in ascending invoice-ID order.
+        """
         rows = self._connection.execute(
             f"SELECT {_COLUMNS} FROM invoices WHERE customer_id = ? AND status = ? "  # noqa: S608 - constant column list
             "ORDER BY invoice_id LIMIT ?",
@@ -135,10 +143,11 @@ class SqliteUnitOfWork(UnitOfWork):
     invoices: InvoiceRepository
 
     def __init__(self, connect_to: ConnectionFactory) -> None:
-        """Store the factory; the connection opens in '__enter__'.
+        """Store the factory; the connection opens in ``__enter__``.
 
         Args:
-            connect_to: Returns a new connection with 'autocommit=False'.
+            connect_to (ConnectionFactory): Returns a new connection with
+                ``autocommit=False``.
         """
         self._connect_to = connect_to
         self._connection: sqlite3.Connection | None = None
@@ -170,7 +179,7 @@ class SqliteUnitOfWork(UnitOfWork):
         self._require_connection().rollback()
 
     def _require_connection(self) -> sqlite3.Connection:
-        """Fail loudly when used outside a 'with' block."""
+        """Fail loudly when used outside a ``with`` block."""
         if self._connection is None:
             raise RuntimeError("unit of work used outside its 'with' block")
         return self._connection

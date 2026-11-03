@@ -51,31 +51,31 @@ asset defines it, because that is the bundle that delivers it.
 | Project memory, decisions, lessons and handoffs | `kit-knowledge` | `kit-project-memory` | `kit-codebase-researcher` |
 | Self-review and feedback loops | none | `kit-feedback-loop` | `kit-code-reviewer` |
 | Tests (`test_*.py`, `*_test.py`, `*.test.*`, `*.spec.*`, test directories) | `kit-test`, `kit-tdd` | `kit-test-first`, `kit-verify-change` | `kit-test-author` |
-| Architecture boundaries | `kit-layer-placement` (layer directories) | `kit-hexagonal-architecture` | `kit-plan-architect`, `kit-solid-review`, `kit-deep-thinking` |
+| Architecture boundaries | `kit-layer-placement` (layer directories) | `kit-hexagonal-architecture` | `kit-planner`, `kit-code-reviewer`, `kit-deep-thinking` (hidden adviser) |
 | Planning and cross-file consistency | none | `kit-change-plan`, `kit-consistency`, `kit-parallel-work` | `kit-orchestrator`, `kit-planner`, `kit-code-reviewer` |
 | Subagent delegation with owned paths and handoff checks | none | `kit-subagent-delivery`, `kit-parallel-work` | `kit-orchestrator` |
-| Refactoring, readability and modernization | `kit-readability` (Python, TypeScript, JavaScript) | `kit-refactor` | `kit-refactor`, `kit-modernization` |
+| Refactoring, readability and modernization | `kit-readability` (Python, TypeScript, JavaScript) | `kit-refactor` | `kit-refactor` (hidden worker), `kit-deep-thinking` (hidden adviser) |
 | Defect diagnosis and repair | none | `kit-test-first` | `kit-debug` |
 | Editor assistance and MCP servers | none | `kit-editor` (integration catalog, inactive examples), `kit-mcp-integration` | none |
-| Release readiness | none | `kit-release` | `kit-devops`, `kit-devops-implementer` |
+| Release readiness | none | `kit-release` | `kit-devops-implementer`; `kit-devops` with iac |
 
 ### Backend (backend bundle)
 
 | Technology or concern | Instruction (`applyTo`) | Skills | Roles |
 | --- | --- | --- | --- |
-| Python services, adapters and idioms | `kit-backend`, `kit-python-conventions` (`**/*.py`) | `kit-python-service` | `kit-tdd`, `kit-testing`, `kit-backend-implementer` |
+| Python services, adapters and idioms | `kit-backend`, `kit-python-conventions` (`**/*.py`) | `kit-python-service` | `kit-test-author`, `kit-backend-implementer` |
 | FastAPI app factory, lifespan, dependency injection, routers, middleware and health | `kit-fastapi` (`**/api/**/*.py`, `**/main.py`, `**/middleware/**/*.py`) | `kit-fastapi-service`, `kit-api-contracts` | `kit-backend-implementer` |
 | API authentication and authorization (OAuth, OIDC, JWT, JWKS, roles) | `kit-auth` (`**/auth/**/*.py`, `**/security/**/*.py`) | `kit-auth` | `kit-backend-implementer` |
 | Python packaging | `kit-python-packaging` (`**/pyproject.toml`, `**/*.spec`, `**/MANIFEST.in`, `**/setup.cfg`) | `kit-python-package` | `kit-backend-implementer` |
 | Python CLI and SDK entry points | `kit-python-conventions` | `kit-cli-tool` | `kit-backend-implementer` |
 | HTTP APIs and API specifications | `kit-backend`, `kit-api-specs` (OpenAPI, AsyncAPI, GraphQL files) | `kit-api-contracts` | `kit-contract-iac-lint` |
-| Black-box API tests (Postman or Newman, Bruno, `.http` files, Schemathesis) | none | `kit-api-testing` | `kit-testing` |
+| Black-box API tests (Postman or Newman, Bruno, `.http` files, Schemathesis) | none | `kit-api-testing` | `kit-test-author` |
 | Application configuration, secrets and LLM experiment sweeps | `kit-pydantic-v2` (`**/*settings.py`) | `kit-config` | none |
 | SQLAlchemy 2 repositories, unit of work, PostgreSQL and SQLite adapters | `kit-sql` (`**/repositories/**/*.py`, `**/persistence/**/*.py`), `kit-database` | `kit-sql-persistence` | `kit-backend-implementer` |
 | SQL migrations and Alembic | `kit-database` | `kit-database-migrations` | none |
 | Neo4j graphs and Cypher | `kit-cypher` (`**/*.cypher`, `**/graph/**/*.py`) | `kit-graph-database` | none |
-| Domain model | `kit-domain` (`**/domain/**`, `**/core/**`) | `kit-domain-model` | `kit-ddd` |
-| Specification-driven design | none | none | `kit-sdd` |
+| Domain model | `kit-domain` (`**/domain/**`, `**/core/**`) | `kit-domain-model` | `kit-ddd` (hidden adviser) |
+| Specification-driven design | none | none | `kit-sdd` (hidden adviser) |
 | Pydantic v2 | `kit-pydantic-v2` (DTO, schema, request, response, settings files) | `kit-pydantic-v2` | none |
 | Polars 2 | `kit-polars-v2` (polars, dataframe, analytics files) | `kit-polars-v2` | none |
 | Jinja templates | `kit-jinja-templates` (`**/*.jinja`, `**/*.j2`, template files) | `kit-jinja` | none |
@@ -88,8 +88,8 @@ asset defines it, because that is the bundle that delivers it.
 
 | Technology or concern | Instruction (`applyTo`) | Skills | Roles |
 | --- | --- | --- | --- |
-| TypeScript and JavaScript | `kit-typescript`, `kit-frontend` | `kit-react-feature` | `kit-frontend`, `kit-frontend-implementer` |
-| React components | `kit-react` (`**/*.tsx`, `**/*.jsx`) | `kit-react-feature`, `kit-component-library` | `kit-frontend` |
+| TypeScript and JavaScript | `kit-typescript`, `kit-frontend` | `kit-react-feature` | `kit-frontend-implementer` |
+| React components | `kit-react` (`**/*.tsx`, `**/*.jsx`) | `kit-react-feature`, `kit-component-library` | `kit-frontend-implementer` |
 | CSS and SCSS | `kit-css` | `kit-component-library` | none |
 | Design tokens, Tailwind v4 themes, dark mode, shadcn/ui theming and Storybook | `kit-design-tokens` (`**/theme.css`, `**/tokens.css`, component `.tsx` files), `kit-css` | `kit-design-system`, `kit-component-library` | none |
 | Vite, Bun, `tsconfig`, client environment variables, bundle budgets and source maps | `kit-frontend-tooling` | `kit-frontend-build` | `kit-frontend-implementer` |
@@ -107,8 +107,8 @@ asset defines it, because that is the bundle that delivers it.
 
 | Technology or concern | Instruction | Skills | Roles |
 | --- | --- | --- | --- |
-| Backend and frontend contract changes | none | `kit-fullstack-workflow` | `kit-fullstack` (coordinator) |
-| Shared routes, event names, enum values and error codes | `kit-naming-registry` (`**/naming_registry.json`, `**/naming_registry.schema.json`, `**/registry/**`) | `kit-naming-registry` | `kit-fullstack` (coordinator) |
+| Backend and frontend contract changes | none | `kit-fullstack-workflow` | `kit-orchestrator` (coordinator) |
+| Shared routes, event names, enum values and error codes | `kit-naming-registry` (`**/naming_registry.json`, `**/naming_registry.schema.json`, `**/registry/**`) | `kit-naming-registry` | `kit-orchestrator` (coordinator) |
 
 ### Infrastructure (iac bundle)
 
@@ -118,7 +118,7 @@ asset defines it, because that is the bundle that delivers it.
 | Terraform and OpenTofu plans on Azure, AWS and Google Cloud (terraform feature) | `kit-terraform`, `kit-iac` | `kit-terraform-validation`, `kit-infra-review` | `kit-infra-reviewer` |
 | IaC tool choice and migration (Terraform, OpenTofu, Bicep, CloudFormation, CDK, Pulumi, Crossplane) | `kit-cloud-iac` (CloudFormation, SAM, CDK and Pulumi files), `kit-iac` | `kit-infra-review` (IaC selection reference) | `kit-infra-reviewer` |
 | API management and gateways (Azure API Management, Amazon API Gateway, Google API Gateway and Apigee, Kubernetes Gateway API) | `kit-api-management` (APIM, policy and gateway paths) | `kit-api-gateway` | `kit-infra-reviewer` |
-| Continuous delivery: build once, promote by digest, environments, rollout and rollback | `kit-ci-pipelines`, `kit-devops` | `kit-delivery-pipelines` | `kit-devops`, `kit-devops-implementer` |
+| Continuous delivery: build once, promote by digest, environments, rollout and rollback | `kit-ci-pipelines`, `kit-devops` | `kit-delivery-pipelines` | `kit-devops-implementer`; `kit-devops` with iac |
 | Dockerfile, Containerfile and Compose files | `kit-containers`, `kit-iac` | `kit-containers` | `kit-infra-reviewer` |
 | GitHub Actions and Azure DevOps pipelines (security review) | `kit-ci-pipelines` (`.github/workflows/*.yml`, `.azuredevops/**`, `azure-pipelines*.yml`) | `kit-ci-review` | `kit-infra-reviewer` |
 | Shell and PowerShell scripts | `kit-shell` | `kit-infra-review` | none |
@@ -129,10 +129,10 @@ asset defines it, because that is the bundle that delivers it.
 Tool-specific skills ship as opt-in features that extend iac: `terraform`,
 `bicep` (the Azure-native tool) and `remote-access`. Cloud providers are not
 separate bundles; provider detail lives in templates that load only when used.
-The read-only `kit-infra-reviewer` lives in the iac bundle and judges
-operator-produced plans and scans. Infrastructure delegation roles
-(`kit-devops`, `kit-devops-implementer`) live in the shared bundle and are
-therefore available in every profile. The static contract reviewer
+The `kit-infra-reviewer` verifier and the `kit-devops` coordinator live in the
+iac bundle; the reviewer judges operator-produced plans and scans. The
+`kit-devops-implementer` worker lives in the shared bundle, so CI and container
+authoring is available in every profile through `kit-orchestrator`. The static contract reviewer
 `kit-contract-iac-lint` lives in the backend bundle, so an iac-only composition
 does not include it.
 
@@ -167,12 +167,12 @@ it needs.
 
 | Technology or concern | Instruction (`applyTo`) | Skills | Roles |
 | --- | --- | --- | --- |
-| Model provider clients and managed prompts | `kit-ai-boundaries` (prompt, agent, LLM and queue paths) | `kit-llm-client` | `kit-ai-engineer` |
-| Model gateways (LiteLLM proxy, local Ollama models) | `kit-ai-boundaries` | `kit-llm-gateway` | `kit-ai-engineer` |
-| LLM evaluation (golden datasets, judges, statistics, CI gates, sweeps) | `kit-llm-evaluation` (`**/evals/**`, `**/evaluation/**`) | `kit-llm-evaluation` | `kit-ai-engineer`, `kit-eval-reviewer` |
-| Agent loops, tools, guardrails and budgets | `kit-agent-systems` (`**/agents/**/*.py`, `**/tools/**/*.py`), `kit-ai-boundaries` | `kit-agent-systems` | `kit-ai-engineer` |
-| LangGraph workflows | `kit-ai-boundaries` | `kit-langgraph` | `kit-ai-engineer` |
-| Retrieval pipelines | `kit-rag` (retrieval, embedding, vector and Cypher paths) | `kit-retrieval` | `kit-ai-engineer` |
+| Model provider clients and managed prompts | `kit-ai-boundaries` (prompt, agent, LLM and queue paths) | `kit-llm-client` | `kit-orchestrator` |
+| Model gateways (LiteLLM proxy, local Ollama models) | `kit-ai-boundaries` | `kit-llm-gateway` | `kit-orchestrator` |
+| LLM evaluation (golden datasets, judges, statistics, CI gates, sweeps) | `kit-llm-evaluation` (`**/evals/**`, `**/evaluation/**`) | `kit-llm-evaluation` | `kit-eval-reviewer` |
+| Agent loops, tools, guardrails and budgets | `kit-agent-systems` (`**/agents/**/*.py`, `**/tools/**/*.py`), `kit-ai-boundaries` | `kit-agent-systems` | `kit-orchestrator` |
+| LangGraph workflows | `kit-ai-boundaries` | `kit-langgraph` | `kit-orchestrator` |
+| Retrieval pipelines | `kit-rag` (retrieval, embedding, vector and Cypher paths) | `kit-retrieval` | `kit-orchestrator` |
 | Background task queues | `kit-ai-boundaries` | `kit-task-queue` | none |
 | Server-to-client streaming | `kit-realtime` (stream, WebSocket, SSE paths) | `kit-server-streaming` | none |
 

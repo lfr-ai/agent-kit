@@ -7,6 +7,42 @@ from pathlib import Path
 import pytest
 import scripts.render_native as renderer
 
+_ROOT = Path(__file__).resolve().parents[3]
+_SELF_PICKER_ROLES = frozenset({"kit-orchestrator", "kit-debug"})
+
+
+def test_repository_self_selection_picker_roster_is_minimal() -> None:
+    """The repository's own picker offers only the orchestrator and debugger."""
+    picker = {
+        path.removeprefix(".github/agents/").removesuffix(".agent.md")
+        for path, content in renderer.expected(_ROOT).items()
+        if path.startswith(".github/agents/") and b"\nuser-invocable: true\n" in content
+    }
+
+    assert picker == _SELF_PICKER_ROLES
+
+
+def _attest_roles(root: Path, files: dict[str, bytes]) -> None:
+    """Seed a historical ledger and role bytes in a disposable test workspace."""
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    ledger = root / renderer._LOCK_PATH
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "files": {
+                    name: hashlib.sha256(content).hexdigest()
+                    for name, content in files.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
 
 def test_projection_updates_only_attested_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -28,6 +64,129 @@ def test_projection_updates_only_attested_files(
     with pytest.raises(ValueError, match="edited independently"):
         renderer.write(tmp_path)
     assert (tmp_path / target).read_bytes() == b"independent change"
+
+
+@pytest.mark.parametrize(
+    ("directory", "suffix"),
+    [(".github/agents", ".agent.md"), (".claude/agents", ".md")],
+)
+@pytest.mark.parametrize("conflict", [None, "edited-worker", "unowned-destination"])
+def test_flattening_workers_preserves_projection_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: str,
+    suffix: str,
+    conflict: str | None,
+) -> None:
+    """Migrate attested nested workers, never independent edits or collisions."""
+    old = f"{directory}/subagents/kit-example{suffix}"
+    new = f"{directory}/kit-example{suffix}"
+    _attest_roles(tmp_path, {old: b"original"})
+    if conflict == "edited-worker":
+        (tmp_path / old).write_bytes(b"independent change")
+    elif conflict == "unowned-destination":
+        (tmp_path / new).write_bytes(b"operator owned")
+    before = _snapshot(tmp_path)
+    monkeypatch.setattr(renderer, "expected", lambda _root: {new: b"updated"})
+
+    if conflict is not None:
+        with pytest.raises(ValueError, match=r"edited independently|unowned"):
+            renderer.write(tmp_path)
+        assert _snapshot(tmp_path) == before
+    else:
+        renderer.write(tmp_path)
+        assert not (tmp_path / old).exists()
+        assert (tmp_path / new).read_bytes() == b"updated"
+        assert renderer.check(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        ".github/agents/subagents/kit-example.agent.md",
+        ".claude/agents/subagents/kit-example.md",
+    ],
+)
+def test_legacy_attestation_does_not_authorize_new_nested_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    """A previous nested file can be removed, never rewritten as a new projection."""
+    _attest_roles(tmp_path, {target: b"original"})
+    before = _snapshot(tmp_path)
+    monkeypatch.setattr(renderer, "expected", lambda _root: {target: b"updated"})
+
+    with pytest.raises(ValueError, match="canonical"):
+        renderer.write(tmp_path)
+    assert _snapshot(tmp_path) == before
+
+
+def test_flattening_failure_restores_legacy_files_and_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure after a legacy removal restores old bytes and removes flat outputs."""
+    old = {
+        ".github/agents/subagents/kit-example.agent.md": b"copilot",
+        ".claude/agents/subagents/kit-example.md": b"claude",
+    }
+    _attest_roles(tmp_path, old)
+    before = _snapshot(tmp_path)
+    output = {name.replace("/subagents/", "/"): data for name, data in old.items()}
+    monkeypatch.setattr(renderer, "expected", lambda _root: output)
+    unlink = Path.unlink
+    calls = 0
+    failure = OSError("controlled legacy removal failure")
+
+    def fail_second_removal(path: Path, *, missing_ok: bool = False) -> None:
+        nonlocal calls
+        if path.relative_to(tmp_path).as_posix() in old:
+            calls += 1
+            if calls == 2:
+                raise failure
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_second_removal)
+
+    with pytest.raises(OSError, match="controlled legacy removal") as raised:
+        renderer.write(tmp_path)
+    assert raised.value is failure
+    assert calls == 2
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("directory", "suffix"),
+    [(".github/agents", ".agent.md"), (".claude/agents", ".md")],
+)
+def test_flattening_rejects_linked_legacy_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: str,
+    suffix: str,
+) -> None:
+    """A legacy attestation cannot authorize reading or deleting through a link."""
+    root = tmp_path / "source"
+    external = tmp_path / "external"
+    external.mkdir()
+    filename = f"kit-example{suffix}"
+    old = f"{directory}/subagents/{filename}"
+    new = f"{directory}/{filename}"
+    _attest_roles(root, {old: b"original"})
+    (root / old).unlink()
+    parent = root / directory / "subagents"
+    parent.rmdir()
+    (external / filename).write_bytes(b"original")
+    try:
+        parent.symlink_to(external, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+    monkeypatch.setattr(renderer, "expected", lambda _root: {new: b"updated"})
+    before = _snapshot(root)
+    external_before = _snapshot(external)
+
+    with pytest.raises(ValueError, match=r"link|contain"):
+        renderer.write(root)
+    assert _snapshot(root) == before
+    assert _snapshot(external) == external_before
 
 
 @pytest.mark.parametrize("content", [b"operator owned", b"generated"])
@@ -89,8 +248,7 @@ def test_ledger_alias_is_rejected_before_any_mutation(
     """An alias cannot authorize writing then deleting the same retained file."""
     filename = f"kit-example{suffix}"
     target = f"{directory}/{filename}"
-    monkeypatch.setattr(renderer, "expected", lambda _root: {target: b"original"})
-    renderer.write(tmp_path)
+    _attest_roles(tmp_path, {target: b"original"})
     lock = tmp_path / renderer._LOCK_PATH
     ledger = json.loads(lock.read_bytes())
     digest = ledger["files"][target]
@@ -107,7 +265,8 @@ def test_ledger_alias_is_rejected_before_any_mutation(
     lock.write_text(json.dumps(ledger), encoding="utf-8")
     before = _snapshot(tmp_path)
     next_content = b"updated" if retain_canonical else b"original"
-    monkeypatch.setattr(renderer, "expected", lambda _root: {target: next_content})
+    planned = target.replace("/subagents/", "/")
+    monkeypatch.setattr(renderer, "expected", lambda _root: {planned: next_content})
 
     with pytest.raises(ValueError, match=r"canonical|unowned"):
         renderer.write(tmp_path)
@@ -127,6 +286,10 @@ def test_ledger_alias_is_rejected_before_any_mutation(
         ".github/agents/kit-.agent.md",
         ".claude/agents/kit--example.md",
         ".github/agents/other/kit-example.agent.md",
+        ".github/agents/subagents/kit-example.md",
+        ".claude/agents/subagents/kit-example.agent.md",
+        ".github/agents/subagents/subagents/kit-example.agent.md",
+        ".claude/agents/subagents/../kit-example.md",
     ],
 )
 def test_ledger_requires_runtime_specific_role_filename(
@@ -159,8 +322,8 @@ def test_ledger_requires_runtime_specific_role_filename(
         ".claude/agents/operator.md",
         ".claude/agents/subagents/kit-unknown.md",
         ".claude/agents/nested/deeper/operator.md",
-        ".github/agents/subagents/kit-reviewer.agent.md",
-        ".claude/agents/subagents/kit-reviewer.md",
+        ".github/agents/kit-operator.agent.md",
+        ".claude/agents/kit-operator.md",
     ],
 )
 def test_inventory_reports_unknown_native_roles_without_deleting_them(
@@ -196,15 +359,13 @@ def test_inventory_is_checked_even_when_ledger_has_drifted(
     assert any(extra in finding for finding in findings)
 
 
-def test_inventory_only_exempts_explicit_reviewers_and_ignores_unrelated_files(
+def test_inventory_ignores_unrelated_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The check is repository-local and only considers each runtime's role suffix."""
     monkeypatch.setattr(renderer, "expected", lambda _root: {})
     renderer.write(tmp_path)
     for relative in (
-        ".github/agents/kit-reviewer.agent.md",
-        ".claude/agents/kit-reviewer.md",
         ".github/agents/notes.txt",
         ".claude/agents/notes.txt",
         ".github/workflows/not-a-role.agent.md",
@@ -220,13 +381,20 @@ def test_inventory_only_exempts_explicit_reviewers_and_ignores_unrelated_files(
     assert _snapshot(tmp_path) == before
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        ".github/agents/kit-example.agent.md",
+        ".claude/agents/kit-example.md",
+        ".github/agents/subagents/kit-example.agent.md",
+        ".claude/agents/subagents/kit-example.md",
+    ],
+)
 def test_removed_attested_role_is_deleted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
     """Strict ownership must retain the existing legitimate removal operation."""
-    target = ".claude/agents/subagents/kit-example.md"
-    monkeypatch.setattr(renderer, "expected", lambda _root: {target: b"original"})
-    renderer.write(tmp_path)
+    _attest_roles(tmp_path, {target: b"original"})
     monkeypatch.setattr(renderer, "expected", lambda _root: {})
 
     renderer.write(tmp_path)
@@ -237,17 +405,17 @@ def test_removed_attested_role_is_deleted(
 @pytest.mark.parametrize(
     "target",
     [
-        ".github/agents/kit-reviewer.agent.md",
-        ".claude/agents/kit-reviewer.md",
         ".github/agents/kit-example.md",
         ".claude/agents/kit-example.agent.md",
         ".claude/agents/kit-example.md/.",
+        ".github/agents/subagents/kit-example.agent.md",
+        ".claude/agents/subagents/kit-example.md",
     ],
 )
 def test_invalid_planned_paths_are_rejected_before_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
-    """Source planning cannot broaden the writer's authority or adopt native reviewers."""
+    """Source planning cannot broaden the writer's authority."""
     retained = ".github/agents/kit-example.agent.md"
     monkeypatch.setattr(renderer, "expected", lambda _root: {retained: b"original"})
     renderer.write(tmp_path)
@@ -260,17 +428,23 @@ def test_invalid_planned_paths_are_rejected_before_mutation(
 
 
 @pytest.mark.parametrize(
-    "target", [".github/agents/kit-reviewer.agent.md", ".claude/agents/kit-reviewer.md"]
+    "target",
+    [
+        ".github/agents/operator.agent.md",
+        ".claude/agents/operator.md",
+        ".github/agents/subagents/operator.agent.md",
+        ".claude/agents/nested/kit-example.md",
+    ],
 )
-def test_ledger_cannot_claim_separately_authored_reviewers(
+def test_ledger_cannot_claim_operator_owned_roles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
-    """The discovery exceptions are not generated ownership, even with attested bytes."""
+    """Non-canonical role files are not generated ownership, even with attested bytes."""
     monkeypatch.setattr(renderer, "expected", lambda _root: {})
     renderer.write(tmp_path)
     path = tmp_path / target
     path.parent.mkdir(parents=True)
-    path.write_bytes(b"native reviewer")
+    path.write_bytes(b"operator role")
     lock = tmp_path / renderer._LOCK_PATH
     ledger = json.loads(lock.read_bytes())
     ledger["files"][target] = hashlib.sha256(path.read_bytes()).hexdigest()

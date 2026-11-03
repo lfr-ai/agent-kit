@@ -1,9 +1,9 @@
 """FastAPI router with explicit schemas and RFC 9457 problem details.
 
-Copy into 'src/<package>/presentation/orders_api.py'. The router depends only on
+Copy into ``src/<package>/presentation/orders_api.py``. The router depends only on
 an application-service port; the composition root stores the wired service on
-'app.state.orders' and calls 'install_problem_handlers(app)'. Return annotations
-are the response models, so no route repeats them in 'response_model='.
+``app.state.orders`` and calls ``install_problem_handlers(app)``. Return annotations
+are the response models, so no route repeats them in ``response_model=``.
 """
 
 from datetime import datetime
@@ -22,6 +22,8 @@ PROBLEM_BASE = "https://api.example.com/problems"
 _MAX_ORDER_LINES = 100
 _MAX_ORDER_NOTE_CHARS = 500
 _DEFAULT_PAGE_SIZE_ORDERS = 20
+_MAX_PAGE_SIZE_ORDERS = 100
+_MAX_IDEMPOTENCY_KEY_CHARS = 255
 _HTTP_UNPROCESSABLE_CONTENT_STATUS_CODE = 422
 
 OrderStatus = Literal["draft", "confirmed", "cancelled"]
@@ -83,17 +85,29 @@ class OrderService(Protocol):
     """Application port used by this router."""
 
     def create(self, request: OrderCreateIn, /, *, idempotency_key: str) -> OrderOut:
-        """Create a draft order, replaying the stored result for a repeated key."""
+        """Create a draft order, replaying the stored result for a repeated key.
+
+        Args:
+            request (OrderCreateIn): Validated customer, currency, lines and note.
+            idempotency_key (str): Replay key; reuse with a different body raises
+                ``IdempotencyConflictError``.
+        """
         ...
 
     def get(self, order_id: str, /) -> OrderOut:
-        """Return one order or raise 'OrderNotFoundError'."""
+        """Return one order or raise ``OrderNotFoundError``."""
         ...
 
     def list_page(
         self, *, limit: int, cursor: str | None, status: OrderStatus | None
     ) -> OrderPageOut:
-        """Return one page; raise 'ValueError' for an invalid cursor."""
+        """Return one page; raise ``ValueError`` for an invalid cursor.
+
+        Args:
+            limit (int): Maximum orders to include.
+            cursor (str | None): Opaque continuation token, or None for the first page.
+            status (OrderStatus | None): Optional order-status filter.
+        """
         ...
 
 
@@ -106,16 +120,29 @@ def orders_service(request: Request) -> OrderService:
     return service
 
 ServiceDep = Annotated[OrderService, Depends(orders_service)]
+PageLimit = Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE_ORDERS)]
+PageCursor = Annotated[str | None, Query()]
+StatusFilter = Annotated[OrderStatus | None, Query(alias="status")]
+IdempotencyKey = Annotated[
+    str, Header(alias="Idempotency-Key", max_length=_MAX_IDEMPOTENCY_KEY_CHARS)
+]
 
 
 @router.get("", operation_id="listOrders")
 def list_orders(
     service: ServiceDep,
-    limit: Annotated[int, Query(ge=1, le=100)] = _DEFAULT_PAGE_SIZE_ORDERS,
-    cursor: Annotated[str | None, Query()] = None,
-    order_status: Annotated[OrderStatus | None, Query(alias="status")] = None,
+    limit: PageLimit = _DEFAULT_PAGE_SIZE_ORDERS,
+    cursor: PageCursor = None,
+    order_status: StatusFilter = None,
 ) -> OrderPageOut:
-    """List orders newest first using cursor pagination."""
+    """List orders newest first using cursor pagination.
+
+    Args:
+        service (ServiceDep): Injected application service supplying the page.
+        limit (PageLimit): Validated page-size bound from the query string.
+        cursor (PageCursor): Opaque continuation token, or None to start.
+        order_status (StatusFilter): Optional filter from the ``status`` query.
+    """
     try:
         return service.list_page(limit=limit, cursor=cursor, status=order_status)
     except ValueError as error:
@@ -135,9 +162,16 @@ def create_order(
     body: OrderCreateIn,
     response: Response,
     service: ServiceDep,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", max_length=255)],
+    idempotency_key: IdempotencyKey,
 ) -> OrderOut:
-    """Create a draft order; retries with the same key return the same order."""
+    """Create a draft order; retries with the same key return the same order.
+
+    Args:
+        body (OrderCreateIn): Validated draft-order request.
+        response (Response): Response whose Location header is set to the order URL.
+        service (ServiceDep): Injected application service owning creation and replay.
+        idempotency_key (IdempotencyKey): Required header used for replay.
+    """
     order = service.create(body, idempotency_key=idempotency_key)
     response.headers["Location"] = f"{router.prefix}/{order.id}"
     return order
@@ -149,16 +183,18 @@ def create_order(
     responses={status.HTTP_404_NOT_FOUND: {"description": "Missing"}},
 )
 def get_order(order_id: str, service: ServiceDep) -> OrderOut:
-    """Fetch one order."""
+    """Fetch one order.
+
+    Args:
+        order_id (str): Order identifier captured from the URL path.
+        service (ServiceDep): Injected service that returns the order or raises
+            ``OrderNotFoundError``.
+    """
     return service.get(order_id)
 
 
 def install_problem_handlers(app: FastAPI) -> None:
-    """Render every error as problem details, including framework errors.
-
-    Args:
-        app: Application whose default exception handlers are replaced.
-    """
+    """Render every error as problem details, including framework errors."""
     app.add_exception_handler(RequestValidationError, _validation_problem)
     app.add_exception_handler(HTTPException, _http_problem)
     app.add_exception_handler(OrderNotFoundError, _not_found_problem)
@@ -174,7 +210,16 @@ def problem(
     detail: str | None = None,
     errors: list[dict[str, str]] | None = None,
 ) -> JSONResponse:
-    """Build an RFC 9457 response with the problem media type."""
+    """Build an RFC 9457 response with the problem media type.
+
+    Args:
+        status_code (int): HTTP status used in both the response and problem body.
+        title (str): Short human-readable problem summary.
+        problem_type (str): Problem type URI; defaults to ``about:blank``.
+        detail (str | None): Optional occurrence-specific explanation.
+        errors (list[dict[str, str]] | None): Optional field-error objects with
+            ``pointer`` and ``message`` entries; omitted when empty.
+    """
     body: dict[str, object] = {"type": problem_type, "title": title, "status": status_code}
     if detail is not None:
         body["detail"] = detail

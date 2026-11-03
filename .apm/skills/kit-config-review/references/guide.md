@@ -16,7 +16,7 @@ equal names are not semantic equivalence.
 
 - No independently authored generated copy or undocumented source owner.
 - Unknown fields and malformed resource inputs fail explicitly.
-- Read-only workers omit execution/edit/delegation tools in native projections.
+- Non-implementing workers omit edit/delegation tools; their offline shell is not a sandbox.
 - Description/body limits and selected source footprint remain in budget.
 - Existing output is audited before generation updates hashes.
 - Negative fixtures prove forbidden fields, escaping paths and drift are rejected.

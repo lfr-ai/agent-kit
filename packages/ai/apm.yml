@@ -4,5 +4,10 @@ license: MIT
 description: Optional AI orchestration, model client, retrieval, queue, and streaming guidance.
 targets: [copilot, claude]
 includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
-dependencies: {}
+dependencies:
+  mcp:
+    - name: langfuse-docs
+      registry: false
+      transport: http
+      url: https://langfuse.com/api/mcp
 executables: {}

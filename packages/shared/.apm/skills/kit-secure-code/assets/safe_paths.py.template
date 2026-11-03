@@ -44,8 +44,8 @@ def safe_join(base: Path, *parts: str) -> Path:
     rejected as well.
 
     Args:
-        base: Trusted, existing directory.
-        *parts: Untrusted relative path parts.
+        base (Path): Trusted, existing directory.
+        *parts (str): Untrusted relative path parts.
 
     Returns:
         The resolved path inside ``base``; it may not exist yet.
@@ -69,7 +69,7 @@ def validate_file_name(name: str) -> str:
     """Return a caller-chosen file name when it is a plain, portable name.
 
     Args:
-        name: Untrusted single file name, for example from an upload.
+        name (str): Untrusted single file name, for example from an upload.
 
     Returns:
         The unchanged name.

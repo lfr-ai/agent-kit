@@ -4,5 +4,32 @@ license: MIT
 description: Optional Bicep authoring and Azure what-if review.
 targets: [copilot, claude]
 includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
-dependencies: {}
+dependencies:
+  mcp:
+    - name: azure
+      registry: false
+      transport: stdio
+      command: bunx
+      args:
+        - --bun
+        - "@azure/mcp@2.0.5"
+        - server
+        - start
+        - --read-only
+        - --namespace
+        - bicepschema
+        - --namespace
+        - get_azure_bestpractices
+        - --namespace
+        - wellarchitectedframework
+        - --namespace
+        - group
+        - --namespace
+        - policy
+        - --namespace
+        - role
+        - --namespace
+        - acr
+        - --namespace
+        - containerapps
 executables: {}

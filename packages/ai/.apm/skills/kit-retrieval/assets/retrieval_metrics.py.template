@@ -1,6 +1,6 @@
 """Offline retrieval metrics and golden-set evaluation.
 
-Copy to 'retrieval/metrics.py'. All functions are pure and deterministic so
+Copy to ``retrieval/metrics.py``. All functions are pure and deterministic so
 they can gate CI on a versioned golden set. Ranked inputs are chunk or source
 identifiers in retrieval order; relevance judgments are identifier-to-gain
 mappings where a larger gain means more useful evidence.
@@ -20,18 +20,18 @@ def _check_k(k: int) -> None:
 
 
 def recall_at_k(retrieved: Sequence[str], relevant: Collection[str], k: int) -> float:
-    """Share of relevant identifiers found in the first 'k' results.
+    """Share of relevant identifiers found in the first ``k`` results.
 
     Args:
-        retrieved: Identifiers in rank order.
-        relevant: Identifiers judged relevant.
-        k: Cut-off.
+        retrieved (Sequence[str]): Identifiers in rank order.
+        relevant (Collection[str]): Identifiers judged relevant.
+        k (int): Cut-off.
 
     Returns:
         Recall in [0, 1].
 
     Raises:
-        ValueError: If 'k' is invalid or nothing is relevant.
+        ValueError: If ``k`` is invalid or nothing is relevant.
     """
     _check_k(k)
     if not relevant:
@@ -42,12 +42,12 @@ def recall_at_k(retrieved: Sequence[str], relevant: Collection[str], k: int) -> 
 def precision_at_k(
     retrieved: Sequence[str], relevant: Collection[str], k: int
 ) -> float:
-    """Share of the first 'k' results that are relevant.
+    """Share of the first ``k`` results that are relevant.
 
     Args:
-        retrieved: Identifiers in rank order.
-        relevant: Identifiers judged relevant.
-        k: Cut-off; missing positions count as non-relevant.
+        retrieved (Sequence[str]): Identifiers in rank order.
+        relevant (Collection[str]): Identifiers judged relevant.
+        k (int): Cut-off; missing positions count as non-relevant.
 
     Returns:
         Precision in [0, 1].
@@ -60,8 +60,8 @@ def reciprocal_rank(retrieved: Sequence[str], relevant: Collection[str]) -> floa
     """Inverse rank of the first relevant result, or 0.0 when none appears.
 
     Args:
-        retrieved: Identifiers in rank order.
-        relevant: Identifiers judged relevant.
+        retrieved (Sequence[str]): Identifiers in rank order.
+        relevant (Collection[str]): Identifiers judged relevant.
 
     Returns:
         Reciprocal rank in [0, 1].
@@ -79,15 +79,15 @@ def ndcg_at_k(retrieved: Sequence[str], gains: Mapping[str, float], k: int) -> f
     Duplicate identifiers earn gain only at their first position.
 
     Args:
-        retrieved: Identifiers in rank order.
-        gains: Graded relevance per identifier; absent means 0.
-        k: Cut-off.
+        retrieved (Sequence[str]): Identifiers in rank order.
+        gains (Mapping[str, float]): Graded relevance per identifier; absent means 0.
+        k (int): Cut-off.
 
     Returns:
         nDCG in [0, 1].
 
     Raises:
-        ValueError: If 'k' is invalid, a gain is negative, or no gain is positive.
+        ValueError: If ``k`` is invalid, a gain is negative, or no gain is positive.
     """
     _check_k(k)
     if any(gain < 0 for gain in gains.values()):
@@ -116,8 +116,8 @@ def citation_precision(cited: Collection[str], retrieved: Collection[str]) -> fl
     either fabricated or leaked; both are failures.
 
     Args:
-        cited: Identifiers cited by the generated answer.
-        retrieved: Identifiers handed to the generator.
+        cited (Collection[str]): Identifiers cited by the generated answer.
+        retrieved (Collection[str]): Identifiers handed to the generator.
 
     Returns:
         Precision in [0, 1]; 1.0 when the answer cites nothing.
@@ -178,9 +178,10 @@ def evaluate(
     """Score retrieval runs against a golden set.
 
     Args:
-        runs: Query id mapped to retrieved identifiers in rank order.
-        golden: Judged queries.
-        k: Cut-off.
+        runs (Mapping[str, Sequence[str]]): Query id mapped to retrieved identifiers in
+            rank order.
+        golden (Sequence[GoldenQuery]): Judged queries.
+        k (int): Cut-off.
 
     Returns:
         The aggregate report.
@@ -226,11 +227,11 @@ def evaluate(
 def load_golden_set(path: Path) -> list[GoldenQuery]:
     """Read a JSON Lines golden set.
 
-    Each line is an object with 'query_id', 'text', 'subject' and an optional
-    'gains' object of identifier to non-negative number.
+    Each line is an object with ``query_id``, ``text``, ``subject`` and an optional
+    ``gains`` object of identifier to non-negative number.
 
     Args:
-        path: File to read.
+        path (Path): File to read.
 
     Returns:
         Golden queries in file order.

@@ -89,8 +89,8 @@ def check_source(text: str, path: str) -> list[str]:
     """Return findings for one module.
 
     Args:
-        text: Python source text.
-        path: Display path used as the finding prefix.
+        text (str): Python source text.
+        path (str): Display path used as the finding prefix.
 
     Returns:
         Findings formatted as ``path:line: rule: message``, sorted by line.
@@ -303,11 +303,7 @@ def _creates_session(call: ast.Call, factories: set[str]) -> bool:
 
 
 def self_test() -> list[str]:
-    """Check both rules on in-memory sources and return unmet expectations.
-
-    Returns:
-        One message per synthetic case whose rules differ from the expectation.
-    """
+    """Check both rules on in-memory sources and return unmet expectations."""
     failures: list[str] = []
     for source, expected in _SELF_TEST_CASES:
         rules = [finding.split(": ")[1] for finding in check_source(source, "case.py")]
@@ -351,11 +347,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Scan files or directories and print every finding.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero without findings, one with findings, two for unusable input.
+    Returns zero without findings, one with findings, two for unusable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

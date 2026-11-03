@@ -1,6 +1,6 @@
-"""LlamaIndex retriever behind the framework-neutral 'Retriever' port.
+"""LlamaIndex retriever behind the framework-neutral ``Retriever`` port.
 
-Copy to 'retrieval/adapters/llamaindex.py'. Requires 'llama-index-core'. Only
+Copy to ``retrieval/adapters/llamaindex.py``. Requires ``llama-index-core``. Only
 this module imports LlamaIndex. Like the LangChain adapter, access control is
 enforced by a per-query factory that applies metadata filters inside the
 index, and every returned node is re-validated before it leaves the adapter.
@@ -29,7 +29,7 @@ RetrieverFactory = Callable[[Query], BaseRetriever]
 
 
 class LlamaIndexRetrieverAdapter:
-    """Adapt a LlamaIndex 'BaseRetriever' to the 'Retriever' port."""
+    """Adapt a LlamaIndex ``BaseRetriever`` to the ``Retriever`` port."""
 
     def __init__(
         self,
@@ -41,9 +41,10 @@ class LlamaIndexRetrieverAdapter:
         """Configure the adapter.
 
         Args:
-            factory: Builds a pre-filtered retriever for one query.
-            name: Strategy name reported in hits and fusion weights.
-            unavailable: Exceptions mapped to 'RetrievalUnavailableError'.
+            factory (RetrieverFactory): Builds a pre-filtered retriever for one query.
+            name (str): Strategy name reported in hits and fusion weights.
+            unavailable (tuple[type[Exception], ...]): Exceptions mapped to
+                ``RetrievalUnavailableError``.
         """
         self._factory = factory
         self._name = name
@@ -58,7 +59,7 @@ class LlamaIndexRetrieverAdapter:
         """Run the framework retriever and convert its nodes.
 
         Args:
-            query: Request to execute.
+            query (Query): Request to execute.
 
         Returns:
             Visible, attributable hits in framework order.

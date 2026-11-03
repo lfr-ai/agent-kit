@@ -72,6 +72,14 @@ application needs only one store and plain SQL or a client library does the
 job; the pgvector adapter in [pgvector_store.py.template](../assets/pgvector_store.py.template)
 is about 300 lines with no framework.
 
+Reuse an existing LlamaIndex ingestion/index pipeline or LangChain retriever
+before adding a parallel framework. DSPy is an optional optimization/evaluation
+layer over the existing retrieval port, not a second vector store; use separate
+training and held-out examples. LangGraph is useful only if an existing graph
+needs bounded corrective retrieval or approval/resumption. Measure the simpler
+retriever first and keep store-level ACL filters in every path. No framework
+installation is required by this toolkit guidance.
+
 ## Upgrades
 
 - Pin framework versions; upgrade one adapter at a time behind its contract tests.

@@ -30,8 +30,14 @@
 | Endpoint (HTTP) | https://... |
 | Authorization | OAuth per specification / scoped token / none |
 | Identity | dedicated account or app; not a personal administrator |
+| Token audience (resource identifier) | |
+| Scopes requested | |
+| Token passthrough | server exchanges or issues its own token / forwards the client token (reject) |
 | Token scope and expiry | |
 | Where the secret is supplied | prompted input / user environment |
+| Vendor read-only mode or header | flag or header name / none |
+| `tools` allowlist | tool names / not supported by the host |
+| Query data sent to a third party | yes / no (classification: ) |
 
 ## Tools and data
 

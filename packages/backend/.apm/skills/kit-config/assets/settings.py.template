@@ -1,7 +1,7 @@
 """Typed application settings parsed once at the composition root.
 
 Copy into the configuration/composition package of the consumer (for example
-'myapp/composition/settings.py'). Domain and application code never import this
+``myapp/composition/settings.py``). Domain and application code never import this
 module; the composition root passes the facets below to the adapters that need
 them.
 """
@@ -110,7 +110,16 @@ class AppSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Document precedence: arguments, environment, dotenv, secret files."""
+        """Set precedence to arguments, environment, dotenv, then secret files.
+
+        Args:
+            settings_cls (type[BaseSettings]): Settings model supplied by
+                Pydantic; unused because the source instances are already bound.
+            init_settings (PydanticBaseSettingsSource): Constructor argument source.
+            env_settings (PydanticBaseSettingsSource): Process environment source.
+            dotenv_settings (PydanticBaseSettingsSource): Configured dotenv source.
+            file_secret_settings (PydanticBaseSettingsSource): Secret-file source.
+        """
         del settings_cls
         return (init_settings, env_settings, dotenv_settings, file_secret_settings)
 
@@ -126,7 +135,7 @@ def format_errors(error: ValidationError) -> str:
 
 @cache
 def load_settings() -> AppSettings:
-    """Parse settings once; tests call 'load_settings.cache_clear()' to reset."""
+    """Parse settings once; tests call ``load_settings.cache_clear()`` to reset."""
     return AppSettings()  # type: ignore[call-arg]  # values come from sources
 
 

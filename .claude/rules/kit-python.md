@@ -15,6 +15,9 @@ paths:
   extracting named helpers; never suppress those limits.
 - Use paired double-backtick literals for inline code in Python docstrings;
   keep Markdown prose in standard CommonMark single-backtick syntax.
+- Use a one-line docstring when a callable has at most one parameter, a plain
+  return, and no constraint, effect, or failure worth a section; public callables
+  with two or more parameters need `Args:`.
 - Catch specific failures and surface actionable diagnostics without credentials.
 - Tests use temporary workspaces; never depend on personal configuration or real cloud data.
 - A source-path calculation must not assume the package is installed in the consumer.

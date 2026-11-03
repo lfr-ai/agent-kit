@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from enum import Enum
 import json
 import os
@@ -13,6 +14,8 @@ from typing import TYPE_CHECKING, TypedDict, TypeGuard, override
 from urllib.parse import urlsplit
 
 import yaml
+
+from agent_kit.core.guards import is_int, is_json_object, is_str_list
 
 if TYPE_CHECKING:
     from yaml.nodes import MappingNode
@@ -90,7 +93,7 @@ _DEPENDABOT_VERSION = 2
 _DEPENDABOT_ECOSYSTEMS = frozenset(
     {"uv", "bun", "docker", "github-actions", "pre-commit", "devcontainers"}
 )
-_AUDIT_COMMAND = "uv run --locked --no-sync python scripts/audit_dependencies.py"
+_AUDIT_COMMAND = "uv run --no-project python scripts/audit_dependencies.py"
 _SYNC_COMMAND = "uv sync --locked"
 _REVIEW_SCOPES = {"runtime", "development", "unknown"}
 _OIDC_READ = {"contents": "read", "id-token": "write"}
@@ -171,13 +174,45 @@ class _WorkflowLoader(yaml.BaseLoader):
         return result
 
 
-def _mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Narrow decoded data without treating arbitrary values as mappings."""
-    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+def _child(value: object, key: str) -> object:
+    """Return a decoded object's field.
+
+    Args:
+        value (object): Decoded value that may be an object.
+        key (str): Field name to read.
+
+    Returns:
+        object: ``value[key]``, or ``None`` when ``value`` is not an object or lacks the key.
+    """
+    return value.get(key) if is_json_object(value) else None
+
+
+def _job_needs(job: object) -> list[object] | None:
+    """Return a job's ``needs`` as a list, accepting the one-string shorthand."""
+    needs = _child(job, "needs")
+    if isinstance(needs, str):
+        return [needs]
+    return needs if isinstance(needs, list) else None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Maintainers:
+    """Validated account-neutral ownership source."""
+
+    owners: list[str]
+    repository: str | None
+    security_contact: str | None
+    conduct_contact: str | None
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     """Reject duplicate maintainer fields without exposing their contents.
+
+    Args:
+        pairs (list[tuple[str, object]]): Decoded ``(field, value)`` pairs in file order.
+
+    Returns:
+        dict[str, object]: The fields of one maintainer object keyed by name.
 
     Raises:
         _GovernanceInputError: A maintainer field is repeated.
@@ -190,23 +225,30 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
-def _valid_owners(owners: object) -> bool:
+def _valid_owners(owners: object) -> TypeGuard[list[str]]:
     """Return whether owners are unique GitHub account or team handles."""
     return (
-        isinstance(owners, list)
-        and all(isinstance(owner, str) and _OWNER.fullmatch(owner) for owner in owners)
+        is_str_list(owners)
+        and all(_OWNER.fullmatch(owner) for owner in owners)
         and len(set(owners)) == len(owners)
     )
 
 
-def _verify_contact(field: str, contact: object) -> None:
-    """Accept an absent contact or a private HTTPS or mailto route.
+def _contact(field: str, contact: object) -> str | None:
+    """Accept an absent contact or return a private HTTPS or mailto route.
+
+    Args:
+        field (str): Maintainer field name, reported when the contact is rejected.
+        contact (object): Decoded contact value.
+
+    Returns:
+        str | None: The validated contact, or ``None`` when it is absent.
 
     Raises:
         _GovernanceInputError: The contact is not a private HTTPS or mailto route.
     """
     if contact is None:
-        return
+        return None
     if not isinstance(contact, str) or any(char.isspace() for char in contact):
         raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
     parsed = urlsplit(contact)
@@ -218,9 +260,23 @@ def _verify_contact(field: str, contact: object) -> None:
     )
     if not allowed:
         raise _GovernanceInputError(_GovernanceIssue.INVALID_CONTACT, field=field)
+    return contact
 
 
-def _maintainers(root: Path) -> dict[str, object]:
+def _repository(value: object) -> str | None:
+    """Accept an absent repository or return an approved ``owner/name`` coordinate.
+
+    Raises:
+        _GovernanceInputError: The value is not an approved coordinate.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _REPOSITORY.fullmatch(value):
+        raise _GovernanceInputError(_GovernanceIssue.INVALID_REPOSITORY)
+    return value
+
+
+def _maintainers(root: Path) -> _Maintainers:
     """Read the explicit account-neutral ownership source.
 
     Raises:
@@ -230,24 +286,32 @@ def _maintainers(root: Path) -> dict[str, object]:
         (root / ".github/maintainers.json").read_text(encoding="utf-8"),
         object_pairs_hook=_unique_pairs,
     )
-    if not _mapping(raw) or set(raw) != _FIELDS:
+    if not is_json_object(raw) or set(raw) != _FIELDS:
         raise _GovernanceInputError(_GovernanceIssue.INVALID_MAINTAINER_FIELDS)
-    if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+    version = raw["schema_version"]
+    if not is_int(version) or version != 1:
         raise _GovernanceInputError(_GovernanceIssue.INVALID_MAINTAINER_SCHEMA)
-    if not _valid_owners(raw["owners"]):
+    owners = raw["owners"]
+    if not _valid_owners(owners):
         raise _GovernanceInputError(_GovernanceIssue.INVALID_OWNERS)
-    repository = raw["repository"]
-    if repository is not None and (
-        not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository)
-    ):
-        raise _GovernanceInputError(_GovernanceIssue.INVALID_REPOSITORY)
-    for field in ("security_contact", "conduct_contact"):
-        _verify_contact(field, raw[field])
-    return raw
+    return _Maintainers(
+        owners=owners,
+        repository=_repository(raw["repository"]),
+        security_contact=_contact("security_contact", raw["security_contact"]),
+        conduct_contact=_contact("conduct_contact", raw["conduct_contact"]),
+    )
 
 
-def _ownership(root: Path, config: dict[str, object]) -> list[str]:
-    """Keep ownership coverage explicit, including CODEOWNERS itself."""
+def _ownership(root: Path, config: _Maintainers) -> list[str]:
+    """Keep ownership coverage explicit, including CODEOWNERS itself.
+
+    Args:
+        root (Path): Repository root that holds ``.github/CODEOWNERS``.
+        config (_Maintainers): Approved ownership source.
+
+    Returns:
+        list[str]: Findings; empty when CODEOWNERS matches the approved owners.
+    """
     rules = [
         line.partition("#")[0].strip()
         for line in (root / ".github/CODEOWNERS")
@@ -255,9 +319,7 @@ def _ownership(root: Path, config: dict[str, object]) -> list[str]:
         .splitlines()
         if line.partition("#")[0].strip()
     ]
-    owners = config["owners"]
-    if not isinstance(owners, list):
-        return ["CODEOWNERS owner source is invalid"]
+    owners = config.owners
     if not owners:
         return [] if not rules else ["CODEOWNERS assigns an unapproved identity"]
     expected = ["*", *owners]
@@ -273,13 +335,17 @@ def publication_blockers(root: Path) -> list[str]:
         findings = _ownership(root, config)
     except (OSError, ValueError) as error:
         return [str(error)]
-    if not config["owners"]:
+    if not config.owners:
         findings.append("CODEOWNERS has no approved personal account or team")
-    for field in ("repository", "security_contact", "conduct_contact"):
-        if config[field] is None:
+    for field, value in (
+        ("repository", config.repository),
+        ("security_contact", config.security_contact),
+        ("conduct_contact", config.conduct_contact),
+    ):
+        if value is None:
             findings.append(f"publication requires an approved {field}")
     active_repository = os.environ.get("GITHUB_REPOSITORY")
-    if active_repository and config["repository"] != active_repository:
+    if active_repository and config.repository != active_repository:
         findings.append(
             "approved repository does not match the active release repository"
         )
@@ -297,13 +363,13 @@ def _load_workflow(path: Path) -> object:
 
 def _checkout_reviewed(options: object) -> bool:
     """Return whether checkout disables persistent credentials."""
-    return _mapping(options) and options.get("persist-credentials") == "false"
+    return is_json_object(options) and options.get("persist-credentials") == "false"
 
 
 def _upload_reviewed(options: object) -> bool:
     """Return whether an artifact upload uses a reviewed name and path."""
     return (
-        _mapping(options)
+        is_json_object(options)
         and (
             options.get("name"),
             options.get("path"),
@@ -316,14 +382,15 @@ def _upload_reviewed(options: object) -> bool:
 def _download_reviewed(options: object) -> bool:
     """Return whether an artifact download matches a reviewed upload."""
     return (
-        _mapping(options) and (options.get("name"), options.get("path")) in _DOWNLOADS
+        is_json_object(options)
+        and (options.get("name"), options.get("path")) in _DOWNLOADS
     )
 
 
 def _codecov_reviewed(options: object) -> bool:
     """Return whether Codecov pins its CLI, keeps validation, and uses OIDC."""
     return (
-        _mapping(options)
+        is_json_object(options)
         and str(options.get("version", "")).startswith("v")
         and options.get("skip_validation") in {None, "false"}
         and "token" not in options
@@ -355,8 +422,16 @@ _ACTION_OPTION_RULES = (
 
 
 def _step_findings(name: str, step: object) -> list[str]:
-    """Reject mutable actions, interpolated scripts, and unreviewed options."""
-    if not _mapping(step):
+    """Reject mutable actions, interpolated scripts, and unreviewed options.
+
+    Args:
+        name (str): Workflow file name used to prefix each finding.
+        step (object): Decoded workflow step.
+
+    Returns:
+        list[str]: One message per violated step rule; empty when the step passes.
+    """
+    if not is_json_object(step):
         return [f"{name}: malformed workflow step"]
     findings: list[str] = []
     action = step.get("uses")
@@ -381,7 +456,16 @@ def _step_findings(name: str, step: object) -> list[str]:
 def _job_policy_findings(
     name: str, identifier: str, job: dict[str, object]
 ) -> list[str]:
-    """Require timeouts, approved permissions, no secrets, and reviewed reuse."""
+    """Require timeouts, approved permissions, no secrets, and reviewed reuse.
+
+    Args:
+        name (str): Workflow file name used to prefix each finding.
+        identifier (str): Job key within the workflow.
+        job (dict[str, object]): Decoded job mapping.
+
+    Returns:
+        list[str]: One message per violated job rule; empty when the job passes.
+    """
     findings: list[str] = []
     if "steps" in job and not isinstance(job.get("timeout-minutes"), str):
         findings.append(f"{name}: job {identifier} needs an explicit timeout")
@@ -398,8 +482,17 @@ def _job_policy_findings(
 
 
 def _job_findings(name: str, identifier: str, job: object) -> list[str]:
-    """Check one job's policy and every step it runs."""
-    if not _mapping(job):
+    """Check one job's policy and every step it runs.
+
+    Args:
+        name (str): Workflow file name used to prefix each finding.
+        identifier (str): Job key within the workflow.
+        job (object): Decoded job value.
+
+    Returns:
+        list[str]: Policy and step findings; empty when the job passes.
+    """
+    if not is_json_object(job):
         return [f"{name}: job {identifier} must be a mapping"]
     findings = _job_policy_findings(name, identifier, job)
     steps = job.get("steps", [])
@@ -414,7 +507,16 @@ def _job_findings(name: str, identifier: str, job: object) -> list[str]:
 def _root_findings(
     name: str, raw: dict[str, object], triggers: dict[str, object]
 ) -> list[str]:
-    """Reject privileged triggers and broader default permissions."""
+    """Reject privileged triggers and broader default permissions.
+
+    Args:
+        name (str): Workflow file name used to prefix each finding.
+        raw (dict[str, object]): Decoded workflow document.
+        triggers (dict[str, object]): Decoded ``on`` mapping of the workflow.
+
+    Returns:
+        list[str]: One message per violated root rule; empty when the root passes.
+    """
     findings: list[str] = []
     if "pull_request_target" in triggers:
         findings.append(f"{name}: pull_request_target is not an approved trigger")
@@ -428,11 +530,10 @@ def _ci_audit_consumers(jobs: dict[str, object]) -> list[str]:
     findings: list[str] = []
     for identifier in ("verify", "precommit", "smoke"):
         job = jobs.get(identifier)
-        needs = job.get("needs") if _mapping(job) else None
-        needed = [needs] if isinstance(needs, str) else needs
+        needed = _job_needs(job)
         if (
-            not _mapping(job)
-            or not isinstance(needed, list)
+            not is_json_object(job)
+            or needed is None
             or "audit" not in needed
             or job.get("if") not in (None, "success()")
         ):
@@ -444,18 +545,25 @@ def _ci_audit_consumers(jobs: dict[str, object]) -> list[str]:
 
 
 def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[str]:
-    """Require gate triggers, a complete summary, and audit-before-install edges."""
+    """Require gate triggers, a complete summary, and audit-before-install edges.
+
+    Args:
+        triggers (dict[str, object]): Decoded ``on`` mapping of ``ci.yml``.
+        jobs (dict[str, object]): Decoded ``jobs`` mapping of ``ci.yml``.
+
+    Returns:
+        list[str]: One message per violated CI rule; empty when the workflow passes.
+    """
     findings: list[str] = []
     if not {"pull_request", "merge_group", "workflow_call"}.issubset(triggers):
         findings.append(
             "ci.yml: PR, merge queue, and reusable verification triggers are required"
         )
     summary = jobs.get("checks")
-    needs = summary.get("needs") if _mapping(summary) else None
-    needed = [needs] if isinstance(needs, str) else needs
+    needed = _job_needs(summary)
     if (
-        not _mapping(summary)
-        or not isinstance(needed, list)
+        not is_json_object(summary)
+        or needed is None
         or sorted(str(item) for item in needed) != sorted(set(jobs) - {"checks"})
         or summary.get("if") != "always()"
     ):
@@ -463,7 +571,7 @@ def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[s
             "ci.yml: the required summary must always run and need every other job"
         )
     audit = jobs.get("audit")
-    if not _mapping(audit) or audit.get("uses") != _REUSABLE["ci.yml"]:
+    if not is_json_object(audit) or audit.get("uses") != _REUSABLE["ci.yml"]:
         findings.append("ci.yml: the dependency audit must be a required job")
     findings.extend(_ci_audit_consumers(jobs))
     return findings
@@ -471,16 +579,8 @@ def _ci_findings(triggers: dict[str, object], jobs: dict[str, object]) -> list[s
 
 def _release_command_findings(publish: dict[str, object]) -> list[str]:
     """Require one draft prerelease creation that verifies an existing tag."""
-    steps = publish.get("steps")
-    commands = (
-        [step.get("run") for step in steps if _mapping(step)]
-        if isinstance(steps, list)
-        else []
-    )
     release_commands = [
-        command
-        for command in commands
-        if isinstance(command, str) and "gh release create " in command
+        command for command in _run_commands(publish) if "gh release create " in command
     ]
     if len(release_commands) != 1 or any(
         flag not in release_commands[0].split()
@@ -493,24 +593,28 @@ def _release_command_findings(publish: dict[str, object]) -> list[str]:
 def _release_findings(
     triggers: dict[str, object], jobs: dict[str, object]
 ) -> list[str]:
-    """Require verified, environment-gated publication from a tag push."""
+    """Require verified, environment-gated publication from a tag push.
+
+    Args:
+        triggers (dict[str, object]): Decoded ``on`` mapping of ``release.yml``.
+        jobs (dict[str, object]): Decoded ``jobs`` mapping of ``release.yml``.
+
+    Returns:
+        list[str]: One message per violated release rule; empty when it passes.
+    """
     findings: list[str] = []
     publish = jobs.get("publish")
     verify = jobs.get("verify")
-    if not _mapping(verify) or verify.get("uses") != _REUSABLE["release.yml"]:
+    if not is_json_object(verify) or verify.get("uses") != _REUSABLE["release.yml"]:
         findings.append(
             "release.yml: publication must depend on the shared verification gate"
         )
-    arguments = verify.get("with") if _mapping(verify) else None
-    if (
-        not _mapping(arguments)
-        or arguments.get("release-tag") != "${{ github.ref_name }}"
-    ):
+    if _child(_child(verify, "with"), "release-tag") != "${{ github.ref_name }}":
         findings.append(
             "release.yml: verification must validate the actual release tag"
         )
     if (
-        not _mapping(publish)
+        not is_json_object(publish)
         or publish.get("needs") != "verify"
         or publish.get("environment") != "release"
         or publish.get("if") != "github.event.repository.visibility == 'public'"
@@ -520,7 +624,7 @@ def _release_findings(
         )
     if "push" not in triggers or len(triggers) != 1:
         findings.append("release.yml: only tag push may start the release workflow")
-    if _mapping(publish):
+    if is_json_object(publish):
         findings.extend(_release_command_findings(publish))
     return findings
 
@@ -528,7 +632,15 @@ def _release_findings(
 def _dependency_review_workflow(
     triggers: dict[str, object], jobs: dict[str, object]
 ) -> list[str]:
-    """Require complete dependency review limited to pull requests."""
+    """Require complete dependency review limited to pull requests.
+
+    Args:
+        triggers (dict[str, object]): Decoded ``on`` mapping of the workflow.
+        jobs (dict[str, object]): Decoded ``jobs`` mapping of the workflow.
+
+    Returns:
+        list[str]: Review-scope and trigger findings; empty when the workflow passes.
+    """
     findings = _dependency_review(jobs)
     if set(triggers) != {"pull_request"}:
         findings.append(
@@ -540,7 +652,16 @@ def _dependency_review_workflow(
 def _workflow_specific(
     name: str, triggers: dict[str, object], jobs: dict[str, object]
 ) -> list[str]:
-    """Apply the contract owned by one named workflow, if any."""
+    """Apply the contract owned by one named workflow, if any.
+
+    Args:
+        name (str): Workflow file name that selects the contract.
+        triggers (dict[str, object]): Decoded ``on`` mapping of the workflow.
+        jobs (dict[str, object]): Decoded ``jobs`` mapping of the workflow.
+
+    Returns:
+        list[str]: Workflow-specific findings; empty for workflows without one.
+    """
     if name == "ci.yml":
         return _ci_findings(triggers, jobs)
     if name == "dependency-audit.yml":
@@ -553,16 +674,24 @@ def _workflow_specific(
 
 
 def _workflow(root: Path, name: str) -> list[str]:
-    """Reject unsafe or unreviewed executable workflow surfaces."""
+    """Reject unsafe or unreviewed executable workflow surfaces.
+
+    Args:
+        root (Path): Repository root that holds ``.github/workflows``.
+        name (str): Workflow file name to check.
+
+    Returns:
+        list[str]: Root, job, and workflow-specific findings; empty when it passes.
+    """
     raw = _load_workflow(root / ".github/workflows" / name)
-    if not _mapping(raw):
+    if not is_json_object(raw):
         return [f"{name}: workflow must be a mapping"]
     triggers = raw.get("on")
-    if not _mapping(triggers):
+    if not is_json_object(triggers):
         return [f"{name}: explicit trigger mapping is required"]
     findings = _root_findings(name, raw, triggers)
     jobs = raw.get("jobs")
-    if not _mapping(jobs):
+    if not is_json_object(jobs):
         return [*findings, f"{name}: jobs must be explicit"]
     for identifier, job in jobs.items():
         findings.extend(_job_findings(name, identifier, job))
@@ -570,22 +699,41 @@ def _workflow(root: Path, name: str) -> list[str]:
     return findings
 
 
+def _list_child(value: object, key: str) -> list[object]:
+    """Return a decoded object's list field.
+
+    Args:
+        value (object): Decoded value that may be an object.
+        key (str): Field name to read.
+
+    Returns:
+        list[object]: ``value[key]`` when it is a list, otherwise an empty list.
+    """
+    child = _child(value, key)
+    return child if isinstance(child, list) else []
+
+
 def _run_commands(job: object) -> list[str]:
     """Return a job's literal shell commands in step order."""
-    steps = job.get("steps") if _mapping(job) else None
-    if not isinstance(steps, list):
-        return []
     return [
         command
-        for step in steps
-        if _mapping(step) and isinstance(command := step.get("run"), str)
+        for step in _list_child(job, "steps")
+        if is_json_object(step) and isinstance(command := step.get("run"), str)
     ]
 
 
 def _dependency_audit(
     triggers: dict[str, object], jobs: dict[str, object]
 ) -> list[str]:
-    """Require scheduled, reusable auditing that precedes installing the lock."""
+    """Require scheduled, reusable auditing that precedes installing the lock.
+
+    Args:
+        triggers (dict[str, object]): Decoded ``on`` mapping of the workflow.
+        jobs (dict[str, object]): Decoded ``jobs`` mapping of the workflow.
+
+    Returns:
+        list[str]: Trigger and ordering findings; empty when the workflow passes.
+    """
     findings: list[str] = []
     if not {"schedule", "workflow_call"}.issubset(triggers):
         findings.append(
@@ -606,12 +754,11 @@ def _dependency_audit(
 def _dependency_review(jobs: dict[str, object]) -> list[str]:
     """Require vulnerability and license review for every dependency scope."""
     job = jobs.get("review")
-    steps = job.get("steps") if _mapping(job) else None
     options = next(
         (
             step.get("with")
-            for step in (steps if isinstance(steps, list) else [])
-            if _mapping(step)
+            for step in _list_child(job, "steps")
+            if is_json_object(step)
             and str(step.get("uses", "")).startswith(
                 "actions/dependency-review-action@"
             )
@@ -620,11 +767,11 @@ def _dependency_review(jobs: dict[str, object]) -> list[str]:
     )
     scopes = (
         {scope.strip() for scope in str(options.get("fail-on-scopes", "")).split(",")}
-        if _mapping(options)
+        if is_json_object(options)
         else set()
     )
     if (
-        not _mapping(options)
+        not is_json_object(options)
         or options.get("vulnerability-check") != "true"
         or options.get("license-check") != "true"
         or options.get("fail-on-severity") != "low"
@@ -638,7 +785,15 @@ def _dependency_review(jobs: dict[str, object]) -> list[str]:
 
 
 def _ruleset(root: Path, name: str) -> list[str]:
-    """Validate an importable repository ruleset without claiming it is applied."""
+    """Validate an importable repository ruleset without claiming it is applied.
+
+    Args:
+        root (Path): Repository root that holds ``.github/rulesets``.
+        name (str): Ruleset file name, a key of the reviewed contracts.
+
+    Returns:
+        list[str]: Scope, inventory, and parameter findings; empty when it passes.
+    """
     expected = _RULESET_RULES[name]
     try:
         raw: object = json.loads(
@@ -647,24 +802,17 @@ def _ruleset(root: Path, name: str) -> list[str]:
         )
     except (OSError, ValueError):
         return [f"rulesets/{name}: missing, invalid, or duplicate-key JSON"]
-    if not _mapping(raw):
+    if not is_json_object(raw):
         return [f"rulesets/{name}: ruleset must be a mapping"]
     findings = _ruleset_scope_findings(name, raw, expected)
     rules = raw.get("rules")
-    typed: dict[str, object] = (
-        {
-            kind: rule
-            for rule in rules
-            if _mapping(rule) and isinstance(kind := rule.get("type"), str)
-        }
-        if isinstance(rules, list)
-        else {}
-    )
-    if (
-        not isinstance(rules, list)
-        or len(typed) != len(rules)
-        or set(typed) != expected["required"]
-    ):
+    entries = rules if isinstance(rules, list) else []
+    typed: dict[str, object] = {
+        kind: rule
+        for rule in entries
+        if is_json_object(rule) and isinstance(kind := rule.get("type"), str)
+    }
+    if len(typed) != len(entries) or set(typed) != expected["required"]:
         findings.append(
             f"rulesets/{name}: rule inventory must contain each reviewed type exactly once"
         )
@@ -676,14 +824,22 @@ def _ruleset(root: Path, name: str) -> list[str]:
 def _ruleset_scope_findings(
     name: str, raw: dict[str, object], expected: _RulesetContract
 ) -> list[str]:
-    """Require the fixed target, scope, enforcement, and reviewed bypass actors."""
+    """Require the fixed target, scope, enforcement, and reviewed bypass actors.
+
+    Args:
+        name (str): Ruleset file name used to prefix each finding.
+        raw (dict[str, object]): Decoded ruleset document.
+        expected (_RulesetContract): Reviewed target, include refs, and required rule types.
+
+    Returns:
+        list[str]: Scope and bypass findings; empty when both match the contract.
+    """
     findings: list[str] = []
-    conditions = raw.get("conditions")
-    ref_name = conditions.get("ref_name") if _mapping(conditions) else None
+    ref_name = _child(raw.get("conditions"), "ref_name")
     if (
         raw.get("target") != expected["target"]
         or raw.get("enforcement") != "active"
-        or not _mapping(ref_name)
+        or not is_json_object(ref_name)
         or ref_name.get("include") != expected["include"]
         or ref_name.get("exclude") != []
     ):
@@ -695,13 +851,13 @@ def _ruleset_scope_findings(
 
 def _review_parameter_findings(parameters: object) -> list[str]:
     """Require the reviewed positive approval count and all review guards."""
-    if not _mapping(parameters):
+    if not is_json_object(parameters):
         return ["rulesets/main.json: review parameters are required"]
     findings: list[str] = []
     if not all(parameters.get(guard) is True for guard in _PULL_REQUEST_GUARDS):
         findings.append("rulesets/main.json: review guards must all be enabled")
     count = parameters.get("required_approving_review_count")
-    if type(count) is not int or count != _REQUIRED_APPROVALS:
+    if not is_int(count) or count != _REQUIRED_APPROVALS:
         findings.append(
             "rulesets/main.json: review count must remain the reviewed positive integer"
         )
@@ -710,23 +866,17 @@ def _review_parameter_findings(parameters: object) -> list[str]:
 
 def _main_ruleset_parameters(rules: dict[str, object]) -> list[str]:
     """Check review and status-check parameters of the default-branch ruleset."""
-    review = rules.get("pull_request")
     findings = _review_parameter_findings(
-        review.get("parameters") if _mapping(review) else None
+        _child(rules.get("pull_request"), "parameters")
     )
-    status = rules.get("required_status_checks")
-    status_parameters = status.get("parameters") if _mapping(status) else None
-    checks = (
-        status_parameters.get("required_status_checks")
-        if _mapping(status_parameters)
-        else None
-    )
+    status_parameters = _child(rules.get("required_status_checks"), "parameters")
+    checks = _child(status_parameters, "required_status_checks")
     if checks != [{"context": _REQUIRED_CHECK}]:
         findings.append(
             "rulesets/main.json: the stable required matrix summary is the only check"
         )
     if (
-        not _mapping(status_parameters)
+        not is_json_object(status_parameters)
         or status_parameters.get("strict_required_status_checks_policy") is not True
     ):
         findings.append("rulesets/main.json: required status checks must be strict")
@@ -734,7 +884,11 @@ def _main_ruleset_parameters(rules: dict[str, object]) -> list[str]:
 
 
 def _labels(root: Path) -> set[str] | None:
-    """Read the declarative label inventory, or None when it is invalid."""
+    """Read the declarative label inventory.
+
+    Returns:
+        set[str] | None: Unique label names, or ``None`` when the inventory is invalid.
+    """
     try:
         raw: object = yaml.safe_load(
             (root / ".github/labels.yml").read_text(encoding="utf-8")
@@ -746,44 +900,49 @@ def _labels(root: Path) -> set[str] | None:
     names: set[str] = set()
     for item in raw:
         if (
-            not _mapping(item)
+            not is_json_object(item)
             or set(item) != {"name", "description", "color"}
-            or not isinstance(item["name"], str)
-            or not isinstance(item["description"], str)
-            or not isinstance(item["color"], str)
-            or re.fullmatch(r"[0-9a-f]{6}", item["color"]) is None
+            or not all(isinstance(value, str) for value in item.values())
+            or re.fullmatch(r"[0-9a-f]{6}", str(item["color"])) is None
             or item["name"] in names
         ):
             return None
-        names.add(item["name"])
+        names.add(str(item["name"]))
     return names
 
 
 def _yaml_mapping(path: Path) -> dict[str, object] | None:
-    """Load one YAML mapping, tolerating a missing or malformed file."""
+    """Load one YAML mapping, tolerating a missing or malformed file.
+
+    Returns:
+        dict[str, object] | None: The decoded mapping, or ``None`` when unreadable or not a mapping.
+    """
     try:
         raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
-    return raw if _mapping(raw) else None
+    return raw if is_json_object(raw) else None
 
 
-def _issue_config_findings(root: Path, repository: object) -> list[str]:
-    """Require disabled blank issues and a private security route."""
+def _issue_config_findings(root: Path, repository: str | None) -> list[str]:
+    """Require disabled blank issues and a private security route.
+
+    Args:
+        root (Path): Repository root that holds ``.github/ISSUE_TEMPLATE``.
+        repository (str | None): Approved ``owner/name`` coordinate, if any.
+
+    Returns:
+        list[str]: Findings; empty when the issue config passes.
+    """
     findings: list[str] = []
     config = _yaml_mapping(root / ".github/ISSUE_TEMPLATE/config.yml")
     if config is None or config.get("blank_issues_enabled") is not False:
         findings.append("issue config: blank issues must be disabled")
-    links = config.get("contact_links") if config is not None else None
-    urls = (
-        [
-            url
-            for item in links
-            if _mapping(item) and isinstance(url := item.get("url"), str)
-        ]
-        if isinstance(links, list)
-        else []
-    )
+    urls = [
+        url
+        for item in _list_child(config, "contact_links")
+        if is_json_object(item) and isinstance(url := item.get("url"), str)
+    ]
     security_routes = [
         url
         for url in urls
@@ -793,7 +952,7 @@ def _issue_config_findings(root: Path, repository: object) -> list[str]:
         findings.append(
             "issue config: private security reporting or SECURITY.md instructions are required"
         )
-    elif isinstance(repository, str) and not all(
+    elif repository is not None and not all(
         url.startswith(f"https://github.com/{repository}/") for url in urls
     ):
         findings.append("issue config: contact links must use the approved repository")
@@ -801,12 +960,20 @@ def _issue_config_findings(root: Path, repository: object) -> list[str]:
 
 
 def _issue_form_findings(root: Path, labels: set[str]) -> list[str]:
-    """Require issue forms to apply only declared labels."""
+    """Require issue forms to apply only declared labels.
+
+    Args:
+        root (Path): Repository root that holds ``.github/ISSUE_TEMPLATE``.
+        labels (set[str]): Label names declared in ``labels.yml``.
+
+    Returns:
+        list[str]: Findings; empty when every form uses declared labels.
+    """
     findings: list[str] = []
     for form in ("bug.yml", "capability-change.yml", "feature.yml"):
         data = _yaml_mapping(root / ".github/ISSUE_TEMPLATE" / form)
-        form_labels = data.get("labels") if data is not None else None
-        if not isinstance(form_labels, list) or not form_labels:
+        form_labels = _list_child(data, "labels")
+        if not form_labels:
             findings.append(f"{form}: issue form labels are required")
             continue
         findings.extend(
@@ -819,31 +986,29 @@ def _issue_form_findings(root: Path, labels: set[str]) -> list[str]:
 
 def _release_labels(changelog: object) -> set[str]:
     """Collect labels named by release-note categories and exclusions."""
-    if not _mapping(changelog):
-        return set()
-    used: set[str] = set()
-    categories = changelog.get("categories")
-    if isinstance(categories, list):
-        for category in categories:
-            if _mapping(category) and isinstance(
-                category_labels := category.get("labels"), list
-            ):
-                used.update(str(label) for label in category_labels)
-    exclude = changelog.get("exclude")
-    if _mapping(exclude) and isinstance(exclude_labels := exclude.get("labels"), list):
-        used.update(str(label) for label in exclude_labels)
+    used = {str(label) for label in _list_child(_child(changelog, "exclude"), "labels")}
+    for category in _list_child(changelog, "categories"):
+        used.update(str(label) for label in _list_child(category, "labels"))
     return used
 
 
-def _intake(root: Path, repository: object) -> list[str]:
-    """Require a private security route and valid labels without claiming host state."""
+def _intake(root: Path, repository: str | None) -> list[str]:
+    """Require a private security route and valid labels without claiming host state.
+
+    Args:
+        root (Path): Repository root that holds the ``.github`` intake files.
+        repository (str | None): Approved ``owner/name`` coordinate, if any.
+
+    Returns:
+        list[str]: Findings; empty when intake configuration passes.
+    """
     labels = _labels(root)
     if labels is None:
         return ["labels.yml: must list unique name, description, and hex color"]
     findings = _issue_config_findings(root, repository)
     findings.extend(_issue_form_findings(root, labels))
     release = _yaml_mapping(root / ".github/release.yml")
-    used = _release_labels(release.get("changelog") if release is not None else None)
+    used = _release_labels(_child(release, "changelog"))
     findings.extend(
         f"release.yml: label {label!r} is not in labels.yml"
         for label in sorted(used - {"*"} - labels)
@@ -854,26 +1019,21 @@ def _intake(root: Path, repository: object) -> list[str]:
 def _dependabot(root: Path) -> list[str]:
     """Require Dependabot for every manifest kind, using only declared labels."""
     config = _yaml_mapping(root / ".github/dependabot.yml")
-    updates = config.get("updates") if config is not None else None
+    updates = _child(config, "updates")
     if (
         config is None
         or config.get("version") != _DEPENDABOT_VERSION
         or not isinstance(updates, list)
     ):
         return ["dependabot.yml: version 2 with an updates list is required"]
-    entries = [item for item in updates if _mapping(item)]
+    entries = [item for item in updates if is_json_object(item)]
     ecosystems = {item.get("package-ecosystem") for item in entries}
     findings = [
         f"dependabot.yml: {ecosystem} updates are required"
         for ecosystem in sorted(_DEPENDABOT_ECOSYSTEMS - ecosystems)
     ]
     labels = _labels(root) or set()
-    used = {
-        str(label)
-        for item in entries
-        if isinstance(item_labels := item.get("labels"), list)
-        for label in item_labels
-    }
+    used = {str(label) for item in entries for label in _list_child(item, "labels")}
     findings.extend(
         f"dependabot.yml: label {label!r} is not in labels.yml"
         for label in sorted(used - labels)
@@ -892,7 +1052,7 @@ def check(root: Path) -> list[str]:
     try:
         config = _maintainers(root)
         findings.extend(_ownership(root, config))
-        findings.extend(_intake(root, config["repository"]))
+        findings.extend(_intake(root, config.repository))
     except (OSError, ValueError) as error:
         findings.append(str(error))
     workflow_root = root / ".github/workflows"

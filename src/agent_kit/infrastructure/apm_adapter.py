@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from enum import StrEnum, unique
 import importlib.metadata
+import logging
 import math
 import os
 from pathlib import Path
 import subprocess
 import sys
 import sysconfig
+import time
 
 APM_VERSION = "0.33.0"
 _DEFAULT_TIMEOUT_SECONDS = 900.0
+_LOGGER = logging.getLogger(__name__)
 
 
 class ApmCliError(RuntimeError):
@@ -118,10 +121,18 @@ class ApmCliAdapter:
     ) -> None:
         """Run one fixed APM command, reporting only its label and status.
 
+        Args:
+            label (str): Fixed command label used in diagnostics.
+            arguments (list[str]): Full argv, starting with the pinned executable.
+            root (Path): Working directory for the process.
+            environment (dict[str, str]): Process environment.
+
         Raises:
             ApmCommandError: The command cannot start or times out.
             ApmExitError: The command exits with a non-zero status.
         """
+        _LOGGER.debug("running apm %s in %s", label, root)
+        started = time.perf_counter()
         try:
             result = subprocess.run(  # noqa: S603 -- executable and argv are constrained above
                 arguments,
@@ -138,6 +149,12 @@ class ApmCliAdapter:
             ) from error
         except OSError as error:
             raise ApmCommandError(command=label, issue=ApmCommandIssue.START) from error
+        _LOGGER.debug(
+            "apm %s exited %d after %.1fs",
+            label,
+            result.returncode,
+            time.perf_counter() - started,
+        )
         if result.returncode != 0:
             raise ApmExitError(command=label, returncode=result.returncode)
 
@@ -166,7 +183,15 @@ def pinned_apm_executable() -> str:
 
 
 def _commands(executable: str) -> tuple[tuple[str, list[str]], ...]:
-    """Build the fixed policy status and CI audit invocations."""
+    """Build the fixed policy status and CI audit invocations.
+
+    Args:
+        executable (str): Pinned APM launcher path.
+
+    Returns:
+        tuple[tuple[str, list[str]], ...]: ``(label, argv)`` pairs in run order:
+        policy status, then audit.
+    """
     return (
         (
             "policy status",

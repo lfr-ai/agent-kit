@@ -42,7 +42,7 @@ class OrderStatus(StrEnum):
         return self in _TERMINAL
 
     def can_transition_to(self, target: Self, /) -> bool:
-        """Whether moving from this state to 'target' is allowed."""
+        """Whether moving from this state to ``target`` is allowed."""
         return target in _TRANSITIONS[self]
 
 

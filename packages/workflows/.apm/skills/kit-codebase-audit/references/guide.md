@@ -22,7 +22,7 @@ decides the exit status at the end.
 | Dependency hygiene | `deptry . --json-output audit/deptry.json` | JSON with `DEP001`-`DEP005` codes |
 | Complexity detail (optional) | `radon cc -s -n C src` and `radon mi -s src` | text |
 | Duplication | follow `kit-duplication-review` (jscpd JSON report and its summarizer) | clone list |
-| Vulnerabilities | `pip-audit --format json > audit/pip-audit.json` or `osv-scanner scan source --format sarif -r . > audit/osv.sarif` | JSON or SARIF |
+| Vulnerabilities | uv projects: `uv audit --locked --preview-features audit-command,json-output --output-format json > audit/uv-audit.json`; otherwise `pip-audit --format json > audit/pip-audit.json` or `osv-scanner scan source --format sarif -r . > audit/osv.sarif` | uv JSON (count `summary.vulnerabilities` and `summary.adverse_statuses` by hand), pip-audit JSON or SARIF |
 | Spelling | `cspell --no-progress "**/*.{md,py}"` | text |
 | Merge | `python assets/summarize_findings.py audit/ruff.json audit/ty.json audit/osv.sarif --root "$PWD" --output audit/tool-findings.md` | ranked Markdown |
 
@@ -98,6 +98,7 @@ format, not both, or the summarizer counts each finding twice.
   [deptry rules](https://deptry.com/rules-violations/)
 - [Radon](https://radon.readthedocs.io/en/latest/)
 - [jscpd](https://github.com/kucherenko/jscpd)
+- [uv audit](https://docs.astral.sh/uv/reference/cli/#uv-audit)
 - [pip-audit](https://github.com/pypa/pip-audit)
 - [OSV-Scanner output formats](https://google.github.io/osv-scanner/output/)
 - [CSpell](https://cspell.org/)

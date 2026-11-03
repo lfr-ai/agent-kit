@@ -21,6 +21,7 @@ _SMOKE_SELECTIONS = (
     ("fullstack", ()),
     ("ai", ("terraform", "bicep", "remote-access")),
     ("workflows", ()),
+    ("backend", ("temporal", "identity")),
 )
 
 
@@ -49,7 +50,15 @@ class _SmokeCommandTimeout(SystemExit):
 
 
 def resource_failures(expected: dict[str, bytes], *, destination: Path) -> list[str]:
-    """Reject absent, altered or injected resources, not merely skill identities."""
+    """Reject absent, altered or injected resources, not merely skill identities.
+
+    Args:
+        expected (dict[str, bytes]): Destination-relative path to expected file bytes.
+        destination (Path): Installed skills directory to inspect.
+
+    Returns:
+        list[str]: Sorted relative paths that are missing, altered, or unexpected.
+    """
     changed = {
         relative
         for relative, content in expected.items()
@@ -65,7 +74,15 @@ def resource_failures(expected: dict[str, bytes], *, destination: Path) -> list[
 
 
 def fixture_environment(parent: dict[str, str], *, home: Path) -> dict[str, str]:
-    """Keep APM's user-wide lock, cache and trust data inside the test fixture."""
+    """Keep APM's user-wide lock, cache and trust data inside the test fixture.
+
+    Args:
+        parent (dict[str, str]): Environment to extend.
+        home (Path): Fixture directory that replaces the user home.
+
+    Returns:
+        dict[str, str]: Copy of ``parent`` with ``HOME``, ``USERPROFILE`` and ``APM_HOME`` redirected.
+    """
     return {
         **parent,
         "HOME": str(home),
@@ -81,7 +98,17 @@ def delivery_failures(
     roles: set[str],
     resources: dict[str, bytes],
 ) -> list[str]:
-    """Compare canonical and installed source/resources plus both native rosters."""
+    """Compare canonical and installed source/resources plus both native rosters.
+
+    Args:
+        package (Path): Composed package directory that APM installed into.
+        skills (set[str]): Expected skill names in every skill location.
+        roles (set[str]): Expected native role paths relative to ``package``.
+        resources (dict[str, bytes]): Skill-relative resource path to expected bytes.
+
+    Returns:
+        list[str]: One message per changed roster or altered resource.
+    """
     failures: list[str] = []
     for location in (".apm/skills", ".agents/skills", ".claude/skills"):
         actual_skills = {
@@ -103,8 +130,58 @@ def delivery_failures(
     return failures
 
 
+def executable_failures(package: Path, *, servers: set[str]) -> list[str]:
+    """Check the installed Git-guard hook for both hosts and the declared servers.
+
+    Args:
+        package (Path): Composed package directory that APM installed into.
+        servers (set[str]): MCP server names declared in the package manifest.
+
+    Returns:
+        list[str]: One message per missing hook registration, altered script, or server mismatch.
+    """
+    source = _ROOT / "packages/shared/.apm/hooks/scripts"
+    name = json.loads((package / "apm.yml").read_text(encoding="utf-8"))["name"]
+    failures: list[str] = []
+    registration = package / f".github/hooks/{name}-git-guard.json"
+    if "git_guard.py" not in _read(registration):
+        failures.append("Copilot Git-guard hook registration is missing")
+    if "git_guard.py" not in _read(package / ".claude/settings.json"):
+        failures.append("Claude Git-guard hook registration is missing")
+    for root in (
+        package / f".github/hooks/scripts/{name}/scripts",
+        package / f".claude/hooks/{name}/scripts",
+    ):
+        failures.extend(
+            f"{root.relative_to(package).as_posix()}: {item.name} is missing or altered"
+            for item in sorted(source.iterdir())
+            if not (root / item.name).is_file()
+            or (root / item.name).read_bytes() != item.read_bytes()
+        )
+    for manifest, key in (
+        (".mcp.json", "mcpServers"),
+        (".github/mcp.json", "mcpServers"),
+    ):
+        found = set(json.loads(_read(package / manifest) or "{}").get(key, {}))
+        if found != servers:
+            failures.append(
+                f"{manifest}: delivered MCP servers differ from the manifest"
+            )
+    return failures
+
+
+def _read(path: Path) -> str:
+    """Return a file's text, or an empty string when it is absent."""
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
 def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     """Run a controlled boundary command and surface its exact failure.
+
+    Args:
+        command (list[str]): Executable followed by its arguments.
+        cwd (Path): Working directory for the command.
+        env (dict[str, str]): Complete environment for the command.
 
     Raises:
         _SmokeCommandTimeout: The command exceeds the timeout.
@@ -122,6 +199,9 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     except subprocess.TimeoutExpired as error:
         raise _SmokeCommandTimeout(_TIMEOUT_SECONDS, command) from error
     if result.returncode:
+        sys.stderr.write(
+            f"Failed (exit {result.returncode}): {' '.join(command[1:])}\n"
+        )
         sys.stderr.write(
             f"{result.stdout.decode('utf-8', errors='backslashreplace')}\n"
         )
@@ -141,7 +221,18 @@ def _compose_command(
     features: tuple[str, ...],
     session_skills: tuple[str, ...],
 ) -> list[str]:
-    """Build the bounded ``compose`` command for one disposable selection."""
+    """Build the bounded ``compose`` command for one disposable selection.
+
+    Args:
+        toolkit (str): Path of the toolkit launcher.
+        profile (str): Profile to compose.
+        package (Path): Output directory for the composed package.
+        features (tuple[str, ...]): Optional features to add to the profile.
+        session_skills (tuple[str, ...]): Explicit skill allowlist, or empty for the full profile.
+
+    Returns:
+        list[str]: The launcher followed by its ``compose`` arguments.
+    """
     return [
         toolkit,
         "compose",
@@ -159,6 +250,14 @@ def _selected_source(
     package: Path, *, session_skills: tuple[str, ...]
 ) -> tuple[set[str], set[str], dict[str, bytes]]:
     """Return the composed skill roster, native roles and skill resources.
+
+    Args:
+        package (Path): Composed package directory.
+        session_skills (tuple[str, ...]): Explicit skill allowlist, or empty for the full profile.
+
+    Returns:
+        tuple[set[str], set[str], dict[str, bytes]]: Composed skill names, native role
+            paths, and skill-relative resource path mapped to its bytes.
 
     Raises:
         _SmokeContractError: Skills or native roles differ from the contract.
@@ -193,10 +292,23 @@ def _delivered(
     roles: set[str],
     resources: dict[str, bytes],
 ) -> bool:
-    """Report delivery failures on stderr and return whether delivery held."""
-    failures = delivery_failures(
-        package, skills=skills, roles=roles, resources=resources
-    )
+    """Report delivery failures on stderr and return whether delivery held.
+
+    Args:
+        package (Path): Composed package directory that APM installed into.
+        skills (set[str]): Expected skill names.
+        roles (set[str]): Expected native role paths.
+        resources (dict[str, bytes]): Skill-relative resource path to expected bytes.
+
+    Returns:
+        bool: ``True`` when no delivery failure was found.
+    """
+    manifest = json.loads((package / "apm.yml").read_text(encoding="utf-8"))
+    servers = {entry["name"] for entry in manifest["dependencies"].get("mcp", [])}
+    failures = [
+        *delivery_failures(package, skills=skills, roles=roles, resources=resources),
+        *executable_failures(package, servers=servers),
+    ]
     if failures:
         sys.stderr.write(f"{'\n'.join(failures)}\n")
     return not failures
@@ -211,7 +323,19 @@ def smoke_profile(
     env: dict[str, str],
     session_skills: tuple[str, ...],
 ) -> int:
-    """Install, compile, audit and verify one bounded disposable selection."""
+    """Install, compile, audit and verify one bounded disposable selection.
+
+    Args:
+        profile (str): Profile to compose and install.
+        features (tuple[str, ...]): Optional features to add to the profile.
+        apm (str): Path of the pinned APM launcher.
+        toolkit (str): Path of the toolkit launcher.
+        env (dict[str, str]): Base environment for every command.
+        session_skills (tuple[str, ...]): Explicit skill allowlist, or empty for the full profile.
+
+    Returns:
+        int: ``0`` when delivery held, otherwise ``1``.
+    """
     with TemporaryDirectory(prefix="agent-kit-apm-") as temporary:
         home = Path(temporary) / "home"
         home.mkdir()
@@ -249,7 +373,6 @@ def smoke_profile(
             [
                 apm,
                 "install",
-                "--only=apm",
                 "--target",
                 _RUNTIMES,
                 "--no-trust-bin",
@@ -275,7 +398,6 @@ def smoke_profile(
                 apm,
                 "install",
                 "--frozen",
-                "--only=apm",
                 "--target",
                 _RUNTIMES,
                 "--no-trust-bin",

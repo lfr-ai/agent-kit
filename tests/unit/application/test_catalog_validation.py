@@ -19,7 +19,6 @@ from agent_kit.application.services.catalog_service import (
     _check_references,
     _contained_catalog_path,
     _contains_hidden_unicode,
-    _document_text,
     _effective_bundles,
     _exact_mapping,
     _included_paths,
@@ -652,8 +651,8 @@ def test_real_unsafe_link_after_a_code_fence_is_still_rejected() -> None:
     assert [finding.code for finding in findings] == ["links.escape"]
 
 
-def test_document_text_and_check_links_handle_none_text() -> None:
-    """_document_text returns empty for non-text docs and _check_links ignores None text."""
+def test_check_links_ignores_nontext_documents() -> None:
+    """Unreadable/non-text documents have no Markdown links to inspect."""
     doc = SourceDocument(
         content=b"",
         frontmatter=None,
@@ -665,7 +664,6 @@ def test_document_text_and_check_links_handle_none_text() -> None:
         text=None,
         yaml_value=None,
     )
-    assert _document_text(doc) == ""
     findings: list[Finding] = []
     _check_links(doc, set(), findings, base_is_bundle=True)
     assert findings == []

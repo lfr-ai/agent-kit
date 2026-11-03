@@ -98,6 +98,11 @@ class RecordError(ValueError):
 def parse_time(value: object, field: str) -> datetime:
     """Parse an ISO 8601 timestamp that carries a time zone.
 
+    Args:
+        value (object): Expected ISO 8601 string with an explicit time zone,
+            normalized to UTC after parsing.
+        field (str): Export field name included in type and missing-zone errors.
+
     Raises:
         RecordError: The value is not a time-zone-aware timestamp.
     """
@@ -112,7 +117,13 @@ def parse_time(value: object, field: str) -> datetime:
 
 
 def _optional_time(value: object, field: str) -> datetime | None:
-    """Parse an optional timestamp."""
+    """Parse an optional timestamp.
+
+    Args:
+        value (object): None for an absent timestamp, otherwise a time-zone-aware
+            ISO 8601 string passed to ``parse_time``.
+        field (str): Export field name used by timestamp validation errors.
+    """
     return None if value is None else parse_time(value, field)
 
 
@@ -172,7 +183,14 @@ def _p90(values: list[float]) -> float | None:
 
 
 def _change_failures(selected: list[Deployment]) -> tuple[list[Deployment], str]:
-    """Pick change failures and name the basis that was used."""
+    """Pick change failures and name the basis that was used.
+
+    Returns:
+        tuple[list[Deployment], str]: Failure records in input order followed
+        by the basis label. Any explicit incident flag selects incident-marked
+        records and ``caused_incident``; otherwise failed/error statuses are
+        selected with a label noting the lack of incident data.
+    """
     if any(item.caused_incident is not None for item in selected):
         return [item for item in selected if item.caused_incident], "caused_incident"
     failed = [item for item in selected if item.status in FAILED_STATES]
@@ -185,10 +203,10 @@ def compute(
     """Compute the metrics for one environment and half-open window.
 
     Args:
-        deployments: All validated records.
-        environment: Environment name to measure, for example production.
-        since: Inclusive window start.
-        until: Exclusive window end.
+        deployments (list[Deployment]): All validated records.
+        environment (str): Environment name to measure, for example production.
+        since (datetime): Inclusive window start.
+        until (datetime): Exclusive window end.
 
     Returns:
         The report; ratios and durations are None when there is no data.
@@ -232,7 +250,13 @@ def compute(
 
 
 def _format(value: float | None, unit: str) -> str:
-    """Render an optional number for the text report."""
+    """Render an optional number for the text report.
+
+    Args:
+        value (float | None): Number formatted to two decimal places, or None
+            to produce ``no data`` without a unit.
+        unit (str): Suffix appended verbatim, including any leading space.
+    """
     return "no data" if value is None else f"{value:.2f}{unit}"
 
 
@@ -266,8 +290,7 @@ def _day(value: str) -> datetime:
 def main(argv: list[str] | None = None) -> int:
     """Print delivery metrics for one environment.
 
-    Returns:
-        0 on success, 2 for unreadable or invalid input.
+    Returns 0 on success, 2 for unreadable or invalid input.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("export", type=Path, help="JSON export of deployments")

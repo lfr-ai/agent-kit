@@ -1,8 +1,8 @@
 """Provider-neutral language-model client contract.
 
-Copy to 'llm/port.py'. Application code depends on this module only. Provider
+Copy to ``llm/port.py``. Application code depends on this module only. Provider
 SDKs and gateways (LiteLLM, vendor SDKs, a self-hosted proxy) live in
-'llm/adapters/' and translate their errors into the typed errors below.
+``llm/adapters/`` and translate their errors into the typed errors below.
 """
 
 import hashlib
@@ -46,8 +46,8 @@ class LlmRateLimitedError(LlmTransientError):
         """Store the provider's suggested wait.
 
         Args:
-            message: Safe, content-free description.
-            retry_after_s: Seconds to wait before retrying, if known.
+            message (str): Safe, content-free description.
+            retry_after_s (float | None): Seconds to wait before retrying, if known.
         """
         super().__init__(message)
         self.retry_after_s = retry_after_s
@@ -111,10 +111,10 @@ class PromptTemplate:
     """Versioned prompt with explicit placeholders.
 
     Attributes:
-        name: Stable prompt identifier, for example 'invoice-summary'.
+        name: Stable prompt identifier, for example ``invoice-summary``.
         version: Human-assigned version, bumped on every wording change.
         system: System instructions.
-        user: User message template using '$name' placeholders.
+        user: User message template using ``$name`` placeholders.
     """
 
     name: str
@@ -132,7 +132,8 @@ class PromptTemplate:
         """Fill placeholders; missing or extra variables are errors.
 
         Args:
-            variables: Placeholder values; untrusted text stays in the user message.
+            variables (Mapping[str, str]): Placeholder values; untrusted text stays in
+                the user message.
 
         Returns:
             System and user messages.
@@ -224,7 +225,7 @@ class Completion:
     Attributes:
         text: Generated text; untrusted until validated.
         model: Concrete model that served the request.
-        finish_reason: 'stop', 'length', 'content_filter' or provider value.
+        finish_reason: ``stop``, ``length``, ``content_filter`` or provider value.
         usage: Token usage.
         cost_usd: Provider- or gateway-reported cost, when available.
         latency_ms: Wall-clock latency of the successful attempt.
@@ -246,5 +247,5 @@ class LlmClient(Protocol):
     """Port every adapter, policy wrapper and fake implements."""
 
     async def complete(self, request: CompletionRequest) -> Completion:
-        """Return a completion or raise an 'LlmError' subclass."""
+        """Return a completion or raise an ``LlmError`` subclass."""
         ...

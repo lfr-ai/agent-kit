@@ -65,14 +65,7 @@ class Issue:
 
 
 def is_test_module_name(name: str) -> bool:
-    """Return whether a file name is a pytest test module name.
-
-    Args:
-        name: File name without directories.
-
-    Returns:
-        True for ``test_*.py`` and ``*_test.py``.
-    """
+    """Return whether a file name is a pytest test module name."""
     return name.endswith(".py") and (
         name.startswith("test_") or name.endswith("_test.py")
     )
@@ -90,15 +83,7 @@ def _expectation_call(node: ast.Call) -> bool:
 
 
 def asserts_something(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """Return whether a test body contains an assertion or expectation.
-
-    Args:
-        function: Test function or method definition.
-
-    Returns:
-        True when the body has ``assert``, a pytest expectation, or an
-        ``assert*`` helper call.
-    """
+    """Return whether a test body contains an assertion or expectation."""
     return any(
         isinstance(node, ast.Assert)
         or (isinstance(node, ast.Call) and _expectation_call(node))
@@ -112,7 +97,7 @@ def find_tests(
     """Yield module-level ``test_*`` functions and ``test_*`` methods of ``Test*`` classes.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Yields:
         Test function definitions in source order.
@@ -149,9 +134,9 @@ def check_module(path: str, text: str, *, in_tier: bool) -> list[Issue]:
     """Check one Python file under the tests root.
 
     Args:
-        path: Display path.
-        text: Module source.
-        in_tier: Whether the file lies inside an accepted tier directory.
+        path (str): Display path.
+        text (str): Module source.
+        in_tier (bool): Whether the file lies inside an accepted tier directory.
 
     Returns:
         Issues for the file.
@@ -194,8 +179,8 @@ def check_tree(root: Path, *, tiers: Sequence[str] = DEFAULT_TIERS) -> list[Issu
     """Check every Python file under a tests root.
 
     Args:
-        root: Tests directory, for example ``tests``.
-        tiers: Directory names directly under ``root`` that hold tests.
+        root (Path): Tests directory, for example ``tests``.
+        tiers (Sequence[str]): Directory names directly under ``root`` that hold tests.
 
     Returns:
         Sorted issues.
@@ -240,11 +225,7 @@ _SELF_TEST_ISSUES = (
 
 
 def self_test() -> list[str]:
-    """Check a synthetic suite in a temporary directory.
-
-    Returns:
-        Unmet expectations; empty when the rules behave as documented.
-    """
+    """Check a synthetic suite in a temporary directory."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "tests"
         for relative, text in _SELF_TEST_TREE.items():
@@ -275,11 +256,7 @@ def _report_self_test() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check a tests directory and print issues.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when issues exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when issues exist, 2 on usage or read errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

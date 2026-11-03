@@ -16,7 +16,8 @@ license: MIT
 - [Threat checklist](assets/threat-checklist.md.template) to fill per change.
 - Templates: [auth provider and context](assets/auth-provider.tsx.template),
   [API fetch interceptor](assets/auth-fetch.ts.template) with
-  [tests](assets/auth-fetch.test.ts.template),
+  [tests](assets/auth-fetch.test.ts.template) and
+  [native POST body regression](assets/auth-fetch.standards.test.ts.template),
   [route guard and role-aware UI](assets/route-guard.tsx.template).
 - Related owners: the typed HTTP client in `kit-state-data` (pass the
   interceptor as its `fetchImpl`), safe return paths and error boundaries in
@@ -33,15 +34,17 @@ license: MIT
 3. Use the authorization code flow with PKCE (`S256`), `state`, and `nonce`;
    never the implicit or password grants. Register exact redirect URIs.
 4. Use a maintained certified library; do not hand-roll protocol handling.
-5. Store tokens outside script-readable persistent storage: BFF cookies, or
-   in-memory access tokens for browser clients. Never put refresh tokens in
-   `localStorage` or `sessionStorage`.
+5. Prefer BFF cookies or in-memory tokens. With MSAL, choose its supported
+   `memoryStorage`, `sessionStorage` or `localStorage` cache by threat model;
+   never copy tokens into a second hand-written cache. No cache defeats XSS.
 6. Renew through refresh token rotation or the BFF session; handle renewal
    failure as signed out with a visible prompt, not a silent loop.
 7. Protect cookie-authenticated unsafe requests with `SameSite` cookies plus a
    CSRF token or required custom header; keep CORS origins exact.
 8. On 401, attempt one coordinated renewal and retry once; on 403, show an
-   access message and keep the session. Never retry indefinitely.
+   access message and keep the session. Never retry indefinitely. Automatically
+   replay unsafe requests only with an API pre-effect rejection/idempotency
+   guarantee. A second 401 expires the session.
 9. Treat route guards and role-based UI as navigation aids; the API authorizes
    every request and must reject what the UI hides.
 10. Implement logout that clears local state and caches, ends the server
@@ -55,7 +58,8 @@ license: MIT
 
 - [ ] Architecture choice and token storage are recorded in the checklist.
 - [ ] Code flow with PKCE `S256`, `state`, and `nonce`; no implicit grant.
-- [ ] No tokens in persistent web storage, URLs, logs, or error reports.
+- [ ] Supported library cache choice documented; no tokens in URLs, logs, error
+  reports or a hand-written persistent cache.
 - [ ] Concurrent 401s trigger a single renewal; 403 does not sign out.
 - [ ] Unsafe cookie requests carry CSRF protection; return paths are validated.
 - [ ] Logout clears client caches and ends the server and provider session.

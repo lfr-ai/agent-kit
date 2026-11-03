@@ -179,7 +179,7 @@ def content_lines(text: str) -> list[tuple[int, str]]:
     """Return numbered lines outside fenced code blocks and HTML comments.
 
     Args:
-        text: Markdown file content.
+        text (str): Markdown file content.
 
     Returns:
         ``(line number, line)`` pairs; single-line comments are removed in place.
@@ -203,7 +203,11 @@ def content_lines(text: str) -> list[tuple[int, str]]:
 
 
 def _fields(lines: Iterable[tuple[int, str]]) -> dict[str, tuple[int, str]]:
-    """Collect ``Field: value`` lines; the first occurrence of a field wins."""
+    """Collect ``Field: value`` lines; the first occurrence of a field wins.
+
+    Returns:
+        ``(line, value)`` keyed by field name.
+    """
     found: dict[str, tuple[int, str]] = {}
     for number, line in lines:
         match = _FIELD.match(line)
@@ -236,7 +240,11 @@ def _front_matter(lines: list[tuple[int, str]]) -> Block | None:
 
 
 def _headings(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
-    """Return ``(index, level, title)`` for every heading line."""
+    """Return ``(index, level, title)`` for every heading line.
+
+    Returns:
+        ``(index, level, title)`` triples in document order.
+    """
     found: list[tuple[int, int, str]] = []
     for index, (_, line) in enumerate(lines):
         match = _HEADING.match(line)
@@ -248,7 +256,12 @@ def _headings(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
 def _entries(
     lines: list[tuple[int, str]], *, level: int
 ) -> tuple[list[Block], list[tuple[int, str]]]:
-    """Split dated entries at ``level`` and report undated sibling headings."""
+    """Split dated entries at ``level`` and report undated sibling headings.
+
+    Returns:
+        Dated blocks in document order and ``(line, message)`` problems for undated
+        sibling headings.
+    """
     headings = _headings(lines)
     entry_headings = [item for item in headings if item[1] == level]
     if not any(_DATE_PREFIX.match(title) for _, _, title in entry_headings):
@@ -278,7 +291,11 @@ def _entries(
 
 
 def _status_problems(block: Block) -> list[tuple[int, str]]:
-    """Check the status value and the replacement link of superseded blocks."""
+    """Check the status value and the replacement link of superseded blocks.
+
+    Returns:
+        ``(line, message)`` problems; empty when the status is valid.
+    """
     if "status" not in block.fields:
         return []
     line, value = block.fields["status"]
@@ -308,7 +325,11 @@ def _newest_date(block: Block, dated: date) -> date:
 
 
 def _date_problems(block: Block, *, policy: Policy) -> list[tuple[int, str]]:
-    """Check date validity, future dates and age of one block."""
+    """Check date validity, future dates and age of one block.
+
+    Returns:
+        ``(line, message)`` problems; empty when the date is acceptable.
+    """
     if not block.date_text:
         return []
     dated = _parse_date(block.date_text)
@@ -332,7 +353,11 @@ def _date_problems(block: Block, *, policy: Policy) -> list[tuple[int, str]]:
 
 
 def _block_problems(block: Block, *, policy: Policy) -> list[tuple[int, str]]:
-    """Check required fields, status and dates of one entry or record."""
+    """Check required fields, status and dates of one entry or record.
+
+    Returns:
+        ``(line, message)`` problems in check order; empty for a valid block.
+    """
     required = policy.required if block.kind == "entry" else _RECORD_REQUIRED
     missing = [
         (block.line, f"{block.kind} '{block.label}' is missing field '{name}'")
@@ -364,7 +389,11 @@ def _link_problem(target: str, *, source: Path, root: Path) -> str | None:
 def _link_problems(
     lines: list[tuple[int, str]], *, source: Path, root: Path
 ) -> list[tuple[int, str]]:
-    """Check every local Markdown link outside inline code."""
+    """Check every local Markdown link outside inline code.
+
+    Returns:
+        ``(line, message)`` problems for broken links, in line order.
+    """
     problems: list[tuple[int, str]] = []
     for number, line in lines:
         for match in _LINK.finditer(_INLINE_CODE.sub("", line)):
@@ -378,10 +407,10 @@ def check_text(text: str, *, source: Path, shown: str, policy: Policy) -> list[F
     """Check one Markdown document.
 
     Args:
-        text: File content.
-        source: File location used to resolve relative links.
-        shown: Path printed in findings.
-        policy: Shared settings.
+        text (str): File content.
+        source (Path): File location used to resolve relative links.
+        shown (str): Path printed in findings.
+        policy (Policy): Shared settings.
 
     Returns:
         Findings sorted by line and message.
@@ -405,7 +434,7 @@ def collect(paths: Iterable[Path]) -> list[Path]:
     """Expand folders to the Markdown files below them.
 
     Args:
-        paths: Files or folders.
+        paths (Iterable[Path]): Files or folders.
 
     Returns:
         Markdown files in a stable order.
@@ -531,7 +560,11 @@ def _run_self_test() -> int:
 
 
 def _policy(args: argparse.Namespace) -> Policy | str:
-    """Build the policy from arguments, or return a usage error message."""
+    """Build the policy from arguments, or return a usage error message.
+
+    Returns:
+        The validated policy, or a usage error message.
+    """
     today = datetime.now(tz=UTC).date()
     if args.today:
         parsed = _parse_date(args.today)
@@ -555,11 +588,7 @@ def _policy(args: argparse.Namespace) -> Policy | str:
 def main(argv: list[str] | None = None) -> int:
     """Check memory files and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on unreadable input or bad arguments.
+    Returns 0 when clean, 1 when findings exist, 2 on unreadable input or bad arguments.
     """
     args = _parser().parse_args(argv)
     if args.self_test:

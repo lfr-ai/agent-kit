@@ -1,9 +1,9 @@
 """Schema-validated structured output with one bounded repair attempt.
 
-Copy to 'llm/structured.py'. Requires 'pydantic>=2'. Provider JSON modes reduce
+Copy to ``llm/structured.py``. Requires ``pydantic>=2``. Provider JSON modes reduce
 malformed output but do not remove it, and they never check business rules.
 Every structured result is therefore parsed and validated here, and failures
-become a typed 'StructuredOutputError' instead of leaking half-valid data.
+become a typed ``StructuredOutputError`` instead of leaking half-valid data.
 """
 
 import re
@@ -26,14 +26,7 @@ _DEFAULT_ERROR_LIMIT = 5
 
 
 def extract_json(text: str) -> str:
-    """Strip a single surrounding Markdown code fence, if present.
-
-    Args:
-        text: Raw model output.
-
-    Returns:
-        The candidate JSON text.
-    """
+    """Strip a single surrounding Markdown code fence, if present."""
     stripped = text.strip()
     match = _FENCE.match(stripped)
     return match.group("body").strip() if match else stripped
@@ -43,8 +36,8 @@ def describe_errors(error: ValidationError, *, limit: int = _DEFAULT_ERROR_LIMIT
     """Summarize validation errors by location and type, without input values.
 
     Args:
-        error: Pydantic validation error.
-        limit: Maximum number of problems to describe.
+        error (ValidationError): Pydantic validation error.
+        limit (int): Maximum number of problems to describe.
 
     Returns:
         A short, content-free description safe to log and to send back.
@@ -63,13 +56,14 @@ async def complete_structured[ModelT: BaseModel](
     *,
     max_repairs: int = 1,
 ) -> tuple[ModelT, Completion]:
-    """Request JSON matching 'schema', validate it, and repair at most 'max_repairs' times.
+    """Request JSON matching ``schema``, validate it, and repair a bounded number of times.
 
     Args:
-        client: Any 'LlmClient', usually the resilient wrapper.
-        request: Base request; its JSON schema defaults to the model's schema.
-        schema: Pydantic model describing the expected object.
-        max_repairs: Extra attempts that show the model its validation errors.
+        client (LlmClient): Any ``LlmClient``, usually the resilient wrapper.
+        request (CompletionRequest): Base request; its JSON schema defaults to the
+            model's schema.
+        schema (type[ModelT]): Pydantic model describing the expected object.
+        max_repairs (int): Extra attempts that show the model its validation errors.
 
     Returns:
         The validated object and the completion that produced it.

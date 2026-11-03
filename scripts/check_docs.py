@@ -46,7 +46,14 @@ _ROOT_DOCUMENTS = frozenset(
 
 
 def _documentation_paths(root: Path) -> Iterator[Path]:
-    """Find actual source documents without traversing generated directories."""
+    """Find source documents without traversing excluded or linked directories.
+
+    Yields:
+        Path: Markdown and ``llms.txt`` paths in filesystem traversal order,
+        restricted to approved filenames directly under ``root``. Paths retain
+        the relative or absolute form of ``root``; no matches yields nothing.
+        Linked files are included so the caller can report them.
+    """
     for current, directories, files in os.walk(root, followlinks=False):
         directories[:] = [
             name

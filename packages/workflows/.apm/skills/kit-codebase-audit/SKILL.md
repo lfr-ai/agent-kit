@@ -33,8 +33,8 @@ and `kit-duplication-review`; this procedure covers the whole repository.
    [pyproject audit snippets](assets/pyproject-audit.toml.template) listed in the
    guide: Ruff with complexity (`C90`, `PLR`) and selected families, a type
    checker (ty, mypy or pyright), import-linter contracts, vulture, deptry,
-   duplication through `kit-duplication-review`, pip-audit or OSV-Scanner
-   through `kit-supply-chain`, and cspell.
+   duplication through `kit-duplication-review`, `uv audit` for uv projects
+   (pip-audit or OSV-Scanner otherwise) through `kit-supply-chain`, and cspell.
 5. **Merge and rank tool output** with the
    [findings summarizer](assets/summarize_findings.py):
 
@@ -48,7 +48,9 @@ and `kit-duplication-review`; this procedure covers the whole repository.
 6. **Review manually where tools are blind.** Walk the lenses in
    [manual review](references/manual-review.md): dependency direction and
    ports versus adapters, naming (file versus class), magic numbers, docstrings,
-   error handling, logging, configuration, tests by tier and documentation.
+   error handling, logging, configuration, repeated cross-cutting code with two
+   or more consumers that a typed decorator or context manager should own
+   (`kit-python-decorators`), tests by tier and documentation.
    Sample hot spots (churn times complexity) instead of reading everything.
 7. **Grade every finding** with the
    [severity and confidence rubric](references/severity-rubric.md). Collapse

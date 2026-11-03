@@ -29,6 +29,8 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
   non-default branch, open a pull request, or enable auto-merge only after the
   user approves the exact command. Never push or merge to the default branch,
   force-push, rewrite pushed history, tag, release, or change repository settings.
+- Write commit messages as Conventional Commits (`fix(catalog): reject unknown
+  fields`); the `commit-msg` hook runs `cz check` and rejects other shapes.
 - Version control in any other repository, remote publication, user-global setup
   changes, resource deployment, and production data belong to approved operator
   workflows.

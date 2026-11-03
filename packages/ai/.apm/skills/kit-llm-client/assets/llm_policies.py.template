@@ -1,6 +1,6 @@
-"""Resilience and accounting policies around any 'LlmClient'.
+"""Resilience and accounting policies around any ``LlmClient``.
 
-Copy to 'llm/policies.py'. 'ResilientLlmClient' wraps an adapter with bounded
+Copy to ``llm/policies.py``. ``ResilientLlmClient`` wraps an adapter with bounded
 retries (exponential backoff with full jitter, honoring Retry-After), an
 overall deadline, a concurrency limit, a circuit breaker, and a token and
 spend budget. It logs one structured, content-free record per attempt.
@@ -78,12 +78,12 @@ class RetrySettings:
 def backoff_delay(
     attempt: int, settings: RetrySettings, rng: Callable[[], float]
 ) -> float:
-    """Full-jitter exponential backoff for the retry after 'attempt'.
+    """Full-jitter exponential backoff for the retry after ``attempt``.
 
     Args:
-        attempt: One-based number of the attempt that just failed.
-        settings: Delay bounds.
-        rng: Returns a float in [0, 1).
+        attempt (int): One-based number of the attempt that just failed.
+        settings (RetrySettings): Delay bounds.
+        rng (Callable[[], float]): Returns a float in [0, 1).
 
     Returns:
         Seconds to wait before the next attempt.
@@ -133,9 +133,10 @@ class SpendBudget:
         """Configure the caps.
 
         Args:
-            max_tokens_per_request: Estimated input plus maximum output cap.
-            max_total_usd: Spend cap for this scope.
-            prices: Model alias to price, used when cost is not reported.
+            max_tokens_per_request (int): Estimated input plus maximum output cap.
+            max_total_usd (float): Spend cap for this scope.
+            prices (Mapping[str, Price]): Model alias to price, used when cost is not
+                reported.
         """
         self._max_tokens = max_tokens_per_request
         self._max_usd = max_total_usd
@@ -147,7 +148,7 @@ class SpendBudget:
         """Refuse a request that would break a cap.
 
         Args:
-            request: Request about to be sent.
+            request (CompletionRequest): Request about to be sent.
 
         Raises:
             LlmBudgetExceededError: If the request is too large or the scope
@@ -165,8 +166,8 @@ class SpendBudget:
         """Account a completed call.
 
         Args:
-            request: The request that was sent.
-            completion: Its result.
+            request (CompletionRequest): The request that was sent.
+            completion (Completion): Its result.
 
         Returns:
             Cost in US dollars, or None when neither provider nor price table knows it.
@@ -193,9 +194,10 @@ class CircuitBreaker:
         """Configure thresholds.
 
         Args:
-            failure_threshold: Consecutive transient failures that open the circuit.
-            reset_after_s: Seconds before a single probe call is allowed.
-            clock: Monotonic clock.
+            failure_threshold (int): Consecutive transient failures that open the
+                circuit.
+            reset_after_s (float): Seconds before a single probe call is allowed.
+            clock (Callable[[], float]): Monotonic clock.
         """
         self._threshold = failure_threshold
         self._reset_after = reset_after_s
@@ -234,7 +236,7 @@ class CircuitBreaker:
 
 
 class ResilientLlmClient:
-    """'LlmClient' decorator that applies every call policy in one place."""
+    """``LlmClient`` decorator that applies every call policy in one place."""
 
     def __init__(
         self,
@@ -251,14 +253,17 @@ class ResilientLlmClient:
         """Wrap an adapter.
 
         Args:
-            inner: Adapter that performs one attempt.
-            retry: Retry and deadline bounds.
-            budget: Optional token and spend caps.
-            breaker: Optional circuit breaker shared by callers of one provider.
-            max_concurrency: Concurrent in-flight calls through this client.
-            clock: Monotonic clock.
-            sleep: Awaitable sleep, injected for tests.
-            rng: Uniform [0, 1) source for jitter, injected for tests.
+            inner (LlmClient): Adapter that performs one attempt.
+            retry (RetrySettings | None): Retry and deadline bounds.
+            budget (SpendBudget | None): Optional token and spend caps.
+            breaker (CircuitBreaker | None): Optional circuit breaker shared by callers
+                of one provider.
+            max_concurrency (int): Concurrent in-flight calls through this client.
+            clock (Callable[[], float]): Monotonic clock.
+            sleep (Callable[[float], Awaitable[None]]): Awaitable sleep, injected for
+                tests.
+            rng (Callable[[], float]): Uniform [0, 1) source for jitter, injected for
+                tests.
         """
         self._inner = inner
         self._retry = retry or RetrySettings()
@@ -273,7 +278,7 @@ class ResilientLlmClient:
         """Call the adapter under budget, concurrency, breaker and retry policies.
 
         Args:
-            request: Request to send.
+            request (CompletionRequest): Request to send.
 
         Returns:
             The completion, annotated with attempts and cost.
@@ -332,7 +337,14 @@ class ResilientLlmClient:
     def _next_delay(
         self, error: LlmTransientError, attempt: int, deadline: float
     ) -> float | None:
-        """Return the wait before the next attempt, or None to stop retrying."""
+        """Return the wait before the next attempt, or None to stop retrying.
+
+        Args:
+            error (LlmTransientError): Failure whose Retry-After value may raise
+                the jittered delay or exceed the accepted wait.
+            attempt (int): One-based number of the attempt that just failed.
+            deadline (float): Absolute monotonic time by which retries must end.
+        """
         if attempt >= self._retry.max_attempts:
             return None
         delay = backoff_delay(attempt, self._retry, self._rng)
@@ -352,7 +364,16 @@ class ResilientLlmClient:
         outcome: str,
         completion: Completion | None = None,
     ) -> None:
-        """Emit one content-free record per attempt."""
+        """Emit one content-free record per attempt.
+
+        Args:
+            request (CompletionRequest): Supplies operation, model alias, prompt
+                identity and request ID, without logging prompt content.
+            attempt (int): One-based attempt number recorded in the event.
+            outcome (str): Success label or failure category.
+            completion (Completion | None): Successful result supplying usage,
+                cost and latency fields; None for a failed attempt.
+        """
         fields: dict[str, object] = {
             "operation": request.operation,
             "model_alias": request.model,

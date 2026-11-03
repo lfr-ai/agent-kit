@@ -1,6 +1,6 @@
 """Invoice domain model: pure policy with no I/O.
 
-Copy to 'app/domain/invoice.py'. The domain imports only the standard library
+Copy to ``app/domain/invoice.py``. The domain imports only the standard library
 value types it needs; it never imports application, adapter or framework code.
 """
 
@@ -32,7 +32,7 @@ class Invoice:
         invoice_id: Stable identifier chosen by the application.
         customer_id: Identifier of the customer who owes the amount.
         amount: Positive amount in the invoice currency.
-        currency: ISO 4217 alphabetic code such as 'EUR'.
+        currency: ISO 4217 alphabetic code such as ``EUR``.
         status: Current lifecycle state.
         payment_reference: Provider reference recorded when the invoice is paid.
     """
@@ -66,10 +66,10 @@ class Invoice:
         """Return a paid copy; paying twice or paying a void invoice is an error.
 
         Args:
-            payment_reference: Provider reference for the successful charge.
+            payment_reference (str): Provider reference for the successful charge.
 
         Returns:
-            A new invoice in the 'paid' state.
+            A new invoice in the ``paid`` state.
 
         Raises:
             InvoiceError: If the invoice is not open or the reference is empty.

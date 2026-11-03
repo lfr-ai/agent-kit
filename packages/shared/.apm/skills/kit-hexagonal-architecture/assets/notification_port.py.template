@@ -1,6 +1,6 @@
 """Driven port for telling customers about invoice events.
 
-Copy to 'app/application/ports/notifications.py'. The application owns this
+Copy to ``app/application/ports/notifications.py``. The application owns this
 interface and states it in application terms ("invoice paid"), not in transport
 terms ("send SMTP message"). Adapters translate it to e-mail, chat, queues, etc.
 """
@@ -40,7 +40,7 @@ class InvoiceNotifier(Protocol):
         """Deliver a payment confirmation.
 
         Args:
-            notice: What happened, in application terms.
+            notice (InvoicePaidNotice): What happened, in application terms.
 
         Raises:
             NotificationError: If the channel rejected or could not take the message.

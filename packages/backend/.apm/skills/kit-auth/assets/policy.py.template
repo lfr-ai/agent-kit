@@ -76,9 +76,9 @@ def principal_from_claims(
     """Build a principal from verified claims, dropping unknown values.
 
     Args:
-        claims: Claims from a token whose signature and registered claims
-            were already validated.
-        roles_claim: Claim that carries role names.
+        claims (Mapping[str, object]): Claims from a token whose signature and
+            registered claims were already validated.
+        roles_claim (str): Claim that carries role names.
 
     Returns:
         The principal.
@@ -115,8 +115,8 @@ def is_allowed(principal: Principal, permission: Permission) -> bool:
     """Decide one permission; roles grant, delegated scopes can only narrow.
 
     Args:
-        principal: Verified caller.
-        permission: Operation being attempted.
+        principal (Principal): Verified caller.
+        permission (Permission): Operation being attempted.
 
     Returns:
         True only when a role grants the permission and, for delegated
@@ -131,14 +131,7 @@ def is_allowed(principal: Principal, permission: Permission) -> bool:
 
 
 def scopes_granting(permission: Permission) -> tuple[str, ...]:
-    """List scopes that grant a permission, for ``insufficient_scope`` hints.
-
-    Args:
-        permission: Required permission.
-
-    Returns:
-        Sorted scope names.
-    """
+    """List sorted scopes that grant a permission, for ``insufficient_scope`` hints."""
     return tuple(
         sorted(
             scope

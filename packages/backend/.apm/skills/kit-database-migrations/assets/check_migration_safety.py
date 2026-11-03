@@ -44,8 +44,8 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
     """Return a keyword argument value from a call.
 
     Args:
-        call: Call node.
-        name: Keyword name.
+        call (ast.Call): Call node.
+        name (str): Keyword name.
 
     Returns:
         The keyword's value node, or None when absent.
@@ -54,39 +54,17 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
 
 
 def _is_true(node: ast.expr | None) -> bool:
-    """Return whether a node is the literal ``True``.
-
-    Args:
-        node: Expression or None.
-
-    Returns:
-        True only for a literal ``True`` constant.
-    """
+    """Return whether a node is the literal ``True``."""
     return isinstance(node, ast.Constant) and node.value is True
 
 
 def _is_false(node: ast.expr | None) -> bool:
-    """Return whether a node is the literal ``False``.
-
-    Args:
-        node: Expression or None.
-
-    Returns:
-        True only for a literal ``False`` constant.
-    """
+    """Return whether a node is the literal ``False``."""
     return isinstance(node, ast.Constant) and node.value is False
 
 
 def _column_not_null_without_default(call: ast.Call) -> bool:
-    """Return whether an ``add_column`` call adds NOT NULL without server default.
-
-    Args:
-        call: The ``add_column`` call.
-
-    Returns:
-        True when a ``Column(...)`` argument has ``nullable=False`` and no
-        ``server_default``.
-    """
+    """Return whether an ``add_column`` call adds NOT NULL without server default."""
     for argument in call.args:
         if not isinstance(argument, ast.Call):
             continue
@@ -102,14 +80,7 @@ def _column_not_null_without_default(call: ast.Call) -> bool:
 
 
 def _sql_text(call: ast.Call) -> str:
-    """Extract literal SQL from ``op.execute`` arguments, including ``sa.text``.
-
-    Args:
-        call: The ``execute`` call.
-
-    Returns:
-        Concatenated literal SQL, or an empty string when not literal.
-    """
+    """Extract literal SQL from ``op.execute`` arguments, including ``sa.text``."""
     parts: list[str] = []
     for argument in call.args:
         target = argument
@@ -124,8 +95,8 @@ def _schema_risk(name: str, call: ast.Call) -> str | None:
     """Return the first schema-level risk for an operation.
 
     Args:
-        name: Operation method name.
-        call: Call node.
+        name (str): Operation method name.
+        call (ast.Call): Call node.
 
     Returns:
         Human-readable risk, or None.
@@ -150,14 +121,7 @@ def _schema_risk(name: str, call: ast.Call) -> str | None:
 
 
 def _sql_risk(call: ast.Call) -> str | None:
-    """Return a risk for literal destructive SQL passed to ``op.execute``.
-
-    Args:
-        call: The ``execute`` call.
-
-    Returns:
-        Human-readable risk, or None.
-    """
+    """Return a risk for literal destructive SQL passed to ``op.execute``."""
     match = _RAW_SQL.search(_sql_text(call))
     if match is None:
         return None
@@ -171,8 +135,9 @@ class _RevisionScanner(ast.NodeVisitor):
         """Create a scanner.
 
         Args:
-            operations: Local names bound to Alembic ``op`` or batch operations.
-            dialect: Target dialect, ``postgresql`` or ``generic``.
+            operations (set[str]): Local names bound to Alembic ``op`` or batch
+                operations.
+            dialect (str): Target dialect, ``postgresql`` or ``generic``.
         """
         self.operations = operations
         self.dialect = dialect
@@ -180,11 +145,7 @@ class _RevisionScanner(ast.NodeVisitor):
         self.hits: list[tuple[int, str]] = []
 
     def visit_With(self, node: ast.With) -> None:
-        """Track batch-operation aliases and autocommit blocks.
-
-        Args:
-            node: With statement.
-        """
+        """Track batch-operation aliases and autocommit blocks."""
         entered = [self._enter(item) for item in node.items]
         autocommit = any(entered)
         self.autocommit_depth += int(autocommit)
@@ -195,14 +156,7 @@ class _RevisionScanner(ast.NodeVisitor):
         self.autocommit_depth -= int(autocommit)
 
     def _enter(self, item: ast.withitem) -> bool:
-        """Register a batch-operation alias and report an autocommit context.
-
-        Args:
-            item: One context manager of a with statement.
-
-        Returns:
-            True when the item opens an ``autocommit_block``.
-        """
+        """Register a batch-operation alias and report an autocommit context."""
         expression = item.context_expr
         if not isinstance(expression, ast.Call) or not isinstance(
             expression.func, ast.Attribute
@@ -215,11 +169,7 @@ class _RevisionScanner(ast.NodeVisitor):
         return expression.func.attr == "autocommit_block"
 
     def visit_Call(self, node: ast.Call) -> None:
-        """Classify one operation call.
-
-        Args:
-            node: Call expression.
-        """
+        """Classify one operation call."""
         func = node.func
         if (
             isinstance(func, ast.Attribute)
@@ -235,8 +185,8 @@ class _RevisionScanner(ast.NodeVisitor):
         """Return a finding message for a risky operation, if any.
 
         Args:
-            name: Operation method name.
-            call: Call node.
+            name (str): Operation method name.
+            call (ast.Call): Call node.
 
         Returns:
             Human-readable risk, or None for a safe operation.
@@ -252,8 +202,8 @@ class _RevisionScanner(ast.NodeVisitor):
         """Return PostgreSQL-specific index findings.
 
         Args:
-            name: Operation method name.
-            call: Call node.
+            name (str): Operation method name.
+            call (ast.Call): Call node.
 
         Returns:
             Human-readable risk, or None.
@@ -276,14 +226,7 @@ class _RevisionScanner(ast.NodeVisitor):
 
 
 def _operation_names(tree: ast.Module) -> set[str]:
-    """Return local names bound to ``alembic.op``.
-
-    Args:
-        tree: Parsed module.
-
-    Returns:
-        Names such as ``op`` or an alias.
-    """
+    """Return local names bound to ``alembic.op``."""
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "alembic":
@@ -297,8 +240,8 @@ def _waived(lines: list[str], line: int) -> bool:
     """Return whether the operation line or the line above carries the waiver.
 
     Args:
-        lines: Source lines.
-        line: One-based line number.
+        lines (list[str]): Source lines.
+        line (int): One-based line number.
 
     Returns:
         True when the waiver comment is present.
@@ -317,10 +260,10 @@ def check_revision(
     """Report risky operations in one Alembic revision.
 
     Args:
-        text: Revision source.
-        path: Display path.
-        dialect: ``postgresql`` enables index-concurrency checks.
-        include_downgrade: Also scan the ``downgrade`` function.
+        text (str): Revision source.
+        path (str): Display path.
+        dialect (str): ``postgresql`` enables index-concurrency checks.
+        include_downgrade (bool): Also scan the ``downgrade`` function.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -351,7 +294,8 @@ def _revision_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     """Expand targets into revision files.
 
     Args:
-        targets: Files or directories (for example ``migrations/versions``).
+        targets (Sequence[Path]): Files or directories (for example
+            ``migrations/versions``).
 
     Returns:
         Sorted Python files and findings for missing targets.
@@ -401,9 +345,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            body: Observed body for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            body (str | None): Observed body for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(body=body, found=found))
 
@@ -499,11 +443,7 @@ def _self_test_options() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="revision files or dirs")

@@ -83,8 +83,8 @@ def install_exception_handlers(app: FastAPI, *, problem_base: str) -> None:
     """Register problem-details handlers for service and framework errors.
 
     Args:
-        app: Application whose default handlers are replaced.
-        problem_base: Absolute URI prefix of the documented problem types.
+        app (FastAPI): Application whose default handlers are replaced.
+        problem_base (str): Absolute URI prefix of the documented problem types.
     """
     handlers = _Handlers(problem_base=problem_base.rstrip("/"))
     app.add_exception_handler(ServiceError, handlers.service_error)
@@ -94,14 +94,7 @@ def install_exception_handlers(app: FastAPI, *, problem_base: str) -> None:
 
 
 def spec_for(error: ServiceError) -> ProblemSpec:
-    """Return the most specific mapping for an error class.
-
-    Args:
-        error: Raised service error.
-
-    Returns:
-        The mapping of the nearest mapped base class, or the internal fallback.
-    """
+    """Return the nearest mapped spec for an error class, or the internal fallback."""
     for cls in type(error).__mro__:
         spec = PROBLEMS.get(cls)
         if spec is not None:
@@ -116,7 +109,13 @@ class _Handlers:
     problem_base: str
 
     async def service_error(self, request: Request, error: Exception) -> JSONResponse:
-        """Render a mapped ``ServiceError`` with its caller-safe message."""
+        """Render a mapped ``ServiceError`` with its caller-safe message.
+
+        Args:
+            request (Request): Supplies the URL path for server-side failure logging.
+            error (Exception): Expected service error; other types use the generic
+                unexpected-error response.
+        """
         if not isinstance(error, ServiceError):
             return await self.unexpected_error(request, error)
         spec = spec_for(error)
@@ -133,7 +132,13 @@ class _Handlers:
     async def validation_error(
         self, request: Request, error: Exception
     ) -> JSONResponse:
-        """Render request validation failures with JSON pointers, not input values."""
+        """Render request validation failures with JSON pointers, not input values.
+
+        Args:
+            request (Request): Forwarded to the fallback handler for unexpected types.
+            error (Exception): Expected request validation error supplying field
+                locations and messages, without echoing submitted values.
+        """
         if not isinstance(error, RequestValidationError):
             return await self.unexpected_error(request, error)
         errors = [
@@ -152,7 +157,13 @@ class _Handlers:
         )
 
     async def http_error(self, request: Request, error: Exception) -> JSONResponse:
-        """Render framework HTTP errors, keeping headers such as ``WWW-Authenticate``."""
+        """Render framework HTTP errors, keeping headers such as ``WWW-Authenticate``.
+
+        Args:
+            request (Request): Forwarded to the fallback handler for unexpected types.
+            error (Exception): Expected framework HTTP exception supplying status,
+                optional string detail and response headers.
+        """
         if not isinstance(error, StarletteHTTPException):
             return await self.unexpected_error(request, error)
         status = HTTPStatus(error.status_code)
@@ -167,7 +178,13 @@ class _Handlers:
     async def unexpected_error(
         self, request: Request, error: Exception
     ) -> JSONResponse:
-        """Return a generic 500 body; never echo the exception text."""
+        """Return a generic 500 body; never echo the exception text.
+
+        Args:
+            request (Request): Framework callback argument, unused in the public body.
+            error (Exception): Unexpected failure, intentionally excluded from
+                the response to avoid leaking internal details.
+        """
         return problem_response(
             status=_UNMAPPED.status,
             title=_UNMAPPED.title,

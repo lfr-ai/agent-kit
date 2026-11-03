@@ -10,10 +10,15 @@ import hashlib
 import json
 from pathlib import Path, PureWindowsPath
 import sys
+from typing import TYPE_CHECKING
 
 import yaml
 
+from agent_kit.core.guards import is_int, is_json_object, is_str_list
 from scripts.check_resources import check as check_resources
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 _ROOT = Path(__file__).resolve().parents[1]
 _FRONTMATTER_FENCES = 2  # split into empty prefix, metadata, and body
@@ -98,6 +103,12 @@ class _CoverageInputError(ValueError):
 def _pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     """Prevent a later duplicate inventory entry hiding an earlier one.
 
+    Args:
+        pairs (list[tuple[str, object]]): Decoded ``(key, value)`` pairs in file order.
+
+    Returns:
+        dict[str, object]: The object's fields keyed by name.
+
     Raises:
         _CoverageInputError: An inventory key is repeated.
     """
@@ -115,7 +126,15 @@ def _json(path: Path) -> object:
 
 
 def _unsafe_asset(root: Path, relative: object) -> bool:
-    """Reject non-string, absolute, drive, backslash, parent, missing, or escaping paths."""
+    """Reject non-string, absolute, drive, backslash, parent, missing, or escaping paths.
+
+    Args:
+        root (Path): Repository root the asset must stay inside.
+        relative (object): Decoded asset reference.
+
+    Returns:
+        bool: ``True`` when the reference must be rejected.
+    """
     return (
         not isinstance(relative, str)
         or Path(relative).is_absolute()
@@ -128,7 +147,15 @@ def _unsafe_asset(root: Path, relative: object) -> bool:
 
 
 def _valid_mcp_template_server(name: str, server: dict[str, object]) -> bool:
-    """Validate one inactive example or reviewed server definition."""
+    """Validate one inactive example or reviewed server definition.
+
+    Args:
+        name (str): Server name in the template.
+        server (dict[str, object]): Decoded server definition.
+
+    Returns:
+        bool: ``True`` when the definition matches the reviewed shape for ``name``.
+    """
     if name in _ACTIVE_MCP_SERVERS:
         return server == _ACTIVE_MCP_SERVERS[name]
     if server.get("type") == "http":
@@ -146,9 +173,8 @@ def _valid_mcp_template_server(name: str, server: dict[str, object]) -> bool:
         set(server) == {"type", "command", "args"}
         and isinstance(command, str)
         and command in {"bunx", "docker"}
-        and isinstance(args, list)
+        and is_str_list(args)
         and bool(args)
-        and all(isinstance(item, str) for item in args)
         and (command != "bunx" or args[0] == "--bun")
         and "REVIEWED_" in " ".join(args)
         and not any("latest" in item for item in args)
@@ -159,18 +185,29 @@ def _valid_mcp_template_server(name: str, server: dict[str, object]) -> bool:
 def _mcp_template_servers(
     filename: str, raw: object, *, wrapper: str, names: set[str]
 ) -> tuple[dict[str, object] | None, list[str]]:
-    """Validate one native template; return its servers and failures."""
+    """Validate one native template; return its servers and failures.
+
+    Args:
+        filename (str): Template file name used to prefix each failure.
+        raw (object): Decoded template document.
+        wrapper (str): Top-level key that holds the server mapping.
+        names (set[str]): Server names the template must define exactly.
+
+    Returns:
+        tuple[dict[str, object] | None, list[str]]: The server mapping, or ``None``
+            when the wrapper or inventory is invalid, and the failure messages.
+    """
+    servers = raw.get(wrapper) if is_json_object(raw) else None
     if (
-        not isinstance(raw, dict)
+        not is_json_object(raw)
         or set(raw) != {wrapper}
-        or not isinstance(raw[wrapper], dict)
-        or set(raw[wrapper]) != names
+        or not is_json_object(servers)
+        or set(servers) != names
     ):
         return None, [f"{filename}: MCP template wrapper or inventory is invalid"]
-    servers: dict[str, object] = raw[wrapper]
     failures: list[str] = []
     for name, server in servers.items():
-        if not isinstance(server, dict):
+        if not is_json_object(server):
             failures.append(f"{filename}: invalid MCP template server {name}")
         elif not _valid_mcp_template_server(name, server):
             failures.append(f"{filename}: invalid MCP template transport for {name}")
@@ -178,7 +215,15 @@ def _mcp_template_servers(
 
 
 def _mcp_templates(root: Path, names: set[str]) -> list[str]:
-    """Compare complete inactive native inventories without claiming tool safety."""
+    """Compare complete inactive native inventories without claiming tool safety.
+
+    Args:
+        root (Path): Repository root that holds the editor assets.
+        names (set[str]): Server names every native template must define.
+
+    Returns:
+        list[str]: Template failures; empty when the templates agree and are valid.
+    """
     failures: list[str] = []
     home = root / "packages/shared/.apm/skills/kit-editor/assets"
     definitions: list[dict[str, object]] = []
@@ -230,12 +275,20 @@ class _Bundles:
 def _baseline_sections(
     raw: dict[str, object],
 ) -> tuple[dict[str, dict[str, object]], list[str]]:
-    """Return baseline sections, or failures when any count is wrong."""
+    """Return baseline sections, or failures when any count is wrong.
+
+    Args:
+        raw (dict[str, object]): Decoded ``baseline`` mapping.
+
+    Returns:
+        tuple[dict[str, dict[str, object]], list[str]]: Section name to its entries
+            for every section with the pinned count, and one failure per bad section.
+    """
     sections: dict[str, dict[str, object]] = {}
     failures: list[str] = []
     for name, count in _BASELINE_COUNTS.items():
         section = raw.get(name)
-        if isinstance(section, dict) and len(section) == count:
+        if is_json_object(section) and len(section) == count:
             sections[name] = section
         else:
             failures.append(
@@ -245,9 +298,17 @@ def _baseline_sections(
 
 
 def _identity_failures(
-    sections: dict[str, dict[str, object]], exclusions: object
+    sections: dict[str, dict[str, object]], exclusions: dict[str, object]
 ) -> list[str]:
-    """Pin baseline identities and require exclusions for unmigrated skills."""
+    """Pin baseline identities and require exclusions for unmigrated skills.
+
+    Args:
+        sections (dict[str, dict[str, object]]): Validated baseline sections.
+        exclusions (dict[str, object]): Validated ``exclusions`` mapping.
+
+    Returns:
+        list[str]: At most one failure; empty when identities and exclusions match.
+    """
     baseline = {name: sorted(section) for name, section in sections.items()}
     digest = hashlib.sha256(
         json.dumps(baseline, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -257,7 +318,7 @@ def _identity_failures(
             "coverage baseline identities differ from the source-verified inventory"
         ]
     unmigrated = {name for name, value in sections["skills"].items() if value is None}
-    if not isinstance(exclusions, dict) or set(exclusions) != unmigrated:
+    if set(exclusions) != unmigrated:
         return [
             "coverage exclusions must match exactly the deliberately unmigrated skills"
         ]
@@ -265,21 +326,35 @@ def _identity_failures(
 
 
 def _asset_index(root: Path) -> dict[str, object] | None:
-    """Return the asset categories, or None when the index is malformed."""
+    """Return the asset categories.
+
+    Returns:
+        dict[str, object] | None: Category to decoded reference list, or ``None`` when
+            the index is malformed.
+    """
     asset_index = _json(root / ".agents/agentic-setup/assets.json")
-    if (
-        not isinstance(asset_index, dict)
-        or set(asset_index) != {"schema_version", "assets"}
-        or not isinstance(asset_index["assets"], dict)
-    ):
+    if not is_json_object(asset_index) or set(asset_index) != {
+        "schema_version",
+        "assets",
+    }:
         return None
-    return asset_index["assets"]
+    assets = asset_index["assets"]
+    return assets if is_json_object(assets) else None
 
 
 def _asset_failures(
     root: Path, assets: dict[str, object], baseline: dict[str, object]
 ) -> list[str]:
-    """Require matching categories and safe, present asset references."""
+    """Require matching categories and safe, present asset references.
+
+    Args:
+        root (Path): Repository root the references must stay inside.
+        assets (dict[str, object]): Asset category to decoded reference list.
+        baseline (dict[str, object]): Baseline asset categories to compare against.
+
+    Returns:
+        list[str]: One failure per category or reference that is invalid.
+    """
     failures: list[str] = []
     if set(assets) != set(baseline):
         failures.append("asset index and baseline asset categories differ")
@@ -296,7 +371,16 @@ def _asset_failures(
 
 
 def _collect_skills(root: Path, bundle: Path, skills: dict[str, Path]) -> list[str]:
-    """Record each bundle skill identity and report unreadable metadata."""
+    """Record each bundle skill identity and report unreadable metadata.
+
+    Args:
+        root (Path): Repository root used to relativize failure paths.
+        bundle (Path): Authored bundle directory to scan.
+        skills (dict[str, Path]): Collector mapping skill name to its ``SKILL.md``.
+
+    Returns:
+        list[str]: One failure per skill whose metadata is unreadable or unnamed.
+    """
     failures: list[str] = []
     for path in bundle.rglob("SKILL.md"):
         parts = path.read_text(encoding="utf-8").split("---", _FRONTMATTER_FENCES)
@@ -304,27 +388,39 @@ def _collect_skills(root: Path, bundle: Path, skills: dict[str, Path]) -> list[s
             failures.append(f"{path.relative_to(root)}: invalid skill metadata")
             continue
         metadata = yaml.safe_load(parts[1])
-        if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str):
+        name = metadata.get("name") if is_json_object(metadata) else None
+        if not isinstance(name, str):
             failures.append(f"{path.relative_to(root)}: missing skill identity")
             continue
-        skills[metadata["name"]] = path
+        skills[name] = path
     return failures
 
 
 def _collect_roles(root: Path, bundle: Path, roles: set[str]) -> list[str]:
-    """Record native role identities and report invalid or duplicate roles."""
+    """Record native role identities and report invalid or duplicate roles.
+
+    Args:
+        root (Path): Repository root used to relativize failure paths.
+        bundle (Path): Authored bundle directory to scan.
+        roles (set[str]): Collector of role identifiers seen so far.
+
+    Returns:
+        list[str]: One failure per invalid role asset or duplicate role.
+    """
     failures: list[str] = []
     for path in bundle.rglob("agents.json"):
         asset = _json(path)
-        if not isinstance(asset, dict) or not isinstance(asset.get("roles"), list):
+        entries = asset.get("roles") if is_json_object(asset) else None
+        if not isinstance(entries, list):
             failures.append(f"{path.relative_to(root)}: invalid native role asset")
             continue
-        for role in asset["roles"]:
-            if not isinstance(role, dict) or not isinstance(role.get("id"), str):
+        for role in entries:
+            identifier = role.get("id") if is_json_object(role) else None
+            if not isinstance(identifier, str):
                 continue
-            if role["id"] in roles:
-                failures.append(f"duplicate role {role['id']}")
-            roles.add(role["id"])
+            if identifier in roles:
+                failures.append(f"duplicate role {identifier}")
+            roles.add(identifier)
     return failures
 
 
@@ -340,7 +436,15 @@ def _parse_template(path: Path) -> None:
 
 
 def _template_failures(root: Path, bundle: Path) -> list[str]:
-    """Report source templates whose rendered syntax cannot be parsed."""
+    """Report source templates whose rendered syntax cannot be parsed.
+
+    Args:
+        root (Path): Repository root used to relativize failure paths.
+        bundle (Path): Authored bundle directory to scan.
+
+    Returns:
+        list[str]: One failure per template with invalid syntax.
+    """
     failures: list[str] = []
     for path in bundle.rglob("*.template"):
         try:
@@ -351,7 +455,15 @@ def _template_failures(root: Path, bundle: Path) -> list[str]:
 
 
 def _scan_bundles(root: Path) -> tuple[_Bundles, list[str]]:
-    """Collect capability identities from the root and every package bundle."""
+    """Collect capability identities from the root and every package bundle.
+
+    Args:
+        root (Path): Repository root that holds ``.apm`` and ``packages``.
+
+    Returns:
+        tuple[_Bundles, list[str]]: Identities found across all bundles, and the
+            metadata, role, and template failures collected while scanning.
+    """
     bundles = _Bundles(skills={}, instructions=set(), roles=set(), prompts=set())
     failures: list[str] = []
     for bundle in [root / ".apm", *sorted((root / "packages").glob("*/.apm"))]:
@@ -369,10 +481,39 @@ def _scan_bundles(root: Path) -> tuple[_Bundles, list[str]]:
     return bundles, failures
 
 
+def _unresolved(
+    section: dict[str, object], known: Collection[str], label: str
+) -> list[str]:
+    """Report entries whose recorded replacement is not a known identity.
+
+    Args:
+        section (dict[str, object]): Original identity mapped to its decoded replacement.
+        known (Collection[str]): Replacement identities that exist in the bundles.
+        label (str): Replacement kind named in each failure message.
+
+    Returns:
+        list[str]: One failure per entry whose replacement is not a known string.
+    """
+    return [
+        f"missing {label} replacement {name}: {target}"
+        for name, target in section.items()
+        if not isinstance(target, str) or target not in known
+    ]
+
+
 def _skill_replacement_failures(
     skills: dict[str, object], exclusions: dict[str, object], available: set[str]
 ) -> list[str]:
-    """Require a replacement or an exclusion rationale for every skill."""
+    """Require a replacement or an exclusion rationale for every skill.
+
+    Args:
+        skills (dict[str, object]): Original skill mapped to its replacement, or ``None``.
+        exclusions (dict[str, object]): Excluded skill mapped to its rationale.
+        available (set[str]): Skill names that exist in the bundles.
+
+    Returns:
+        list[str]: One failure per skill with neither a replacement nor a rationale.
+    """
     failures: list[str] = []
     for name, target in skills.items():
         if target is None:
@@ -386,8 +527,17 @@ def _skill_replacement_failures(
 def _prompt_file_failures(
     prompt_files: object, commands: dict[str, object], prompts: set[str]
 ) -> list[str]:
-    """Require native prompt replacements for recorded original commands."""
-    if not isinstance(prompt_files, dict):
+    """Require native prompt replacements for recorded original commands.
+
+    Args:
+        prompt_files (object): Decoded ``prompt_files`` value.
+        commands (dict[str, object]): Recorded original commands.
+        prompts (set[str]): Native prompt names that exist in the bundles.
+
+    Returns:
+        list[str]: One failure per mapping that is unknown or has no native prompt.
+    """
+    if not is_json_object(prompt_files):
         return ["prompt_files must map original commands to prompts"]
     failures: list[str] = []
     for name, target in prompt_files.items():
@@ -399,7 +549,15 @@ def _prompt_file_failures(
 
 
 def _script_failures(root: Path, scripts: dict[str, object]) -> list[str]:
-    """Require a known disposition or a safe Python replacement per script."""
+    """Require a known disposition or a safe Python replacement per script.
+
+    Args:
+        root (Path): Repository root the replacement scripts must stay inside.
+        scripts (dict[str, object]): Original script mapped to its decoded disposition.
+
+    Returns:
+        list[str]: One failure per script with an unknown or unsafe disposition.
+    """
     return [
         f"missing or unsafe script disposition {name}: {target}"
         for name, target in scripts.items()
@@ -420,28 +578,31 @@ def _replacement_failures(
     prompt_files: object,
     bundles: _Bundles,
 ) -> list[str]:
-    """Check every recorded replacement against the discovered bundles."""
+    """Check every recorded replacement against the discovered bundles.
+
+    Args:
+        root (Path): Repository root passed through to script checks.
+        sections (dict[str, dict[str, object]]): Validated baseline sections.
+        exclusions (dict[str, object]): Excluded skill mapped to its rationale.
+        prompt_files (object): Decoded ``prompt_files`` value.
+        bundles (_Bundles): Identities discovered in every authored bundle.
+
+    Returns:
+        list[str]: One failure per missing replacement across all sections.
+    """
     failures = _skill_replacement_failures(
         sections["skills"], exclusions, set(bundles.skills)
     )
     failures.extend(
-        f"missing instruction replacement {name}: {target}"
-        for name, target in sections["instructions"].items()
-        if not isinstance(target, str) or target not in bundles.instructions
+        _unresolved(sections["instructions"], bundles.instructions, "instruction")
     )
     failures.extend(
-        f"missing command procedure replacement {name}: {target}"
-        for name, target in sections["prompts"].items()
-        if not isinstance(target, str) or target not in bundles.skills
+        _unresolved(sections["prompts"], bundles.skills, "command procedure")
     )
     failures.extend(
         _prompt_file_failures(prompt_files, sections["prompts"], bundles.prompts)
     )
-    failures.extend(
-        f"missing native role replacement {name}: {target}"
-        for name, target in sections["agents"].items()
-        if not isinstance(target, str) or target not in bundles.roles
-    )
+    failures.extend(_unresolved(sections["agents"], bundles.roles, "native role"))
     failures.extend(_script_failures(root, sections["scripts"]))
     return failures
 
@@ -449,16 +610,27 @@ def _replacement_failures(
 def _integration_failures(
     root: Path, sections: dict[str, dict[str, object]]
 ) -> list[str]:
-    """Check integration, MCP template, and hook migration inventories."""
+    """Check integration, MCP template, and hook migration inventories.
+
+    Args:
+        root (Path): Repository root that holds the editor assets.
+        sections (dict[str, dict[str, object]]): Validated baseline sections.
+
+    Returns:
+        list[str]: One failure per violated integration, template, or hook rule.
+    """
     failures: list[str] = []
     integration = _json(
         root / "packages/shared/.apm/skills/kit-editor/assets/integration-catalog.json"
     )
+    integrations = (
+        integration.get("integrations") if is_json_object(integration) else None
+    )
     if (
-        not isinstance(integration, dict)
+        not is_json_object(integration)
         or integration.get("default_active") != []
-        or not isinstance(integration.get("integrations"), dict)
-        or set(integration["integrations"]) != set(sections["mcp"])
+        or not is_json_object(integrations)
+        or set(integrations) != set(sections["mcp"])
     ):
         failures.append(
             "integration source inventory must match the baseline with no implicit active servers"
@@ -474,7 +646,15 @@ def _integration_failures(
 
 
 def _live_inventory(source_root: Path) -> dict[str, set[str]]:
-    """Collect capability identities from the original source checkout."""
+    """Collect capability identities from the original source checkout.
+
+    Args:
+        source_root (Path): Original checkout to inventory.
+
+    Returns:
+        dict[str, set[str]]: Section name (``skills``, ``instructions``, ``agents``,
+            ``prompts``, ``scripts``) mapped to the identities found there.
+    """
     skills_root = source_root / ".agents/skills"
     prompts_root = source_root / ".github/prompts"
     return {
@@ -504,7 +684,15 @@ def _live_inventory(source_root: Path) -> dict[str, set[str]]:
 def _live_source_failures(
     source_root: Path | None, sections: dict[str, dict[str, object]]
 ) -> list[str]:
-    """Compare an optional original checkout with the recorded inventory."""
+    """Compare an optional original checkout with the recorded inventory.
+
+    Args:
+        source_root (Path | None): Original checkout to compare, or ``None`` to skip.
+        sections (dict[str, dict[str, object]]): Validated baseline sections.
+
+    Returns:
+        list[str]: Per-section difference summary plus its unrecorded and stale names.
+    """
     if source_root is None:
         return []
     failures: list[str] = []
@@ -525,21 +713,24 @@ def _live_source_failures(
 def _editor_task_entry_failures(
     task: object, definitions: dict[str, object]
 ) -> list[str]:
-    """Require one editor task to be a thin wrapper over a Taskfile target."""
+    """Require one editor task to be a thin wrapper over a Taskfile target.
+
+    Args:
+        task (object): Decoded editor task entry.
+        definitions (dict[str, object]): Taskfile target definitions by name.
+
+    Returns:
+        list[str]: One failure per violated wrapper rule; empty for a valid wrapper.
+    """
     if (
-        not isinstance(task, dict)
+        not is_json_object(task)
         or task.get("type") != "process"
         or task.get("command") != "task"
     ):
         return ["editor task is not a thin canonical Task wrapper"]
     failures: list[str] = []
     args = task.get("args")
-    if (
-        not isinstance(args, list)
-        or len(args) != 1
-        or not isinstance(args[0], str)
-        or args[0] not in definitions
-    ):
+    if not is_str_list(args) or len(args) != 1 or args[0] not in definitions:
         failures.append("editor task references an unavailable Taskfile target")
     if task.get("options") != {"cwd": "${workspaceFolder}"}:
         failures.append("editor task must target the active workspace directory")
@@ -550,10 +741,10 @@ def _editor_task_failures(root: Path) -> list[str]:
     """Require editor tasks to delegate to canonical Taskfile targets."""
     tasks: object = _json(root / ".vscode/tasks.json")
     taskfile = yaml.safe_load((root / "Taskfile.yml").read_text(encoding="utf-8"))
-    if not isinstance(tasks, dict) or not isinstance(taskfile, dict):
+    if not is_json_object(tasks) or not is_json_object(taskfile):
         return ["editor/task definitions cannot be parsed"]
     definitions = taskfile.get("tasks", {})
-    if not isinstance(definitions, dict):
+    if not is_json_object(definitions):
         definitions = {}
     task_entries = tasks.get("tasks", [])
     failures: list[str] = []
@@ -566,27 +757,37 @@ def _editor_task_failures(root: Path) -> list[str]:
 
 
 def _policy_failures(root: Path) -> list[str]:
-    """Require the consumer APM policy template to deny MCP by default."""
-    policy_path = root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
-    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
-    mcp_policy = policy.get("mcp") if isinstance(policy, dict) else None
+    """Require the consumer policy template to keep MCP reviewed and executables on."""
+    template = root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
+    policy = yaml.safe_load(template.read_text(encoding="utf-8"))
+    mcp_policy = policy.get("mcp") if is_json_object(policy) else None
     if (
-        not isinstance(mcp_policy, dict)
-        or mcp_policy.get("allow") != []
-        or mcp_policy.get("self_defined") != "deny"
+        not is_json_object(policy)
+        or not is_json_object(mcp_policy)
+        or not mcp_policy.get("allow")
+        or mcp_policy.get("self_defined") != "allow"
         or mcp_policy.get("trust_transitive") is not False
+        or "executables" in policy
     ):
-        return ["consumer APM policy template must deny MCP by default"]
+        return ["consumer APM policy template must keep MCP named and reviewed"]
     return []
 
 
 def check(root: Path, *, source_root: Path | None = None) -> list[str]:
-    """Verify every promised replacement exists and inactive sources remain valid."""
+    """Verify every promised replacement exists and inactive sources remain valid.
+
+    Args:
+        root (Path): Repository root to verify.
+        source_root (Path | None): Optional original checkout to compare inventories with.
+
+    Returns:
+        list[str]: Human-readable failures; empty when coverage is complete.
+    """
     raw = _json(root / ".agents/agentic-setup/coverage.json")
     if (
-        not isinstance(raw, dict)
+        not is_json_object(raw)
         or set(raw) != _FIELDS
-        or type(raw.get("schema_version")) is not int
+        or not is_int(raw.get("schema_version"))
         or raw.get("schema_version") != 1
     ):
         return ["coverage schema is invalid"]
@@ -594,6 +795,10 @@ def check(root: Path, *, source_root: Path | None = None) -> list[str]:
     if failures:
         return failures
     exclusions = raw["exclusions"]
+    if not is_json_object(exclusions):
+        return [
+            "coverage exclusions must match exactly the deliberately unmigrated skills"
+        ]
     identity_failures = _identity_failures(sections, exclusions)
     if identity_failures:
         return identity_failures

@@ -154,7 +154,7 @@ def _prose_lines(text: str) -> list[tuple[int, str]]:
     """Return numbered lines outside fenced code blocks.
 
     Args:
-        text: Markdown document text.
+        text (str): Markdown document text.
 
     Returns:
         One-based line numbers paired with line text, excluding fenced code.
@@ -174,8 +174,8 @@ def parse_requirements(text: str, id_pattern: str) -> list[Requirement]:
     """Parse ``## <id> title`` sections and their ``### Scenario:`` blocks.
 
     Args:
-        text: Requirements document text.
-        id_pattern: Regular expression for requirement identifiers.
+        text (str): Requirements document text.
+        id_pattern (str): Regular expression for requirement identifiers.
 
     Returns:
         Requirements in document order.
@@ -198,7 +198,11 @@ def parse_requirements(text: str, id_pattern: str) -> list[Requirement]:
 def _step_messages(
     label: str, name: str, line: int, steps: tuple[str, ...]
 ) -> list[tuple[int, str]]:
-    """Check that one scenario has When/Then steps and a valid first step."""
+    """Check that one scenario has When/Then steps and a valid first step.
+
+    Returns:
+        ``(line, message)`` pairs; empty when the steps are valid.
+    """
     messages = [
         (line, f"{label}: scenario '{name}' has no {keyword} step")
         for keyword in ("When", "Then")
@@ -212,7 +216,11 @@ def _step_messages(
 def _scenario_messages(
     label: str, scenarios: tuple[tuple[str, int, tuple[str, ...]], ...]
 ) -> list[tuple[int, str]]:
-    """Check scenario names for duplicates and each scenario's steps."""
+    """Check scenario names for duplicates and each scenario's steps.
+
+    Returns:
+        ``(line, message)`` pairs in scenario order.
+    """
     messages: list[tuple[int, str]] = []
     names: set[str] = set()
     for name, line, steps in scenarios:
@@ -224,7 +232,11 @@ def _scenario_messages(
 
 
 def _requirement_messages(requirement: Requirement) -> list[tuple[int, str]]:
-    """Return located messages for one requirement's kind, wording and scenarios."""
+    """Return located messages for one requirement's kind, wording and scenarios.
+
+    Returns:
+        ``(line, message)`` pairs; empty for a valid requirement.
+    """
     label = requirement.identifier
     line = requirement.line
     messages: list[tuple[int, str]] = []
@@ -259,9 +271,9 @@ def check_requirements(path: Path, text: str, id_pattern: str) -> list[Finding]:
     """Validate requirement identifiers, wording and scenario coverage.
 
     Args:
-        path: Requirements file used in findings.
-        text: Requirements document text.
-        id_pattern: Regular expression for requirement identifiers.
+        path (Path): Requirements file used in findings.
+        text (str): Requirements document text.
+        id_pattern (str): Regular expression for requirement identifiers.
 
     Returns:
         Findings in line order.
@@ -292,8 +304,8 @@ def check_tasks(path: Path, text: str) -> tuple[list[Finding], int]:
     """Require every list item to be a checkbox and count open tasks.
 
     Args:
-        path: Task file used in findings.
-        text: Task document text.
+        path (Path): Task file used in findings.
+        text (str): Task document text.
 
     Returns:
         Findings and the number of unchecked tasks.
@@ -319,9 +331,9 @@ def check_markers(path: Path, text: str, markers: tuple[str, ...]) -> list[Findi
     """Report unresolved placeholder markers outside fenced code.
 
     Args:
-        path: File used in findings.
-        text: Document text.
-        markers: Whole-word, case-sensitive markers.
+        path (Path): File used in findings.
+        text (str): Document text.
+        markers (tuple[str, ...]): Whole-word, case-sensitive markers.
 
     Returns:
         One finding per line that contains a marker.
@@ -337,7 +349,11 @@ def check_markers(path: Path, text: str, markers: tuple[str, ...]) -> list[Findi
 
 
 def _first_value(text: str, pattern: re.Pattern[str]) -> tuple[str, int] | None:
-    """Return the first captured value and its line, outside code fences."""
+    """Return the first captured value and its line, outside code fences.
+
+    Returns:
+        The captured value and its one-based line, or None when absent.
+    """
     for number, line in _prose_lines(text):
         if match := pattern.match(line.strip()):
             return match.group(1).casefold(), number
@@ -424,8 +440,8 @@ def check_change(directory: Path, settings: Settings | None = None) -> list[Find
     """Validate one change folder against the lifecycle contract.
 
     Args:
-        directory: Change folder to validate.
-        settings: Names, markers and options; defaults when omitted.
+        directory (Path): Change folder to validate.
+        settings (Settings | None): Names, markers and options; defaults when omitted.
 
     Returns:
         Findings sorted by path and line.
@@ -469,7 +485,11 @@ def _required_findings(directory: Path, required: tuple[str, ...]) -> list[Findi
 def _task_findings(
     directory: Path, spec: Path, options: Settings
 ) -> tuple[list[Finding], int | None]:
-    """Check the task list and optional traceability; count open tasks."""
+    """Check the task list and optional traceability; count open tasks.
+
+    Returns:
+        Findings and the number of open tasks, or None when the task list is missing.
+    """
     tasks = directory / options.tasks_name
     if not tasks.is_file():
         return [], None
@@ -514,7 +534,7 @@ class MissingFindingError(AssertionError):
         """Describe the violated invariant.
 
         Args:
-            expected: Diagnostic expected for the failing input.
+            expected (str): Diagnostic expected for the failing input.
         """
         super().__init__(f"missing finding: {expected}")
 
@@ -584,11 +604,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Validate change folders and print one finding per line.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv`` when omitted.
-
-    Returns:
-        0 when every folder passes, 1 on findings, 2 on unusable input.
+    Returns 0 when every folder passes, 1 on findings, 2 on unusable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

@@ -6,7 +6,7 @@ license: MIT
 
 # Validate runtime boundaries
 
-This capability describes review steps and ships opt-in local tools. It does not
+This capability describes review steps and ships a Git-guard hook and opt-in local tools. It does not
 install, activate, or emulate an agent runtime, and nothing here is an
 authorization boundary or a sandbox.
 
@@ -69,15 +69,16 @@ Details: [native roles](references/native-roles.md).
 
 ## Guard adoption procedure
 
+The Git guard is already delivered by the `shared` hook. These steps add a
+consumer-owned policy for extra rules.
+
 1. Read the [threat model and bypass list](references/guards.md) with the repository
    owner; agree that native approvals, permission rules, and sandboxing stay primary.
-2. Copy [tool_guard.py](assets/tool_guard.py) and
+2. Copy the delivered `tool_guard.py` (beside the installed Git guard hook) and
    [the policy template](assets/tool_guard_policy.json.template) into a consumer-owned
-   directory; review every rule and the `fail_mode` (default `closed`).
-   For consumer Git inspection, also register the
-   [read-only Git policy](assets/git_readonly_policy.json.template) as a separate
-   handler. Do not replace the baseline policy or infer a maintenance exception
-   from a skill name; see [Git scope](references/guards.md#read-only-git-for-consumer-sessions).
+   directory; review every rule and the `fail_mode` (default `closed`). Register it
+   as a separate handler; never replace the delivered Git guard. See
+   [Git scope](references/guards.md#git-scope).
 3. Run `tool_guard.py --self-test`, `check-policy`, and `explain` cases for each rule.
 4. Register the hook from [the Copilot template](assets/copilot-hooks.json.template) or
    [the Claude template](assets/claude-settings-hooks.json.template), following the

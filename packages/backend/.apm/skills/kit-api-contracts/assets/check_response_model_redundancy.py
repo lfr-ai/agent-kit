@@ -54,10 +54,11 @@ def check_source(
     """Return findings for route decorators in one module.
 
     Args:
-        text: Python source text.
-        path: Display path used as the finding prefix.
-        methods: Decorator attribute names treated as route registrations.
-        require_type: Also report routes without any response type.
+        text (str): Python source text.
+        path (str): Display path used as the finding prefix.
+        methods (frozenset[str]): Decorator attribute names treated as route
+            registrations.
+        require_type (bool): Also report routes without any response type.
 
     Returns:
         Findings formatted as ``path:line: message``, sorted by line.
@@ -159,11 +160,7 @@ def _union(members: Iterable[ast.expr]) -> ast.expr:
 def main(argv: list[str] | None = None) -> int:
     """Scan files or directories for redundant response models.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero without findings, otherwise one.
+    Returns zero without findings, otherwise one.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

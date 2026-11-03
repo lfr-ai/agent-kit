@@ -1,0 +1,13 @@
+name: agent-kit-temporal
+version: "0.1.0"
+license: MIT
+description: Optional Temporal durable-execution workflows, activities, testing, and operations.
+targets: [copilot, claude]
+includes: [.apm/instructions/, .apm/skills/]
+dependencies:
+  mcp:
+    - name: temporal-docs
+      registry: false
+      transport: http
+      url: https://temporal.mcp.kapa.ai
+executables: {}

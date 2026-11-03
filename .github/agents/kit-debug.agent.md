@@ -1,8 +1,7 @@
 ---
 name: kit-debug
-description: "Diagnose and repair a reproduced defect with focused evidence."
-tools: ["read", "search", "edit", "execute"]
-agents: []
+description: "Use to fix a reproduced defect: isolate the root cause, apply the smallest fix, and keep a regression test."
+tools: ["read", "search", "edit", "execute", "todo"]
 user-invocable: true
 disable-model-invocation: true
 ---

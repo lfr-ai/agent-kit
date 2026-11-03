@@ -1,8 +1,8 @@
 """Driven adapter: implement the notifier port with standard-library SMTP.
 
-Copy to 'app/adapters/notifications/smtp_notifier.py'. The adapter owns every
+Copy to ``app/adapters/notifications/smtp_notifier.py``. The adapter owns every
 transport detail (host, TLS, message format, address lookup) and translates
-transport failures into the port's 'NotificationError'. Nothing in the domain or
+transport failures into the port's ``NotificationError``. Nothing in the domain or
 application imports this module; the composition root constructs it.
 """
 
@@ -25,9 +25,9 @@ def starttls_factory(*, host: str, port: int, timeout: float) -> SmtpFactory:
     """Build a factory that opens a verified STARTTLS connection per message.
 
     Args:
-        host: SMTP server host name.
-        port: SMTP submission port, usually 587.
-        timeout: Socket timeout in seconds for connect and each command.
+        host (str): SMTP server host name.
+        port (int): SMTP submission port, usually 587.
+        timeout (float): Socket timeout in seconds for connect and each command.
 
     Returns:
         A zero-argument callable returning a connected, encrypted client.
@@ -54,9 +54,10 @@ class SmtpInvoiceNotifier(InvoiceNotifier):
         """Store collaborators; no connection is opened until a message is sent.
 
         Args:
-            connect: Opens an authenticated SMTP client.
-            sender: Envelope and header sender address.
-            address_of: Resolves a customer identifier to an e-mail address.
+            connect (SmtpFactory): Opens an authenticated SMTP client.
+            sender (str): Envelope and header sender address.
+            address_of (AddressLookup): Resolves a customer identifier to an e-mail
+                address.
         """
         self._connect = connect
         self._sender = sender
@@ -66,7 +67,7 @@ class SmtpInvoiceNotifier(InvoiceNotifier):
         """Format and send the payment confirmation.
 
         Args:
-            notice: What happened, in application terms.
+            notice (InvoicePaidNotice): What happened, in application terms.
 
         Raises:
             NotificationError: If address lookup or SMTP delivery fails.

@@ -248,12 +248,12 @@ class EvidenceInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            label: Diagnostic label for the invalid input.
-            field: Diagnostic field for the invalid input.
-            index: Diagnostic index for the invalid input.
-            path: Diagnostic path for the invalid input.
-            limit: Diagnostic limit for the invalid input.
+            issue (EvidenceInputIssue): The violated input invariant.
+            label (str | None): Diagnostic label for the invalid input.
+            field (str | None): Diagnostic field for the invalid input.
+            index (int | None): Diagnostic index for the invalid input.
+            path (Path | None): Diagnostic path for the invalid input.
+            limit (int | None): Diagnostic limit for the invalid input.
         """
         super().__init__(
             issue.value.format(
@@ -275,9 +275,9 @@ class EvidenceInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
-            label: Diagnostic label for the invalid input.
-            index: Diagnostic index for the invalid input.
+            issue (EvidenceInputIssue): The violated input invariant.
+            label (str | None): Diagnostic label for the invalid input.
+            index (int | None): Diagnostic index for the invalid input.
         """
         super().__init__(issue.value.format(label=label, index=index))
 
@@ -324,6 +324,9 @@ def _items(value: object, label: str) -> list[object]:
 
 def _closed(value: object, fields: frozenset[str], label: str) -> dict[str, object]:
     """Require an object with only known fields.
+
+    Returns:
+        The object with string keys, limited to ``fields``.
 
     Raises:
         EvidenceInputTypeError: The value is not an object.
@@ -440,7 +443,15 @@ def gate_findings(
     diff_name: str,
     evidence_name: str,
 ) -> list[str]:
-    """Return every reason the package is not ready for review."""
+    """Return every reason the package is not ready for review.
+
+    Args:
+        changes (list[FileChange]): Changed files parsed from the diff.
+        evidence (Evidence): Validated verification evidence.
+        allow (tuple[str, ...]): Path patterns the change may touch.
+        diff_name (str): Diff file name used in findings.
+        evidence_name (str): Evidence file name used in findings.
+    """
     findings: list[str] = []
     if not changes:
         findings.append(f"{diff_name}:1: diff contains no changed files")
@@ -488,7 +499,14 @@ def render(
     findings: list[str],
     diff_sha256: str,
 ) -> str:
-    """Render the deterministic Markdown review package."""
+    """Render the deterministic Markdown review package.
+
+    Args:
+        changes (list[FileChange]): Changed files parsed from the diff.
+        evidence (Evidence): Validated verification evidence.
+        findings (list[str]): Readiness findings; empty when the package is ready.
+        diff_sha256 (str): Digest that binds the package to the reviewed diff.
+    """
     added = sum(item.added for item in changes)
     removed = sum(item.removed for item in changes)
     lines = [
@@ -573,7 +591,19 @@ def build(
     max_bytes: int,
     stderr: TextIO,
 ) -> tuple[str | None, int]:
-    """Return the rendered package and exit status for the given inputs."""
+    """Return the rendered package and exit status for the given inputs.
+
+    Args:
+        diff_path (Path): Unified diff to package.
+        evidence_path (Path): JSON verification evidence.
+        allow (tuple[str, ...]): Path patterns the change may touch.
+        max_bytes (int): Maximum size of each input file.
+        stderr (TextIO): Destination of input errors.
+
+    Returns:
+        The Markdown package, or None when inputs are unusable, and the exit status for
+        the caller.
+    """
     try:
         diff_text = _read(diff_path, max_bytes)
         evidence = parse_evidence(_read(evidence_path, max_bytes))

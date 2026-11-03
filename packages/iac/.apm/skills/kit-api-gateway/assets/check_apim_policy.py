@@ -126,8 +126,8 @@ class PolicyXmlError(ValueError):
         """Describe the parse problem.
 
         Args:
-            line: One-based line where parsing failed.
-            problem: Short description of the problem.
+            line (int): One-based line where parsing failed.
+            problem (str): Short description of the problem.
         """
         super().__init__(f"line {line}: {problem}")
 
@@ -139,8 +139,8 @@ class InvalidPolicyFileError(ValueError):
         """Name the file and the parse problem.
 
         Args:
-            path: The file that failed to parse.
-            error: The underlying parse error.
+            path (Path): The file that failed to parse.
+            error (PolicyXmlError): The underlying parse error.
         """
         super().__init__(f"{path.as_posix()}: {error}")
 
@@ -152,7 +152,7 @@ class MissingPathError(ValueError):
         """Describe the missing path.
 
         Args:
-            path: The path that was not found.
+            path (Path): The path that was not found.
         """
         super().__init__(f"path does not exist: {path}")
 
@@ -182,11 +182,7 @@ class Node:
             yield from child.walk()
 
     def first(self, tag: str) -> Node | None:
-        """Return the first direct child called ``tag``, if any.
-
-        Args:
-            tag: Element name to match.
-        """
+        """Return the first direct child called ``tag``, if any."""
         return next((child for child in self.children if child.tag == tag), None)
 
 
@@ -252,7 +248,8 @@ class _TreeBuilder:
         """Bind the builder to the parser that reports line numbers.
 
         Args:
-            parser: The expat parser whose callbacks feed this builder.
+            parser (expat.XMLParserType): The expat parser whose callbacks feed this
+                builder.
         """
         self._parser = parser
         self._stack: list[_Open] = []
@@ -309,7 +306,7 @@ def parse(text: str) -> Node:
     """Parse policy XML into a ``Node`` tree.
 
     Args:
-        text: Complete policy document.
+        text (str): Complete policy document.
 
     Returns:
         The ``policies`` or ``fragment`` root element.
@@ -344,8 +341,8 @@ def scope_for(path: Path, configured: str) -> str:
     """Return the policy scope for ``path``.
 
     Args:
-        path: Policy file.
-        configured: ``auto`` or an explicit scope.
+        path (Path): Policy file.
+        configured (str): ``auto`` or an explicit scope.
 
     Returns:
         The explicit scope, or the first scope named in the file name, else
@@ -573,9 +570,9 @@ def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
     """Check one policy document and return its findings in line order.
 
     Args:
-        path: Path reported in findings and used for scope detection.
-        text: Policy XML.
-        options: Expectations for this run.
+        path (Path): Path reported in findings and used for scope detection.
+        text (str): Policy XML.
+        options (Options): Expectations for this run.
 
     Returns:
         Findings sorted by line, rule, and message, without disabled rules.
@@ -602,8 +599,8 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     """Expand directories into sorted policy files.
 
     Args:
-        paths: Files or directories. Directories contribute files ending in
-            ``.xml`` or ``.xml.template``.
+        paths (Iterable[Path]): Files or directories. Directories contribute files
+            ending in ``.xml`` or ``.xml.template``.
 
     Returns:
         Sorted, de-duplicated file list.
@@ -676,11 +673,7 @@ _SELF_EXPECTATIONS = {
 
 
 def self_test() -> list[str]:
-    """Check every rule on in-memory documents and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check every rule on in-memory documents and return unmet expectations."""
     failures: list[str] = []
     strict = Options(require_auth=True)
     if scan_text(Path("clean-api.xml"), _CLEAN_API, strict):
@@ -819,12 +812,8 @@ def _scan(paths: Sequence[Path], options: Options) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check API Management policy files and print one line per finding.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings (or a failed self-test), 2 for missing
-        paths or unreadable or unparsable input.
+    Returns 0 when clean, 1 with findings (or a failed self-test), 2 for missing paths
+    or unreadable or unparsable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

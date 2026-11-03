@@ -16,4 +16,6 @@ version_files = [
   "packages/terraform/apm.yml:^version",
   "packages/bicep/apm.yml:^version",
   "packages/remote-access/apm.yml:^version",
+  "packages/temporal/apm.yml:^version",
+  "packages/identity/apm.yml:^version",
 ]

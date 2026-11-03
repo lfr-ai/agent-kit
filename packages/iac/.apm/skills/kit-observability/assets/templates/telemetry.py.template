@@ -1,6 +1,6 @@
 """OpenTelemetry instrumentation template for a Python service.
 
-Copy to 'src/<package>/telemetry.py'. Requires:
+Copy to ``src/<package>/telemetry.py``. Requires:
     opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc
 
 Configuration follows the standard OTEL_* environment variables, for example
@@ -53,21 +53,14 @@ _REDACTED_KEYS = frozenset(
 class JsonFormatter(logging.Formatter):
     """Emit one JSON object per record with trace correlation fields.
 
-    Structured context is passed as 'extra={"fields": {...}}' so that keys are
+    Structured context is passed as ``extra={"fields": {...}}`` so that keys are
     explicit and redaction can see them.
     """
 
     converter = time.gmtime
 
     def format(self, record: logging.LogRecord) -> str:
-        """Render the record as JSON, redacting sensitive extra fields.
-
-        Args:
-            record: The log record to format.
-
-        Returns:
-            A single-line JSON document.
-        """
+        """Render the record as single-line JSON, redacting sensitive extra fields."""
         context = trace.get_current_span().get_span_context()
         payload: dict[str, object] = {
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
@@ -95,7 +88,7 @@ class Telemetry:
         meter: Meter for additional instruments.
         tracer_provider: Provider to flush and shut down on exit.
         meter_provider: Provider to flush and shut down on exit.
-        request_duration: Histogram following 'http.server.request.duration'.
+        request_duration: Histogram following ``http.server.request.duration``.
     """
 
     tracer: trace.Tracer
@@ -110,10 +103,10 @@ class Telemetry:
         """Record one server request with bounded-cardinality attributes.
 
         Args:
-            route: Route template such as '/orders/{id}', never the raw path.
-            method: HTTP method; unknown methods are recorded as '_OTHER'.
-            status_code: HTTP response status code.
-            duration_s: Request duration in seconds.
+            route (str): Route template such as ``/orders/{id}``, never the raw path.
+            method (str): HTTP method; unknown methods are recorded as ``_OTHER``.
+            status_code (int): HTTP response status code.
+            duration_s (float): Request duration in seconds.
         """
         known = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
         attributes = {
@@ -130,7 +123,7 @@ class Telemetry:
         """Trace a unit of work and mark the span as an error on exceptions.
 
         Args:
-            name: Low-cardinality span name such as 'orders.process'.
+            name (str): Low-cardinality span name such as ``orders.process``.
 
         Yields:
             The active span, for adding attributes and events.
@@ -159,10 +152,10 @@ def configure_telemetry(
     """Install global tracer and meter providers and JSON logging.
 
     Args:
-        service_name: Logical service name ('service.name').
-        service_version: Deployed version ('service.version').
-        sample_ratio: Head sampling ratio for new root traces (0.0-1.0).
-        export_interval_ms: Metric export interval in milliseconds.
+        service_name (str): Logical service name (``service.name``).
+        service_version (str): Deployed version (``service.version``).
+        sample_ratio (float): Head sampling ratio for new root traces (0.0-1.0).
+        export_interval_ms (int): Metric export interval in milliseconds.
 
     Returns:
         The configured telemetry handle.

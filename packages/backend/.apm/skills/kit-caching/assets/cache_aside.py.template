@@ -55,7 +55,12 @@ unavailable, corrupt, store_failed, lock_wait, and lock_fallback."""
 
 
 def _ignore_event(namespace: str, event: str) -> None:
-    """Default event sink that records nothing."""
+    """Default event sink that records nothing.
+
+    Args:
+        namespace (str): Cache namespace associated with the discarded event.
+        event (str): Cache lifecycle label intentionally ignored by this sink.
+    """
     del namespace, event
 
 
@@ -131,6 +136,12 @@ def build_key(
     Parts that are long, empty, or contain characters outside
     ``[A-Za-z0-9._@{}-]`` are replaced by ``h-<sha256>`` so callers cannot
     inject separators or unbounded text. Braces are kept for cluster hash tags.
+
+    Args:
+        prefix (str): Trusted application prefix, included without normalization.
+        namespace (str): Trusted cache namespace, included without normalization.
+        version (int): Representation version included as the ``v<version>`` segment.
+        parts (Sequence[str]): Ordered key dimensions, each normalized or hashed.
     """
     safe = [_safe_part(part) for part in parts]
     return ":".join([prefix, namespace, f"v{version}", *safe])
@@ -163,17 +174,21 @@ class CachedLoader[T]:
         """Configure the loader.
 
         Args:
-            cache: Byte cache port (Redis adapter or in-memory fake).
-            codec: Converts values to and from bytes.
-            policy: TTLs, jitter, and lock timing.
-            key_prefix: Application prefix that ACLs restrict, such as ``shop``.
-            namespace: Entity namespace, such as ``catalog:product``.
-            version: Serialized-shape version; bump it to orphan old entries.
-            lock: Optional distributed lock to de-duplicate loads across replicas.
-            uniform: Jitter source; tests pass a deterministic function.
-            token_factory: Produces unique lock tokens.
-            sleep: Awaitable sleep used while waiting for another lock holder.
-            on_event: Metrics hook receiving the namespace and an event name.
+            cache (Cache): Byte cache port (Redis adapter or in-memory fake).
+            codec (Codec[T]): Converts values to and from bytes.
+            policy (CachePolicy): TTLs, jitter, and lock timing.
+            key_prefix (str): Application prefix that ACLs restrict, such as ``shop``.
+            namespace (str): Entity namespace, such as ``catalog:product``.
+            version (int): Serialized-shape version; bump it to orphan old entries.
+            lock (DistributedLock | None): Optional distributed lock to de-duplicate
+                loads across replicas.
+            uniform (Callable[[float, float], float]): Jitter source; tests pass a
+                deterministic function.
+            token_factory (Callable[[], str]): Produces unique lock tokens.
+            sleep (Callable[[float], Awaitable[None]]): Awaitable sleep used while
+                waiting for another lock holder.
+            on_event (CacheEventSink): Metrics hook receiving the namespace and an event
+                name.
         """
         self._cache = cache
         self._codec = codec
@@ -203,8 +218,9 @@ class CachedLoader[T]:
         """Return the cached value or load, store, and return it.
 
         Args:
-            *parts: Key parts after the namespace, tenant first.
-            load: Reads the source; returns ``None`` for a definitive "not found".
+            *parts (str): Key parts after the namespace, tenant first.
+            load (Callable[[], Awaitable[T | None]]): Reads the source; returns ``None``
+                for a definitive "not found".
 
         Returns:
             The value, or ``None`` when the source has no such record.

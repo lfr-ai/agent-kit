@@ -38,7 +38,8 @@ class SqlAlchemyOrderRepository:
         """Bind the repository to the unit of work's session.
 
         Args:
-            session: Open session; the repository flushes but never commits it.
+            session (AsyncSession): Open session; the repository flushes but never
+                commits it.
         """
         self._session = session
 
@@ -46,7 +47,7 @@ class SqlAlchemyOrderRepository:
         """Return a stored order with its lines.
 
         Args:
-            order_id: Identifier of the order.
+            order_id (uuid.UUID): Identifier of the order.
 
         Returns:
             The stored order as a validated domain object.
@@ -63,7 +64,7 @@ class SqlAlchemyOrderRepository:
         changes to it.
 
         Args:
-            order: New order; its identifier must not exist yet.
+            order (Order): New order; its identifier must not exist yet.
 
         Raises:
             DuplicateOrderError: If an order with the same identifier exists.
@@ -80,7 +81,7 @@ class SqlAlchemyOrderRepository:
         """Stage changes to a stored order, guarded by its version.
 
         Args:
-            order: Changed order carrying the version it was loaded with.
+            order (Order): Changed order carrying the version it was loaded with.
 
         Raises:
             OrderNotFoundError: If the order no longer exists.
@@ -105,9 +106,10 @@ class SqlAlchemyOrderRepository:
         """Return one keyset page of a customer's orders, oldest first.
 
         Args:
-            customer_id: Owner of the orders.
-            after: Cursor from the previous page; ``None`` starts at the beginning.
-            limit: Maximum orders per page.
+            customer_id (uuid.UUID): Owner of the orders.
+            after (OrderCursor | None): Cursor from the previous page; ``None`` starts
+                at the beginning.
+            limit (int): Maximum orders per page.
 
         Returns:
             Orders ordered by ``(created_at, id)`` and the next-page cursor, which
@@ -185,7 +187,13 @@ def _new_row(order: Order) -> OrderRow:
 
 
 def _apply(order: Order, row: OrderRow) -> None:
-    """Copy mutable order state onto a tracked row."""
+    """Copy mutable order state onto a tracked row.
+
+    Args:
+        order (Order): Source of status, currency, shipping time and ordered lines.
+        row (OrderRow): Tracked row to mutate; its lines are replaced with new
+            rows carrying zero-based positions, while identity and version stay intact.
+    """
     row.status = order.status.value
     row.currency = order.currency
     row.shipped_at = order.shipped_at

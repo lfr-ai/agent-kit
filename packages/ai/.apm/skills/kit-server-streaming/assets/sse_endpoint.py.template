@@ -1,18 +1,18 @@
 """FastAPI Server-Sent Events endpoint over the event hub.
 
-Copy to 'streaming/sse.py'. Requires 'fastapi'. Uses 'StreamingResponse' with
+Copy to ``streaming/sse.py``. Requires ``fastapi``. Uses ``StreamingResponse`` with
 an explicit frame generator so heartbeats, connection lifetime, replay and
 cancellation are visible and testable on any FastAPI version. FastAPI 0.135
-and later also ship 'fastapi.sse.EventSourceResponse'; the same contract
+and later also ship ``fastapi.sse.EventSourceResponse``; the same contract
 applies if you switch.
 
 Routes:
 
-- 'GET /streams/{stream_id}/events': SSE. Honors 'Last-Event-ID'.
+- ``GET /streams/{stream_id}/events``: SSE. Honors ``Last-Event-ID``.
   401/403 before any streaming, 404 unknown stream, 409 replay gap (client
   must restart), 204 when the stream already ended and nothing is left to
-  replay (this also tells a browser 'EventSource' to stop reconnecting).
-- 'DELETE /streams/{stream_id}': cancel the producer; 202.
+  replay (this also tells a browser ``EventSource`` to stop reconnecting).
+- ``DELETE /streams/{stream_id}``: cancel the producer; 202.
 """
 
 import asyncio
@@ -62,7 +62,7 @@ class StreamSettings:
     Attributes:
         heartbeat_s: Idle interval before a comment frame keeps proxies open.
         max_connection_s: Connection lifetime; clients reconnect with
-            'Last-Event-ID' afterwards, which rebalances long-lived connections.
+            ``Last-Event-ID`` afterwards, which rebalances long-lived connections.
         retry_ms: Reconnection delay hint sent to clients.
     """
 
@@ -81,15 +81,15 @@ async def sse_frames(
 ) -> AsyncIterator[bytes]:
     """Turn an event iterator into SSE frames with heartbeats and a lifetime.
 
-    Waiting for the next event uses a task plus 'asyncio.wait', never
-    'wait_for', because cancelling a pending 'anext' would close the
+    Waiting for the next event uses a task plus ``asyncio.wait``, never
+    ``wait_for``, because cancelling a pending ``anext`` would close the
     subscription. When the client disconnects, the server cancels this
-    generator; the 'finally' block cancels the pending read and closes the
+    generator; the ``finally`` block cancels the pending read and closes the
     subscription, which releases hub resources.
 
     Args:
-        events: Hub subscription.
-        settings: Heartbeat, lifetime and retry hint.
+        events (AsyncGenerator[StreamEvent]): Hub subscription.
+        settings (StreamSettings): Heartbeat, lifetime and retry hint.
 
     Yields:
         Encoded frames.
@@ -140,9 +140,10 @@ def build_router(
     """Create the streaming routes.
 
     Args:
-        hub: Event hub shared with producers.
-        authorize: Per-request, per-stream authorization check.
-        settings: Connection bounds; defaults to 'StreamSettings()'.
+        hub (EventHub): Event hub shared with producers.
+        authorize (Authorizer): Per-request, per-stream authorization check.
+        settings (StreamSettings | None): Connection bounds; defaults to
+            ``StreamSettings()``.
 
     Returns:
         A router to include in the application.

@@ -19,23 +19,12 @@ _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 
 def bind_request_id(request_id: str) -> Token[str | None]:
-    """Bind a request identifier to the current task.
-
-    Args:
-        request_id: Validated or generated identifier.
-
-    Returns:
-        Token that ``reset_request_id`` uses to restore the previous value.
-    """
+    """Bind a request identifier to the current task; return the reset token."""
     return _request_id.set(request_id)
 
 
 def reset_request_id(token: Token[str | None]) -> None:
-    """Restore the identifier that was bound before ``bind_request_id``.
-
-    Args:
-        token: Token returned by ``bind_request_id``.
-    """
+    """Restore the identifier that was bound before ``bind_request_id``."""
     _request_id.reset(token)
 
 
@@ -56,12 +45,14 @@ def problem_response(
     """Build an ``application/problem+json`` response.
 
     Args:
-        status: HTTP status; repeated in the ``status`` member.
-        title: Stable summary of the problem type.
-        problem_type: URI identifying the problem type.
-        detail: Occurrence-specific, caller-safe explanation.
-        extensions: Extra members such as ``errors`` or ``code``.
-        headers: Response headers to keep, such as ``WWW-Authenticate``.
+        status (HTTPStatus): HTTP status; repeated in the ``status`` member.
+        title (str): Stable summary of the problem type.
+        problem_type (str): URI identifying the problem type.
+        detail (str | None): Occurrence-specific, caller-safe explanation.
+        extensions (Mapping[str, object] | None): Extra members such as ``errors`` or
+            ``code``.
+        headers (Mapping[str, str] | None): Response headers to keep, such as
+            ``WWW-Authenticate``.
 
     Returns:
         A JSON response whose ``instance`` names the request identifier.

@@ -35,14 +35,7 @@ return 0
 
 
 def create_redis_client(settings: CacheSettings) -> redis.Redis:
-    """Build a pooled asyncio client tuned for an optional cache.
-
-    Args:
-        settings: Validated cache settings; the URL carries no credentials.
-
-    Returns:
-        A client whose pool opens connections lazily. The caller closes it.
-    """
+    """Build a lazily pooled asyncio cache client; the caller closes it."""
     retry = Retry(
         ExponentialWithJitterBackoff(
             cap=settings.retry_backoff_cap_seconds,
@@ -74,8 +67,9 @@ class RedisCache:
         """Wrap a client owned by the application lifespan.
 
         Args:
-            client: Shared asyncio client; this adapter never closes it.
-            operation_timeout_seconds: Budget for one operation including retries.
+            client (redis.Redis): Shared asyncio client; this adapter never closes it.
+            operation_timeout_seconds (float): Budget for one operation including
+                retries.
         """
         self._client = client
         self._timeout = operation_timeout_seconds
@@ -108,6 +102,12 @@ class RedisCache:
 
         A non-positive TTL deletes the key, matching the in-memory fake.
 
+        Args:
+            key (str): Fully namespaced Redis key to replace.
+            value (bytes): Encoded value sent unchanged to Redis.
+            ttl_seconds (float): Lifetime converted to milliseconds; zero or less
+                deletes the key.
+
         Raises:
             CacheUnavailableError: The server failed or the budget expired.
         """
@@ -130,6 +130,11 @@ class RedisCache:
     async def acquire(self, key: str, token: str, *, ttl_seconds: float) -> bool:
         """Take an advisory lock with ``SET key token NX PX ttl``.
 
+        Args:
+            key (str): Redis key to claim only when absent.
+            token (str): Ownership token checked by the release script.
+            ttl_seconds (float): Positive lock lifetime converted to milliseconds.
+
         Raises:
             ValueError: ``ttl_seconds`` is not positive.
             CacheUnavailableError: The server failed or the budget expired.
@@ -145,6 +150,10 @@ class RedisCache:
 
     async def release(self, key: str, token: str) -> bool:
         """Delete the lock only if ``token`` still owns it (atomic script).
+
+        Args:
+            key (str): Redis lock key passed to the atomic release script.
+            token (str): Expected ownership token; a mismatch preserves the lock.
 
         Raises:
             CacheUnavailableError: The server failed or the budget expired.

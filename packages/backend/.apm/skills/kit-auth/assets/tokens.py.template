@@ -75,7 +75,7 @@ class TokenRejectedError(Exception):
         """Record the reason without any token content.
 
         Args:
-            reason: Classified rejection reason.
+            reason (RejectionReason): Classified rejection reason.
         """
         super().__init__(f"token rejected: {reason}")
         self.reason = reason
@@ -93,7 +93,7 @@ class TokenVerifier(Protocol):
         """Verify a token.
 
         Args:
-            token: Raw bearer token.
+            token (str): Raw bearer token.
 
         Returns:
             The verified principal.
@@ -111,7 +111,7 @@ class SigningKeyResolver(Protocol):
         """Return the signing key named by the token's ``kid``.
 
         Args:
-            token: Raw token whose header names the key.
+            token (str): Raw token whose header names the key.
 
         Returns:
             The matching public key.
@@ -175,12 +175,12 @@ class JwksKeyResolver:
         """Create a resolver for one issuer.
 
         Args:
-            jwks_url: HTTPS ``jwks_uri`` from the issuer's metadata.
-            cache_seconds: How long a fetched key set is reused.
-            timeout_seconds: Network timeout for one fetch.
-            min_refresh_seconds: Shortest interval between forced refetches,
+            jwks_url (str): HTTPS ``jwks_uri`` from the issuer's metadata.
+            cache_seconds (int): How long a fetched key set is reused.
+            timeout_seconds (int): Network timeout for one fetch.
+            min_refresh_seconds (float): Shortest interval between forced refetches,
                 so random ``kid`` values cannot flood the issuer.
-            clock: Monotonic seconds source; tests pass a fake.
+            clock (Callable[[], float]): Monotonic seconds source; tests pass a fake.
         """
         self._client = PyJWKClient(
             jwks_url,
@@ -212,7 +212,12 @@ class JwksKeyResolver:
         return key
 
     def _find(self, kid: str, *, refresh: bool) -> PyJWK | None:
-        """Look up a signing key in the cached or refreshed key set."""
+        """Look up a signing key in the cached or refreshed key set.
+
+        Args:
+            kid (str): Token header key identifier to match against signing keys.
+            refresh (bool): Force a JWKS fetch instead of reusing the cached set.
+        """
         keys = self._client.get_signing_keys(refresh=refresh)
         return next((key for key in keys if key.key_id == kid), None)
 
@@ -224,8 +229,8 @@ class PyJwtVerifier:
         """Bind a policy to a key source.
 
         Args:
-            policy: Accepted issuer, audience, algorithms, and claims.
-            keys: Public key resolver for the issuer.
+            policy (JwtPolicy): Accepted issuer, audience, algorithms, and claims.
+            keys (SigningKeyResolver): Public key resolver for the issuer.
         """
         self._policy = policy
         self._keys = keys
@@ -261,7 +266,16 @@ class PyJwtVerifier:
             raise TokenRejectedError(RejectionReason.WRONG_TYPE)
 
     def _decode(self, token: str, key: PyJWK) -> Mapping[str, object]:
-        """Verify the signature and registered claims with the fixed policy."""
+        """Verify the signature and registered claims with the fixed policy.
+
+        Args:
+            token (str): Encoded JWT whose header passed the policy check.
+            key (PyJWK): Resolved issuer signing key used to verify the signature.
+
+        Returns:
+            Mapping[str, object]: Decoded payload keyed by claim name, after
+            signature, issuer, audience, required-claim and time checks.
+        """
         try:
             return jwt.decode(
                 token,

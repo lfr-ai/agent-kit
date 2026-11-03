@@ -77,8 +77,8 @@ installation directory, which is generated and may move.
   is on, and then ignores matchers. Register the guard in one place per harness to
   avoid running it twice.
 
-This repository does not activate either template. Activation is a consumer
-decision recorded with its own tests.
+The delivered Git guard is registered by APM from `git-guard.json`; these templates
+are for an additional consumer-owned policy. Activate them only with their own tests.
 
 ## Verifying a registration
 

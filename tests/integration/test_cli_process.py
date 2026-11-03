@@ -17,6 +17,20 @@ _ROOT = Path(__file__).resolve().parents[2]
 _PROCESS_TIMEOUT_SECONDS = 300
 
 
+def test_smoke_failure_names_the_command_even_without_vendor_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        apm_smoke.run(
+            [sys.executable, "-c", "raise SystemExit(7)"],
+            cwd=tmp_path,
+            env=os.environ.copy(),
+        )
+
+    assert error.value.code == 7
+    assert "Failed (exit 7): -c raise SystemExit(7)" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("returncode", [0, 9])
 def test_apm_output_is_independent_of_the_windows_console_encoding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int

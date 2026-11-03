@@ -39,7 +39,7 @@ in `.apm/selection.json`.
 - Prefer existing local tools; add an MCP server only for a real missing capability.
 - In VS Code, use **Configure Tools** to enable only needed tools, choose the
   appropriate custom agent, and inspect **Chat: Open Customizations**.
-- Retain manual MCP startup and native approval. Templates and prompt instructions
+- Retain native approval for MCP tools. Templates and prompt instructions
   do not grant authorization or isolate a process.
 - In Claude, inspect `/context` and the selected skill/agent. Native invocation
   controls are not portable fields to add indiscriminately to every skill.

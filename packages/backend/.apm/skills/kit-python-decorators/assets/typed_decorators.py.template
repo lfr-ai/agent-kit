@@ -1,0 +1,161 @@
+"""Central cross-cutting policies as typed, sync-and-async-aware decorators.
+
+Copy into ``src/shop/policies.py`` and import from here everywhere; do not
+repeat ``try``/``except`` or logging blocks in services. A ``Policy`` wraps one
+context manager (a *scope*) and applies it to every call, so one code path
+serves both ordinary and coroutine functions. Retry, caching, authorization and
+metrics follow the same shape; add them here, one scope each, or use a vetted
+library (see the reference) for retry.
+
+Policies do not retry, cache, or log arguments: values may be sensitive.
+Generator and async-generator functions are rejected at decoration time because
+a scope would close before iteration starts.
+"""
+
+import functools
+import inspect
+import logging
+import time
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
+from typing import Final, overload
+from warnings import deprecated
+
+logger = logging.getLogger(__name__)
+
+type Scope = Callable[[str], AbstractContextManager[None]]
+
+_MILLISECONDS_PER_SECOND = 1000.0
+
+__all__ = [
+    "Policy",
+    "deprecated",
+    "log_calls",
+    "timed",
+    "translate_errors",
+]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Policy:
+    """Apply one scope around every call of the decorated function.
+
+    Attributes:
+        scope: Factory returning a context manager for one call; it receives
+            the decorated callable's qualified name.
+    """
+
+    scope: Scope
+
+    @overload
+    def __call__[**P, R](
+        self, function: Callable[P, Awaitable[R]], /
+    ) -> Callable[P, Awaitable[R]]: ...
+
+    @overload
+    def __call__[**P, R](self, function: Callable[P, R], /) -> Callable[P, R]: ...
+
+    def __call__(self, function: Callable[..., object], /) -> Callable[..., object]:
+        """Return a wrapper that runs ``function`` inside the scope.
+
+        Args:
+            function (Callable[..., object]): Ordinary or coroutine function.
+
+        Returns:
+            A wrapper of the same kind (``async def`` for a coroutine function)
+            whose signature and result type match ``function``.
+
+        Raises:
+            TypeError: If ``function`` is a generator or async generator function.
+        """
+        if inspect.isgeneratorfunction(function) or inspect.isasyncgenfunction(
+            function
+        ):
+            raise TypeError(f"{_name_of(function)}: generators cannot be wrapped")
+        name = _name_of(function)
+        if inspect.iscoroutinefunction(function):
+            return _wrap_async(function, self.scope, name)
+        return _wrap_sync(function, self.scope, name)
+
+
+def log_calls(*, level: int = logging.DEBUG) -> Policy:
+    """Log entry and outcome of each call without arguments or results.
+
+    Apply the returned policy as ``@log_calls()``; ``level`` applies to both records.
+    """
+
+    @contextmanager
+    def scope(name: str) -> Iterator[None]:
+        logger.log(level, "%s started", name)
+        outcome = "failed"
+        try:
+            yield
+            outcome = "finished"
+        finally:
+            logger.log(level, "%s %s", name, outcome)
+
+    return Policy(scope=scope)
+
+
+def translate_errors(
+    errors: tuple[type[Exception], ...], *, to: Callable[[Exception], Exception]
+) -> Policy:
+    """Translate selected exceptions into the caller-facing error, chained.
+
+    Args:
+        errors (tuple[type[Exception], ...]): Dependency errors to translate.
+        to (Callable[[Exception], Exception]): Builds the documented error from
+            the original; the original stays as ``__cause__``.
+
+    Returns:
+        A policy to apply at one adapter boundary.
+    """
+
+    @contextmanager
+    def scope(name: str) -> Iterator[None]:
+        try:
+            yield
+        except errors as error:
+            raise to(error) from error
+
+    return Policy(scope=scope)
+
+
+@contextmanager
+def _timing(name: str) -> Iterator[None]:
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = (time.perf_counter() - started) * _MILLISECONDS_PER_SECOND
+        logger.debug("%s took %.1f ms", name, elapsed_ms)
+
+
+timed: Final = Policy(scope=_timing)
+
+
+def _name_of(function: Callable[..., object]) -> str:
+    return getattr(function, "__qualname__", type(function).__qualname__)
+
+
+def _wrap_sync(
+    function: Callable[..., object], scope: Scope, name: str
+) -> Callable[..., object]:
+    @functools.wraps(function)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        with scope(name):
+            return function(*args, **kwargs)
+
+    return wrapper
+
+
+def _wrap_async(
+    function: Callable[..., Awaitable[object]], scope: Scope, name: str
+) -> Callable[..., Awaitable[object]]:
+    @functools.wraps(function)
+    async def wrapper(*args: object, **kwargs: object) -> object:
+        with scope(name):
+            return await function(*args, **kwargs)
+
+    return wrapper

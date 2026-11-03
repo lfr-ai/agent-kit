@@ -48,8 +48,8 @@ class StreamInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            value: Diagnostic value for the invalid input.
+            issue (StreamInputIssue): The violated input invariant.
+            value (str | None): Diagnostic value for the invalid input.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -58,7 +58,7 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
     """Decode a top-level JSON array, keeping the line of each element.
 
     Args:
-        text: JSON document text.
+        text (str): JSON document text.
 
     Returns:
         Pairs of one-based line number and decoded element.
@@ -108,11 +108,11 @@ def check_events(
     """Return contract findings for one recording.
 
     Args:
-        items: Elements with their line numbers.
-        path: Display path used in findings.
-        allowed: Known event names.
-        max_event_bytes: Maximum compact JSON payload size.
-        allow_open: Accept recordings without a terminal ``end`` event.
+        items (list[tuple[int, object]]): Elements with their line numbers.
+        path (str): Display path used in findings.
+        allowed (frozenset[str]): Known event names.
+        max_event_bytes (int): Maximum compact JSON payload size.
+        allow_open (bool): Accept recordings without a terminal ``end`` event.
 
     Returns:
         Findings formatted as ``path:line: message``, in input order.
@@ -194,11 +194,7 @@ def _terminal_findings(
 def main(argv: list[str] | None = None) -> int:
     """Validate each manifest and print findings.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 with findings, 2 on unreadable input.
+    Returns 0 when clean, 1 with findings, 2 on unreadable input.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", type=Path, help="JSON event manifests")

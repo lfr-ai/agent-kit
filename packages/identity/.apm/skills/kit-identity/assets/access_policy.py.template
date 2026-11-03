@@ -1,0 +1,155 @@
+"""Application policy AFTER library verification; not a JWT/OIDC implementation."""
+
+# ruff: noqa: DOC502 -- documented verifier-port errors propagate through require
+
+from dataclasses import dataclass
+import hmac
+from typing import Protocol
+
+
+class UnauthenticatedError(Exception):
+    """Missing, expired, malformed, wrongly targeted or cryptographically invalid token."""
+
+
+class ForbiddenError(Exception):
+    """A verified token lacks the required scope or application role."""
+
+
+class IdentityUnavailableError(Exception):
+    """Verification infrastructure is unavailable; never bypass verification."""
+
+
+class InvalidCallbackError(Exception):
+    """The login callback does not match the initiating browser transaction."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class VerifiedAccess:
+    """Normalized claims from a trusted verifier, never from a decode-only parser.
+
+    Args:
+        issuer: Verified tenant-specific issuer.
+        audience: Verified API audience.
+        scopes: Space-separated delegated scp claim normalized to a set.
+        roles: Application roles, not directory roles or display names.
+    """
+
+    issuer: str
+    audience: str
+    scopes: frozenset[str]
+    roles: frozenset[str]
+
+
+class TokenVerifier(Protocol):
+    """Infrastructure port for the application's reviewed token library."""
+
+    def verify(self, *, access_token: str) -> VerifiedAccess:
+        """Verify signature, allowed algorithm, issuer, audience, tenant and time.
+
+        Args:
+            access_token (str): Bearer credential; never log or persist it here.
+
+        Returns:
+            Normalized access-token claims, not ID-token claims.
+
+        Raises:
+            UnauthenticatedError: Token validation failed.
+            IdentityUnavailableError: Trusted metadata/JWKS cannot be obtained.
+        """
+        ...
+
+
+class AccessGate:
+    """Orchestrate token verification and permission policy without a framework."""
+
+    def __init__(self, *, verifier: TokenVerifier, issuer: str, audience: str) -> None:
+        """Inject the trusted verifier and target configuration.
+
+        Args:
+            verifier (TokenVerifier): Adapter using a reviewed token library.
+            issuer (str): Startup-validated tenant-specific issuer.
+            audience (str): Startup-validated API audience.
+        """
+        self._verifier = verifier
+        self._issuer = issuer
+        self._audience = audience
+
+    def require(
+        self, *, access_token: str, scopes: frozenset[str], roles: frozenset[str]
+    ) -> VerifiedAccess:
+        """Require all requested scopes AND at least one requested role.
+
+        Args:
+            access_token (str): Credential passed unchanged to the verifier.
+            scopes (frozenset[str]): Required delegated scopes; empty means no scope
+                constraint.
+            roles (frozenset[str]): Acceptable application roles; empty means no role
+                constraint.
+
+        Returns:
+            Verified claims; resource/tenant ownership must still be authorized.
+
+        Raises:
+            UnauthenticatedError: Verification fails or token targets another API/issuer.
+            ForbiddenError: A nonempty scope or role constraint is unsatisfied.
+            IdentityUnavailableError: The verifier is unavailable.
+        """
+        claims = self._verifier.verify(access_token=access_token)
+        if claims.issuer != self._issuer or claims.audience != self._audience:
+            raise UnauthenticatedError
+        if not scopes <= claims.scopes or (roles and not roles & claims.roles):
+            raise ForbiddenError
+        return claims
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LoginBinding:
+    """Synthetic callback binding; use the OIDC library's real transaction store.
+
+    Args:
+        state: Unpredictable session-bound state.
+        nonce: Unpredictable nonce sent in the authentication request.
+        redirect_uri: Exact registered callback URI, not a return-to URL.
+        expires_at: Transaction expiry as Unix seconds.
+    """
+
+    state: str
+    nonce: str
+    redirect_uri: str
+    expires_at: int
+
+
+def validate_callback(
+    *,
+    binding: LoginBinding,
+    state: str,
+    nonce: str,
+    redirect_uri: str,
+    now: int,
+) -> None:
+    """Check a consumed transaction after the library verifies the ID token.
+
+    Returning normally means the binding matches and has not expired. No code
+    exchange is performed.
+
+    Args:
+        binding (LoginBinding): Atomically consumed, session-bound transaction from the
+            library.
+        state (str): Callback state.
+        nonce (str): Nonce from the cryptographically verified ID token.
+        redirect_uri (str): Actual callback URI without query parameters.
+        now (int): Current Unix seconds, supplied by the handling boundary.
+
+    Raises:
+        InvalidCallbackError: State, nonce, redirect or transaction expiry is invalid.
+    """
+    matches = (
+        bool(binding.state),
+        bool(binding.nonce),
+        hmac.compare_digest(binding.state.encode(), state.encode()),
+        hmac.compare_digest(binding.nonce.encode(), nonce.encode()),
+        binding.redirect_uri == redirect_uri,
+        now < binding.expires_at,
+    )
+    if not all(matches):
+        raise InvalidCallbackError

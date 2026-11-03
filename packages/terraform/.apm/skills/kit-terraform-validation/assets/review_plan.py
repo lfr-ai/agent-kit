@@ -55,8 +55,8 @@ class PlanInputError(ValueError):
         """Describe a supported input failure.
 
         Args:
-            issue: The violated input invariant.
-            value: Diagnostic value for the invalid input.
+            issue (PlanInputIssue): The violated input invariant.
+            value (str | None): Diagnostic value for the invalid input.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -68,7 +68,7 @@ class PlanInputTypeError(TypeError):
         """Describe a wrong input type.
 
         Args:
-            issue: The violated input invariant.
+            issue (PlanInputIssue): The violated input invariant.
         """
         super().__init__(issue.value)
 
@@ -156,6 +156,10 @@ def _action_kind(change: dict[object, object]) -> str:
 def analyze_plan(value: object) -> dict[str, list[str]]:
     """Reject incomplete/unknown input and classify supported resource actions.
 
+    Returns:
+        Resource addresses keyed by action kind; every kind is present, empty when
+        unused, and addresses keep plan order.
+
     Raises:
         ValueError: A required field is missing or a plan value is unsupported.
         PlanInputTypeError: The document or a present field has the wrong type.
@@ -199,7 +203,7 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
+            issue (SelfTestIssue): The invariant that failed.
         """
         super().__init__(issue.value)
 

@@ -1,6 +1,6 @@
 """Celery binding for the broker-neutral task contracts.
 
-Copy to 'tasks/adapters/celery_app.py'. Requires 'celery>=5.3'. Celery owns
+Copy to ``tasks/adapters/celery_app.py``. Requires ``celery>=5.3``. Celery owns
 delivery, acknowledgement and retries here, so this module maps the same
 policy the neutral worker applies onto Celery settings:
 
@@ -14,7 +14,7 @@ policy the neutral worker applies onto Celery settings:
 - The Redis and SQS transports emulate acknowledgement with a visibility
   timeout; it must exceed the longest task runtime plus the longest countdown.
 
-Run a worker with 'celery -A tasks.adapters.celery_app worker --loglevel=INFO'.
+Run a worker with ``celery -A tasks.adapters.celery_app worker --loglevel=INFO``.
 """
 
 import asyncio
@@ -64,13 +64,14 @@ app.conf.update(
 def register(task_type: str, spec: HandlerSpec, store: IdempotencyStore) -> Task:
     """Register a handler as a Celery task that consumes serialized envelopes.
 
-    Producers send 'envelope.to_json().decode()' as the single argument, so the
+    Producers send ``envelope.to_json().decode()`` as the single argument, so the
     same envelope contract and versioning apply as with the neutral worker.
 
     Args:
-        task_type: Celery task name; equal to the envelope task type.
-        spec: Handler registration with versions, timeout and attempt limit.
-        store: Shared idempotency store.
+        task_type (str): Celery task name; equal to the envelope task type.
+        spec (HandlerSpec): Handler registration with versions, timeout and attempt
+            limit.
+        store (IdempotencyStore): Shared idempotency store.
 
     Returns:
         The registered Celery task.
@@ -133,15 +134,22 @@ def enqueue(task: Task, body: bytes, *, countdown_s: float = 0.0) -> None:
     """Publish a serialized envelope to a registered task.
 
     Args:
-        task: Task returned by 'register'.
-        body: 'TaskEnvelope.to_json()' output.
-        countdown_s: Delay before the task becomes eligible to run.
+        task (Task): Task returned by ``register``.
+        body (bytes): ``TaskEnvelope.to_json()`` output.
+        countdown_s (float): Delay before the task becomes eligible to run.
     """
     task.apply_async(args=(body.decode(),), countdown=countdown_s)
 
 
 def describe_settings() -> Mapping[str, object]:
-    """Return the delivery-relevant settings, for startup logs and reviews."""
+    """Return the delivery-relevant settings, for startup logs and reviews.
+
+    Returns:
+        Mapping[str, object]: Current Celery values keyed by ``task_acks_late``,
+        ``task_reject_on_worker_lost``, ``worker_prefetch_multiplier``,
+        ``task_time_limit``, ``task_soft_time_limit`` and
+        ``broker_transport_options``; the last value is the transport options map.
+    """
     keys = (
         "task_acks_late",
         "task_reject_on_worker_lost",

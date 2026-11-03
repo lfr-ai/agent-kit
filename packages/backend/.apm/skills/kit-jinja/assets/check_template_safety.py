@@ -67,7 +67,7 @@ def _jinja_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
     """Collect names imported from Jinja and aliases of the Jinja package.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Mapping of local name to original name, and local package aliases.
@@ -87,14 +87,7 @@ def _jinja_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
 
 
 def _package_aliases(node: ast.Import) -> set[str]:
-    """Return local names that an ``import`` statement binds to Jinja.
-
-    Args:
-        node: Import statement.
-
-    Returns:
-        Local package aliases.
-    """
+    """Return local names that an ``import`` statement binds to Jinja."""
     return {
         alias.asname or alias.name.split(".")[0]
         for alias in node.names
@@ -106,9 +99,9 @@ def _callee(call: ast.Call, names: dict[str, str], modules: set[str]) -> str | N
     """Resolve a call to the original Jinja name it refers to.
 
     Args:
-        call: Call node.
-        names: Local-to-original names imported from Jinja.
-        modules: Local aliases of Jinja packages.
+        call (ast.Call): Call node.
+        names (dict[str, str]): Local-to-original names imported from Jinja.
+        modules (set[str]): Local aliases of Jinja packages.
 
     Returns:
         The original Jinja name, the attribute name for method calls, or None.
@@ -131,8 +124,8 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
     """Return a keyword argument value.
 
     Args:
-        call: Call node.
-        name: Keyword name.
+        call (ast.Call): Call node.
+        name (str): Keyword name.
 
     Returns:
         The value node, or None.
@@ -141,14 +134,7 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
 
 
 def _is_dynamic_text(node: ast.expr) -> bool:
-    """Return whether an expression builds text from runtime values.
-
-    Args:
-        node: Expression node.
-
-    Returns:
-        True for f-strings, ``%`` or ``+`` formatting, and ``.format()`` calls.
-    """
+    """Return whether an expression builds text from runtime values."""
     if isinstance(node, ast.JoinedStr):
         return True
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
@@ -161,14 +147,7 @@ def _is_dynamic_text(node: ast.expr) -> bool:
 
 
 def _template_issues(_call: ast.Call) -> list[str]:
-    """Return the issue for direct ``Template`` construction.
-
-    Args:
-        _call: Call node.
-
-    Returns:
-        One message.
-    """
+    """Return the issue for direct ``Template`` construction."""
     return [
         (
             "jinja2.Template uses an implicit environment; load templates through "
@@ -178,28 +157,14 @@ def _template_issues(_call: ast.Call) -> list[str]:
 
 
 def _markup_issues(call: ast.Call) -> list[str]:
-    """Return the issue for ``Markup`` around formatted text.
-
-    Args:
-        call: Call node.
-
-    Returns:
-        Zero or one message.
-    """
+    """Return the issue for ``Markup`` around formatted text."""
     if call.args and _is_dynamic_text(call.args[0]):
         return ["Markup around formatted text marks untrusted input as safe"]
     return []
 
 
 def _from_string_issues(call: ast.Call) -> list[str]:
-    """Return the issue for ``from_string`` on non-literal source.
-
-    Args:
-        call: Call node.
-
-    Returns:
-        Zero or one message.
-    """
+    """Return the issue for ``from_string`` on non-literal source."""
     if not call.args or (
         isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
     ):
@@ -223,8 +188,8 @@ def _python_issue(call: ast.Call, name: str) -> list[str]:
     """Return issues for one resolved Jinja call.
 
     Args:
-        call: Call node.
-        name: Original Jinja name.
+        call (ast.Call): Call node.
+        name (str): Original Jinja name.
 
     Returns:
         Zero or more messages.
@@ -239,8 +204,8 @@ def _environment_issues(call: ast.Call, name: str) -> list[str]:
     """Return issues for an ``Environment`` construction.
 
     Args:
-        call: Call node.
-        name: Original environment class name.
+        call (ast.Call): Call node.
+        name (str): Original environment class name.
 
     Returns:
         Zero or more messages.
@@ -263,8 +228,8 @@ def check_python(text: str, path: str) -> list[str]:
     """Report unsafe Jinja usage in Python source.
 
     Args:
-        text: Python source.
-        path: Display path.
+        text (str): Python source.
+        path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -295,8 +260,8 @@ def check_template(text: str, path: str) -> list[str]:
     """Report risky constructs in Jinja template source.
 
     Args:
-        text: Template source.
-        path: Display path.
+        text (str): Template source.
+        path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
@@ -317,8 +282,8 @@ def _files(targets: Sequence[Path], suffixes: Sequence[str]) -> list[Path]:
     """Expand targets into Python and template files.
 
     Args:
-        targets: Files or directories.
-        suffixes: Template file suffixes.
+        targets (Sequence[Path]): Files or directories.
+        suffixes (Sequence[str]): Template file suffixes.
 
     Returns:
         Sorted candidate files.
@@ -344,8 +309,8 @@ def scan(targets: Sequence[Path], *, suffixes: Sequence[str]) -> list[str]:
     """Scan targets and return all findings.
 
     Args:
-        targets: Files or directories.
-        suffixes: Template file suffixes.
+        targets (Sequence[Path]): Files or directories.
+        suffixes (Sequence[str]): Template file suffixes.
 
     Returns:
         Findings, including missing targets and unreadable files.
@@ -389,9 +354,9 @@ class SelfTestError(AssertionError):
         """Describe a self-test regression.
 
         Args:
-            issue: The invariant that failed.
-            source: Observed source for the failing case.
-            found: Observed found for the failing case.
+            issue (SelfTestIssue): The invariant that failed.
+            source (str | None): Observed source for the failing case.
+            found (list[str] | None): Observed found for the failing case.
         """
         super().__init__(issue.value.format(source=source, found=found))
 
@@ -500,11 +465,7 @@ def _self_test_clean_templates() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 when clean, 1 when findings were reported.
+    Returns 0 when clean, 1 when findings were reported.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="files or directories")

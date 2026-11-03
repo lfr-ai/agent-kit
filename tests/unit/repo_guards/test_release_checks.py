@@ -46,6 +46,8 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "terraform",
         "bicep",
         "remote-access",
+        "temporal",
+        "identity",
     ):
         bundle = root / "packages" / name
         bundle.mkdir(parents=True)
@@ -85,8 +87,8 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "apm.yml": b'license: MIT\nversion: "0.1.0"\n',
         "apm-policy.yml": b"enforcement: block\n",
         ".apm/skills/kit-test/SKILL.md": b"# Synthetic skill\n",
-        ".github/agents/subagents/kit-reviewer.agent.md": b"---\ntools: [read, search]\n---\nRead only.\n",
-        ".claude/agents/subagents/kit-reviewer.md": b"---\ntools: Read, Grep, Glob\n---\nRead only.\n",
+        ".github/agents/kit-example.agent.md": b"---\ntools: [read, search]\n---\nRead only.\n",
+        ".claude/agents/kit-example.md": b"---\ntools: Read, Grep, Glob\n---\nRead only.\n",
     }
     provenance = {
         "source": {"catalog_version": "0.1.0"},

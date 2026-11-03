@@ -4,5 +4,31 @@ license: MIT
 description: Optional accessible typed frontend capability bundle.
 targets: [copilot, claude]
 includes: [.apm/instructions/, .apm/prompts/, .apm/skills/]
-dependencies: {}
+dependencies:
+  mcp:
+    - name: playwright
+      registry: false
+      transport: stdio
+      command: bunx
+      args: ["--bun", "@playwright/mcp@0.0.80", "--isolated", "--headless"]
+    - name: chrome-devtools
+      registry: false
+      transport: stdio
+      command: bunx
+      args:
+        - --bun
+        - chrome-devtools-mcp@1.9.0
+        - --isolated
+        - --headless
+        - --no-usage-statistics
+        - --no-performance-crux
+    - name: shadcn
+      registry: false
+      transport: stdio
+      command: bunx
+      args: ["--bun", "shadcn@4.21.0", "mcp"]
+    - name: storybook
+      registry: false
+      transport: http
+      url: http://localhost:6006/mcp
 executables: {}

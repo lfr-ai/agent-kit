@@ -321,7 +321,11 @@ def _instance_attributes(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[M
 
 
 def _members(node: ast.ClassDef) -> dict[str, Member]:
-    """Collect methods, properties and attributes declared by a class body."""
+    """Collect methods, properties and attributes declared by a class body.
+
+    Returns:
+        Members keyed by name; methods take precedence over attributes.
+    """
     members: dict[str, Member] = {}
     attributes: list[Member] = []
     for item in node.body:
@@ -353,8 +357,8 @@ def parse_classes(path: str, text: str) -> list[ClassInfo]:
     """Parse one module and describe its top-level classes.
 
     Args:
-        path: Path used in findings.
-        text: Module source.
+        path (str): Path used in findings.
+        text (str): Module source.
 
     Returns:
         Top-level classes in source order.
@@ -393,7 +397,11 @@ def _is_interface_name(name: str) -> bool:
 def _port_members(
     port: ClassInfo, protocols: dict[str, ClassInfo], seen: frozenset[str]
 ) -> dict[str, Member]:
-    """Merge a port's members with those of the protocols it extends."""
+    """Merge a port's members with those of the protocols it extends.
+
+    Returns:
+        Members keyed by name, including those of every scanned base protocol.
+    """
     merged: dict[str, Member] = {}
     for base in reversed(port.bases):
         parent = protocols.get(base)
@@ -410,7 +418,11 @@ def _port_members(
 def _resolved_members(
     cls: ClassInfo, classes: dict[str, ClassInfo], seen: frozenset[str]
 ) -> dict[str, Member]:
-    """Merge members inherited from scanned non-protocol base classes."""
+    """Merge members inherited from scanned non-protocol base classes.
+
+    Returns:
+        Members keyed by name; the class's own definitions win over inherited ones.
+    """
     merged: dict[str, Member] = {}
     for base in reversed(cls.bases):
         parent = classes.get(base)
@@ -571,9 +583,11 @@ def analyze(
     """Check every implementation of every port found in ``port_sources``.
 
     Args:
-        port_sources: ``(path, text)`` pairs whose Protocol classes are ports.
-        sources: ``(path, text)`` pairs searched for implementations.
-        options: Reporting switches.
+        port_sources (Sequence[tuple[str, str]]): ``(path, text)`` pairs whose Protocol
+            classes are ports.
+        sources (Sequence[tuple[str, str]]): ``(path, text)`` pairs searched for
+            implementations.
+        options (Options): Reporting switches.
 
     Returns:
         Findings sorted by path, line and message.
@@ -613,7 +627,11 @@ def analyze(
 def _parse_sources(
     by_path: dict[str, str],
 ) -> tuple[list[ClassInfo], list[Finding]]:
-    """Parse every source in path order, reporting unparsable modules."""
+    """Parse every source in path order, reporting unparsable modules.
+
+    Returns:
+        Parsed classes and findings for modules that could not be parsed.
+    """
     findings: list[Finding] = []
     all_classes: list[ClassInfo] = []
     for path, text in sorted(by_path.items()):
@@ -633,7 +651,11 @@ def _matched_ports(
     port_members: dict[str, dict[str, Member]],
     options: Options,
 ) -> list[tuple[ClassInfo, dict[str, Member]]]:
-    """Return the ports a class implements explicitly or structurally."""
+    """Return the ports a class implements explicitly or structurally.
+
+    Returns:
+        ``(port, port members)`` pairs for each implemented port, in port order.
+    """
     return [
         (protocols[name], members)
         for name, members in sorted(port_members.items())
@@ -658,7 +680,11 @@ def _python_files(paths: Iterable[Path]) -> list[Path]:
 
 
 def _read(paths: Iterable[Path]) -> list[tuple[str, str]]:
-    """Read sources as ``(posix path, text)`` pairs."""
+    """Read sources as ``(posix path, text)`` pairs.
+
+    Returns:
+        ``(posix path, text)`` pairs in input order.
+    """
     return [
         (path.as_posix(), path.read_text(encoding="utf-8"))
         for path in _python_files(paths)
@@ -725,11 +751,7 @@ class BadStream:
 
 
 def self_test() -> list[str]:
-    """Run the checker on in-memory sources and return any unmet expectation.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Run the checker on in-memory sources and return any unmet expectation."""
     findings = analyze(
         [("ports.py", _SELF_TEST_PORT)], [("adapters.py", _SELF_TEST_ADAPTERS)]
     )
@@ -822,11 +844,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the checker and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     parser = _parser()
     args = parser.parse_args(argv)

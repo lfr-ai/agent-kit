@@ -1,6 +1,6 @@
-"""LangChain retriever behind the framework-neutral 'Retriever' port.
+"""LangChain retriever behind the framework-neutral ``Retriever`` port.
 
-Copy to 'retrieval/adapters/langchain.py'. Requires 'langchain-core'. Only
+Copy to ``retrieval/adapters/langchain.py``. Requires ``langchain-core``. Only
 this module imports LangChain; the import-linter contract forbids it anywhere
 in the retrieval core. The adapter never trusts the framework for access
 control: it builds a per-principal, pre-filtered retriever through a factory,
@@ -31,7 +31,7 @@ RetrieverFactory = Callable[[Query], BaseRetriever]
 
 
 class LangChainRetrieverAdapter:
-    """Adapt a LangChain 'BaseRetriever' to the 'Retriever' port."""
+    """Adapt a LangChain ``BaseRetriever`` to the ``Retriever`` port."""
 
     def __init__(
         self,
@@ -44,10 +44,11 @@ class LangChainRetrieverAdapter:
         """Configure the adapter.
 
         Args:
-            factory: Builds a pre-filtered retriever for one query.
-            name: Strategy name reported in hits and fusion weights.
-            score_key: Metadata key holding a store score, when present.
-            unavailable: Exceptions mapped to 'RetrievalUnavailableError'.
+            factory (RetrieverFactory): Builds a pre-filtered retriever for one query.
+            name (str): Strategy name reported in hits and fusion weights.
+            score_key (str): Metadata key holding a store score, when present.
+            unavailable (tuple[type[Exception], ...]): Exceptions mapped to
+                ``RetrievalUnavailableError``.
         """
         self._factory = factory
         self._name = name
@@ -67,7 +68,7 @@ class LangChainRetrieverAdapter:
         dropped and logged as an access-control defect in the filter factory.
 
         Args:
-            query: Request to execute.
+            query (Query): Request to execute.
 
         Returns:
             Visible, attributable hits in framework order.

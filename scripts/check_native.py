@@ -4,13 +4,10 @@ import json
 from pathlib import Path
 import sys
 
-import yaml
-
 _ROOT = Path(__file__).resolve().parents[1]
 _COMMAND = "uv run --locked --no-sync agent-kit context"
 _SESSION_ENTRYPOINTS = (".venv/Scripts/agent-kit.exe", ".venv/bin/agent-kit")
 _HOOK_TIMEOUT_SECONDS = 10
-_FRONTMATTER_FENCES = 2  # split into empty prefix, metadata, and body
 # Dependencies change through a reviewed, audited lock; agents never install ad hoc.
 _PACKAGE_INSTALL_DENY = [
     "Bash(pip install *)",
@@ -84,15 +81,6 @@ _VERSION_CONTROL_APPROVAL = {
     "/^gh\\s+(pr\\s+(create|merge|close|edit|ready)|issue\\s+(create|edit|close)|release|repo|api|auth|secret|variable)\\b/": False,
 }
 _TERMINAL_APPROVAL = {**_PACKAGE_INSTALL_APPROVAL, **_VERSION_CONTROL_APPROVAL}
-_COPILOT_FIELDS = {
-    "name",
-    "description",
-    "tools",
-    "agents",
-    "user-invocable",
-    "disable-model-invocation",
-}
-_CLAUDE_FIELDS = {"name", "description", "tools"}
 _VSCODE_TOOLCHAIN = {
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
     "python.languageServer": "None",
@@ -113,14 +101,6 @@ _VSCODE_TOOLCHAIN = {
 }
 
 
-def _reviewer(path: Path) -> tuple[object, str]:
-    """Read metadata and body without importing provider code."""
-    header, body = path.read_text(encoding="utf-8").split("---", _FRONTMATTER_FENCES)[
-        1:
-    ]
-    return yaml.safe_load(header), body.strip()
-
-
 def _vscode_contract(settings: object) -> list[str]:
     """Keep workspace tool ownership and native discovery explicit."""
     if not isinstance(settings, dict):
@@ -138,34 +118,6 @@ def _vscode_contract(settings: object) -> list[str]:
         failures.append("VS Code Python formatting must be owned by Ruff.")
     if settings.get("chat.useClaudeHooks") is not False:
         failures.append("VS Code Local must not execute mirrored Claude hooks.")
-    return failures
-
-
-def _reviewer_failures(root: Path) -> list[str]:
-    """Require matching, least-privilege native reviewer definitions."""
-    failures: list[str] = []
-    copilot, copilot_body = _reviewer(root / ".github/agents/kit-reviewer.agent.md")
-    claude, claude_body = _reviewer(root / ".claude/agents/kit-reviewer.md")
-    failures.extend(
-        "Native reviewer metadata requires explicit review."
-        for metadata, fields in ((copilot, _COPILOT_FIELDS), (claude, _CLAUDE_FIELDS))
-        if not isinstance(metadata, dict) or set(metadata) != fields
-    )
-    if not isinstance(copilot, dict) or copilot.get("tools") != ["read", "search"]:
-        failures.append("Copilot reviewer must use the approved read/search tools.")
-    if isinstance(copilot, dict) and copilot.get("agents") != []:
-        failures.append("Copilot reviewer cannot enable nested workers.")
-    if not isinstance(copilot, dict) or (
-        copilot.get("user-invocable") is not True
-        or copilot.get("disable-model-invocation") is not False
-    ):
-        failures.append(
-            "Copilot reviewer invocation flags must be true/false booleans."
-        )
-    if not isinstance(claude, dict) or claude.get("tools") != "Read, Grep, Glob":
-        failures.append("Claude reviewer must use the approved Read/Grep/Glob tools.")
-    if copilot_body != claude_body:
-        failures.append("Native reviewer procedure bodies diverged.")
     return failures
 
 
@@ -226,9 +178,8 @@ def _claude_settings_failures(root: Path) -> list[str]:
 
 
 def check(root: Path) -> list[str]:
-    """Find changed reviewer tools, policy scope, or hook execution ownership."""
-    failures = _reviewer_failures(root)
-    failures.extend(_copilot_hook_failures(root))
+    """Find changed policy scope or hook execution ownership."""
+    failures = _copilot_hook_failures(root)
     failures.extend(_claude_settings_failures(root))
     vscode = json.loads((root / ".vscode/settings.json").read_text())
     failures.extend(_vscode_contract(vscode))
@@ -245,7 +196,7 @@ def main() -> int:
                 "audit and provision the locked environment; --no-sync hooks never "
                 "install dependencies."
             )
-    except (OSError, ValueError, yaml.YAMLError) as exc:
+    except (OSError, ValueError) as exc:
         sys.stderr.write(f"Native contract cannot be parsed: {exc}\n")
         return 1
     for failure in failures:

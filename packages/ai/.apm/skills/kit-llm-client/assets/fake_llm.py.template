@@ -1,6 +1,6 @@
-"""Deterministic 'LlmClient' fake for application tests.
+"""Deterministic ``LlmClient`` fake for application tests.
 
-Copy to 'llm/fakes.py' (or a tests helper package). The fake honors the port
+Copy to ``llm/fakes.py`` (or a tests helper package). The fake honors the port
 contract: it records every request, returns scripted completions or raises
 scripted typed errors in order, and never touches the network.
 """
@@ -25,12 +25,12 @@ def completion(
     """Build a completion for scripting.
 
     Args:
-        text: Generated text.
-        model: Model reported as having served the request.
-        finish_reason: Provider finish reason.
-        input_tokens: Reported input tokens.
-        output_tokens: Reported output tokens.
-        cost_usd: Reported cost, or None to exercise price tables.
+        text (str): Generated text.
+        model (str): Model reported as having served the request.
+        finish_reason (str): Provider finish reason.
+        input_tokens (int): Reported input tokens.
+        output_tokens (int): Reported output tokens.
+        cost_usd (float | None): Reported cost, or None to exercise price tables.
 
     Returns:
         The completion.
@@ -51,7 +51,8 @@ class ScriptedLlmClient:
         """Store the script.
 
         Args:
-            outcomes: Completions to return or errors to raise, in call order.
+            outcomes (Sequence[Completion | LlmError]): Completions to return or errors
+                to raise, in call order.
         """
         self._outcomes = list(outcomes)
         self.requests: list[CompletionRequest] = []
@@ -60,7 +61,7 @@ class ScriptedLlmClient:
         """Record the request and play the next scripted outcome.
 
         Args:
-            request: Request under test.
+            request (CompletionRequest): Request under test.
 
         Returns:
             The next scripted completion.

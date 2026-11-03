@@ -37,7 +37,14 @@ def _install_locked(session: nox.Session) -> None:
 
 
 def _pytest(session: nox.Session, tier: str, *extra: str) -> None:
-    """Run one tier's directory with any extra pytest arguments."""
+    """Run one tier's directory with any extra pytest arguments.
+
+    Args:
+        session (nox.Session): Session whose locked environment is synchronized
+            before running pytest; its positional arguments are appended last.
+        tier (str): Key selecting a directory from ``TIER_DIRECTORIES``.
+        *extra (str): Additional pytest argument tokens placed before session arguments.
+    """
     _install_locked(session)
     session.run("pytest", TIER_DIRECTORIES[tier], *extra, *session.posargs)
 

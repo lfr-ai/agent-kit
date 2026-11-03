@@ -105,14 +105,7 @@ class Registry:
 
 
 def canonical_digest(document: object) -> str:
-    """Return the SHA-256 of a JSON value with sorted keys and compact separators.
-
-    Args:
-        document: Parsed JSON value.
-
-    Returns:
-        Lower-case hexadecimal digest.
-    """
+    """Return the SHA-256 of a JSON value with sorted keys and compact separators."""
     text = json.dumps(document, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -144,6 +137,9 @@ def _text(
 
 def _objects(value: object, *, where: str) -> list[dict[str, object]]:
     """Return a list of JSON objects or raise ``RegistryError``.
+
+    Returns:
+        The objects of the list in order, each with string keys.
 
     Raises:
         RegistryError: The value is not a list of objects.
@@ -215,7 +211,7 @@ def parse_registry(document: object) -> Registry:
     """Convert a parsed registry document into render-ready records.
 
     Args:
-        document: JSON value loaded from the registry file.
+        document (object): JSON value loaded from the registry file.
 
     Returns:
         The parsed registry.
@@ -265,14 +261,7 @@ def _python_group(group: Group) -> list[str]:
 
 
 def render_python(registry: Registry) -> str:
-    """Render the Python module.
-
-    Args:
-        registry: Parsed registry.
-
-    Returns:
-        Module text with a provenance header.
-    """
+    """Render the Python module."""
     lines = [
         '"""Shared identifiers generated from the naming registry."""',
         "",
@@ -306,14 +295,7 @@ def _typescript_group(group: Group) -> list[str]:
 
 
 def render_typescript(registry: Registry) -> str:
-    """Render the TypeScript module.
-
-    Args:
-        registry: Parsed registry.
-
-    Returns:
-        Module text with a provenance header.
-    """
+    """Render the TypeScript module."""
     lines = [f"export const REGISTRY_VERSION = {json.dumps(registry.version)};"]
     for group in registry.groups:
         lines.extend(_typescript_group(group))
@@ -325,7 +307,7 @@ def load_registry(path: Path) -> Registry:
     """Read and parse a registry file.
 
     Args:
-        path: Registry JSON file.
+        path (Path): Registry JSON file.
 
     Returns:
         The parsed registry.
@@ -341,8 +323,8 @@ def write_if_changed(path: Path, text: str) -> bool:
     """Write text with LF line endings when it differs from the current file.
 
     Args:
-        path: Output file; parent directories are created.
-        text: Complete file content.
+        path (Path): Output file; parent directories are created.
+        text (str): Complete file content.
 
     Returns:
         True when the file was written, False when it was already current.
@@ -358,7 +340,7 @@ class SelfTestError(AssertionError):
     """Generated output did not meet a documented guarantee."""
 
 
-_SELF_TEST_REGISTRY: dict[str, object] = {
+_SELF_TEST_REGISTRY = {
     "version": "1.0.0",
     "groups": [
         {
@@ -411,12 +393,8 @@ def self_test() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Generate the requested outputs.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 on success, 2 for unreadable input or text that cannot be rendered (argparse exits
-        with 2 on invalid arguments).
+    Returns 0 on success, 2 for unreadable input or text that cannot be rendered
+    (argparse exits with 2 on invalid arguments).
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("registry", nargs="?", type=Path, help="registry JSON file")

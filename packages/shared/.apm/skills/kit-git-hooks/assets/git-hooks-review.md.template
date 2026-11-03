@@ -1,0 +1,74 @@
+# Git hooks review: REPOSITORY_NAME
+
+- Date: YYYY-MM-DD
+- Reviewer: ROLE_NAME
+- Decision: adopt | adopt with restrictions | change | reject
+- Next review: YYYY-MM-DD or when the hook configuration or CI changes
+
+## Runner
+
+| Item | Value |
+| --- | --- |
+| Hook runner | pre-commit / other (name it) |
+| Reason for the choice | |
+| Configuration file | |
+| `core.hooksPath` set | no / yes (value and reason) |
+| Installed by | bootstrap command |
+| Hook types installed | pre-commit / commit-msg / pre-push |
+
+## Stage plan and budgets
+
+| Stage | Checks | Budget | Measured (typical change) | Machine class |
+| --- | --- | --- | --- | --- |
+| pre-commit | | | | |
+| commit-msg | | | | |
+| pre-push | | | | |
+| manual and CI only | | not applicable | not applicable | not applicable |
+
+- Hooks that rewrite files (allowed: whitespace and line endings only):
+- Network or container hooks and why they are not at pre-commit:
+
+## Supply chain
+
+| Item | Result |
+| --- | --- |
+| Every hook repository `rev` is a full commit SHA with a version comment | yes / no |
+| Local hooks call lockfile-pinned tools | yes / no |
+| Pin checker runs in the gate | yes / no |
+| Update process (`autoupdate --freeze` or bot) and reviewer | |
+
+## Messages and secrets
+
+| Item | Result |
+| --- | --- |
+| Commit-message rule and tool | |
+| Commit range or pull-request title checked in CI | |
+| Primary secret scanner and baseline file | |
+| History scan (schedule or manual) | |
+| Platform push protection enabled | yes / no |
+
+## Bypass and CI
+
+| Item | Result |
+| --- | --- |
+| Agent instructions forbid `--no-verify`, `-n` and `SKIP=` | yes / no |
+| Agent pre-tool hook denies bypass flags (literal text only; not a sandbox) | yes / no / not applicable |
+| CI re-runs every hook check on all files with the same pinned tools | yes / no |
+| That CI job is required in branch protection or a ruleset | yes / no |
+| Recorded bypasses since the last review (hook id, reason, approver) | |
+
+## Evidence (synthetic changes only)
+
+| Check | Command | Environment | Result |
+| --- | --- | --- | --- |
+| Formatting failure is rejected at pre-commit | | | |
+| Fake secret is rejected (value removed afterward) | | | |
+| Malformed commit message is rejected | | | |
+| Failing test is rejected at pre-push | | | |
+| Same failures block the merge in CI with hooks skipped | | | |
+
+State what was executed and what was only inspected.
+
+## Findings and follow-up
+
+- Finding, owner, due date.

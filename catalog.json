@@ -19,7 +19,9 @@
     "coordination": {"path": "packages/coordination", "kind": "portable"},
     "terraform": {"path": "packages/terraform", "kind": "portable"},
     "bicep": {"path": "packages/bicep", "kind": "portable"},
-    "remote-access": {"path": "packages/remote-access", "kind": "portable"}
+    "remote-access": {"path": "packages/remote-access", "kind": "portable"},
+    "temporal": {"path": "packages/temporal", "kind": "portable"},
+    "identity": {"path": "packages/identity", "kind": "portable"}
   },
   "profiles": {
     "toolkit": {"extends": [], "bundles": ["toolkit", "shared"]},
@@ -32,6 +34,8 @@
     "ai": {"extends": ["backend"], "bundles": ["ai"]},
     "terraform": {"extends": ["iac"], "bundles": ["terraform"]},
     "bicep": {"extends": ["iac"], "bundles": ["bicep"]},
-    "remote-access": {"extends": ["iac"], "bundles": ["remote-access"]}
+    "remote-access": {"extends": ["iac"], "bundles": ["remote-access"]},
+    "temporal": {"extends": ["backend"], "bundles": ["temporal"]},
+    "identity": {"extends": ["shared"], "bundles": ["identity"]}
   }
 }

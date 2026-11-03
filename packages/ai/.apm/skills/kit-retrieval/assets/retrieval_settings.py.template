@@ -1,9 +1,9 @@
 """Typed retrieval settings loaded from environment variables.
 
-Copy to 'retrieval/settings.py'. Uses only the standard library so the core
-package stays dependency-free; swap in 'pydantic-settings' if the application
-already standardizes on it. Every variable uses the 'RETRIEVAL_' prefix and the
-defaults match 'compose.vector-store.yaml' and 'schema.sql'.
+Copy to ``retrieval/settings.py``. Uses only the standard library so the core
+package stays dependency-free; swap in ``pydantic-settings`` if the application
+already standardizes on it. Every variable uses the ``RETRIEVAL_`` prefix and the
+defaults match ``compose.vector-store.yaml`` and ``schema.sql``.
 """
 
 from collections.abc import Mapping
@@ -28,7 +28,13 @@ _DEFAULT_STATEMENT_TIMEOUT_MILLISECONDS = 2000
 
 
 def _int(environ: Mapping[str, str], name: str, default: int) -> int:
-    """Read an integer variable, naming the variable on failure."""
+    """Read an integer variable, naming the variable on failure.
+
+    Args:
+        environ (Mapping[str, str]): Environment snapshot to read.
+        name (str): Variable suffix appended to ``ENV_PREFIX``.
+        default (int): Fallback when the prefixed variable is absent.
+    """
     raw = environ.get(ENV_PREFIX + name)
     if raw is None:
         return default
@@ -39,7 +45,13 @@ def _int(environ: Mapping[str, str], name: str, default: int) -> int:
 
 
 def _float(environ: Mapping[str, str], name: str, default: float) -> float:
-    """Read a float variable, naming the variable on failure."""
+    """Read a float variable, naming the variable on failure.
+
+    Args:
+        environ (Mapping[str, str]): Environment snapshot to read.
+        name (str): Variable suffix appended to ``ENV_PREFIX``.
+        default (float): Fallback when the prefixed variable is absent.
+    """
     raw = environ.get(ENV_PREFIX + name)
     if raw is None:
         return default
@@ -54,12 +66,12 @@ class RetrievalSettings:
     """Retrieval configuration with validated bounds.
 
     Attributes:
-        database_url: Connection string; excluded from 'repr' because it may
+        database_url: Connection string; excluded from ``repr`` because it may
             embed a password.
         embedding_model: Provider model identifier used for documents and queries.
-        embedding_dimensions: Vector length; must match 'vector(N)' in the schema.
+        embedding_dimensions: Vector length; must match ``vector(N)`` in the schema.
         text_search_config: PostgreSQL text search configuration; must match
-            the generated 'tsv' column in the schema.
+            the generated ``tsv`` column in the schema.
         top_k: Hits returned to answer assembly.
         candidate_multiplier: Per-strategy over-fetch before fusion.
         rrf_k: Reciprocal rank fusion constant.
@@ -99,7 +111,7 @@ class RetrievalSettings:
         """Build settings from an environment mapping.
 
         Args:
-            environ: Usually 'os.environ'; tests pass a plain dict.
+            environ (Mapping[str, str]): Usually ``os.environ``; tests pass a dict.
 
         Returns:
             Validated settings.

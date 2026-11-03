@@ -19,8 +19,7 @@ tasks:
       - sh: bun --version
         msg: Install Bun (see CONTRIBUTING.md), then rerun `task bootstrap`.
     cmds:
-      - uv sync --locked --inexact --only-group audit
-      - uv run --locked --no-sync python scripts/audit_dependencies.py
+      - uv run --no-project python scripts/audit_dependencies.py
       - uv sync --locked
       - bun install --frozen-lockfile
       - uv run --locked pre-commit install --install-hooks
@@ -128,3 +127,8 @@ tasks:
     desc: Exercise the released APM CLI in disposable selected packages
     cmds:
       - uv run --locked python scripts/apm_smoke.py {{.CLI_ARGS}}
+
+  eval:harness:
+    desc: Measure AGENTS.md and toolkit skills in pi-harness-lab (free scripted model; set HARNESS_LAB)
+    cmds:
+      - uv run --locked python -m scripts.eval_harness {{.CLI_ARGS}}

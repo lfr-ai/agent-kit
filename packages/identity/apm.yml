@@ -1,0 +1,8 @@
+name: agent-kit-identity
+version: "0.1.0"
+license: MIT
+description: Optional Microsoft Entra, OAuth 2.1/OIDC, access-control, and frontend authentication guidance.
+targets: [copilot, claude]
+includes: [.apm/instructions/, .apm/skills/]
+dependencies: {}
+executables: {}

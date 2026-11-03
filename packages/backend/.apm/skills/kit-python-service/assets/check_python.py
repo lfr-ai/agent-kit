@@ -4,8 +4,8 @@
 # ///
 """Check Python convention invariants in explicit paths without importing them.
 
-Rules (``bool-trap``, ``magic-number``, and ``redundant-default`` are opt-in;
-others default on):
+Rules (``bool-trap``, ``magic-number``, ``redundant-default``, and the ``docstring-*``
+contract rules below are opt-in; others default on):
 
 - ``docstring-backtick``: inline code uses paired double-backtick literals.
 - ``any-cast``: no ``typing.Any`` or ``typing.cast``, imported or attribute-accessed.
@@ -25,12 +25,28 @@ others default on):
   passes a keyword argument equal to that parameter's default (a literal, an
   ``UPPER_CASE`` constant, or a ``Class.MEMBER`` reference); omit the argument
   (enable with ``--redundant-defaults``). Methods and imported callees are not traced.
+- ``docstring-args``: a public callable with two or more parameters has an ``Args:``
+  section; any ``Args:`` section lists each parameter in signature order (enable
+  the docstring rules with ``--docstrings``).
+- ``docstring-args-type``: each ``Args:`` entry reads ``name (type): meaning`` where
+  ``type`` equals the unparsed annotation (whitespace and quotes normalised).
+- ``docstring-one-line``: a callable with at most one parameter and a return that
+  needs no ``Returns:`` uses a one-line docstring instead of a summary followed only
+  by ``Args:`` or ``Returns:`` (``__init__`` is exempt).
+- ``docstring-returns``: a tuple of two or more elements, mapping, nested generic,
+  ``Callable``, or union of two or more non-``None`` types needs ``Returns:``
+  (generators document ``Yields:`` instead; ``TypeGuard``/``TypeIs`` are bool-like).
+- ``docstring-returns-none``: ``Returns:`` is not allowed on ``-> None``.
+
+The docstring rules exempt test modules, dunder methods other than ``__init__``,
+``@overload`` stubs, properties, ``@override`` methods, and private or nested helpers
+without a docstring.
 """
 
 import argparse
 import ast
 from collections.abc import Iterable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePath
 import re
 import sys
 
@@ -54,7 +70,44 @@ _DEFAULT_RULES = frozenset(
         "bare-except",
     }
 )
-ALL_RULES = _DEFAULT_RULES | {"bool-trap", "magic-number", "redundant-default"}
+_DOCSTRING_RULES = frozenset(
+    {
+        "docstring-args",
+        "docstring-args-type",
+        "docstring-one-line",
+        "docstring-returns",
+        "docstring-returns-none",
+    }
+)
+_ONE_LINE_SECTIONS = frozenset({"Args", "Returns"})
+ALL_RULES = (
+    _DEFAULT_RULES
+    | _DOCSTRING_RULES
+    | {"bool-trap", "magic-number", "redundant-default"}
+)
+_ARGS_THRESHOLD = 2
+_RECEIVERS = frozenset({"self", "cls"})
+_EXEMPT_DECORATORS = frozenset(
+    {
+        "overload",
+        "property",
+        "cached_property",
+        "override",
+        "setter",
+        "getter",
+        "deleter",
+    }
+)
+_MAPPING_NAMES = frozenset(
+    {"dict", "Dict", "Mapping", "MutableMapping", "OrderedDict", "defaultdict"}
+)
+_TUPLE_NAMES = frozenset({"tuple", "Tuple"})
+_PREDICATE_NAMES = frozenset({"TypeGuard", "TypeIs"})
+_SECTION_HEADER = re.compile(
+    r"^(Args|Returns|Yields|Raises|Attributes|Examples?|Notes?|Todo|Warnings?"
+    r"|References|See Also|Keyword Args|Other Parameters):\s*$"
+)
+_ENTRY = re.compile(r"^(\*{0,2}\w+)\s*(.*)$")
 _NAMED_NUMBERS = frozenset({0, 1, -1})
 _CONSTANT_NAME = re.compile(r"^_*[A-Z][A-Z0-9_]*$")
 _TYPE_FIELDS = frozenset({"annotation", "returns"})
@@ -66,9 +119,9 @@ def violations(
     """Find concrete convention defects without executing the target module.
 
     Args:
-        text: Python source text.
-        path: Display path used as the finding prefix.
-        rules: Rule names to apply; defaults exclude the opt-in rules.
+        text (str): Python source text.
+        path (str): Display path used as the finding prefix.
+        rules (frozenset[str]): Rule names to apply; defaults exclude the opt-in rules.
 
     Returns:
         Findings formatted as ``path:line: message``, sorted by line.
@@ -89,7 +142,18 @@ def violations(
         )
     if "redundant-default" in rules:
         findings.extend(_redundant_defaults(tree))
+    findings.extend(_contract_lines(tree, path, rules))
     return [f"{path}:{line}: {message}" for line, message in sorted(findings)]
+
+
+def _contract_lines(
+    tree: ast.Module, path: str, rules: frozenset[str]
+) -> Iterator[tuple[int, str]]:
+    if not rules & _DOCSTRING_RULES:
+        return
+    for rule, line, message in _contract_findings(tree, path):
+        if rule in rules:
+            yield line, message
 
 
 def _redundant_defaults(tree: ast.Module) -> Iterator[tuple[int, str]]:
@@ -393,15 +457,298 @@ def _is_string(annotation: ast.expr | None) -> bool:
     return isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)
 
 
+def _contract_findings(tree: ast.Module, path: str) -> Iterator[tuple[str, int, str]]:
+    if not _is_test_module(path):
+        yield from _walk_callables(tree, public=True)
+
+
+def _is_test_module(path: str) -> bool:
+    parts = PurePath(path)
+    return (
+        parts.name.startswith("test_")
+        or parts.name.endswith("_test.py")
+        or parts.name == "conftest.py"
+        or "tests" in parts.parts
+    )
+
+
+def _walk_callables(node: ast.AST, *, public: bool) -> Iterator[tuple[str, int, str]]:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _FUNCTIONS):
+            exposed = public and (
+                not child.name.startswith("_") or child.name == "__init__"
+            )
+            yield from _callable_findings(child, public=exposed)
+            yield from _walk_callables(child, public=False)
+        elif isinstance(child, ast.ClassDef):
+            yield from _walk_callables(
+                child, public=public and not child.name.startswith("_")
+            )
+        else:
+            yield from _walk_callables(child, public=public)
+
+
+def _is_exempt(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    name = function.name
+    if name.startswith("__") and name.endswith("__") and name != "__init__":
+        return True
+    for decorator in function.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        label = target.id if isinstance(target, ast.Name) else _attribute_name(target)
+        if label in _EXEMPT_DECORATORS:
+            return True
+    return False
+
+
+def _attribute_name(node: ast.expr) -> str:
+    return node.attr if isinstance(node, ast.Attribute) else ""
+
+
+def _parameters(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[tuple[str, ast.arg]]:
+    arguments = function.args
+    positional = [*arguments.posonlyargs, *arguments.args]
+    if positional and positional[0].arg in _RECEIVERS:
+        positional = positional[1:]
+    items = [(argument.arg, argument) for argument in positional]
+    if arguments.vararg:
+        items.append((f"*{arguments.vararg.arg}", arguments.vararg))
+    items.extend((argument.arg, argument) for argument in arguments.kwonlyargs)
+    if arguments.kwarg:
+        items.append((f"**{arguments.kwarg.arg}", arguments.kwarg))
+    return items
+
+
+def _callable_findings(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, *, public: bool
+) -> Iterator[tuple[str, int, str]]:
+    if _is_exempt(function):
+        return
+    parameters = _parameters(function)
+    docstring = ast.get_docstring(function)
+    needs_args = public and len(parameters) >= _ARGS_THRESHOLD
+    if docstring is None:
+        if needs_args:
+            yield (
+                "docstring-args",
+                function.lineno,
+                f"'{function.name}' needs a docstring with an Args: section",
+            )
+        return
+    sections = _sections(docstring)
+    if needs_args or "Args" in sections:
+        yield from _args_findings(function, parameters, sections)
+    if (
+        len(parameters) < _ARGS_THRESHOLD
+        and function.name != "__init__"
+        and not _requires_returns(function)
+        and _only_summary_and(docstring, _ONE_LINE_SECTIONS)
+    ):
+        yield (
+            "docstring-one-line",
+            function.lineno,
+            f"'{function.name}' is obvious from its signature; use a one-line docstring",
+        )
+    yield from _returns_findings(function, sections)
+
+
+def _only_summary_and(docstring: str, allowed: frozenset[str]) -> bool:
+    found = False
+    in_section = False
+    for line in docstring.splitlines()[1:]:
+        header = _SECTION_HEADER.match(line)
+        if header:
+            if header.group(1) not in allowed:
+                return False
+            found = in_section = True
+        elif line.strip() and not (in_section and line[:1].isspace()):
+            return False
+    return found
+
+
+def _sections(docstring: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in docstring.splitlines():
+        header = _SECTION_HEADER.match(line)
+        if header:
+            current = sections.setdefault(header.group(1), [])
+        elif current is not None and line[:1].strip():
+            current = None
+        elif current is not None:
+            current.append(line)
+    return sections
+
+
+def _args_findings(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    parameters: list[tuple[str, ast.arg]],
+    sections: dict[str, list[str]],
+) -> Iterator[tuple[str, int, str]]:
+    expected = [label for label, _ in parameters]
+    if "Args" not in sections:
+        yield "docstring-args", function.lineno, f"add Args: for {expected}"
+        return
+    documented = _documented_args(sections["Args"])
+    if [label for label, _ in documented] != expected:
+        found = [label for label, _ in documented]
+        message = f"Args must list {expected} in signature order; found {found}"
+        yield "docstring-args", function.lineno, message
+        return
+    for (label, argument), (_, doc_type) in zip(parameters, documented, strict=True):
+        if argument.annotation is None:
+            continue
+        want = _normalise_type(ast.unparse(argument.annotation))
+        if doc_type is None or _normalise_type(doc_type) != want:
+            yield (
+                "docstring-args-type",
+                function.lineno,
+                f"Args entry '{label}' must read '{label} ({want}): ...'",
+            )
+
+
+def _documented_args(lines: list[str]) -> list[tuple[str, str | None]]:
+    body = [line for line in lines if line.strip()]
+    if not body:
+        return []
+    indent = len(body[0]) - len(body[0].lstrip())
+    entries = (
+        _parse_entry(line.strip())
+        for line in body
+        if len(line) - len(line.lstrip()) == indent
+    )
+    return [entry for entry in entries if entry is not None]
+
+
+def _parse_entry(text: str) -> tuple[str, str | None] | None:
+    match = _ENTRY.match(text)
+    if match is None:
+        return None
+    name, rest = match.groups()
+    if rest.startswith(":"):
+        return name, None
+    if not rest.startswith("("):
+        return None
+    depth = 0
+    for index, character in enumerate(rest):
+        depth += character == "("
+        depth -= character == ")"
+        if depth == 0:
+            return name, rest[1:index]
+    return None
+
+
+def _normalise_type(text: str) -> str:
+    unquoted = text.replace("'", "").replace('"', "")
+    try:
+        return ast.unparse(ast.parse(unquoted, mode="eval"))
+    except SyntaxError:
+        return " ".join(unquoted.split())
+
+
+def _returns_findings(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, sections: dict[str, list[str]]
+) -> Iterator[tuple[str, int, str]]:
+    returns = function.returns
+    if returns is None:
+        return
+    described = any(line.strip() for line in sections.get("Returns", []))
+    if isinstance(returns, ast.Constant) and returns.value is None:
+        if "Returns" in sections:
+            yield (
+                "docstring-returns-none",
+                function.lineno,
+                "remove Returns: from a function annotated -> None",
+            )
+    elif not described and _requires_returns(function):
+        yield (
+            "docstring-returns",
+            function.lineno,
+            "structured return type needs Returns: describing its shape",
+        )
+
+
+def _requires_returns(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    returns = function.returns
+    return (
+        returns is not None
+        and not (isinstance(returns, ast.Constant) and returns.value is None)
+        and _is_structured(returns)
+        and not _yields(function)
+    )
+
+
+def _yields(node: ast.AST) -> bool:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.Yield | ast.YieldFrom):
+            return True
+        if not isinstance(child, (*_FUNCTIONS, ast.Lambda, ast.ClassDef)) and _yields(
+            child
+        ):
+            return True
+    return False
+
+
+def _is_structured(annotation: ast.expr) -> bool:
+    members = _union_members(annotation)
+    if len(members) != 1:
+        return len(members) > 1
+    member = members[0]
+    base = _base_name(member)
+    if base in _PREDICATE_NAMES:
+        return False
+    if base in _MAPPING_NAMES or base == "Callable":
+        return True
+    if base in _TUPLE_NAMES and isinstance(member, ast.Subscript):
+        elements = _elements(member.slice)
+        if len(elements) >= _ARGS_THRESHOLD and not any(
+            isinstance(item, ast.Constant) and item.value is Ellipsis
+            for item in elements
+        ):
+            return True
+    return isinstance(member, ast.Subscript) and any(
+        isinstance(item, ast.Subscript) for item in ast.walk(member.slice)
+    )
+
+
+def _elements(node: ast.expr) -> list[ast.expr]:
+    return list(node.elts) if isinstance(node, ast.Tuple) else [node]
+
+
+def _base_name(node: ast.expr) -> str:
+    target = node.value if isinstance(node, ast.Subscript) else node
+    return target.id if isinstance(target, ast.Name) else _attribute_name(target)
+
+
+def _union_members(node: ast.expr) -> list[ast.expr]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return [node]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return [*_union_members(node.left), *_union_members(node.right)]
+    if isinstance(node, ast.Subscript) and _base_name(node) in {"Union", "Optional"}:
+        return [
+            member
+            for element in _elements(node.slice)
+            for member in _union_members(element)
+        ]
+    if isinstance(node, ast.Constant) and node.value is None:
+        return []
+    return [node]
+
+
 def collect(
     paths: Iterable[Path], *, excluded: frozenset[str], templates: bool = False
 ) -> tuple[list[Path], list[str]]:
     """Expand explicit targets into Python files, rejecting missing or linked paths.
 
     Args:
-        paths: Files or directories named by the caller.
-        excluded: Directory names skipped during recursion.
-        templates: Scan production Python templates instead of Python modules.
+        paths (Iterable[Path]): Files or directories named by the caller.
+        excluded (frozenset[str]): Directory names skipped during recursion.
+        templates (bool): Scan production Python templates instead of Python modules.
 
     Returns:
         Sorted unique Python files and findings for unusable targets.
@@ -441,14 +788,7 @@ def _is_source(path: Path, *, templates: bool) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Scan explicit source targets and report every finding.
-
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero when no finding exists, otherwise one.
-    """
+    """Scan ``argv`` targets (default ``sys.argv[1:]``); return ``1`` on any finding."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -481,6 +821,11 @@ def main(argv: list[str] | None = None) -> int:
         help="also flag keyword arguments that repeat a module-level callee's default",
     )
     parser.add_argument(
+        "--docstrings",
+        action="store_true",
+        help="also enforce the docstring-* rules (Args, one-line, Returns)",
+    )
+    parser.add_argument(
         "--templates",
         action="store_true",
         help="scan production *.py.template files instead of modules; omit test fixtures",
@@ -499,6 +844,7 @@ def main(argv: list[str] | None = None) -> int:
         | ({"bool-trap"} if args.bool_trap else set())
         | ({"magic-number"} if args.magic_numbers else set())
         | ({"redundant-default"} if args.redundant_defaults else set())
+        | (_DOCSTRING_RULES if args.docstrings else set())
     )
     rules = selected - set(args.disable)
     files, findings = collect(

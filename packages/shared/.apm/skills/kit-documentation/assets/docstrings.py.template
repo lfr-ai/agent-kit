@@ -41,8 +41,8 @@ def split_amount(total: Decimal, *, parts: int) -> list[Decimal]:
     always equals ``total``.
 
     Args:
-        total: Amount to split, in the currency's major unit.
-        parts: Number of installments; at least 1.
+        total (Decimal): Amount to split, in the currency's major unit.
+        parts (int): Number of installments; at least 1.
 
     Returns:
         Installments in payment order.
@@ -52,7 +52,7 @@ def split_amount(total: Decimal, *, parts: int) -> list[Decimal]:
 
     Example:
         >>> split_amount(Decimal("100.00"), parts=3)
-        [Decimal('33.33'), Decimal('33.33'), Decimal('33.34')]
+        [Decimal(``33.33``), Decimal(``33.33``), Decimal(``33.34``)]
     """
     if parts < 1 or total < 0:
         message = "parts must be at least 1 and total must not be negative"
@@ -65,8 +65,8 @@ def overdue_invoices(invoices: Iterable[Invoice], *, today: date) -> Iterator[In
     """Yield unpaid invoices whose due date has passed.
 
     Args:
-        invoices: Invoices to inspect; consumed once.
-        today: The reporting date; injected so callers control time.
+        invoices (Iterable[Invoice]): Invoices to inspect; consumed once.
+        today (date): The reporting date; injected so callers control time.
 
     Yields:
         Each overdue invoice, in input order. Iteration ends when the input
@@ -100,9 +100,10 @@ class ReminderPolicy:
         """Return whether to send a reminder for an invoice today.
 
         Args:
-            invoice: The invoice to consider.
-            last_sent: Date of the previous reminder, or None if none was sent.
-            today: The reporting date.
+            invoice (Invoice): The invoice to consider.
+            last_sent (date | None): Date of the previous reminder, or None if none was
+                sent.
+            today (date): The reporting date.
 
         Returns:
             True when the invoice is overdue and outside the quiet period.

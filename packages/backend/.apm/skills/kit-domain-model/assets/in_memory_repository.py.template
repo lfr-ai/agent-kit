@@ -1,8 +1,8 @@
 """In-memory adapter for the order repository port.
 
-Copy into 'tests/fakes/orders.py' (or 'src/<package>/infrastructure/memory.py'
+Copy into ``tests/fakes/orders.py`` (or ``src/<package>/infrastructure/memory.py``
 when local tooling needs it). It stores restored copies, so callers cannot
-mutate stored state without 'save', and enforces the same version rule as the
+mutate stored state without ``save``, and enforces the same version rule as the
 production adapter.
 """
 
@@ -14,7 +14,7 @@ _STORED_VERSION_INDEX = 2
 
 
 class InMemoryOrderRepository:
-    """Dictionary-backed 'OrderRepository' for unit tests."""
+    """Dictionary-backed ``OrderRepository`` for unit tests."""
 
     def __init__(self) -> None:
         """Start empty."""

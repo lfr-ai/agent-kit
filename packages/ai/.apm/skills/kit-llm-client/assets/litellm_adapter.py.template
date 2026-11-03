@@ -1,12 +1,12 @@
-"""LiteLLM-backed adapter for the 'LlmClient' port.
+"""LiteLLM-backed adapter for the ``LlmClient`` port.
 
-Copy to 'llm/adapters/litellm.py'. Requires 'litellm'. This is the only module
+Copy to ``llm/adapters/litellm.py``. Requires ``litellm``. This is the only module
 that imports LiteLLM. It resolves model aliases, disables LiteLLM's own retries
-(retries belong to 'ResilientLlmClient' so budgets and deadlines stay visible),
+(retries belong to ``ResilientLlmClient`` so budgets and deadlines stay visible),
 and maps provider exceptions to the port's typed errors without copying
 provider messages, which can echo prompt content.
 
-Set 'LITELLM_LOCAL_MODEL_COST_MAP=True' in locked-down or offline environments so
+Set ``LITELLM_LOCAL_MODEL_COST_MAP=True`` in locked-down or offline environments so
 LiteLLM uses its bundled model price map instead of fetching one at import.
 """
 
@@ -51,7 +51,7 @@ def _retry_after(error: Exception) -> float | None:
         return None
 
 
-_ERROR_TABLE: tuple[tuple[tuple[type[Exception], ...], type[LlmError], str], ...] = (
+_ERROR_TABLE = (
     ((litellm.Timeout,), LlmTimeoutError, "provider timeout"),
     (
         (litellm.ContextWindowExceededError,),
@@ -93,7 +93,7 @@ def map_provider_error(error: Exception) -> LlmError:
     error, so the specific entries come first.
 
     Args:
-        error: Exception raised by LiteLLM.
+        error (Exception): Exception raised by LiteLLM.
 
     Returns:
         The matching port error.
@@ -113,7 +113,7 @@ def map_provider_error(error: Exception) -> LlmError:
 
 
 class LiteLlmAdapter:
-    """'LlmClient' implementation over 'litellm.acompletion'."""
+    """``LlmClient`` implementation over ``litellm.acompletion``."""
 
     def __init__(
         self,
@@ -125,11 +125,13 @@ class LiteLlmAdapter:
         """Configure model routing.
 
         Args:
-            aliases: Application alias to LiteLLM model string, for example
-                'summarizer' to a provider-prefixed model name. Credentials come
-                from the environment or a secret store, never from this mapping.
-            api_base: Optional gateway or proxy base URL.
-            completion_fn: Injected for tests; defaults to 'litellm.acompletion'.
+            aliases (Mapping[str, str]): Application alias to LiteLLM model string,
+                for example ``summarizer`` to a provider-prefixed model name.
+                Credentials come from the environment or a secret store, never from
+                this mapping.
+            api_base (str | None): Optional gateway or proxy base URL.
+            completion_fn (CompletionFn | None): Injected for tests; defaults to
+                ``litellm.acompletion``.
         """
         if not aliases:
             raise ValueError("at least one model alias is required")
@@ -141,7 +143,7 @@ class LiteLlmAdapter:
         """Send one attempt to the provider.
 
         Args:
-            request: Provider-neutral request.
+            request (CompletionRequest): Provider-neutral request.
 
         Returns:
             The completion with usage and, when the price is known, cost.

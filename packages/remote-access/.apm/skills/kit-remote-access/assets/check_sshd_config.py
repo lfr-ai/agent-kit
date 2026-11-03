@@ -131,8 +131,8 @@ class SshdConfigError(ValueError):
         """Describe the malformed line.
 
         Args:
-            line: One-based line number.
-            text: The offending line without surrounding whitespace.
+            line (int): One-based line number.
+            text (str): The offending line without surrounding whitespace.
         """
         super().__init__(f"line {line}: expected 'Keyword value', got '{text}'")
 
@@ -186,7 +186,7 @@ def parse(text: str) -> list[Setting]:
     """Read every ``Keyword value`` line and note its ``Match`` scope.
 
     Args:
-        text: Complete ``sshd_config`` text.
+        text (str): Complete ``sshd_config`` text.
 
     Returns:
         Settings in file order; comments and blank lines are skipped.
@@ -262,7 +262,12 @@ def _algorithm_finding(path: Path, setting: Setting) -> Finding | None:
 
 
 def _first_global(settings: Iterable[Setting]) -> dict[str, Setting]:
-    """Return the first global setting per keyword, as sshd applies them."""
+    """Return the first global setting per keyword, as sshd applies them.
+
+    Returns:
+        The first global setting keyed by keyword; settings inside ``Match`` blocks are
+        ignored.
+    """
     first: dict[str, Setting] = {}
     for setting in settings:
         if not setting.match_line:
@@ -327,9 +332,9 @@ def scan_text(path: Path, text: str, *, require_baseline: bool) -> list[Finding]
     """Check one ``sshd_config`` file and return its findings in line order.
 
     Args:
-        path: Path reported in findings.
-        text: File content.
-        require_baseline: Whether missing hardening directives are findings.
+        path (Path): Path reported in findings.
+        text (str): File content.
+        require_baseline (bool): Whether missing hardening directives are findings.
 
     Returns:
         Findings sorted by line number and message.
@@ -357,7 +362,7 @@ class MissingPathError(ValueError):
         """Describe the missing path.
 
         Args:
-            path: The path that was not found.
+            path (Path): The path that was not found.
         """
         super().__init__(f"path does not exist: {path}")
 
@@ -366,7 +371,8 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     """Expand directories into sorted ``*.conf`` files; keep explicit files.
 
     Args:
-        paths: Files or directories, such as ``/etc/ssh/sshd_config.d``.
+        paths (Iterable[Path]): Files or directories, such as
+            ``/etc/ssh/sshd_config.d``.
 
     Returns:
         Sorted, de-duplicated file list.
@@ -388,11 +394,7 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
 
 
 def self_test() -> list[str]:
-    """Check the rules on in-memory configurations and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Check the rules on in-memory configurations and return unmet expectations."""
     clean = (
         "# hardened\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
         "PermitRootLogin no\nAllowGroups ssh-users\nCiphers -aes128-cbc\n"
@@ -487,12 +489,8 @@ def _scan(paths: Iterable[Path], *, require_baseline: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check sshd configuration files and print one finding per line.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv``.
-
-    Returns:
-        0 when clean, 1 with findings (or a failed self-test), 2 for missing
-        paths or unreadable input.
+    Returns 0 when clean, 1 with findings (or a failed self-test), 2 for missing paths
+    or unreadable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

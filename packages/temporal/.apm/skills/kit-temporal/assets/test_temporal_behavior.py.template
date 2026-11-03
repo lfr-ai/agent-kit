@@ -1,0 +1,105 @@
+"""Original SDK acceptance tests; copy as test_temporal_behavior.py in a consumer.
+
+Run: python -m unittest -v test_temporal_behavior
+Requires the consumer's reviewed temporalio SDK and approved local test-server
+binary. start_time_skipping may download a binary; do not run against live
+resources. These tests are not executed by the toolkit's stdlib policy guards.
+"""
+
+from datetime import timedelta
+import unittest
+import uuid
+
+from temporalio import activity, workflow
+from temporalio.client import WorkflowFailureError
+from temporalio.common import RetryPolicy
+from temporalio.exceptions import ApplicationError, CancelledError
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Replayer, Worker
+
+_SUCCESS_ATTEMPT = 2
+_ATTEMPT_TIMEOUT = timedelta(seconds=5)
+_TOTAL_TIMEOUT = timedelta(seconds=30)
+_RETRY_DELAY = timedelta(seconds=1)
+_LONG_TIMER = timedelta(days=1)
+_TRANSIENT_MESSAGE = "synthetic retry probe"
+
+
+@activity.defn
+async def retry_probe() -> int:
+    """Return the successful attempt number after one synthetic transient failure.
+
+    Returns:
+        Successful attempt number.
+
+    Raises:
+        ApplicationError: The first attempt deliberately fails.
+    """
+    attempt = activity.info().attempt
+    if attempt < _SUCCESS_ATTEMPT:
+        raise ApplicationError(_TRANSIENT_MESSAGE, type="TransientProbe")
+    return attempt
+
+
+@workflow.defn
+class RetryProbe:
+    """Orchestrate one bounded Activity; no external effect is simulated."""
+
+    @workflow.run
+    async def run(self) -> int:
+        """Return the attempt number recorded by the successful Activity."""
+        return await workflow.execute_activity(
+            retry_probe,
+            start_to_close_timeout=_ATTEMPT_TIMEOUT,
+            schedule_to_close_timeout=_TOTAL_TIMEOUT,
+            retry_policy=RetryPolicy(
+                initial_interval=_RETRY_DELAY,
+                maximum_interval=_RETRY_DELAY,
+                maximum_attempts=_SUCCESS_ATTEMPT,
+            ),
+        )
+
+
+@workflow.defn
+class TimerProbe:
+    """Expose a durable timer that can be cancelled by its client."""
+
+    @workflow.run
+    async def run(self) -> None:
+        """Wait for a durable timer without swallowing cancellation."""
+        await workflow.sleep(_LONG_TIMER)
+
+
+class TemporalBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    """Test actual SDK retry, history replay and cancellation, not Python syntax."""
+
+    async def test_retry_and_replay(self) -> None:
+        """Retry once, assert the result, then replay its recorded history."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            queue = f"retry-{uuid.uuid4()}"
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[RetryProbe],
+                activities=[retry_probe],
+            ):
+                handle = await env.client.start_workflow(
+                    RetryProbe.run, id=f"probe-{uuid.uuid4()}", task_queue=queue
+                )
+                self.assertEqual(await handle.result(), _SUCCESS_ATTEMPT)  # noqa: PT009 - stdlib unittest consumer
+                history = await handle.fetch_history()
+            await Replayer(workflows=[RetryProbe]).replay_workflow(history)
+
+    async def test_cancel_timer(self) -> None:
+        """Cancellation completes as cancellation, not as a successful result."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            queue = f"cancel-{uuid.uuid4()}"
+            async with Worker(env.client, task_queue=queue, workflows=[TimerProbe]):
+                handle = await env.client.start_workflow(
+                    TimerProbe.run, id=f"probe-{uuid.uuid4()}", task_queue=queue
+                )
+                await env.sleep(_RETRY_DELAY)
+                await handle.cancel()
+                with self.assertRaises(WorkflowFailureError) as raised:  # noqa: PT027 - stdlib unittest consumer
+                    await handle.result()
+                self.assertIsInstance(raised.exception.cause, CancelledError)  # noqa: PT009 - stdlib unittest consumer

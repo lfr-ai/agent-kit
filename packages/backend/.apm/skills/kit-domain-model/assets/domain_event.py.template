@@ -1,6 +1,6 @@
 """Domain events: immutable, past-tense facts recorded by aggregates.
 
-Copy into 'src/<package>/core/events.py'. Events carry an identifier for
+Copy into ``src/<package>/core/events.py``. Events carry an identifier for
 de-duplication and a timezone-aware timestamp; payloads hold only what
 consumers need, never secrets.
 """

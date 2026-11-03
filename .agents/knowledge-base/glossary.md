@@ -20,8 +20,9 @@ adapters, layered core) are defined in [architecture](architecture.md).
   consumer copies; an `assets/*.py` file is a stdlib-only runnable checker.
 - **Role asset**: `skills/<skill>/assets/agents.json`, a closed-schema list of agent roles.
   Source for native role projections; not itself an active agent definition.
-- **Role kind and tier**: Kind is `primary` (user-selectable) or `worker` (delegated). Tier is
-  `readonly`, `implementer` or `coordinator` and determines the rendered tools.
+- **Role kind and tier**: Kind is `primary` (user-selectable, shown in the picker) or `worker`
+  (delegated, hidden with `user-invocable: false`). Tier is `verifier`,
+  `implementer` or `coordinator` and determines the rendered tools.
   Only primary coordinators may name workers.
 - **Bundle**: A directory with `apm.yml` and `.apm/` that the catalog declares. Kind
   `project` is this repository's root; kind `portable` is a reusable package
@@ -52,9 +53,9 @@ adapters, layered core) are defined in [architecture](architecture.md).
 - **Selection report**: `.apm/selection.json` in a composed package: mode, skills, instructions,
   description and instruction character counts, and native role file count.
   Character counts are not billed-token estimates.
-- **Native projection (native role rendering)**: Host-specific agent files rendered from role assets: Copilot
-  `.github/agents/[subagents/]<id>.agent.md` and Claude
-  `.claude/agents/[subagents/]<id>.md`, with host metadata joined to one shared body.
+- **Native projection (native role rendering)**: Host-specific agent files rendered flat from role assets: Copilot
+  `.github/agents/<id>.agent.md` and Claude `.claude/agents/<id>.md`, with host metadata
+  joined to one shared body.
 - **Repository selection**: [self.json](../agentic-setup/self.json): the profile, features and runtimes
   this repository renders for its own native roles.
 - **Ownership ledger (native lock)**: [native-lock.json](../agentic-setup/native-lock.json): SHA-256 hashes of the

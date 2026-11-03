@@ -33,7 +33,7 @@ _DEFAULT_BUDGET_TOKEN_RATIO = 0.1
 _BUDGET_THRESHOLD_FRACTION = 0.5
 _DEFAULT_FAILURE_THRESHOLD = 5
 _DEFAULT_RESET_TIMEOUT_SECONDS = 30.0
-_TRANSIENT_ERRORS: tuple[type[Exception], ...] = (TimeoutError, ConnectionError)
+_TRANSIENT_ERRORS = (TimeoutError, ConnectionError)
 
 
 class DeadlineExceededError(TimeoutError):
@@ -47,7 +47,7 @@ class CircuitOpenError(Exception):
         """Record when a probe may be allowed.
 
         Args:
-            retry_after_seconds: Seconds until the circuit admits a probe.
+            retry_after_seconds (float): Seconds until the circuit admits a probe.
         """
         super().__init__(f"circuit open; retry after {retry_after_seconds:.1f}s")
         self.retry_after_seconds = retry_after_seconds
@@ -79,8 +79,8 @@ class Deadline:
         """Create a deadline ``seconds`` from now.
 
         Args:
-            seconds: Budget for the whole operation, retries included.
-            clock: Monotonic seconds source.
+            seconds (float): Budget for the whole operation, retries included.
+            clock (Clock): Monotonic seconds source.
 
         Returns:
             The new deadline.
@@ -109,8 +109,8 @@ def deadline_scope(
     """Bind a deadline for nested calls; an inner scope can only shorten it.
 
     Args:
-        seconds: Budget requested by this scope.
-        clock: Monotonic seconds source; use one clock per process.
+        seconds (float): Budget requested by this scope.
+        clock (Clock): Monotonic seconds source; use one clock per process.
 
     Yields:
         The effective deadline, the earlier of this scope and any enclosing one.
@@ -169,11 +169,7 @@ class RetryPolicy:
     def backoff_ceiling(self, retry_number: int) -> float:
         """Return the jitter upper bound before retry ``retry_number`` (0-based).
 
-        Args:
-            retry_number: Index of the retry about to happen.
-
-        Returns:
-            ``min(max_delay, base_delay * 2 ** retry_number)``.
+        The bound is ``min(max_delay, base_delay * 2 ** retry_number)``.
         """
         exponential = self.base_delay_seconds * _BACKOFF_MULTIPLIER**retry_number
         return min(self.max_delay_seconds, exponential)
@@ -197,8 +193,8 @@ class RetryBudget:
         """Start with a full budget.
 
         Args:
-            max_tokens: Capacity of the bucket.
-            token_ratio: Tokens earned per successful call.
+            max_tokens (float): Capacity of the bucket.
+            token_ratio (float): Tokens earned per successful call.
         """
         self._max_tokens = max_tokens
         self._token_ratio = token_ratio
@@ -246,12 +242,13 @@ class CircuitBreaker:
         """Create a closed circuit.
 
         Args:
-            failure_threshold: Consecutive counted failures that open it.
-            reset_timeout_seconds: Time open before a probe is admitted.
-            half_open_max_calls: Concurrent probes while half-open.
-            counts_as_failure: Exception types that indicate an unhealthy
-                dependency (timeouts, connection errors, 5xx adapters).
-            clock: Monotonic seconds source.
+            failure_threshold (int): Consecutive counted failures that open it.
+            reset_timeout_seconds (float): Time open before a probe is admitted.
+            half_open_max_calls (int): Concurrent probes while half-open.
+            counts_as_failure (tuple[type[Exception], ...]): Exception types that
+                indicate an unhealthy dependency (timeouts, connection errors, 5xx
+                adapters).
+            clock (Clock): Monotonic seconds source.
         """
         self._threshold = failure_threshold
         self._reset_timeout = reset_timeout_seconds
@@ -343,8 +340,8 @@ class Bulkhead:
         """Create the bulkhead.
 
         Args:
-            max_concurrent: Calls allowed in flight at once.
-            max_wait_seconds: Time to queue for a slot; 0 sheds immediately.
+            max_concurrent (int): Calls allowed in flight at once.
+            max_wait_seconds (float): Time to queue for a slot; 0 sheds immediately.
         """
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._max_wait = max_wait_seconds
@@ -405,12 +402,15 @@ async def call_with_retry[T](
     """Run an idempotent operation with timeouts, backoff, and optional guards.
 
     Args:
-        operation: Zero-argument coroutine factory; called once per attempt.
-        policy: Attempts, backoff, per-attempt timeout, and transient errors.
-        deadline: Overall deadline; defaults to the bound ``deadline_scope``.
-        budget: Shared retry budget for the dependency.
-        breaker: Shared circuit breaker for the dependency.
-        context: Sleeper, jitter, and server-hint collaborators.
+        operation (Callable[[], Awaitable[T]]): Zero-argument coroutine factory; called
+            once per attempt.
+        policy (RetryPolicy): Attempts, backoff, per-attempt timeout, and transient
+            errors.
+        deadline (Deadline | None): Overall deadline; defaults to the bound
+            ``deadline_scope``.
+        budget (RetryBudget | None): Shared retry budget for the dependency.
+        breaker (CircuitBreaker | None): Shared circuit breaker for the dependency.
+        context (RetryContext | None): Sleeper, jitter, and server-hint collaborators.
 
     Returns:
         The first successful result.
@@ -457,6 +457,14 @@ async def _attempt[T](
 ) -> T:
     """Run one attempt under the breaker and the tighter of both timeouts.
 
+    Args:
+        operation (Callable[[], Awaitable[T]]): Fresh coroutine factory invoked
+            only after the deadline and breaker admit the attempt.
+        policy (RetryPolicy): Supplies the optional per-attempt timeout.
+        deadline (Deadline | None): Overall bound whose remaining time may shorten
+            the attempt timeout.
+        breaker (CircuitBreaker | None): Optional guard entered around the call.
+
     Raises:
         DeadlineExceededError: No time is left for the attempt.
     """
@@ -484,6 +492,15 @@ def _after_failure(
     context: RetryContext,
 ) -> float | None:
     """Record a transient failure and return the next delay, or ``None`` to stop.
+
+    Args:
+        error (Exception): Caught transient failure used for chaining and delay hints.
+        retry_number (int): Zero-based retry index; zero follows the first failure.
+        policy (RetryPolicy): Attempt limit and backoff bounds.
+        deadline (Deadline | None): Overall bound checked before planning a retry.
+        budget (RetryBudget | None): Shared budget that records this failure and
+            may refuse another attempt.
+        context (RetryContext): Jitter and server-hint collaborators for delay selection.
 
     Raises:
         DeadlineExceededError: The deadline expired during the attempt.
@@ -514,7 +531,16 @@ def _retry_delay(
     deadline: Deadline | None,
     context: RetryContext,
 ) -> float | None:
-    """Return the server hint or jittered backoff, or ``None`` if it cannot fit."""
+    """Return the server hint or jittered backoff, or ``None`` if it cannot fit.
+
+    Args:
+        error (Exception): Failure passed to the optional server-delay extractor.
+        retry_number (int): Zero-based index used to compute the backoff ceiling.
+        policy (RetryPolicy): Backoff policy and maximum accepted server delay.
+        deadline (Deadline | None): Remaining overall time the delay must fit within.
+        context (RetryContext): Optional server hint extractor and jitter function;
+            an accepted hint replaces jittered backoff.
+    """
     hint = context.retry_after(error) if context.retry_after is not None else None
     if hint is not None and hint > policy.max_delay_seconds:
         return None

@@ -92,11 +92,7 @@ class Finding(NamedTuple):
 def snake_case(name: str) -> str:
     """Convert a CapWords class name to the expected snake_case module stem.
 
-    Args:
-        name: Class name such as ``HTTPClient`` or ``InvoiceRepository``.
-
-    Returns:
-        ``http_client`` or ``invoice_repository``.
+    For example, ``HTTPClient`` becomes ``http_client``.
     """
     return _BOUNDARY.sub("_", name).lower()
 
@@ -105,9 +101,9 @@ def names_correspond(class_stem: str, module_stem: str, *, match: str) -> bool:
     """Return whether a class's snake name fits a module stem.
 
     Args:
-        class_stem: snake_case form of the class name.
-        module_stem: Module file name without ``.py``.
-        match: ``exact``, or ``affix`` to allow whole-word prefixes and suffixes.
+        class_stem (str): snake_case form of the class name.
+        module_stem (str): Module file name without ``.py``.
+        match (str): ``exact``, or ``affix`` to allow whole-word prefixes and suffixes.
 
     Returns:
         True when the names correspond under the chosen rule.
@@ -147,8 +143,8 @@ def is_exempt(path: str, options: Options) -> bool:
     """Return whether a module path matches an exemption pattern.
 
     Args:
-        path: POSIX module path.
-        options: Policy holding the patterns.
+        path (str): POSIX module path.
+        options (Options): Policy holding the patterns.
 
     Returns:
         True when the full path or the file name matches a pattern.
@@ -193,9 +189,9 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
     """Check one module's classes against its file name.
 
     Args:
-        path: POSIX module path used in findings.
-        text: Module source.
-        options: Policy switches.
+        path (str): POSIX module path used in findings.
+        text (str): Module source.
+        options (Options): Policy switches.
 
     Returns:
         Findings for this module.
@@ -237,8 +233,8 @@ def check_files(
     """Check several modules.
 
     Args:
-        sources: ``(path, text)`` pairs.
-        options: Policy switches.
+        sources (Iterable[tuple[str, str]]): ``(path, text)`` pairs.
+        options (Options): Policy switches.
 
     Returns:
         Findings sorted by path, line and message.
@@ -281,11 +277,7 @@ _SELF_TEST_SOURCES = (
 
 
 def self_test() -> list[str]:
-    """Run the rules on in-memory modules and return unmet expectations.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
-    """
+    """Run the rules on in-memory modules and return unmet expectations."""
     rendered = "\n".join(
         finding.render()
         for finding in check_files(_SELF_TEST_SOURCES, options=Options())
@@ -428,11 +420,7 @@ def _report(findings: list[Finding], *, module_count: int) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check modules and print findings.
 
-    Args:
-        argv: Command-line arguments; ``sys.argv[1:]`` when None.
-
-    Returns:
-        0 when clean, 1 when findings exist, 2 on usage or read errors.
+    Returns 0 when clean, 1 when findings exist, 2 on usage or read errors.
     """
     parser = _parser()
     args = parser.parse_args(argv)

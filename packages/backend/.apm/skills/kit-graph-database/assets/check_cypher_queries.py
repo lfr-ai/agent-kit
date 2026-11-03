@@ -104,11 +104,8 @@ class Finding:
 def check_cypher(text: str) -> list[Finding]:
     """Return unbounded-read findings for Cypher text holding one or more statements.
 
-    Args:
-        text: Cypher source; statements are separated by semicolons.
-
-    Returns:
-        Findings ordered by line; line 1 is the first line of ``text``.
+    Statements are separated by semicolons. Findings are ordered by line; line 1 is the
+    first line of ``text``.
     """
     findings: list[Finding] = []
     line = 1
@@ -145,8 +142,8 @@ def check_python(text: str, path: str) -> list[Finding]:
     """Return formatting and unbounded-read findings for one Python module.
 
     Args:
-        text: Python source text.
-        path: File name used in syntax errors.
+        text (str): Python source text.
+        path (str): File name used in syntax errors.
 
     Returns:
         Findings ordered by line, excluding waived lines.
@@ -323,11 +320,7 @@ def _kind(node: ast.expr) -> str:
 
 
 def self_test() -> list[str]:
-    """Check both rules on in-memory Python and Cypher sources.
-
-    Returns:
-        One message per synthetic case whose rules differ from the expectation.
-    """
+    """Check both rules on in-memory Python and Cypher sources."""
     failures: list[str] = []
     for source, is_cypher, expected in _SELF_TEST_CASES:
         found = check_cypher(source) if is_cypher else check_python(source, "case.py")
@@ -371,11 +364,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Scan files or directories and print every finding.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        Zero without findings, one with findings, two for unusable input.
+    Returns zero without findings, one with findings, two for unusable input.
     """
     parser = _parser()
     args = parser.parse_args(argv)

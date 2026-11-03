@@ -117,8 +117,8 @@ def analyze_source(text: str, path: str) -> ModuleFacts:
     """Extract findings and router facts from one module.
 
     Args:
-        text: Python source text.
-        path: Display path used in findings.
+        text (str): Python source text.
+        path (str): Display path used in findings.
 
     Returns:
         Local findings plus router definitions and inclusions.
@@ -154,8 +154,8 @@ def check_sources(
     """Check several modules together so router inclusion spans files.
 
     Args:
-        sources: ``(display path, source text)`` pairs.
-        rules: Enabled rule identifiers.
+        sources (Iterable[tuple[str, str]]): ``(display path, source text)`` pairs.
+        rules (frozenset[str]): Enabled rule identifiers.
 
     Returns:
         Rendered findings sorted by path and line.
@@ -190,7 +190,7 @@ def _import_aliases(tree: ast.Module) -> dict[str, str]:
     """Map local names to the dotted names they import.
 
     Args:
-        tree: Parsed module.
+        tree (ast.Module): Parsed module.
 
     Returns:
         Local name to fully qualified name, for example ``sleep`` to ``time.sleep``.
@@ -213,7 +213,7 @@ def _from_import_aliases(node: ast.ImportFrom) -> dict[str, str]:
     is enough because inclusion keys use the last module segment.
 
     Args:
-        node: ``from ... import`` statement.
+        node (ast.ImportFrom): ``from ... import`` statement.
 
     Returns:
         Local name to dotted name; ``from . import items`` maps to ``items``.
@@ -266,7 +266,12 @@ def _is_router_call(node: ast.expr, aliases: dict[str, str]) -> bool:
 def _included_keys(
     tree: ast.Module, stem: str, aliases: dict[str, str]
 ) -> set[tuple[str, str]]:
-    """Resolve ``include_router`` arguments to ``(module stem, name)`` keys."""
+    """Resolve ``include_router`` arguments to ``(module stem, name)`` keys.
+
+    Returns:
+        ``(module stem, router name)`` keys for each resolvable ``include_router`` call;
+        empty when none resolve.
+    """
     keys: set[tuple[str, str]] = set()
     for node in ast.walk(tree):
         if not (
@@ -398,8 +403,8 @@ def collect(paths: Sequence[Path], *, excluded: frozenset[str]) -> list[Path]:
     """Expand files and directories into Python files.
 
     Args:
-        paths: Files or directories.
-        excluded: Directory names to skip.
+        paths (Sequence[Path]): Files or directories.
+        excluded (frozenset[str]): Directory names to skip.
 
     Returns:
         Sorted Python files.
@@ -501,11 +506,7 @@ def self_test() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the checker.
 
-    Args:
-        argv: Command-line arguments; defaults to ``sys.argv[1:]``.
-
-    Returns:
-        0 without findings, 1 with findings, 2 for usage or input errors.
+    Returns 0 without findings, 1 with findings, 2 for usage or input errors.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

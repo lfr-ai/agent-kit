@@ -50,14 +50,7 @@ class PromptSource(Protocol):
     """Adapter boundary returning the existing ``PromptTemplate`` representation."""
 
     def fetch(self, selection: PromptSelection) -> PromptTemplate:
-        """Fetch selected content or raise a content-free ``ManagedPromptError``.
-
-        Args:
-            selection (PromptSelection): Reviewed selector.
-
-        Returns:
-            PromptTemplate: Resolved numeric version and dollar-style variables.
-        """
+        """Fetch selected content or raise a content-free ``ManagedPromptError``."""
         ...
 
 

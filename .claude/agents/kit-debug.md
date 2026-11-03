@@ -1,6 +1,6 @@
 ---
 name: kit-debug
-description: "Diagnose and repair a reproduced defect with focused evidence."
+description: "Use to fix a reproduced defect: isolate the root cause, apply the smallest fix, and keep a regression test."
 tools: "Read, Grep, Glob, Edit, Write, Bash"
 ---
 # Debug a reproduced defect

@@ -15,14 +15,17 @@ import sys
 import tarfile
 from tempfile import NamedTemporaryFile
 import tomllib
-from typing import TypeGuard
+from typing import Literal, assert_never
 import zipfile
 
 import yaml
 
 from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.core.guards import is_json_object
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
 from scripts.check_governance import publication_blockers
+
+type _ArtifactKind = Literal["wheel", "sdist", "source"]
 
 _ROOT = Path(__file__).resolve().parents[1]
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
@@ -38,6 +41,8 @@ _BUNDLES = (
     "terraform",
     "bicep",
     "remote-access",
+    "temporal",
+    "identity",
 )
 
 
@@ -85,16 +90,18 @@ class _ReleaseValidationError(ValueError):
 
 
 def _expected_source(root: Path) -> dict[str, bytes]:
-    """Independently compose expected release bytes from the checked-out canonical source."""
+    """Independently compose expected release bytes from the checked-out canonical source.
+
+    Args:
+        root (Path): Repository root holding the canonical capability source.
+
+    Returns:
+        dict[str, bytes]: Archive-relative path to expected file bytes.
+    """
     plan = CatalogService().compose(
         FileCatalogAdapter().load(root), "fullstack", ("iac",), ()
     )
     return {item.relative_path: item.content for item in plan.files}
-
-
-def _mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Keep decoded metadata concrete at the artifact boundary."""
-    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 def _version(root: Path) -> str:
@@ -110,8 +117,16 @@ def _version(root: Path) -> str:
     return version
 
 
-def _artifacts(root: Path, version: str) -> dict[Path, str]:
-    """Define the exact initial release products, not arbitrary matching globs."""
+def _artifacts(root: Path, version: str) -> dict[Path, _ArtifactKind]:
+    """Define the exact initial release products, not arbitrary matching globs.
+
+    Args:
+        root (Path): Repository root that holds the ``build`` directory.
+        version (str): Release version embedded in each artifact name.
+
+    Returns:
+        dict[Path, _ArtifactKind]: Expected artifact path mapped to its kind.
+    """
     return {
         root / f"build/distributions/agent_kit-{version}-py3-none-any.whl": "wheel",
         root / f"build/distributions/agent_kit-{version}.tar.gz": "sdist",
@@ -130,6 +145,11 @@ class _EntryPointParser(configparser.ConfigParser):
 
 def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
     """Require package code, the declared CLI, metadata, and the bundled license.
+
+    Args:
+        path (Path): Wheel archive to inspect.
+        version (str): Expected package version.
+        license_bytes (bytes): Exact bytes of the repository ``LICENSE``.
 
     Raises:
         _ReleaseContractError: The wheel content is invalid.
@@ -157,6 +177,13 @@ def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
 def _sdist_file(archive: tarfile.TarFile, name: str) -> bytes:
     """Read one required regular source member without extracting to disk.
 
+    Args:
+        archive (tarfile.TarFile): Open source distribution.
+        name (str): Member path inside the archive.
+
+    Returns:
+        bytes: The member's content.
+
     Raises:
         _ReleaseContractError: The required source member is not a file.
     """
@@ -171,6 +198,12 @@ def _sdist(
     path: Path, version: str, license_bytes: bytes, *, project_bytes: bytes
 ) -> None:
     """Require source code and release/build metadata, rejecting unsafe members.
+
+    Args:
+        path (Path): Source distribution to inspect.
+        version (str): Expected package version.
+        license_bytes (bytes): Exact bytes of the repository ``LICENSE``.
+        project_bytes (bytes): Exact bytes of the repository ``pyproject.toml``.
 
     Raises:
         _ReleaseContractError: A member, implementation, build recipe, or license is invalid.
@@ -207,6 +240,11 @@ def _verify_source_bytes(
 ) -> None:
     """Require unique entries whose bytes equal the independently composed source.
 
+    Args:
+        archive (zipfile.ZipFile): Open source archive.
+        names (list[str]): Entry names in archive order, duplicates included.
+        trusted (dict[str, bytes]): Expected path to file bytes.
+
     Raises:
         _ReleaseContractError: Entries repeat or differ from the source.
     """
@@ -221,7 +259,17 @@ def _verify_source_bytes(
 def _unsafe_source_entry(
     archive: zipfile.ZipFile, name: str, digest: object, required: set[str]
 ) -> bool:
-    """Return whether one provenance entry escapes, is unexpected, or mismatches."""
+    """Return whether one provenance entry escapes, is unexpected, or mismatches.
+
+    Args:
+        archive (zipfile.ZipFile): Open source archive.
+        name (str): Entry path recorded in the provenance file list.
+        digest (object): Recorded SHA-256 hex digest, as decoded.
+        required (set[str]): Top-level paths that are always allowed.
+
+    Returns:
+        bool: ``True`` when the entry must be rejected.
+    """
     relative = PurePosixPath(name)
     return (
         relative.is_absolute()
@@ -240,6 +288,12 @@ def _source(
 ) -> None:
     """Require source bytes, exact inventory, and provenance in the selected ZIP.
 
+    Args:
+        path (Path): Source archive to inspect.
+        version (str): Expected catalog and manifest version.
+        license_bytes (bytes): Exact bytes of the repository ``LICENSE``.
+        trusted (dict[str, bytes]): Independently composed path to file bytes.
+
     Raises:
         _ReleaseContractError: Provenance, inventory, or a path is invalid.
     """
@@ -247,14 +301,14 @@ def _source(
         names = archive.namelist()
         _verify_source_bytes(archive, names, trusted)
         provenance: object = json.loads(archive.read("provenance.json"))
-        if not _mapping(provenance):
+        if not is_json_object(provenance):
             raise _ReleaseContractError(_ReleaseIssue.INVALID_PROVENANCE)
         source = provenance.get("source")
         hashes = provenance.get("files")
         if (
-            not _mapping(source)
+            not is_json_object(source)
             or source.get("catalog_version") != version
-            or not _mapping(hashes)
+            or not is_json_object(hashes)
             or set(names) != set(hashes) | {"provenance.json"}
         ):
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SOURCE_INVENTORY)
@@ -270,7 +324,7 @@ def _source(
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SOURCE_PATH)
         manifest: object = yaml.safe_load(archive.read("apm.yml"))
         if (
-            not _mapping(manifest)
+            not is_json_object(manifest)
             or manifest.get("version") != version
             or manifest.get("license") != "MIT"
             or archive.read("LICENSE") != license_bytes
@@ -279,14 +333,20 @@ def _source(
 
 
 def _metadata_findings(root: Path, version: str, findings: list[str]) -> None:
-    """Append catalog, manifest, and changelog drift from the package version."""
+    """Append catalog, manifest, and changelog drift from the package version.
+
+    Args:
+        root (Path): Repository root that holds the release metadata files.
+        version (str): Package version every manifest must match.
+        findings (list[str]): Collector that drift messages are appended to.
+    """
     catalog: object = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
-    if not _mapping(catalog) or catalog.get("version") != version:
+    if not is_json_object(catalog) or catalog.get("version") != version:
         findings.append("catalog version does not match the package")
     for relative in ("apm.yml", *(f"packages/{name}/apm.yml" for name in _BUNDLES)):
         manifest: object = yaml.safe_load((root / relative).read_text(encoding="utf-8"))
         if (
-            not _mapping(manifest)
+            not is_json_object(manifest)
             or manifest.get("version") != version
             or manifest.get("license") != "MIT"
         ):
@@ -296,7 +356,15 @@ def _metadata_findings(root: Path, version: str, findings: list[str]) -> None:
 
 
 def _ignore_marker(folder: str, path: Path) -> bool:
-    """Return whether a path is the owned distributions ignore marker."""
+    """Return whether a path is the owned distributions ignore marker.
+
+    Args:
+        folder (str): Build subfolder that holds ``path``.
+        path (Path): Candidate entry in that folder.
+
+    Returns:
+        bool: ``True`` for a regular, non-linked ``.gitignore`` containing ``*`` in ``distributions``.
+    """
     return (
         folder == "distributions"
         and path.name == ".gitignore"
@@ -320,26 +388,58 @@ def _artifact_inventory(root: Path) -> set[Path]:
 
 
 def _validate_artifact(
-    root: Path, path: Path, kind: str, *, version: str, license_bytes: bytes
+    root: Path,
+    path: Path,
+    kind: _ArtifactKind,
+    *,
+    version: str,
+    license_bytes: bytes,
 ) -> None:
-    """Dispatch one artifact to the validator for its kind."""
-    if kind == "wheel":
-        _wheel(path, version, license_bytes)
-    elif kind == "sdist":
-        _sdist(
-            path,
-            version,
-            license_bytes,
-            project_bytes=(root / "pyproject.toml").read_bytes(),
-        )
-    else:
-        _source(path, version, license_bytes, _expected_source(root))
+    """Dispatch one artifact to the validator for its kind.
+
+    Args:
+        root (Path): Repository root used to read the expected project bytes and source.
+        path (Path): Artifact to validate.
+        kind (_ArtifactKind): Which validator applies.
+        version (str): Expected package version.
+        license_bytes (bytes): Exact bytes of the repository ``LICENSE``.
+    """
+    match kind:
+        case "wheel":
+            _wheel(path, version, license_bytes)
+        case "sdist":
+            _sdist(
+                path,
+                version,
+                license_bytes,
+                project_bytes=(root / "pyproject.toml").read_bytes(),
+            )
+        case "source":
+            _source(path, version, license_bytes, _expected_source(root))
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _artifact_findings(
-    root: Path, path: Path, kind: str, *, version: str, license_bytes: bytes
+    root: Path,
+    path: Path,
+    kind: _ArtifactKind,
+    *,
+    version: str,
+    license_bytes: bytes,
 ) -> list[str]:
-    """Report a linked, irregular, or invalid artifact; absent ones are inventory."""
+    """Report a linked, irregular, or invalid artifact; absent ones are inventory.
+
+    Args:
+        root (Path): Repository root passed through to validation.
+        path (Path): Artifact location, which may not exist.
+        kind (_ArtifactKind): Which validator applies.
+        version (str): Expected package version.
+        license_bytes (bytes): Exact bytes of the repository ``LICENSE``.
+
+    Returns:
+        list[str]: At most one finding describing why the artifact is rejected.
+    """
     if path.is_symlink() or (path.exists() and not path.is_file()):
         return [f"{kind}: artifact is not a regular owned file"]
     if not path.is_file():
@@ -364,7 +464,13 @@ def _artifact_findings(
 
 
 def _collect_findings(root: Path, *, tag: str, findings: list[str]) -> None:
-    """Append every release finding; partial findings survive a later failure."""
+    """Append every release finding; partial findings survive a later failure.
+
+    Args:
+        root (Path): Repository root to validate.
+        tag (str): Release tag, or an empty string for a local check.
+        findings (list[str]): Collector that findings are appended to.
+    """
     version = _version(root)
     license_bytes = (root / "LICENSE").read_bytes()
     if tag and tag != f"v{version}":
@@ -386,7 +492,15 @@ def _collect_findings(root: Path, *, tag: str, findings: list[str]) -> None:
 
 
 def check(root: Path, *, tag: str) -> list[str]:
-    """Check local artifacts; tagged publication additionally requires approved owners."""
+    """Check local artifacts; tagged publication additionally requires approved owners.
+
+    Args:
+        root (Path): Repository root to validate.
+        tag (str): Release tag, or an empty string for a local check.
+
+    Returns:
+        list[str]: Human-readable findings; empty when the release is valid.
+    """
     findings: list[str] = []
     try:
         _collect_findings(root, tag=tag, findings=findings)
@@ -398,9 +512,16 @@ def check(root: Path, *, tag: str) -> list[str]:
 def write_checksums(root: Path) -> Path:
     """Write deterministic basename-only checksums after strict artifact validation.
 
+    A linked or irregular build or checksum destination fails as ``_ReleaseContractError``.
+
+    Args:
+        root (Path): Repository root that holds the ``build`` directory.
+
+    Returns:
+        Path: The written ``SHA256SUMS`` file.
+
     Raises:
         _ReleaseValidationError: An artifact fails validation.
-        _ReleaseContractError: The build or checksum destination is linked or irregular.
     """
     output = root / "build/SHA256SUMS"
     _verify_checksum_target(root, output)
@@ -419,6 +540,10 @@ def write_checksums(root: Path) -> Path:
 def _verify_checksum_target(root: Path, output: Path) -> None:
     """Refuse linked parents, escaped paths, and irregular checksum targets.
 
+    Args:
+        root (Path): Repository root the build directory must sit directly under.
+        output (Path): Checksum file destination.
+
     Raises:
         _ReleaseContractError: The checksum destination is not an owned file.
     """
@@ -436,7 +561,13 @@ def _verify_checksum_target(root: Path, output: Path) -> None:
 
 
 def _publish_checksums(root: Path, output: Path, content: bytes) -> None:
-    """Replace checksums through a closed sibling file, cleaning up on failure."""
+    """Replace checksums through a closed sibling file, cleaning up on failure.
+
+    Args:
+        root (Path): Repository root validated before and after the write.
+        output (Path): Checksum file destination.
+        content (bytes): Complete checksum file content.
+    """
     temporary: Path | None = None
     try:
         _verify_checksum_target(root, output)
@@ -454,6 +585,11 @@ def _publish_checksums(root: Path, output: Path, content: bytes) -> None:
 
 def _verify_stage_target(root: Path, stage: Path, names: set[str]) -> None:
     """Refuse linked, irregular, or foreign staging locations before writing.
+
+    Args:
+        root (Path): Repository root that holds the ``build`` directory.
+        stage (Path): Flat upload directory to prepare.
+        names (set[str]): File names the staging directory may already contain.
 
     Raises:
         _ReleaseContractError: The staging location is linked or foreign.
@@ -487,6 +623,10 @@ def _verify_staged_checksums(content: dict[str, bytes]) -> None:
 
 def _write_stage(stage: Path, content: dict[str, bytes]) -> None:
     """Write the flat upload layout and read every copy back.
+
+    Args:
+        stage (Path): Staging directory to create or reuse.
+        content (dict[str, bytes]): File name to the exact bytes to stage.
 
     Raises:
         _ReleaseContractError: A staged copy differs from its source.

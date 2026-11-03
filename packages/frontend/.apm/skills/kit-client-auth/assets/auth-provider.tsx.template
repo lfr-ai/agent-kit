@@ -3,7 +3,7 @@
 // server; the browser holds only an HTTP-only, SameSite session cookie. UI code
 // depends on AuthContextValue, never on a protocol library. When no BFF exists,
 // implement SessionSource with a maintained OIDC library (see
-// references/library-selection.md) that keeps tokens in memory.
+// references/library-selection.md) with its supported, threat-modelled cache.
 import {
   createContext,
   use,
@@ -111,10 +111,10 @@ export function AuthProvider({ source, onSignedOut, children }: AuthProviderProp
     const controller = new AbortController();
     source.loadUser(controller.signal).then(
       (user) => setState(user ? { status: "signed-in", user } : { status: "signed-out" }),
-      (error: unknown) => {
+      () => {
         if (!controller.signal.aborted) {
-          // Never log tokens or response bodies; the status message is enough.
-          console.warn("Session check failed", error instanceof Error ? error.message : "unknown");
+          // Library errors can contain tokens/claims. Log a fixed boundary code only.
+          console.warn("Session check failed", { code: "session_unavailable" });
           setState({ status: "signed-out", reason: "error" });
         }
       },
