@@ -21,6 +21,8 @@ Runtime claims: <supported provider, host/harness/version, or outside task scope
 
 - [ ] Names state meaning and unit; no abbreviations a newcomer must guess.
 - [ ] Constants, units and literal exceptions follow the project's conventions.
+- [ ] Suppressions name the narrow rule and explain why it does not apply;
+      reasons use syntax the tool accepts, and obsolete exceptions are removed.
 - [ ] Public API and docstring documentation follows the project's policy and
       matches changed arguments, returns and errors.
 - [ ] Types are concrete; no `Any`, casts or untyped public signatures.

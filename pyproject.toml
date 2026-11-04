@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-kit"
 version = "0.1.0"
-description = "Small, policy-checked APM capability bundles and verification tools."
+description = "APM-first capability sources and repository validation library."
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
 license = "MIT"
@@ -14,15 +14,11 @@ authors = [{ name = "Agent Kit contributors" }]
 dependencies = ["PyYAML>=6.0.2,<7"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "Environment :: Console",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Quality Assurance",
 ]
-
-[project.scripts]
-agent-kit = "agent_kit.main:main"
 
 [dependency-groups]
 # Development tooling never ships, so every tool is pinned exactly; Dependabot bumps pins with uv.lock.

@@ -24,10 +24,17 @@ source, and every project gets it on its next update.
    - GitHub Copilot CLI: `copilot --add-dir <path>` or `/add-dir <path>`;
      adding a directory also loads its `.github/skills` and `.github/agents` as
      trusted configuration, so add only the owner's own checkout.
-4. Edit the source, run `task verify` in the checkout, commit on a branch.
+4. Reproduce synthetically, retain a regression, edit the source and run
+   `task verify` in the checkout. For changed agent behavior, compare baseline
+   and candidate using the capability evaluation loop linked from the
+   [owning procedure](../SKILL.md).
+   Commit on a branch only when requested and permitted; otherwise return the
+   unstaged source diff and results.
 5. After approval, push the branch and open a pull request with auto-merge.
-6. When it merges, refresh each project: `apm update` (project scope) or
-   `apm update -g` (user scope).
+6. After merge and release, change each consumer's pinned profile to the
+   reviewed release and run `apm install` (or its user-scope equivalent).
+   Review the lock and installed diff, audit, then rerun the reproduction.
+   A pinned release does not advance merely because its source branch merged.
 
 ## Rollback
 

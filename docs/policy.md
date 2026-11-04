@@ -2,7 +2,9 @@
 
 [apm-policy.yml](../apm-policy.yml) is an explicit, strict baseline:
 
-- No dependency packages are allowed.
+- The source-repository baseline allows no package dependencies. Consumer
+  policies must separately allow the selected profile and its pinned Agent Kit
+  source-package dependencies.
 - MCP servers are limited to the reviewed names in the policy. They are declared
   in place (`self_defined: allow`) over `http` or `stdio` only, and never from the registry.
   The inventory and the way the allow list stays in step with every package
@@ -14,26 +16,33 @@
 ## Enforcement
 
 ```powershell
-uv run agent-kit check --root .
-uv run agent-kit provenance --root build/backend
+task verify -- source
+task verify -- profiles
 uv run apm policy status --policy-source ./apm-policy.yml --check --json
 ```
 
-Run APM policy commands from the package being inspected.
-After native installation, run the explicit audit through `agent-kit apm-check`.
+Run APM policy commands from the repository being inspected. Consumers use
+`apm audit --ci --policy ./apm-policy.yml` after installation; no Agent Kit
+wrapper is required.
 
 **APM 0.33.0 does not automatically select every project-local policy file during
 installation.** A checked-in filename is not an install-time enforcement boundary.
-The supported compose path validates policy before it creates a package.
-Direct APM invocation can bypass that wrapper; CI must require its checks.
+The profile source checks validate Agent Kit's canonical packages, but they do
+not wrap or authorize a consumer's direct APM invocation. Consumers must require
+policy and audit checks in CI; organization-managed policy is the install-time
+enforcement boundary where available.
 
 `version` is a policy revision, not a minimum CLI version. The exact CLI version
 is pinned in the Python manifest and lock, then checked at the executable boundary.
-APM 0.35.0 was the latest release on 2026-11-02 and this repository still pins
-0.33.0. The only breaking change in between is that `apm install --frozen` no
-longer writes `apm.lock.yaml` and fails, naming the paths, when the lock does
-not record every deployed file. Bump the pin only through the reviewed
-dependency workflow, and commit a complete lock before CI relies on `--frozen`.
+APM 0.35.0 was the latest release on 2026-11-04; this repository still pins
+0.33.0 until the documented 14-day cooldown ends on 2026-11-05
+([upgrade evidence](sources.md#pins)). Between these versions, frozen
+installation no longer rewrites an incomplete lock and instead fails with the
+unrecorded paths. Version 0.35.0 also verifies local snapshots against locked
+hashes in frozen mode and fails closed when an explicitly supplied policy cannot
+be loaded. Reassess after the cooldown; before changing the pin, test the
+current lock against frozen install and rerun the APM smoke. Change the pin only
+through the reviewed dependency workflow.
 Every policy key this repository uses is valid in APM policy; APM also
 supports `unmanaged_files`, `executables` and `compilation` sections that this
 baseline does not set.
@@ -49,8 +58,12 @@ baseline does not set.
 - There is no bundled shell-filter security boundary. Enforce restrictions through
   native approval modes, least-privilege identities, and managed controls.
 - Never use force, strip, disabled policy, or weakened hashes to make a gate pass.
-- To enable a dependency later, declare its exact approved source and release,
-  review executables, add allow-list entries, and retain a negative policy test.
+- Generated profile meta-packages resolve pinned source-package dependencies.
+  Their own manifest declares the selected MCP servers directly, so consumer
+  policy can keep `mcp.trust_transitive: false`.
+- Consumer policies should allow only the Agent Kit profile and source-package
+  paths needed by the selected profile, plus its reviewed MCP names. Keep the
+  consumer lockfile under review; the source-repository policy is not inherited.
 
 ## What the policy does not do
 
@@ -64,13 +77,17 @@ manifest:
   scripts: deny
 ```
 
-These sections mean "accept no dependency packages or lifecycle scripts." They do
-not mean "deny `git add`." The Git rules live in the delivered hook policy below.
+In the source-repository policy these sections mean "accept no dependency
+packages or lifecycle scripts." A consumer configures its own dependency
+allowlist for Agent Kit profile packages and their source dependencies. These
+sections do not mean "deny `git add`." The Git rules live in the delivered hook
+policy below.
 
 APM 0.33 has no per-file SHA-256 allowlist for executables, and its
 `executables.deny_all` would also park the hook and MCP servers this kit delivers,
 so the policy omits it. Executable content is constrained by the closed schemas
-that `agent-kit check` enforces (see below), not by APM.
+that the repository's `task verify -- source` gate enforces (see below), not by
+a consumer-facing Agent Kit command.
 
 ## Delivered hooks and MCP servers
 
@@ -80,9 +97,9 @@ Hooks and MCP are delivered by APM, not copied by hand:
   which runs the [guard](../packages/shared/.apm/hooks/scripts/tool_guard.py) with
   [git-guard.policy](../packages/shared/.apm/hooks/scripts/git-guard.policy).
   APM merges it into `.github/hooks/` and `.claude/settings.json`. Every profile includes `shared`.
-- **MCP.** Each package declares `dependencies.mcp` in its `apm.yml`; APM writes
-  `.mcp.json` and `.github/mcp.json`. Session (`--skill`) compositions keep the hook and omit MCP.
-- **Closed schemas.** `agent-kit check` rejects any hook or server outside the
+- **MCP.** Each profile manifest declares the selected `dependencies.mcp`;
+  APM writes `.mcp.json` and `.github/mcp.json`.
+- **Closed schemas.** `task verify -- source` rejects any hook or server outside the
   schema in [executables.py](../src/agent_kit/core/executables.py): hooks run only a
   bundled `python ./scripts/<name>.py`; servers are `https` or loopback `http`
   without credentials, `bunx --bun pkg@x.y.z`, or `docker run -i --rm image@sha256:...`;
@@ -149,7 +166,8 @@ git push origin feature/example
 The scope must be an existing absolute directory. Symlinks are resolved before
 containment checks; missing/relative scopes never grant an exception. When
 installing virtual packages directly, include `shared` alongside each optional
-package. Profiles composed by the CLI include it automatically.
+package. For a profile, reference its generated APM manifest; it declares the
+selected source-package closure.
 
 Sources: [APM governance](https://microsoft.github.io/apm/consumer/governance-on-the-consumer-ramp/),
 [APM hooks and commands](https://microsoft.github.io/apm/producer/author-primitives/hooks-and-commands/),

@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --locked --no-sync agent-kit context",
+            "command": "uv run --locked --no-sync python scripts/session_context.py",
             "timeout": 10
           }
         ]

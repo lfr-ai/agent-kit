@@ -1,147 +1,89 @@
 # Profiles
 
-A profile is a named selection of bundles in [catalog.json](../../catalog.json).
-It may extend other profiles; composition resolves inheritance into an ordered,
-de-duplicated bundle union and copies only those bundles into a new package.
-The catalog is the only profile source; this page explains it and must follow
-it, never the reverse. For the technologies each bundle covers, see
-[technology coverage](technology-coverage.md); for why selection is explicit, see
-[design rationale](design-rationale.md).
+The [catalog](../../catalog.json) is the authoring source for profile names,
+bundle membership, inheritance and budgets. APM does not read that catalog.
+The generated `profiles/` directories contain one compact meta-package manifest
+per portable profile. Each manifest pins the selected source-package closure,
+which lets a consumer install `backend` with one reference instead of listing
+`shared` and `backend`.
 
-## Profile table
+For bundle technologies and rationale, see [technology coverage](technology-coverage.md)
+and [design rationale](design-rationale.md).
 
-| Profile | Extends | Own bundles | Effective bundles | Intended consumer |
-| --- | --- | --- | --- | --- |
-| shared | none | shared | shared | Any repository that wants conventions, context, planning, testing, documentation and agent workflows without a stack |
-| backend | shared | backend | shared, backend | Python services, APIs, persistence, configuration, Pydantic v2, Polars 2 and packaging |
-| frontend | shared | frontend | shared, frontend | Accessible React and TypeScript clients with browser testing |
-| fullstack | backend, frontend | coordination | shared, backend, frontend, coordination | Repositories that change backend and frontend contracts together |
-| iac | shared | iac | shared, iac | Infrastructure, containers, CI and observability review; usually added as a feature |
-| workflows | shared | workflows | shared, workflows | Optional specification, code-graph, duplication and simplification workflows; usually added as a feature |
-| ai | backend | ai | shared, backend, ai | Python applications with model clients, retrieval, graph workflows, queues or streaming |
-| toolkit | none | toolkit, shared | toolkit, shared | This repository only: APM governance plus the shared kernel |
+## Profile map
 
-Effective bundles are listed in resolution order: parents first, then the
-profile's own bundles, skipping any bundle already selected.
-
-```mermaid
-flowchart BT
-    backend --> shared
-    frontend --> shared
-    iac --> shared
-    workflows --> shared
-    fullstack --> backend
-    fullstack --> frontend
-    ai --> backend
-    toolkit
-```
-
-Arrows point from a profile to the profile it extends. `toolkit` lists the
-shared bundle directly instead of extending the shared profile.
-
-## Native roles per profile
-
-Roles are defined in skill assets, so a profile delivers only the roles of its
-selected bundles. Session compositions (`--skill`) deliver none.
-
-| Role source (bundle, skill) | Roles | Delivered by |
+| Profile | Effective bundles | Intended consumer |
 | --- | --- | --- |
-| shared, `kit-agent-runtime` | Primary: `kit-debug`, `kit-orchestrator`. Workers (hidden from the picker): `kit-deep-thinking` (adviser for architecture decisions and upgrade plans), `kit-codebase-researcher`, `kit-code-reviewer` (correctness and coupling), `kit-planner` (including placement and reuse checks), `kit-security-reviewer`, `kit-refactor`, `kit-devops-implementer`, `kit-docs-writer`, `kit-test-author` (test design and authoring) | every profile |
-| backend, `kit-python-service` | Workers: `kit-ddd` and `kit-sdd` (advisers), `kit-backend-implementer`, `kit-contract-iac-lint` | backend, fullstack, ai |
-| frontend, `kit-react-feature` | Worker: `kit-frontend-implementer` | frontend, fullstack |
-| iac, `kit-infra-review` | Coordinator: `kit-devops`. Worker: `kit-infra-reviewer` (verifier: no edit tools) | iac |
-| ai, `kit-llm-evaluation` | Worker: `kit-eval-reviewer` (verifier: no edit tools) | ai |
+| shared | shared | Any repository that wants general development guidance |
+| backend | shared, backend | Python services, APIs, persistence and packaging |
+| frontend | shared, frontend | Accessible React and TypeScript clients |
+| fullstack | shared, backend, frontend, coordination | Applications maintained across client and server |
+| iac | shared, iac | Infrastructure, containers, CI and observability |
+| terraform | shared, iac, terraform | Terraform or OpenTofu |
+| bicep | shared, iac, bicep | Bicep and ARM on Azure |
+| remote-access | shared, iac, remote-access | SSH, bastion and remote access |
+| workflows | shared, workflows | Specification, code-graph, duplication and simplification workflows |
+| ai | shared, backend, ai | Python applications with model clients, retrieval and evaluation |
+| temporal | shared, backend, temporal | Durable workflows and replay-safe tests |
+| identity | shared, identity | Entra ID, OIDC, scopes and roles |
 
-A coordinator's required workers must resolve inside the same selection, which
-is why `kit-devops` ships with the IaC bundle. Every role has offline shell
-access; advisers and reviewers make no source edits. Full-stack, frontend and
-model-backed work runs through `kit-orchestrator`, which links the optional
-workers of the selected bundles.
+The toolkit-only `toolkit` selection is intentionally not published as a
+consumer profile.
 
-## Intended combinations
+## Consumer installation
 
-| Need | Command |
-| --- | --- |
-| Python service | `compose backend` |
-| React client | `compose frontend` |
-| Full-stack application | `compose fullstack` |
-| Full-stack application with infrastructure | `compose fullstack --feature iac` |
-| Python service with AI features and specs | `compose ai --feature workflows` |
-| Narrow backend session | `compose backend --skill kit-python-service` |
+In the **consumer repository**, add exactly the profile you chose to its own
+`apm.yml`, pinned to a reviewed Agent Kit release:
 
-`--feature` accepts any profile name and may be repeated. Features add their
-effective bundles to the base profile's; duplicates collapse. The smoke matrix
-uses three selections, `fullstack`, `ai` with `iac`, and `workflows`, that
-together deliver every portable bundle and every declared role while each stays
-within the profile description budget.
-
-This repository's own native projections use `toolkit` with the `backend`
-feature for both runtimes, declared in [self.json](self.json).
-
-## Compose
-
-```powershell
-uv sync --locked
-uv run --locked agent-kit check --root .
-uv run --locked agent-kit compose fullstack --feature iac --runtime copilot --runtime claude --output build/fullstack
-uv run --locked agent-kit provenance --root build/fullstack
+```yaml
+dependencies:
+  apm:
+    - lfr-ai/agent-kit/profiles/backend#v0.1.0
+  mcp: []
 ```
 
-- `--runtime` defaults to every runtime in the catalog (`copilot`, `claude`);
-  repeat it to choose a subset. Values must be unique and supported.
-- `--output` must not exist. Inside this checkout it must be beneath `build/`.
-- Compose re-validates the source first and writes nothing if validation fails.
-- Unknown profiles, features or skills fail before any output is created.
+Then use APM to install, compile and audit. Commit the consumer's manifest and
+APM lockfile. See the [complete walkthrough](../../docs/setup-completeness.md)
+for policy, updates, rollback and the distinction between source and consumer
+repositories.
 
-A composed package contains:
+## Native role limitation
 
-| Path | Purpose |
-| --- | --- |
-| `.apm/instructions/`, `.apm/skills/` | Selected source primitives and their resources |
-| `.github/agents/`, `.claude/agents/` | Rendered native roles for the selected runtimes (project mode only) |
-| `.apm/selection.json` | Mode, skill and instruction IDs, character counts, role file count |
-| `apm.yml` | Generated manifest with explicit includes and compilation exclusions for skill trees |
-| `apm-policy.yml`, `LICENSE` | Copied from the toolkit root |
-| `provenance.json` | Source identity and SHA-256 hash of every other file |
+The catalog composer still resolves role assets so this repository can render
+its own Copilot and Claude projections from
+[self.json](self.json). Those native role files are **not** included in
+generated consumer profiles. The APM smoke verifies source-package installation
+and resource bytes; it does not test profile dependency resolution or claim
+consumer role discovery.
 
-### Session selection
+## Maintainer workflow
+
+Edit canonical capability files under `packages/*/.apm/` and profile membership
+in `catalog.json`. Never edit files under `profiles/` by hand. Rebuild and check
+the generated APM meta-package manifests:
 
 ```powershell
-uv run --locked agent-kit compose backend --skill kit-python-service --runtime copilot --output build/session-backend
+task profiles:build
+task verify -- source
+task verify -- profiles
+task apm:smoke
 ```
 
-Session mode keeps general project instructions and policy, includes a
-skill-specific instruction only when its same-named skill is selected, omits
-native roles, and fails if a retained document links to a resource whose skill
-was not selected. Add that skill explicitly with another `--skill`.
+`profiles:build` refuses to overwrite an unowned file or independently edited
+generated output. The ownership ledger at
+[`profile-lock.json`](profile-lock.json) records hashes for every generated
+file. The regular `task verify` includes the source and package checks.
 
-A session package does not hide parent, user or plugin capabilities in a host.
-Use a separate reviewed workspace when native isolation matters.
-
-## Verify a profile
+## Other checks and limits
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Source budgets and metadata | `uv run --locked agent-kit check --root . --json` | Every profile's skill count, body lines and description total are within catalog budgets |
-| Output integrity | `uv run --locked agent-kit provenance --root <package>` | No missing, extra or altered files since composition |
-| APM policy and audit | `uv run --locked agent-kit apm-check --root <package>` | Provenance passes, then pinned `apm policy status` and `apm audit --ci` succeed |
-| Real delivery | `task apm:smoke` and `task apm:smoke -- --session` | Install, compile, both native rosters, byte-identical resources and frozen reinstall |
-| Resource depth | `uv run --locked python -m scripts.check_resources --json` | Linked references, assets and Python resource syntax per skill |
+| Source budgets and metadata | `task verify -- source` | Catalog, bundle manifests, resources, policy, and profile budgets are valid |
+| Generated profiles | `task verify -- profiles` | Each compact manifest and ownership hash matches the catalog |
+| APM delivery | `task apm:smoke` | Source packages install, compile and replay in disposable projects; it does not test a released profile dependency closure |
+| Resource depth | `uv run --locked python -m scripts.check_resources --json` | Linked references, assets and Python resource syntax |
 | Inventory coverage | `uv run --locked python -m scripts.check_coverage` | Original capabilities have replacements or recorded exclusions |
+| Repository-owned roles | `task verify -- roles` | Native role projections match their source and ownership ledger |
 
-These checks do not certify behavior inside a live IDE, model or cloud
-session; see [compatibility](../../docs/compatibility.md).
-
-## Change a profile
-
-1. Edit [catalog.json](../../catalog.json) only; keep inheritance acyclic.
-2. Run `uv run --locked agent-kit check --root . --json` and confirm
-   `profile_description_chars` stays within budget for every profile.
-3. Compose the changed profile and every profile that extends it, then run
-   provenance on each.
-4. If the repository's own selection in [self.json](self.json) is affected,
-   run `task verify -- roles` and refresh only through
-   `uv run --locked python -m scripts.render_native --write`.
-5. Update this page, [technology coverage](technology-coverage.md) and the
-   root [README](../../README.md) table.
-6. Run `task verify` and `task apm:smoke`.
+These gates do not certify behavior inside a live IDE, model or cloud session;
+see [compatibility](../../docs/compatibility.md).

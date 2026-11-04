@@ -4,12 +4,12 @@ import argparse
 from enum import Enum
 import json
 from pathlib import Path
-import shutil
 import stat
-import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import zipfile
+
+from agent_kit.composition.root import compose_workspace, verify_provenance
 
 _ROOT = Path(__file__).resolve().parents[1]
 _OUTPUT = _ROOT / "build" / "capabilities"
@@ -31,17 +31,15 @@ class _ArchiveContractError(ValueError):
     """Report one known source-archive completeness failure."""
 
     def __init__(self, issue: _ArchiveIssue) -> None:
+        """Retain ``issue`` and use its fixed diagnostic as the message."""
         self.issue = issue
         super().__init__(issue.value)
 
 
-def _compose(
-    executable: str, profile: str, features: list[str], *, package: Path
-) -> int:
+def _compose(profile: str, features: list[str], *, package: Path) -> int:
     """Compose the selection into ``package`` and verify its provenance.
 
     Args:
-        executable (str): Path of the toolkit launcher.
         profile (str): Profile to compose.
         features (list[str]): Optional features to add to the profile.
         package (Path): Output directory for the composed package.
@@ -49,22 +47,17 @@ def _compose(
     Returns:
         int: Zero when composition and provenance verification both pass, otherwise the failing exit code.
     """
-    command = [
-        executable,
-        "compose",
-        profile,
-        "--root",
-        str(_ROOT),
-        "--output",
-        str(package),
-        *[argument for feature in features for argument in ("--feature", feature)],
-    ]
-    result = subprocess.run(command, check=False)  # noqa: S603 - constrained CLI, no shell
-    if result.returncode:
-        return result.returncode
-    return subprocess.run(  # noqa: S603 - constrained CLI, no shell
-        [executable, "provenance", "--root", str(package)], check=False
-    ).returncode
+    try:
+        compose_workspace(_ROOT, profile, tuple(features), (), package)
+        report = verify_provenance(package)
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"Source composition failed: {error}\n")
+        return 1
+    if report.valid:
+        return 0
+    for finding in report.findings:
+        sys.stderr.write(f"{finding.path}: {finding.message} [{finding.code}]\n")
+    return 1
 
 
 def _write_entries(
@@ -128,13 +121,9 @@ def main() -> int:
     parser.add_argument("--profile", default="fullstack")
     parser.add_argument("--feature", action="append", default=[])
     args = parser.parse_args()
-    executable = shutil.which("agent-kit")
-    if executable is None:
-        sys.stderr.write("Use the locked toolkit environment.\n")
-        return 1
     with TemporaryDirectory(prefix="agent-kit-source-") as temporary:
         package = Path(temporary) / "package"
-        returncode = _compose(executable, args.profile, args.feature, package=package)
+        returncode = _compose(args.profile, args.feature, package=package)
         if returncode:
             return returncode
         provenance = json.loads(

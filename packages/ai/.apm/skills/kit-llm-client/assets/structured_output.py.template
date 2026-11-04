@@ -107,4 +107,4 @@ async def complete_structured[ModelT: BaseModel](
                     ),
                 ),
             )
-    raise StructuredOutputError("unreachable")  # pragma: no cover
+    raise StructuredOutputError("unreachable")

@@ -1,10 +1,13 @@
 ---
 name: kit-repository-setup
-description: Use when preparing a repository for open-source or production use with community files, README, bots and hooks.
+description: Use when bootstrapping repository files, checks, community docs, bots or hooks.
 license: MIT
 ---
 
 # Make a repository ready to publish and maintain
+
+For an approved new project with prompts installed, use `kit-new-project` to
+coordinate this procedure with editor setup and verification.
 
 ## Procedure
 

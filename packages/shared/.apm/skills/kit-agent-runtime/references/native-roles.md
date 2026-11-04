@@ -59,12 +59,12 @@ direct child files, unlike its recursive instruction scan. Folder nesting is not
 a visibility or permission control. Flat output also avoids depending on
 different native Claude discovery behavior.
 
-The deliberate main roster is `kit-orchestrator` and `kit-debug`, plus
-`kit-devops` only when the IaC bundle is selected. Specialist advisers (`kit-ddd`,
+The deliberate main roster is `kit-orchestrator` and `kit-debug`.
+Specialist advisers (`kit-ddd`,
 `kit-sdd`, `kit-deep-thinking`), `kit-refactor`, and
 implementation, research and review helpers are hidden workers. `kit-refactor`,
 `kit-test-author` and `kit-devops-implementer` stay hidden because the
-orchestrator or `kit-devops` delegates to them with owned paths and acceptance
+orchestrator delegates to them with owned paths and acceptance
 checks; picking one directly would skip that planning and review. Each worker
 owns one job: `kit-planner` also checks placement, dependency direction, reuse
 and blast radius; `kit-code-reviewer` also reviews coupling; `kit-deep-thinking`
@@ -107,11 +107,14 @@ reference and keep the body procedural.
 
 1. Edit only `agents.json`. Keep `id`, `kind`, `tier`, `workers`, and `models`
    unchanged unless the change is a reviewed contract change.
-2. Run `uv run --locked agent-kit check --root .` to validate the schema and links.
+2. For Agent Kit's canonical role source, maintainers run
+   `task verify -- source` to validate the schema and links. Consumers use
+   their repository's applicable validation.
 3. Audit repository projection drift with
    `uv run --locked python -m scripts.render_native`, then explicitly refresh
    with `--write` only after review. Source-driven drift is expected after a
    change; independently edited outputs must be resolved by their owner.
+   Unchanged attested files and their unchanged ledger are not rewritten.
    Review the projected diff; do not hand-edit generated agent files or locks.
 4. Record native host behavior separately in the
    [certification worksheet](../assets/certification.md.template). Rendering and
@@ -120,7 +123,7 @@ reference and keep the body procedural.
 ## Sources
 
 Checked against the current public documentation and discovery implementation on
-2026-11-02. File tests prove rendering and ownership, not a live IDE session.
+2026-11-03. File tests prove rendering and ownership, not a live IDE session.
 
 - [VS Code custom agents and picker controls](https://code.visualstudio.com/docs/copilot/customization/custom-agents)
 - [VS Code subagents and exact allowlists](https://code.visualstudio.com/docs/copilot/agents/subagents)

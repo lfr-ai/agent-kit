@@ -3,6 +3,8 @@
 // Used by the testing templates to demonstrate fake timers with user-event.
 import { useEffect, useId, useState, type ReactElement } from "react";
 
+const DEFAULT_SEARCH_DELAY_MS = 300;
+
 export type DebouncedSearchProps = Readonly<{
   label: string;
   initialValue?: string;
@@ -13,7 +15,7 @@ export type DebouncedSearchProps = Readonly<{
 export function DebouncedSearch({
   label,
   initialValue = "",
-  delayMs = 300,
+  delayMs = DEFAULT_SEARCH_DELAY_MS,
   onSearch,
 }: DebouncedSearchProps): ReactElement {
   const id = useId();

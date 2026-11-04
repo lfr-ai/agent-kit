@@ -40,13 +40,21 @@ literals, near-miss merging, baselines that fail only on new clones, and
 changed-file scans. Prefer a baseline or changed-file gate in CI over a global
 percentage when the codebase already has legacy duplication.
 
+The [strict-JSON template](../assets/jscpd.json.template) keeps its exclusion
+rationale here: Git metadata, virtual environments and dependencies are not
+first-party source; caches, build/coverage/report output, minified files and
+generated files are derivative artifacts. Migration history and snapshots
+deliberately preserve schema or output representations and are reviewed in
+their own workflows; lockfiles are maintained by package managers. Revisit
+these exclusions when the audit's purpose includes those files.
+
 ## Ignoring regions in source
 
 Wrap a region in comments containing `jscpd:ignore-start` and
 `jscpd:ignore-end`, using the language's comment syntax:
 
 ```python
-# jscpd:ignore-start
+# jscpd:ignore-start - mirrors the API enum that test_status_labels compares
 STATUS_LABELS = {"draft": "Draft", "sent": "Sent", "paid": "Paid"}
 # jscpd:ignore-end
 ```

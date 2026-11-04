@@ -5,10 +5,13 @@ import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { z } from "zod";
 
+const MAX_SEARCH_QUERY_CHARACTERS = 100;
+const MAX_SEARCH_PAGE = 10_000;
+
 export const orderSearchSchema = z.object({
   status: z.enum(["draft", "submitted", "paid", "cancelled"]).optional().catch(undefined),
-  q: z.string().trim().max(100).optional().catch(undefined),
-  page: z.coerce.number().int().min(1).max(10_000).catch(1),
+  q: z.string().trim().max(MAX_SEARCH_QUERY_CHARACTERS).optional().catch(undefined),
+  page: z.coerce.number().int().min(1).max(MAX_SEARCH_PAGE).catch(1),
   sort: z.enum(["updated-desc", "updated-asc", "total-desc"]).catch("updated-desc"),
 });
 export type OrderSearch = z.infer<typeof orderSearchSchema>;

@@ -116,6 +116,9 @@ def test_hooks_use_commit_stages_and_bun_without_redundant_defaults() -> None:
     assert "zizmor" in hooks
     assert hooks["version-pins"]["always_run"] is True
     assert "toolkit-contract" in hooks
+    assert hooks["toolkit-contract"]["entry"] == (
+        "uv run --locked python scripts/check_source.py --root ."
+    )
     assert "toolkit-drift" in hooks
     assert "toolkit-native-roles" in hooks
 
@@ -300,8 +303,12 @@ def test_task_and_editor_interfaces_only_expose_recurring_workflows() -> None:
         "release:build",
         "release:publish",
         "capabilities:build",
+        "profiles:build",
         "apm:smoke",
     }
+    assert tasks["profiles:build"]["cmds"] == [
+        "uv run --locked python scripts/build_profiles.py --write"
+    ]
     assert "{{.CLI_ARGS}}" in tasks["verify"]["cmds"][0]
     assert tasks["default"]["cmds"] == ["{{.TASK_EXE}} --list"]
     assert all(task.get("desc") for task in tasks.values())
@@ -414,6 +421,27 @@ def test_python_docstring_conventions_run_in_task_and_precommit() -> None:
     assert hook["pass_filenames"] is False
 
 
+def test_suppression_gate_uses_one_always_run_implementation() -> None:
+    config = load_config(str(_ROOT / ".pre-commit-config.yaml"))
+    hook = next(
+        hook
+        for repo in config["repos"]
+        for hook in repo["hooks"]
+        if hook["id"] == "toolkit-suppressions"
+    )
+    assert verify_module._CHECKS["suppressions"] == (
+        verify_module._PYTHON,
+        "scripts/check_suppressions.py",
+    )
+    assert hook["entry"] == "uv run --locked python scripts/check_suppressions.py"
+    assert hook["always_run"] is True
+    assert hook["pass_filenames"] is False
+    facade = (_ROOT / ".agents/guard/verify_agent_config.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"suppressions",' in facade
+
+
 def test_conventions_gate_checks_packaged_python_docstrings(tmp_path: Path) -> None:
     """The committed gate rejects a single-quoted code token in a skill asset."""
     for relative in ("src", "scripts", "tests", ".agents/guard", ".apm"):
@@ -446,7 +474,10 @@ def test_conventions_gate_enforces_docstring_contract_in_assets(
     path.parent.mkdir(parents=True, exist_ok=True)
     signature = '"""Module."""\n\n\ndef pair(first: int, second: int) -> int:\n'
     path.write_text(
-        f'{signature}    """Add."""\n    return first + second\n', encoding="utf-8"
+        f'{signature}    """Add two counts.\n\n    Args:\n'
+        "        first (str): Left operand.\n        second (int): Right operand.\n"
+        '    """\n    return first + second\n',
+        encoding="utf-8",
     )
 
     assert conventions_module.run(root) == 1

@@ -7,9 +7,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Capability selection:** `agent-kit compose --selection FILE` accepts a
-  versioned selection document for project generators and CI. Session skill
-  allowlists support narrower packages with recorded context footprints.
+- **Capability selection:** internal Python library workflows resolve catalog
+  profiles and optional skill allowlists for maintainer tooling. Consumers
+  install a generated APM profile meta-package; no Agent Kit executable is
+  required.
 - **Infrastructure packages:** optional `terraform`, `bicep` and `remote-access`
   profiles let projects install only the tools they use.
 - **Expanded guidance:** skills, instructions, prompts and templates for backend
@@ -25,8 +26,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   evaluations never publish changes automatically.
 - **Hooks and MCP through APM:** `shared` ships an always-on Git-guard hook
   (Git read-only outside the kit checkout, no hook bypass, no push) and each
-  package declares its reviewed MCP servers in `apm.yml`. `agent-kit check`
-  validates both against closed schemas and the policy allow list.
+  package declares its reviewed MCP servers in `apm.yml`. `task verify -- source`
+  validates these declarations against closed schemas and the policy allow list.
 - **Git guard resource:** a Git policy for the existing tool guard, now delivered
   as the `shared` hook. A kit-checkout exception is scoped by `AGENT_KIT_DIR`.
 - **Developer setup:** dedicated tool configuration, Task and VS Code templates,
@@ -82,7 +83,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **Standalone scripts:** complete PEP 723 metadata declares empty dependency
-  lists. Portable CLI tests use subprocess timeouts that clean up child processes.
+  lists. Script process-boundary tests use subprocess timeouts that clean up
+  child processes.
 - **Windows reliability:** bounded retries handle transient publication locks
   without overwriting outputs. APM output no longer depends on console encoding.
 - **Launcher isolation:** APM smoke uses the toolkit launcher beside the active

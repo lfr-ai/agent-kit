@@ -103,7 +103,9 @@ def test_bundle_scan_passes_clean_output(tmp_path: Path) -> None:
 
 
 def test_bundle_scan_reports_redacted_secrets_and_options(tmp_path: Path) -> None:
-    secret = "client_" + 'secret: "' + "s" * 20 + '"'  # pragma: allowlist secret
+    secret = (
+        "client_" + 'secret: "' + "s" * 20 + '"'
+    )  # pragma: allowlist secret - synthetic scanner input
     token = "gh" + "p_" + "a" * 36
     _write(tmp_path, "assets/app.js", f"const cfg={{{secret}}};\nconst t='{token}';\n")
     _write(tmp_path, "assets/app.js.map", "{}\n")
@@ -168,8 +170,9 @@ def test_har_check_reports_without_echoing_values(tmp_path: Path) -> None:
                 {"name": "q", "value": "someone@example.test"},
             ],
             "postData": {
-                "text": '{"client_secret": "topsecretvalue"}'  # pragma: allowlist secret
-            },  # pragma: allowlist secret
+                # pragma: allowlist nextline secret: synthetic HAR leak fixture
+                "text": '{"client_secret": "topsecretvalue"}'
+            },
         },
         "response": {"content": {"text": '{"refresh_token": "topsecretvalue"}'}},
     }

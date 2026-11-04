@@ -7,6 +7,7 @@ retry_wait_time = 5
 accept = ["200..=204", "301..=308", "403", "429"]
 
 exclude = [
+  # Local services and reserved example domains are not public link targets.
   "^https?://localhost",
   "^https?://127\\.0\\.0\\.1",
   "^https?://example\\.(com|org)",
@@ -17,6 +18,7 @@ exclude = [
 ]
 
 exclude_path = [
+  # Dependencies and generated reports are not repository-authored documents.
   "\\.venv",
   "\\.tox",
   "build",
@@ -27,5 +29,6 @@ exclude_path = [
   # Generated APM projections duplicate their .apm/ sources.
   "\\.agents/skills",
   "\\.claude/skills",
+  # Historical release URLs are retained as published, not rewritten on cleanup.
   "CHANGELOG\\.md",
 ]

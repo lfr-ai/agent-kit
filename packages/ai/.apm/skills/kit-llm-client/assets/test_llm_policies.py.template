@@ -53,7 +53,7 @@ def _request(**overrides: object) -> CompletionRequest:
         "max_output_tokens": 100,
     }
     fields.update(overrides)
-    return CompletionRequest(**fields)  # type: ignore[arg-type]
+    return CompletionRequest(**fields)  # type: ignore[arg-type]  # mixed-type overrides
 
 
 def _client(
@@ -64,7 +64,7 @@ def _client(
         clock=clock,
         sleep=clock.sleep,
         rng=lambda: 1.0,
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,  # type: ignore[arg-type]  # mixed-type parametrized client overrides
     )
 
 
@@ -213,7 +213,7 @@ def test_concurrency_limit_is_enforced() -> None:
             active -= 1
             return completion("ok")
 
-    client = ResilientLlmClient(SlowClient(), max_concurrency=2)  # type: ignore[arg-type]
+    client = ResilientLlmClient(SlowClient(), max_concurrency=2)  # type: ignore[arg-type]  # structural test double
 
     async def scenario() -> None:
         await asyncio.gather(*(client.complete(_request()) for _ in range(6)))
@@ -249,4 +249,4 @@ def test_logs_contain_metadata_but_never_content(
 )
 def test_invalid_retry_settings_are_rejected(kwargs: dict[str, float]) -> None:
     with pytest.raises(ValueError, match="must"):
-        RetrySettings(**kwargs)  # type: ignore[arg-type]
+        RetrySettings(**kwargs)  # type: ignore[arg-type]  # invalid input on purpose

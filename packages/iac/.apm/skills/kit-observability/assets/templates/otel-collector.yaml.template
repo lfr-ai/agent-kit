@@ -29,6 +29,7 @@ processors:
 
   # Drop health-check noise before it costs anything downstream.
   filter/health:
+    # A filter evaluation error must not discard otherwise exportable traces.
     error_mode: ignore
     traces:
       span:

@@ -10,12 +10,12 @@
 target-version = "py313"
 line-length = 88
 extend-exclude = [
-  "audit",
-  "build",
-  "dist",
-  "migrations",
-  "vendor",
-  "**/generated/**",
+  "audit",          # Reports from this audit, not application source.
+  "build",          # Build intermediates duplicate authored source.
+  "dist",           # Distribution artifacts are checked at their source.
+  "migrations",     # Historical schema revisions are reviewed as migrations.
+  "vendor",         # Third-party code is not maintained by this project.
+  "**/generated/**", # Fix the generator rather than its output.
 ]
 
 [lint]

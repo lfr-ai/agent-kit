@@ -6,11 +6,17 @@ include_external_packages = True
 name = Inward dependencies
 type = layers
 layers =
-    agent_kit.main
     agent_kit.composition
-    agent_kit.presentation | agent_kit.infrastructure
-    agent_kit.application
+    agent_kit.infrastructure | agent_kit.application
     agent_kit.core
+
+[importlinter:contract:infrastructure]
+name = Infrastructure depends only on Core
+type = forbidden
+source_modules =
+    agent_kit.infrastructure
+forbidden_modules =
+    agent_kit.application
 
 [importlinter:contract:core]
 name = Core avoids external parsing and process packages

@@ -1,6 +1,7 @@
 extends: default
 
 ignore: |
+  # Dependencies and generated build output are validated by their owning tools.
   .venv/
   .tox/
   build/
@@ -27,7 +28,7 @@ rules:
   truthy:
     allowed-values: ["true", "false"]
     check-keys: false
-  document-start: disable
+  document-start: disable # Host configuration and templates do not require ---.
   new-lines:
     type: unix
   empty-lines:

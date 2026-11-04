@@ -398,7 +398,9 @@ def test_middleware_is_pure_asgi_and_handlers_cover_all_errors() -> None:
 
 
 def test_http_settings_reject_wildcards_and_malformed_origins(tmp_path: Path) -> None:
-    pytest.importorskip("pydantic")
+    pytest.importorskip(
+        "pydantic", reason="the HTTP settings template requires the consumer's Pydantic"
+    )
     target = tmp_path / "http_settings.py"
     shutil.copyfile(_FASTAPI / "assets/settings.py.template", target)
     namespace = runpy.run_path(str(target))

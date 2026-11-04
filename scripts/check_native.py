@@ -5,8 +5,8 @@ from pathlib import Path
 import sys
 
 _ROOT = Path(__file__).resolve().parents[1]
-_COMMAND = "uv run --locked --no-sync agent-kit context"
-_SESSION_ENTRYPOINTS = (".venv/Scripts/agent-kit.exe", ".venv/bin/agent-kit")
+_COMMAND = "uv run --locked --no-sync python scripts/session_context.py"
+_SESSION_PYTHON = (".venv/Scripts/python.exe", ".venv/bin/python")
 _HOOK_TIMEOUT_SECONDS = 10
 # Dependencies change through a reviewed, audited lock; agents never install ad hoc.
 _PACKAGE_INSTALL_DENY = [
@@ -183,6 +183,8 @@ def check(root: Path) -> list[str]:
     failures.extend(_claude_settings_failures(root))
     vscode = json.loads((root / ".vscode/settings.json").read_text())
     failures.extend(_vscode_contract(vscode))
+    if not (root / "scripts/session_context.py").is_file():
+        failures.append("Local session context script is missing.")
     return failures
 
 
@@ -190,9 +192,9 @@ def main() -> int:
     """Print native contract failures without changing configuration."""
     try:
         failures = check(_ROOT)
-        if not any((_ROOT / name).is_file() for name in _SESSION_ENTRYPOINTS):
+        if not any((_ROOT / name).is_file() for name in _SESSION_PYTHON):
             failures.append(
-                "Local session context entrypoint is missing. Run task bootstrap to "
+                "Local Python interpreter is missing. Run task bootstrap to "
                 "audit and provision the locked environment; --no-sync hooks never "
                 "install dependencies."
             )

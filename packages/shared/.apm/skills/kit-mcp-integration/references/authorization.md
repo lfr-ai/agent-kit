@@ -87,7 +87,8 @@ dependencies:
 | Does a server upgrade add tools? | The allowlist hides them until a reviewer adds them; compare the host's tool list after every pin change |
 | Are names stable? | Tool names are vendor contracts that can change; a renamed tool silently disappears from the allowlist, so test the expected list |
 
-This repository's closed schema in `agent-kit check` currently accepts only
+In Agent Kit's source checkout, `task verify -- source` checks the closed
+schema, which accepts only
 `name`, `registry`, `transport`, `url`, `command`, `args` and `headers`. A
 `tools` field in a bundle manifest therefore needs a reviewed schema change
 first; consumers who write their own manifest can use it today.

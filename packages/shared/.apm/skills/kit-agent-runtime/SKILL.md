@@ -62,8 +62,9 @@ Details: [subagent-driven development](references/subagent-driven-development.md
    `description`, `workers`, and `models` stable unless the contract change is reviewed.
 2. Keep each body in the mission, inputs, method, quality gates, stop conditions,
    and report outline; never name native tools as if the body granted them.
-3. Validate with `uv run --locked agent-kit check --root .`, regenerate projections
-   with the owning renderer, and review the projected diff.
+3. If editing Agent Kit's canonical role source, maintainers validate with
+   `task verify -- source`; consumers use their repository's applicable checks.
+   Regenerate projections with the owning renderer and review the diff.
 
 Details: [native roles](references/native-roles.md).
 
@@ -99,7 +100,8 @@ consumer-owned policy for extra rules.
 - Guard policies pass `check-policy`; every rule has at least one `explain` case.
 - The tool guard never emits `allow`; unmatched calls produce no output.
 - Fail-open use is time-boxed and recorded; the default stays fail-closed.
-- Role changes pass `agent-kit check`, and projections are regenerated, not hand-edited.
+- Agent Kit role-source changes pass `task verify -- source`; projections are
+  regenerated, not hand-edited.
 - Delegated work returns a handoff and a review package whose gate passes, and final
   verification runs after the last edit.
 - Runnable assets pass `--self-test`; host behavior is recorded separately from file tests.

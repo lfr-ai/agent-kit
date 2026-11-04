@@ -24,6 +24,7 @@ def main() -> int:
         "roles",
         "coverage",
         "conventions",
+        "suppressions",
         "governance",
         "docs",
         "drift",

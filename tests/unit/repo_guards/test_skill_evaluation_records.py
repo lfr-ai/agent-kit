@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
+import re
 import runpy
+import shlex
 
 import pytest
 
@@ -11,6 +13,62 @@ _ASSETS = (
     / "packages/shared/.apm/skills/kit-feedback-loop/assets"
 )
 _CHECKER = runpy.run_path(str(_ASSETS / "check_skill_evaluations.py"))
+_CONFIGURATION_GUIDE = (
+    _ASSETS.parents[5]
+    / ".apm/skills/kit-config-review/references/configuration-evaluation.md"
+)
+
+
+def test_configuration_evaluation_preserves_separate_trial_evidence() -> None:
+    text = _CONFIGURATION_GUIDE.read_text(encoding="utf-8")
+    assert "separate result file for every baseline and candidate trial" in text
+    assert "time/token budgets" in text
+    assert "infrastructure failures" in text
+
+
+def test_configuration_evaluation_links_resolve() -> None:
+    skill = _CONFIGURATION_GUIDE.parents[1] / "SKILL.md"
+    targets = re.findall(r"\]\(([^)#\s]+)", skill.read_text(encoding="utf-8"))
+    assert "references/configuration-evaluation.md" in targets
+    for target in targets:
+        if not target.startswith("https://"):
+            resolved = (skill.parent / target).resolve()
+            assert resolved.is_file(), target
+            assert resolved.is_relative_to(_CONFIGURATION_GUIDE.parents[3])
+
+
+def test_documented_configuration_checker_rejects_unobserved_results(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _ASSETS.parents[5]
+    text = _CONFIGURATION_GUIDE.read_text(encoding="utf-8")
+    commands = re.findall(r"```powershell\n(.*?)\n[ ]*```", text, re.DOTALL)
+    checker_commands = [
+        shlex.split(command.replace("`\n", " "))
+        for command in commands
+        if "check_skill_evaluations.py" in command
+    ]
+    assert len(checker_commands) == 1
+    command = checker_commands[0]
+    checker = command.index("python") + 1
+    assert (root / command[checker]).resolve() == (
+        _ASSETS / "check_skill_evaluations.py"
+    ).resolve()
+    arguments = command[checker + 1 :]
+    assert arguments == [
+        "--cases",
+        "tests/evals/agent-kit.cases.json",
+        "--results",
+        "build/eval/candidate.json",
+    ]
+    results = tmp_path / "candidate.json"
+    results.write_bytes(
+        (_ASSETS / "skill-evaluation-results.json.template").read_bytes()
+    )
+    arguments[1] = str(root / arguments[1])
+    arguments[3] = str(results)
+    assert _CHECKER["main"](arguments) == 2
+    assert capsys.readouterr().err
 
 
 def _cases() -> dict[str, object]:
@@ -140,6 +198,26 @@ def test_starter_results_cannot_claim_an_unrun_evaluation_passed() -> None:
 
     with pytest.raises(_CHECKER["EvaluationInputError"]):
         _CHECKER["failures"](cases, results)
+
+
+def test_repository_dataset_is_complete_but_does_not_claim_observed_passes() -> None:
+    root = _ASSETS.parents[5]
+    cases = json.loads(
+        (root / "tests/evals/agent-kit.cases.json").read_text(encoding="utf-8")
+    )
+    rows = cases["cases"]
+    assert {row["should_invoke"] for row in rows} == {True, False}
+    sources = {
+        path.parent.name
+        for owner in (root / ".apm", *sorted((root / "packages").glob("*/.apm")))
+        for path in owner.glob("skills/*/SKILL.md")
+    }
+    for row in rows:
+        assert row["skill"] in sources
+        assert _CHECKER["_case_expectation"](row) is row["should_invoke"]
+        assert _CHECKER["_identifiers"](row["checks"])
+    with pytest.raises(_CHECKER["EvaluationInputError"]):
+        _CHECKER["failures"](cases, _results())
 
 
 def test_run_metadata_must_be_filled() -> None:

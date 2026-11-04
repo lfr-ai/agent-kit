@@ -3,10 +3,45 @@
 from __future__ import annotations
 
 import ast
+from configparser import ConfigParser
 from pathlib import Path
 import sys
 
 SOURCE = Path(__file__).parents[3] / "src" / "agent_kit"
+
+
+def test_import_linter_enforces_the_infrastructure_boundary() -> None:
+    config = ConfigParser()
+    config.read(SOURCE.parents[1] / ".importlinter", encoding="utf-8")
+    contracts = [
+        config[section]
+        for section in config.sections()
+        if section.startswith("importlinter:contract:")
+        and config[section].get("type") == "forbidden"
+    ]
+
+    assert any(
+        "agent_kit.infrastructure" in contract.get("source_modules", "").split()
+        and "agent_kit.application" in contract.get("forbidden_modules", "").split()
+        for contract in contracts
+    )
+
+
+def test_architecture_guard_rejects_outward_infrastructure_imports() -> None:
+    tree = ast.parse(
+        "from agent_kit.application.services import catalog_service\n"
+        "from agent_kit.core import models\n"
+    )
+
+    assert _layer_violations("infrastructure/adapter.py", tree) == [
+        "infrastructure/adapter.py: Infrastructure imports outward"
+    ]
+    assert (
+        _layer_violations(
+            "infrastructure/adapter.py", ast.parse("from agent_kit.core import models")
+        )
+        == []
+    )
 
 
 def _nonstandard_imports(tree: ast.Module) -> set[str]:
@@ -42,18 +77,13 @@ def _first_party_imports(tree: ast.Module) -> set[str]:
 _OUTWARD_IMPORTS = (
     (
         "application/",
-        ("agent_kit.infrastructure", "agent_kit.presentation"),
+        ("agent_kit.infrastructure",),
         "Application imports outward",
     ),
     (
         "infrastructure/",
-        ("agent_kit.application", "agent_kit.presentation"),
+        ("agent_kit.application",),
         "Infrastructure imports outward",
-    ),
-    (
-        "presentation/",
-        ("agent_kit.infrastructure", "agent_kit.composition"),
-        "Presentation imports outward",
     ),
 )
 

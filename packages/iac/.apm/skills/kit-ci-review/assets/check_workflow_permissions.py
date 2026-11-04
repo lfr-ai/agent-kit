@@ -317,7 +317,7 @@ def self_test() -> None:
         allowed_expressions=("runner.",),
         require_permissions=True,
     )
-    sha = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    sha = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret - synthetic commit SHA
     clean = (
         "name: ci\non:\n  push:\npermissions:\n  contents: read\n"
         "defaults:\n  run:  # job settings, not a script\n    shell: bash\n"

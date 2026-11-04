@@ -1,8 +1,9 @@
 # Docstring patterns
 
 Docstrings explain behavior that the signature cannot: intent, constraints, side
-effects, and failures. Keep obvious operations concise rather than narrating
-their implementation.
+effects, and failures. Prefer the simplest form: a one-line docstring that
+states the whole contract, including what a return value means. Comments are
+single lines that say why, never what the next line does.
 
 ## Toolkit defaults
 
@@ -14,16 +15,24 @@ single backticks.
 
 PEP 257 reserves one-line docstrings for "really obvious cases"; Google §3.8.3
 lets sections be omitted when the name and signature are informative enough for
-a one-line docstring. The toolkit makes that decision mechanical:
+a one-line docstring. Choose by caller-relevant complexity, not parameter count:
 
 | One line when | Multi-line when |
 | --- | --- |
-| At most one parameter (excluding `self`/`cls`), the return needs no `Returns:` (see `docstring-returns`), and the only details would restate the parameter or return. | The callable is public with two or more parameters (`Args:` required), the return is structured, or there are constraints, effects, failures (`Raises:`), yields, or examples worth stating. |
-| Private or nested helper with several self-evident parameters. | `__init__` with parameters: initializer arguments are always documented. |
+| The name, signature, and summary explain the contract; sections would only restate them. This includes public wrappers, delegates with several self-evident parameters, and structured returns whose shape fits in the summary. | A structured return needs more than one line to describe (then `Returns:` is required, see `docstring-returns`), or constraints, effects, failures, yields, or examples need more explanation. Prose is sufficient when sections add no clarity. |
+| A short summary can state the notable input and failure behavior without losing meaning, including an explicit exception-message constructor. | Initializer parameters with units, ranges, or interactions that need explanation; document these in prose or `Args:` on `__init__`. |
 
 ```python
 def _context(actions: CliActions) -> int:
-    """Write SessionStart context; return ``1`` if stdin is oversized or invalid."""
+    """Read bounded stdin JSON and emit advisory context; ``1`` on check failure."""
+
+
+def emit(report: CheckReport, stream: TextIO) -> None:
+    """Write ``report`` findings to ``stream``, one per line."""
+
+
+def _report_dict(report: CheckReport) -> dict[str, object]:
+    """Return the JSON report: ``valid``, ``version``, ``findings`` and ``profiles``."""
 
 
 def scale(value: float, factor: float) -> float:
@@ -37,7 +46,9 @@ def scale(value: float, factor: float) -> float:
 
 When an `Args:` section exists, it lists every parameter in signature order as
 `name (type): meaning`, with `type` equal to the annotation. Types are
-machine-checked, so the repetition cannot drift.
+machine-checked, so the repetition cannot drift. Keep real input, error, and
+constraint contracts even when shortening a docstring. Do not remove meaningful
+sections merely because the callable takes one parameter.
 
 ## Enforced rules
 
@@ -46,14 +57,16 @@ the rules are opt-in in the checker and default-on in this repository's gate.
 
 | Finding code | Fires when |
 | --- | --- |
-| `docstring-args` | A public callable with two or more parameters lacks `Args:`, or any `Args:` section does not list every parameter in signature order. |
+| `docstring-args` | Initializer prose does not name every parameter in double backticks and lacks `Args:`, or any `Args:` section does not list every parameter in signature order (excluding `self`/`cls`). |
 | `docstring-args-type` | An `Args:` entry omits `(type)` or its type differs from the unparsed annotation (whitespace and quotes are normalised; `X \| None` is compared literally). |
-| `docstring-one-line` | A callable with at most one parameter and a return that needs no `Returns:` has a docstring made only of a summary plus `Args:` and/or `Returns:`. `__init__` is exempt. |
-| `docstring-returns` | The return annotation is a tuple of two or more elements, a `dict`/`Mapping`, a nested generic, a `Callable`, or a union of two or more non-`None` types, and `Returns:` is missing or empty. Generators and `TypeGuard`/`TypeIs` predicates are exempt. |
+| `docstring-returns` | A multi-line docstring's return annotation is a tuple of two or more elements, a `dict`/`Mapping`, a nested generic, a `Callable`, or a union of two or more non-`None` types, and `Returns:` is missing or empty. A one-line summary that states the shape passes. Generators and `TypeGuard`/`TypeIs` predicates are exempt. |
 | `docstring-returns-none` | `Returns:` appears on a function annotated `-> None`. |
 
 Exempt: test modules, dunder methods other than `__init__`, `@overload` stubs,
-properties, `@override` methods, and private or nested helpers without a docstring.
+properties, and `@override` methods. Missing docstrings outside parameterized
+initializers are left to the project's documentation linter. The checker validates
+section structure and annotated types, not whether prose is meaningful. Concision
+and completeness require review; there is no signature-based one-line rule.
 
 Ruff selects the pydoclint preview rules by exact code: `DOC102` (documented
 parameter not in the signature), `DOC202` (`Returns:` without a return),
@@ -76,7 +89,7 @@ injected through the ports in ``invoicing.ports``.
 
 ## Function docstrings
 
-One-line, one self-evident parameter and an obvious return:
+One-line, self-evident parameters and an obvious return:
 
 ```python
 def normalise_name(name: str) -> str:
@@ -153,8 +166,18 @@ Guidance:
 ## Class docstrings
 
 Describe responsibility and invariants. Document public attributes of records in
-`Attributes:`; document initializer arguments on `__init__` in its own `Args:`
-section, even when there is only one.
+`Attributes:`. Document initializer arguments on `__init__`, even when there is
+only one: concise prose names each parameter in double backticks and states its
+meaning, or an `Args:` section adds units, constraints, and interactions. A fixed
+exception-message constructor need not add a section merely to repeat its type:
+
+```python
+class ContractError(ValueError):
+    def __init__(self, issue: Issue) -> None:
+        """Retain ``issue`` and use its fixed diagnostic as the message."""
+        self.issue = issue
+        super().__init__(issue.value)
+```
 
 ```python
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -201,7 +224,7 @@ name and the docstring together form the specification.
 | --- | --- |
 | `"""Get order."""` on `get_order` | Say what is notable or remove the noise. |
 | `Args:` missing a type, or a type that differs from the annotation | Write `name (type): meaning` with the annotation verbatim; change both together. |
-| Summary plus only `Args:`/`Returns:` on an obvious one-parameter function | Use one line that names the argument and the notable return values. |
+| `Args:`/`Returns:` that only repeat a self-evident signature | Use concise prose that keeps notable inputs, constraints, effects, and failures. |
 | `Returns:` that only repeats the type | Describe shape, keys, units, ordering, and empty cases. |
 | `Raises: Exception` | Name the specific, handled exceptions. |
 | Implementation narration | Describe the contract; comment tricky lines instead. |

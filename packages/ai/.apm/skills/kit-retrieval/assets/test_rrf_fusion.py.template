@@ -87,4 +87,4 @@ def test_limit_and_empty_input() -> None:
 )
 def test_invalid_arguments_are_rejected(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):  # noqa: PT011 - message varies by argument
-        reciprocal_rank_fusion({"x": _ranking("x", "a")}, **kwargs)  # type: ignore[arg-type]
+        reciprocal_rank_fusion({"x": _ranking("x", "a")}, **kwargs)  # type: ignore[arg-type]  # invalid input on purpose

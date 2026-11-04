@@ -173,4 +173,4 @@ def test_time_budget_maps_to_unavailable() -> None:
 )
 def test_invalid_policies_are_rejected(kwargs: dict[str, float]) -> None:
     with pytest.raises(ValueError, match="must"):
-        CorrectionPolicy(**kwargs)  # type: ignore[arg-type]
+        CorrectionPolicy(**kwargs)  # type: ignore[arg-type]  # invalid input on purpose

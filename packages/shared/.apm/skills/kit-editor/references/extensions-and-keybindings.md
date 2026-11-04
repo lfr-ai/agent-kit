@@ -17,10 +17,10 @@ repository, and extensions they are advised not to use there.
 
 The [extensions template](../assets/extensions.json.template) recommends
 EditorConfig, the Task integration, YAML, Markdown lint, a spell checker, the
-Python language and debugger extensions and Ruff, and marks other Python
-formatters and linters as unwanted. Remove the Python entries in a repository
-without Python, and swap Ruff for the formatter the repository actually
-configures.
+Python language and debugger extensions, Ruff and ty. Other Python formatters,
+linters and type checkers (including Mypy and Pylance) are unwanted. Ruff owns
+formatting, linting and imports; ty owns types. Remove the Python entries and
+matching settings in a repository without Python.
 
 Review each identifier before committing it:
 

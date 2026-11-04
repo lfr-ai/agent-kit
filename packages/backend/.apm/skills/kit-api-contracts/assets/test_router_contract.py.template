@@ -129,7 +129,7 @@ def test_errors_use_problem_details(
     expected_status: int,
 ) -> None:
     """Every error, including framework errors, uses the problem envelope."""
-    response = client.request(method.upper(), path, **kwargs)  # type: ignore[arg-type]
+    response = client.request(method.upper(), path, **kwargs)  # type: ignore[arg-type]  # parametrized request options
     assert response.status_code == expected_status
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()

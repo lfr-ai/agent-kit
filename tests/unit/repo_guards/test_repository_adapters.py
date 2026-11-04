@@ -13,6 +13,7 @@ _FILES = (
     ".github/hooks/session-context.json",
     ".claude/settings.json",
     ".vscode/settings.json",
+    "scripts/session_context.py",
 )
 
 
@@ -59,7 +60,7 @@ def test_session_hooks_require_no_sync(native_root: Path, relative: str) -> None
     """Session entry must not synchronize dependencies before the audited bootstrap."""
     path = native_root / relative
     text = path.read_text()
-    assert "uv run --locked --no-sync agent-kit context" in text
+    assert "uv run --locked --no-sync python scripts/session_context.py" in text
     path.write_text(text.replace(" --no-sync", ""), encoding="utf-8")
 
     assert any("hook" in finding.lower() for finding in check(native_root))
@@ -70,7 +71,7 @@ def test_missing_local_session_entrypoint_reports_audited_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The check-only entrypoint explains how to provision a non-syncing hook."""
+    """The check-only adapter explains how to provision a non-syncing hook."""
     monkeypatch.setattr(native_checker, "_ROOT", native_root)
 
     assert native_checker.main() == 1
@@ -79,9 +80,7 @@ def test_missing_local_session_entrypoint_reports_audited_bootstrap(
     assert "--no-sync" in diagnostic
 
 
-@pytest.mark.parametrize(
-    "relative", [".venv/Scripts/agent-kit.exe", ".venv/bin/agent-kit"]
-)
+@pytest.mark.parametrize("relative", [".venv/Scripts/python.exe", ".venv/bin/python"])
 def test_local_session_entrypoint_needs_no_install_or_execution(
     native_root: Path, monkeypatch: pytest.MonkeyPatch, relative: str
 ) -> None:

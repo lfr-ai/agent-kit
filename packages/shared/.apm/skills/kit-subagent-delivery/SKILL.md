@@ -1,6 +1,6 @@
 ---
 name: kit-subagent-delivery
-description: Use when delegating implementation to subagents with owned paths, handoff checks and coordinator verification.
+description: Use when delegating bounded implementation with owned paths, handoffs and verification.
 license: MIT
 ---
 

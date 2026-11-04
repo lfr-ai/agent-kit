@@ -324,4 +324,4 @@ def test_run_stops_when_asked() -> None:
 )
 def test_invalid_settings_are_rejected(kwargs: dict[str, float], message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        WorkerSettings(**kwargs)  # type: ignore[arg-type]
+        WorkerSettings(**kwargs)  # type: ignore[arg-type]  # invalid input on purpose

@@ -4,6 +4,23 @@
   "chat.useClaudeMdFile": false,
   "chat.useClaudeHooks": false,
   "chat.mcp.autostart": "never",
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Draft only; do not stage or commit. Follow the repository's commit convention, otherwise use Conventional Commits 1.0: <type>(<optional scope>)[!]: <imperative summary>. Keep the subject at most 72 characters with no trailing period; explain breaking changes in a BREAKING CHANGE: footer. Describe only the staged diff."
+    }
+  ],
+  "python.languageServer": "None",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "ruff.importStrategy": "fromEnvironment",
+  "ty.importStrategy": "fromEnvironment",
+  "ty.diagnosticMode": "workspace",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
   "editor.formatOnSave": true,
   "files.watcherExclude": {
     "**/.venv/**": true,

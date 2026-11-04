@@ -51,8 +51,10 @@ def split_amount(total: Decimal, *, parts: int) -> list[Decimal]:
         ValueError: If ``parts`` is less than 1 or ``total`` is negative.
 
     Example:
-        >>> split_amount(Decimal("100.00"), parts=3)
-        [Decimal(``33.33``), Decimal(``33.33``), Decimal(``33.34``)]
+        >>> split_amount(Decimal("100.00"), parts=3) == [
+        ...     Decimal("33.33"), Decimal("33.33"), Decimal("33.34")
+        ... ]
+        True
     """
     if parts < 1 or total < 0:
         message = "parts must be at least 1 and total must not be negative"
@@ -78,14 +80,17 @@ def overdue_invoices(invoices: Iterable[Invoice], *, today: date) -> Iterator[In
 
 
 class ReminderPolicy:
-    """Decides whether an overdue invoice gets a reminder today.
-
-    Args:
-        quiet_days: Minimum days between two reminders for one invoice.
-    """
+    """Decide whether an overdue invoice gets a reminder today."""
 
     def __init__(self, *, quiet_days: int) -> None:
-        """Store the policy; see the class docstring for arguments."""
+        """Set the minimum interval between reminders for one invoice.
+
+        Args:
+            quiet_days (int): Non-negative minimum days between reminders.
+
+        Raises:
+            ValueError: If ``quiet_days`` is negative.
+        """
         if quiet_days < 0:
             message = "quiet_days must not be negative"
             raise ValueError(message)

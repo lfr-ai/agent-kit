@@ -2,210 +2,138 @@
 
 Open the repository root as a single-folder workspace. The committed
 [settings](../.vscode/settings.json), [tasks](../.vscode/tasks.json),
-[debug configurations](../.vscode/launch.json) and
-[extension recommendations](../.vscode/extensions.json), and
-[MCP server definitions](../.vscode/mcp.json) are the shared editor entry
-points. They do not replace the CLI completion gate.
+[debug configurations](../.vscode/launch.json),
+[extension recommendations](../.vscode/extensions.json) and
+[MCP servers](../.vscode/mcp.json) are the shared editor entry points. They do
+not replace the repository verification gate (`task verify`).
 
 ## Start
 
 1. Review the repository before granting Workspace Trust.
-2. Install the recommended extensions you need. Recommendations do not silently
-   install extensions or disable ones already installed. The dev container
-   installs the same list except two host-side extensions (PowerShell and Dev
-   Containers), which belong on the machine that opens the container.
-3. Run **Tasks: Run Task > Bootstrap locked environment**, or `task bootstrap`.
-   Bootstrap audits the Python and JavaScript locks before installing either
-   environment and then installs Git hooks. This is an explicit action, not a
-   folder-open task; do not bypass the audit with a direct dependency sync.
-   On Windows it also registers `AGENT_KIT_DIR` for future sessions. New
-   integrated terminals in this checkout receive the workspace path directly.
-4. Run **Python: Select Interpreter** and select the repository's `.venv`.
-   The portable default points to the directory, so Windows and Unix do not need
-   different executable paths. Changing this default does not replace a previous
-   workspace interpreter selection.
-5. Use **Run Build Task** for `task verify`, or **Run Test Task** for all test
-   tiers. The other editor tasks cover bootstrap, types, lint, formatting,
-   pre-commit, APM smoke, the tox matrix, checkout registration and an interactive
-   Conventional Commit prompt. Use `task verify -- <gate>` or the owning CLI for
-   focused checks; editor tasks do not duplicate the complete gate inventory.
+2. Install the recommended extensions you need; recommendations never install or
+   disable anything. The dev container installs the same list except the
+   host-side PowerShell and Dev Containers extensions.
+3. Run **Tasks: Run Task > Bootstrap locked environment** (`task bootstrap`).
+   It audits both locks, installs both environments and Git hooks, and on
+   Windows registers `AGENT_KIT_DIR`. Do not bypass the audit with a direct sync.
+4. Run **Python: Select Interpreter** and pick the root `.venv`.
+5. Use **Run Build Task** for `task verify` and **Run Test Task** for all tiers.
+   Other tasks: [developer tooling](devtools.md#entry-points).
 
 ## Workspace contract
 
-The workspace setup is scoped to this Python CLI and capability library. The
-five workspace files remain strict JSON with blank-line groups, compatible
-with the repository's existing parsers; JSONC section comments are not required.
-VS Code requires the `settings.json` filename even though its parser accepts
-JSONC. Do not rename it to `settings.jsonc`: workspace discovery would break.
-The strict subset used here needs no `check-json` exclusion.
+The five workspace files are strict JSON. VS Code requires the `settings.json`
+filename; renaming it to `settings.jsonc` breaks discovery.
 
 | Area | Contract |
 | --- | --- |
-| Python interpreter and tests | Root `.venv`, root test discovery and the configured workspace interpreter; no backend subfolder or fixed Unix executable |
-| Ruff | Native server and environment-resolved binary; repository `ruff.toml` remains authoritative, without duplicated rule lists or line-length arguments |
-| Type checking | ty reads `ty.toml`; Pylance is not a second language server |
-| Language formatting | Ruff for Python, built-in JSON formatting, declared YAML/TOML/Markdown providers and explicit ShellCheck actions |
-| File conventions | UTF-8, LF and final/trailing-newline settings agree with EditorConfig |
-| Templates | File associations expose syntax without turning resource examples into another application/toolchain |
-| Visibility and watching | Exclude environments, builds and caches; omit skill mirrors from ordinary text search without hiding or disabling native discovery watches |
-| Agent setup | Standard native discovery and existing AGENTS entry points; no deprecated duplicate-location roster |
-| Terminal and appearance | Machine shell paths, themes and personal UI preferences are not imported |
-| Git, plugins and MCP | No smart-commit changes, marketplace activation, automatic approvals or MCP auto-start; the reviewed remote connections are confined to the MCP manifest |
+| Python and tests | Root `.venv` and root test discovery; no fixed Unix executable |
+| Ruff | Native server, environment binary; `ruff.toml` is authoritative |
+| Types | ty reads `ty.toml`; Mypy and Pylance are unwanted recommendations |
+| Formatting | Ruff for Python, built-in JSON, declared YAML/TOML/Markdown providers, explicit ShellCheck actions |
+| Files | UTF-8, LF and final newlines agree with EditorConfig |
+| Templates | Associations add syntax only |
+| Visibility | Exclude environments, builds and caches; skill mirrors leave text search but stay watched |
+| Agents | Standard native discovery and AGENTS entry points |
+| Personal settings | Shell paths, themes and UI preferences are not imported |
+| Git, plugins, MCP | No smart commits, marketplace activation, automatic approvals or MCP auto-start |
 
-The Python code actions explicitly name Ruff's fix and import providers.
-The editor uses the locked environment's Ruff/ty when available; run bootstrap
-first and inspect their output channels if a bundled-version fallback is reported.
-Do not copy formatter/type-checking options into workspace settings when the
-owning tool configuration already defines them.
+Code actions name Ruff's fix and import providers. If an output channel reports
+a bundled-version fallback, run bootstrap first. Do not copy tool options into
+settings when the tool configuration owns them.
 
 ## Canonical versus generated files
 
-Author under root/package `.apm` directories. Mirrored `.agents/skills` and
-`.claude/skills` are read-only and excluded from ordinary text search, but remain
-visible and watched so native discovery can observe refreshed capabilities.
-Their parent directories are not hidden: knowledge, agentic setup, native
-settings and guards remain inspectable.
-
-`uv.lock`, `apm.lock.yaml` and `.coveragerc` remain searchable. Cache exclusions
-use `.coverage` and `.coverage.*`, not `.coverage*`, which would also hide the
-coverage configuration.
-
-Editor read-only state and exclusions are convenience features, not filesystem
-permissions or a sandbox. Existing source/provenance/native-role checks remain
-the actual repository gates. Other harnesses and external tools can still see
-parent, user or plugin capabilities.
+Author under root or package `.apm` directories. Mirrored `.agents/skills` and
+`.claude/skills` are read-only and out of text search but visible and watched.
+`uv.lock`, `apm.lock.yaml` and `.coveragerc` stay searchable (excluding
+`.coverage` and `.coverage.*`, not `.coverage*`). Read-only state and exclusions
+are conveniences, not permissions; the repository gates remain authoritative.
 
 ## Debugging
 
-- **Check canonical toolkit** debugs the real `agent_kit` module.
-- **Compose a profile into build/** asks for the profile and a new output
-  directory. The CLI still refuses existing destinations; choose another name
-  instead of deleting a consumer or weakening the no-overwrite guard.
-- **Debug current test file** runs pytest without xdist so breakpoints stay in
-  the expected test process.
+| Configuration | Behavior |
+| --- | --- |
+| Debug current test file | pytest without xdist so breakpoints hit |
 
-Debugging uses the selected workspace interpreter. It does not inject source
-paths, start databases/web servers, expose an attach port, install dependencies,
-publish, or deploy. No FastAPI, browser or frontend runtime is configured for a
-repository that has no such application.
+Debugging starts no servers or databases, opens no attach port, installs
+nothing and publishes nothing.
 
 ## Agent boundaries
 
-Keep AGENTS/skill discovery enabled, mirrored Claude entry/hook loading disabled
-for VS Code Local, and MCP autostart at `never`. Workspace terminal rules set
-package installers and package runners (`pip install`, `uv add`, `uvx`, `npx` and
-similar) to `false`, so they always require approval even when another rule
-would auto-approve them; see [dependency security](dependency-security.md).
-Native Claude keeps its own adapter. Current Copilot harness discovery differs
-from Local. The supported `chat.agentFilesLocations` setting is not an isolation
-boundary and is not inherited by other Copilot clients; this workspace uses
-standard native folders instead. Only the older `chat.modeFilesLocations` is
-deprecated.
+AGENTS and skill discovery stay enabled; mirrored Claude entry/hook loading is
+disabled for VS Code Local; MCP autostart is `never`. Terminal rules set package
+installers and runners (`pip install`, `uv add`, `uvx`, `npx` and similar) to
+`false`, so they always need approval; see [dependency security](dependency-security.md).
+`chat.agentFilesLocations` is not an isolation boundary; only
+`chat.modeFilesLocations` is deprecated.
 
 ### Native discovery and menu
 
-The renderer emits every role as a flat file directly in `.github/agents/` and
-`.claude/agents/`; there is no `subagents/` folder. VS Code's default
-`chat.agentFilesLocations` scan reads only direct children of `.github/agents`
-(and `.claude/agents`), unlike its recursive instruction-file scan, so a nested
-worker would be undiscoverable and a coordinator's `agents:` entry would fail with
-"Unknown agent ... will be ignored". `agents:` entries are matched against the
-`name:` frontmatter of the target file (case-sensitive), which the renderer sets to
-the role ID. Claude Code scans `.claude/agents` recursively, but APM flattens agent
-file names to the stem on deployment, so same-named files in subfolders would
-collide; flat output avoids both problems.
+Every role renders as a flat file in `.github/agents/` and `.claude/agents/`.
+VS Code scans only direct children of those folders, so a nested worker would
+be undiscoverable ("Unknown agent ... will be ignored"). `agents:` entries match
+the target's `name:` (case-sensitive), set to the role ID. Claude scans
+recursively, but APM flattens file names, so flat output also avoids collisions.
 
-Copilot frontmatter per tier (checked against the VS Code custom-agent and
-file-reference pages, GitHub Copilot custom-agent docs and the Claude Code
-sub-agent docs on 2026-11-02):
+Frontmatter by tier (checked 2026-11-03 against VS Code, GitHub Copilot and
+Claude Code documentation):
 
-- `tools` uses the Copilot aliases `read`, `search`, `edit`, `execute`, `agent`,
-  `web` and `todo`. Verifiers (every analysis, review and check role) get
-  `read, search, execute, todo` for offline inspection; implementers get `read, search, edit, execute,
-  todo`; coordinators add `agent`. Unknown tool names are silently dropped, so a
-  Claude-style name in a Copilot file would lose that tool; omitting `tools`
-  would instead fall back to whatever the picker has enabled.
-- `agents:` is written only on coordinators and lists exact worker names. The key
-  is omitted elsewhere (Local treats an omitted list as "all agents", but roles
-  without the `agent` tool cannot delegate anyway). `agents`, `handoffs` and
-  `argument-hint` are not supported by the github.com cloud agent.
-- Primaries set `user-invocable: true` and `disable-model-invocation: true`.
-  Workers set `user-invocable: false`, which hides them from the picker while
-  keeping them available as subagents, and `disable-model-invocation: false`
-  (the replacement for the deprecated `infer`). The two flags are independent.
-- Claude files carry `name`, `description` and a scoped `tools` string
-  (`Read, Grep, Glob`, plus `Bash` and `Edit, Write` by tier). The `Agent(a, b)`
-  allowlist on coordinators only takes effect when that agent runs as the main
-  thread (`claude --agent`); sub-agents cannot spawn sub-agents.
+| Tier | Copilot `tools` | Claude `tools` |
+| --- | --- | --- |
+| Verifier (analysis, review, check) | `read, search, execute, todo` | `Read, Grep, Glob, Bash` |
+| Implementer | adds `edit` | adds `Edit, Write` |
+| Coordinator | adds `agent`, plus an `agents:` list of workers | adds `Agent(a, b)` (main thread only) |
 
-The picker roster is `kit-orchestrator`, `kit-debug` and `kit-devops` (only with
-the iac bundle). Specialist advisers (`kit-ddd`, `kit-sdd`, `kit-deep-thinking`),
-`kit-refactor` and all other helpers are hidden workers that coordinators can
-call. Every role
-has offline shell access to inspect history, diffs and checks. Source-read-only intent is not a
-read-only shell sandbox: verifiers can still write files or use the network, and
-host permissions and approvals remain necessary. See the canonical
-[native-role contract](../packages/shared/.apm/skills/kit-agent-runtime/references/native-roles.md).
+- Unknown Copilot tool names are dropped silently; omitting `tools` falls back
+  to the picker's selection.
+- `agents`, `handoffs` and `argument-hint` are unsupported by the github.com
+  cloud agent.
+- Primaries: `user-invocable: true`, `disable-model-invocation: true`. Workers:
+  `user-invocable: false` (hidden but callable), `disable-model-invocation: false`.
 
-There is no documented workspace setting to hide arbitrary built-in and
-extension-contributed agents while retaining custom agents. `chat.agent.enabled`
-disables agent functionality, not just unwanted picker entries; organization
-agent discovery settings do not hide built-ins or extension agents. No speculative
-hide setting or user-global extension mutation is installed here.
+The picker shows `kit-orchestrator` and `kit-debug`. Everything else
+(`kit-devops-implementer`, `kit-infra-reviewer`, `kit-ddd`, `kit-sdd`,
+`kit-deep-thinking`, `kit-test-author`, `kit-refactor`, ...) is a hidden worker.
+All roles have an offline shell, which is not a sandbox. Canonical contract:
+[native roles](../packages/shared/.apm/skills/kit-agent-runtime/references/native-roles.md).
 
-Use **Configure Custom Agents** in the picker to identify an entry's source
-(hover for its location), and **Chat > Diagnostics** to inspect discovery errors.
-For a custom agent you own, `user-invocable: false` is the supported picker-hide
-control, and changes the shared definition for everyone. As of the public docs
-checked on 2026-11-02, the Customizations editor has no custom-agent eye-icon
-show/hide control in Local or Copilot; do not rely on older picker instructions.
-For an extension-contributed agent, the documented fallback is to manage its
-contributing extension. An operator can choose **Disable (Workspace)** where
-offered, affecting all that extension's features; this kit does not do so.
-Built-in entries can remain, so a kit-only picker cannot be promised.
+No setting hides built-in or extension agents while keeping custom ones;
+`chat.agent.enabled` disables agents entirely. To find an entry's source, use
+**Configure Custom Agents** (hover) and **Chat > Diagnostics**. For an
+extension agent, the operator may manage or disable that extension per
+workspace; for a plugin, use the harness's plugin UI. This kit changes neither,
+so a kit-only picker cannot be promised.
 
-After source changes, audit drift with `python -m scripts.render_native` before
-an explicit `--write`. Reload the selected harness and verify discovery and a
-bounded worker call after generation; file tests alone do not certify runtime
-behavior.
-
-Do not add unreviewed plugin rosters, legacy `chat.mcp.autoStart`, duplicate
-Claude hook locations or trust/approval shortcuts. The configured servers and
-their limits are recorded in [MCP adoption](mcp-adoption.md). VS Code MCP
-auto-start remains `never`; host trust, OAuth and tool consent remain separate.
+After source changes, run `python -m scripts.render_native` to audit drift,
+then `--write`; reload the harness and test discovery and one worker call.
+Configured servers are recorded in [MCP adoption](mcp-adoption.md).
 
 ## Verification and limits
 
-The native contract checks pin interpreter, formatter/type-checker ownership,
-pytest discovery and agent safeguards. Workspace regressions check source
-visibility, extension providers, manual Task wrappers and debug inputs. The
-existing task-wiring checks compare every target with the actual Taskfile.
+Portable setup starts at the shared `kit-new-project` prompt: repository
+hygiene, editor wiring, verification and setup docs through existing skills,
+without installing a framework or changing user-global settings.
+It then chains the standards prompts: `/kit-align-structure`, `/kit-align-ordering`, `/kit-align-typing`, `/kit-align-docstrings`, `/kit-centralize-cross-cutting`, `/kit-align-python-conventions`, `/kit-align-tests`, `/kit-reduce-cognitive-load`, `/kit-align-consistency`, `/kit-write-docs`, `/kit-align-agent-docs`.
+The commit-message prompt and draft instruction use Conventional Commits and
+never stage or commit.
 
-The setting identifiers were checked against VS Code 1.141.0, Ruff extension
-2026.88.0 and ty extension 2026.80.0, plus the official references below.
-Terminal activation is not forced: the Python Environments extension's
-`python-envs.terminal.autoActivationType` is machine-scoped, not portable
-workspace policy.
+Native contract checks pin interpreter, formatter/type-checker ownership, pytest
+discovery and agent safeguards; task-wiring checks compare every editor task
+with the Taskfile. Setting identifiers were checked against VS Code 1.141.0,
+Ruff extension 2026.88.0 and ty extension 2026.80.0. Terminal activation is not
+forced (`python-envs.terminal.autoActivationType` is machine-scoped).
 
-JSON/schema checks and interpreter selection do not certify save actions,
-debugger interaction, hosted agent permissions or all installed extensions.
-In a fresh profile, open Python/YAML/TOML/Markdown files, run the named tasks
-and debug entry points, and inspect **Chat: Open Customizations** for the chosen
-harness. Multi-root users must place window-scoped settings in the workspace
-file rather than assuming folder settings override them.
+These checks do not certify save actions, debugging, hosted permissions or all
+extensions. In a fresh profile, open each file type, run the tasks and debug
+entries, and inspect **Chat: Open Customizations**. Multi-root users put
+window-scoped settings in the workspace file.
 
 ## Primary sources
 
-- [VS Code custom-agent discovery and picker controls](https://code.visualstudio.com/docs/copilot/customization/custom-agents)
-- [VS Code subagent invocation and allowlists](https://code.visualstudio.com/docs/copilot/agents/subagents)
-- [VS Code AI settings](https://code.visualstudio.com/docs/agents/reference/ai-settings)
-- [VS Code agent-folder scan implementation](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/chat/common/promptSyntax/utils/promptFilesLocator.ts#L660-L695)
-- [VS Code settings and scopes](https://code.visualstudio.com/docs/configure/settings)
-- [Python interpreter and testing settings](https://code.visualstudio.com/docs/python/settings-reference)
-- [Python debugging](https://code.visualstudio.com/docs/python/debugging)
-- [Ruff editor configuration](https://docs.astral.sh/ruff/editors/settings/)
-- [ty editor integration](https://docs.astral.sh/ty/editors/)
-- [ty editor settings](https://docs.astral.sh/ty/reference/editor-settings/)
-- [VS Code MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers)
-- [Agent skills and harness discovery](https://code.visualstudio.com/docs/agent-customization/agent-skills)
-- [Custom instruction formats](https://code.visualstudio.com/docs/agent-customization/custom-instructions)
+- [Custom agents](https://code.visualstudio.com/docs/copilot/customization/custom-agents), [frontmatter reference](https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference), [subagents](https://code.visualstudio.com/docs/copilot/agents/subagents)
+- [AI settings](https://code.visualstudio.com/docs/agents/reference/ai-settings), [settings and scopes](https://code.visualstudio.com/docs/configure/settings)
+- [Agent-folder scan implementation](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/chat/common/promptSyntax/utils/promptFilesLocator.ts#L660-L695)
+- [Python settings](https://code.visualstudio.com/docs/python/settings-reference), [Python debugging](https://code.visualstudio.com/docs/python/debugging)
+- [Ruff editor settings](https://docs.astral.sh/ruff/editors/settings/), [ty editors](https://docs.astral.sh/ty/editors/), [ty editor settings](https://docs.astral.sh/ty/reference/editor-settings/)
+- [MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers), [agent skills](https://code.visualstudio.com/docs/agent-customization/agent-skills), [custom instructions](https://code.visualstudio.com/docs/agent-customization/custom-instructions)

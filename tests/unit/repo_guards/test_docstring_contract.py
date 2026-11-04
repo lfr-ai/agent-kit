@@ -16,7 +16,6 @@ _RULES = frozenset(
     {
         "docstring-args",
         "docstring-args-type",
-        "docstring-one-line",
         "docstring-returns",
         "docstring-returns-none",
     }
@@ -42,11 +41,215 @@ def _all_clean(source: str) -> bool:
     return _CHECKER["violations"](dedent(source), "module.py", rules=_RULES) == []
 
 
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [("Final", 0), ("Final[int]", 0), ("typing.Final", 0), ("int", 1)],
+)
+def test_internal_constants_allow_only_final_annotations(
+    annotation: str, expected: int
+) -> None:
+    assert _count(f"_LIMIT: {annotation} = 3\n", "private-constant") == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '''
+        def emit(report: CheckReport, stream: TextIO) -> None:
+            """Write ``report`` findings to ``stream``, one per line."""
+            stream.writelines(report.lines)
+        ''',
+        '''
+        async def fetch(client: Client, key: str, *, refresh: bool = False) -> Item:
+            """Delegate lookup to ``client``, forwarding ``refresh`` unchanged."""
+            return await client.fetch(key, refresh=refresh)
+        ''',
+        '''
+        def scale(value: float, factor: float) -> float:
+            """Multiply ``value`` by a positive unit-conversion ``factor``."""
+            return value * factor
+        ''',
+        '''
+        def validate(value: str) -> str:
+            """Validate a bounded identifier.
+
+            Args:
+                value (str): Non-empty ASCII identifier of at most 32 characters.
+
+            Returns:
+                The unchanged identifier; whitespace is not trimmed.
+            """
+            return value
+        ''',
+        '''
+        def status() -> int:
+            """Report the last operation's status.
+
+            Returns:
+                ``0`` on success, ``1`` for invalid input, ``2`` for unavailable storage.
+            """
+            return 0
+        ''',
+    ],
+)
+def test_docstring_shape_follows_contract_not_parameter_count(source: str) -> None:
+    assert _all_clean(source)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "pass",
+        '"""Create a bounded client."""',
+        '''"""Create a bounded client.
+
+        Args:
+        """''',
+    ],
+)
+def test_single_parameter_initializer_requires_documented_argument(body: str) -> None:
+    source = f"class Client:\n    def __init__(self, *, timeout: float) -> None:\n        {body}"
+    assert _count(source, "docstring-args") == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '''
+        class Failure(ValueError):
+            def __init__(self, issue: Issue) -> None:
+                """Retain ``issue`` and use its fixed diagnostic as the message."""
+                self.issue = issue
+                super().__init__(issue.value)
+        ''',
+        '''
+        class Client:
+            def __init__(self, timeout: float, *, retries: int) -> None:
+                """Use ``timeout`` seconds per attempt, with at most ``retries`` retries."""
+                self.timeout = timeout
+                self.retries = retries
+        ''',
+    ],
+)
+def test_initializer_parameters_may_be_documented_in_concise_prose(source: str) -> None:
+    assert _all_clean(source)
+
+
+@pytest.mark.parametrize(
+    "docstring",
+    [
+        "Create a bounded client.",
+        "Use ``timeout_seconds`` seconds per attempt.",
+        "Use ``timeout`` seconds per attempt.",
+        """Use ``timeout`` seconds with ``retries`` retries.
+
+        Args:
+            timeout (float): Timeout in seconds.
+        """,
+    ],
+)
+def test_initializer_prose_does_not_hide_undocumented_or_missing_args(
+    docstring: str,
+) -> None:
+    source = f'''
+        class Client:
+            def __init__(self, timeout: float, *, retries: int) -> None:
+                """{docstring}"""
+    '''
+    assert _count(source, "docstring-args") == 1
+
+
+@pytest.mark.parametrize("section", ["See Also", "References", "Example", "Examples"])
+@pytest.mark.parametrize(
+    ("prose", "mentions"),
+    [
+        ("Create client.", "``timeout`` and ``retries``"),
+        ("Use ``timeout`` seconds per attempt.", "``retries``"),
+    ],
+)
+def test_reference_and_example_mentions_do_not_document_initializer_parameters(
+    section: str, prose: str, mentions: str
+) -> None:
+    source = f'''
+        class Client:
+            def __init__(self, timeout: float, *, retries: int) -> None:
+                """{prose}
+
+                {section}:
+                    Look up {mentions} in the client guide.
+                """
+    '''
+    assert _count(source, "docstring-args") == 1
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"])
+@pytest.mark.parametrize("annotation", ["int", "str"])
+@pytest.mark.parametrize("section", ["", "Notes:\n        No conversion is performed."])
+def test_malformed_supplied_args_header_is_not_ignored(
+    indent: str, annotation: str, section: str
+) -> None:
+    source = f'''
+def add(a: int, b: int) -> int:
+    """Add two values.
+
+    Both values are added without conversion.
+
+    {section}
+
+    {indent}Args:
+    {indent}    a ({annotation}): First value.
+    {indent}    b ({annotation}): Second value.
+    """
+    return a + b
+'''
+    assert _count(source, "docstring-args") == 1
+
+
+def test_explanatory_initializer_prose_may_precede_references() -> None:
+    assert _all_clean('''
+        class Client:
+            def __init__(self, timeout: float, *, retries: int) -> None:
+                """Use ``timeout`` seconds per attempt, with at most ``retries`` retries.
+
+                See Also:
+                    The client guide describes deployment defaults.
+                """
+    ''')
+
+
+def test_explanatory_initializer_notes_may_document_parameters() -> None:
+    assert _all_clean('''
+        class Client:
+            def __init__(self, timeout: float, *, retries: int) -> None:
+                """Create client.
+
+                Notes:
+                    Use ``timeout`` seconds per attempt, with at most ``retries`` retries.
+                """
+    ''')
+
+
+def test_args_header_inside_an_example_is_not_a_supplied_section() -> None:
+    assert _all_clean('''
+        def add(a: int, b: int) -> int:
+            """Add ``a`` and ``b``.
+
+            Examples:
+                A different callable might document strings:
+
+                    Args:
+                        a (str): First value.
+                        b (str): Second value.
+            """
+            return a + b
+    ''')
+
+
 def test_rules_are_registered_but_off_by_default() -> None:
     source = dedent('''
-        def pair(a: int, b: int) -> int:
-            """Add."""
-            return a
+        class Client:
+            def __init__(self, *, timeout: float) -> None:
+                """Create a bounded client."""
     ''')
     assert _CHECKER["ALL_RULES"] >= _RULES
     assert _CHECKER["violations"](source, "module.py") == []
@@ -57,16 +260,16 @@ def test_main_enables_docstring_rules_with_flag_and_only(tmp_path: Path) -> None
     target = tmp_path / "asset.py"
     target.write_text(
         dedent('''
-            def pair(a: int, b: int) -> int:
-                """Add."""
-                return a
+            class Client:
+                def __init__(self, *, timeout: float) -> None:
+                    """Create a bounded client."""
         '''),
         encoding="utf-8",
     )
     assert _CHECKER["main"]([str(target)]) == 0
     assert _CHECKER["main"](["--docstrings", str(target)]) == 1
     assert _CHECKER["main"](["--only", "docstring-args", str(target)]) == 1
-    assert _CHECKER["main"](["--only", "docstring-one-line", str(target)]) == 0
+    assert _CHECKER["main"](["--only", "docstring-returns", str(target)]) == 0
 
 
 def test_compliant_documents_are_clean() -> None:
@@ -97,15 +300,6 @@ def test_compliant_documents_are_clean() -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        '''
-        def pair(a: int, b: int) -> int:
-            """Add."""
-            return a
-        ''',
-        """
-        def pair(a: int, b: int) -> int:
-            return a
-        """,
         '''
         def pair(a: int, b: int) -> int:
             """Add.
@@ -146,23 +340,50 @@ def test_compliant_documents_are_clean() -> None:
         ''',
         '''
         class Box:
-            def put(self, a: int, b: int) -> int:
-                """Put."""
-                return a
-        ''',
-        '''
-        class Box:
             def __init__(self, a: int, b: int) -> None:
                 """Create."""
         ''',
         '''
         def f(*args: int, **kwargs: str) -> int:
-            """Go."""
+            """Go.
+
+            Args:
+                args (int): Values.
+                kwargs (str): Options.
+            """
             return 1
+        ''',
+        '''
+        def f(value: int) -> int:
+            """Go.
+
+            Args:
+                value (int): Value.
+                extra (int): Not a parameter.
+            """
+            return value
+        ''',
+        '''
+        def f(value: int) -> int:
+            """Go.
+
+            Args:
+                value (int): Value.
+                value (int): Repeated.
+            """
+            return value
+        ''',
+        '''
+        def f(value: int) -> int:
+            """Go.
+
+            Args:
+            """
+            return value
         ''',
     ],
 )
-def test_args_section_is_required_and_ordered(source: str) -> None:
+def test_supplied_args_are_complete_and_ordered(source: str) -> None:
     assert _count(source, "docstring-args") == 1
 
 
@@ -266,67 +487,9 @@ _CONTEXT_ONE_LINE = '''
 '''
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        _CONTEXT_EXPANDED,
-        '''
-        def f(a: int) -> int:
-            """Go.
-
-            Args:
-                a (int): Value.
-            """
-            return a
-        ''',
-        '''
-        def f() -> int:
-            """Go.
-
-            Returns:
-                The count.
-            """
-            return 1
-        ''',
-        '''
-        def f(a: int) -> None:
-            """Go.
-
-            Args:
-                a (int): Value.
-            """
-        ''',
-        '''
-        class Box:
-            def put(self, a: int) -> list[int]:
-                """Put.
-
-                Args:
-                    a (int): Value.
-
-                Returns:
-                    The stored values.
-                """
-                return [a]
-        ''',
-        '''
-        def f() -> int:
-            """Go.
-
-            Args:
-                nothing: Nothing.
-            """
-            return 1
-        ''',
-    ],
-)
-def test_obvious_callables_use_a_one_line_docstring(source: str) -> None:
-    assert _count(source, "docstring-one-line") == 1
-
-
-def test_context_example_is_clean_as_one_line() -> None:
-    assert _all_clean(_CONTEXT_ONE_LINE)
-    assert _count(_CONTEXT_EXPANDED, "docstring-args") == 0
+@pytest.mark.parametrize("source", [_CONTEXT_ONE_LINE, _CONTEXT_EXPANDED])
+def test_context_may_be_concise_without_forbidding_failure_details(source: str) -> None:
+    assert _all_clean(source)
 
 
 @pytest.mark.parametrize(
@@ -402,21 +565,10 @@ def test_context_example_is_clean_as_one_line() -> None:
         ''',
     ],
 )
-def test_one_line_is_not_required_when_the_docstring_adds_detail(
+def test_contract_details_may_use_prose_or_sections(
     source: str,
 ) -> None:
-    assert _count(source, "docstring-one-line") == 0
-    assert _count(source, "docstring-args") == 0
-
-
-def test_public_two_parameter_one_liner_needs_args() -> None:
-    source = '''
-        def pair(a: int, b: int) -> int:
-            """Add ``a`` and ``b``."""
-            return a
-    '''
-    assert _count(source, "docstring-args") == 1
-    assert _count(source, "docstring-one-line") == 0
+    assert _all_clean(source)
 
 
 @pytest.mark.parametrize(
@@ -436,9 +588,17 @@ def test_public_two_parameter_one_liner_needs_args() -> None:
 def test_structured_returns_require_a_described_returns_section(
     annotation: str,
 ) -> None:
+    one_line = f'''
+        def f() -> {annotation}:
+            """Return counts keyed by name."""
+            return ()
+    '''
     bare = f'''
         def f() -> {annotation}:
-            """Go."""
+            """Go.
+
+            Counting skips empty names.
+            """
             return ()
     '''
     described = f'''
@@ -450,8 +610,41 @@ def test_structured_returns_require_a_described_returns_section(
             """
             return ()
     '''
+    assert _count(one_line, "docstring-returns") == 0
     assert _count(bare, "docstring-returns") == 1
     assert _count(described, "docstring-returns") == 0
+
+
+@pytest.mark.parametrize("body", ["", "    ", "\n"])
+def test_empty_returns_section_does_not_describe_a_structured_result(body: str) -> None:
+    source = f'''
+        def counts() -> dict[str, int]:
+            """Count entries.
+
+            Returns:
+                {body}
+            """
+            return {{}}
+    '''
+    assert _count(source, "docstring-returns") == 1
+
+
+@pytest.mark.parametrize("name", ["Box", "_Box"])
+def test_initializer_contract_is_independent_of_class_visibility(name: str) -> None:
+    source = f'''
+        class {name}:
+            def __init__(self, value: str = "") -> None:
+                """Store the initial value."""
+    '''
+    assert _count(source, "docstring-args") == 1
+
+
+def test_parameterless_initializer_needs_no_args_section() -> None:
+    assert _all_clean('''
+        class Box:
+            def __init__(self) -> None:
+                """Create an empty box."""
+    ''')
 
 
 @pytest.mark.parametrize(
@@ -504,7 +697,10 @@ def test_generators_document_yields_instead_of_returns() -> None:
     '''
     plain = '''
         def f() -> Iterator[tuple[int, int]]:
-            """Go."""
+            """Go.
+
+            The iterator is empty.
+            """
             return iter(())
     '''
     assert _count(generator, "docstring-returns") == 0
@@ -572,9 +768,9 @@ def test_exempt_callables_are_not_flagged(source: str) -> None:
 )
 def test_test_modules_are_exempt(path: str) -> None:
     source = '''
-        def pair(a: int, b: int) -> int:
-            """Add."""
-            return a
+        class Client:
+            def __init__(self, *, timeout: float) -> None:
+                """Create a bounded client."""
     '''
     assert _count(source, "docstring-args", path=path) == 0
     assert _count(source, "docstring-args", path="src/thing.py") == 1
@@ -582,6 +778,14 @@ def test_test_modules_are_exempt(path: str) -> None:
 
 def test_checker_asset_satisfies_its_own_docstring_contract() -> None:
     assert _CHECKER["main"](["--docstrings", str(_PATH)]) == 0
+
+
+def test_documentation_example_satisfies_the_shared_docstring_contract() -> None:
+    path = (
+        Path(__file__).parents[3]
+        / "packages/shared/.apm/skills/kit-documentation/assets/docstrings.py.template"
+    )
+    assert _CHECKER["main"](["--templates", "--docstrings", str(path)]) == 0
 
 
 def _record_checker(
@@ -644,9 +848,9 @@ def test_conventions_gate_rejects_missing_args_by_default(
             """Module."""
 
 
-            def pair(a: int, b: int) -> int:
-                """Add."""
-                return a
+            class Client:
+                def __init__(self, *, timeout: float) -> None:
+                    """Create a bounded client."""
         ''').lstrip(),
         encoding="utf-8",
     )

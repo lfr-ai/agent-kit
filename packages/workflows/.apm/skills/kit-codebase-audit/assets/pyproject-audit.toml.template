@@ -7,16 +7,20 @@
 [tool.vulture]
 # vulture --config pyproject.toml   (paths below are scanned)
 paths = ["src", "tests"]
+# Revision entry points are loaded by the migration tool; generated code is
+# maintained through its generator rather than dead-code edits.
 exclude = ["*/migrations/*", "*/generated/*"]
 min_confidence = 80
 sort_by_size = true
 # Framework entry points that are called by name, not by import.
 ignore_decorators = ["@app.get", "@app.post", "@pytest.fixture"]
+# Visitor methods and Pydantic configuration are looked up by name.
 ignore_names = ["visit_*", "model_config"]
 
 [tool.deptry]
 # deptry . --json-output audit/deptry.json
 known_first_party = ["shop"]
+# Audit reports, documentation, and maintainer scripts are outside app dependencies.
 extend_exclude = ["audit", "docs", "scripts"]
 
 [tool.deptry.per_rule_ignores]

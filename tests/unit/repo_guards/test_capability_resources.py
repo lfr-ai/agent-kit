@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import sysconfig
+from unittest.mock import Mock
 
 import pytest
 from scripts import apm_smoke
@@ -184,6 +185,9 @@ def test_apm_fixture_home_is_local_and_does_not_mutate_parent_environment(
     assert isolated["USERPROFILE"] == str(tmp_path)
     assert isolated["APM_HOME"] == str(tmp_path / ".apm")
     assert isolated["PATH"] == "tool-path"
+    assert isolated["PYTHONUNBUFFERED"] == "1"
+    assert isolated["PYTHONIOENCODING"] == "utf-8"
+    assert isolated["GIT_CEILING_DIRECTORIES"] == str(tmp_path.parent)
     assert parent == {
         "HOME": "original",
         "USERPROFILE": "original",
@@ -191,49 +195,135 @@ def test_apm_fixture_home_is_local_and_does_not_mutate_parent_environment(
     }
 
 
+def test_smoke_fixture_does_not_inherit_an_explicit_parent_git_workspace(
+    tmp_path: Path,
+) -> None:
+    parent = dict.fromkeys(("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"), "outside")
+    assert not parent.keys() & fixture_environment(parent, home=tmp_path).keys()
+
+
 def test_apm_command_timeout_remains_an_actionable_system_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Timeout errors keep the bounded command context and retain their cause."""
-    command = ["toolkit", "compose", "backend"]
+    command = ["apm", "install", "--frozen"]
     timeout = subprocess.TimeoutExpired(command, timeout=5)
 
-    def fail_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise timeout
-
-    monkeypatch.setattr(apm_smoke.subprocess, "run", fail_run)
+    process = Mock()
+    process.wait.side_effect = timeout
+    stopped = Mock()
+    monkeypatch.setattr(apm_smoke.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(apm_smoke, "_stop_process_tree", stopped)
     with pytest.raises(
-        SystemExit, match=r"Timed out after .*s: compose backend"
+        SystemExit, match=r"Timed out after .*s: install --frozen"
     ) as error:
         apm_smoke.run(command, cwd=tmp_path, env={})
 
     assert error.value.__cause__ is timeout
+    stopped.assert_called_once_with(process)
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_smoke_rejects_nonpositive_deadlines_before_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timeout: int
+) -> None:
+    launch = Mock()
+    monkeypatch.setattr(apm_smoke.subprocess, "Popen", launch)
+    with pytest.raises(apm_adapter.InvalidApmTimeoutError):
+        apm_smoke.run(["apm"], cwd=tmp_path, env={}, timeout_seconds=timeout)
+    launch.assert_not_called()
+
+
+def test_smoke_launch_does_not_capture_pipes_or_allow_interactive_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = Mock()
+    process.wait.return_value = 0
+    launch = Mock(return_value=process)
+    monkeypatch.setattr(apm_smoke.subprocess, "Popen", launch)
+    apm_smoke.run(["apm", "audit"], cwd=tmp_path, env={}, timeout_seconds=7)
+    assert launch.call_args.kwargs == {
+        "cwd": tmp_path,
+        "env": {},
+        "stdin": subprocess.DEVNULL,
+        "start_new_session": sys.platform != "win32",
+    }
+    process.wait.assert_called_once_with(timeout=7)
+
+
+def test_smoke_start_failure_names_the_command_and_retains_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failure = FileNotFoundError("missing executable")
+    monkeypatch.setattr(apm_smoke.subprocess, "Popen", Mock(side_effect=failure))
+    with pytest.raises(SystemExit) as error:
+        apm_smoke.run(["missing", "install"], cwd=tmp_path, env={})
+    assert error.value.code == 1
+    assert error.value.__cause__ is failure
+    assert "Could not start: install" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("deadline", ["0", "-1", "nan", "inf"])
+def test_smoke_cli_rejects_invalid_deadlines_before_resolving_apm(
+    monkeypatch: pytest.MonkeyPatch, deadline: str
+) -> None:
+    resolve = Mock()
+    monkeypatch.setattr(apm_smoke, "_smoke_apm_executable", resolve)
+    monkeypatch.setattr(sys, "argv", ["apm-smoke", "--timeout-seconds", deadline])
+    with pytest.raises(SystemExit) as error:
+        apm_smoke.main()
+    assert error.value.code == 2
+    resolve.assert_not_called()
+
+
+def test_smoke_policy_and_audit_share_the_install_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch = Mock()
+    monkeypatch.setattr(apm_smoke, "run", launch)
+    monkeypatch.setattr(apm_smoke, "_delivered", lambda *_args, **_kwargs: True)
+    (tmp_path / "apm.lock.yaml").write_text("fixture", encoding="utf-8")
+    assert apm_smoke._install_and_audit(
+        tmp_path,
+        apm="apm",
+        env={},
+        expected_skills={"kit-example"},
+        expected_roles=set(),
+        resources={},
+        session_skills=("kit-example",),
+        timeout_seconds=7,
+    )
+    assert len(launch.call_args_list) == 6
+    assert all(call.kwargs["timeout_seconds"] == 7 for call in launch.call_args_list)
+    assert launch.call_args.args[0] == [
+        "apm",
+        "audit",
+        "--ci",
+        "--policy",
+        "./apm-policy.yml",
+        "--no-fail-fast",
+    ]
 
 
 def _smoke_installation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, platform: str
 ) -> Path:
-    """Model wheel launcher records without depending on the source checkout."""
+    """Model the approved APM launcher without depending on the source checkout."""
     environment = tmp_path / "environment"
     if platform == "win32":
         scripts = environment / "Scripts"
         site = environment / "Lib/site-packages"
         launcher = "apm.exe"
-        toolkit = "agent-kit.exe"
         record = "../../Scripts/apm.exe"
     else:
         scripts = environment / "bin"
         site = environment / "lib/python3.13/site-packages"
         launcher = "apm"
-        toolkit = "agent-kit"
         record = "../../../bin/apm"
     scripts.mkdir(parents=True)
     executable = scripts / launcher
     executable.write_bytes(b"approved launcher")
     executable.chmod(0o700)
-    toolkit_launcher = scripts / toolkit
-    toolkit_launcher.write_bytes(b"approved toolkit launcher")
-    toolkit_launcher.chmod(0o700)
     metadata = site / "apm_cli-0.33.0.dist-info"
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text(
@@ -248,7 +338,7 @@ def _smoke_installation(
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 @pytest.mark.parametrize("active_available", [False, True])
-def test_smoke_never_invokes_foreign_path_launcher(
+def test_smoke_never_invokes_foreign_path_apm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -277,14 +367,15 @@ def test_smoke_never_invokes_foreign_path_launcher(
         features: tuple[str, ...],
         *,
         apm: str,
-        toolkit: str,
         env: dict[str, str],
         session_skills: tuple[str, ...],
+        timeout_seconds: int,
     ) -> int:
         assert Path(apm) == approved
         assert env["APM_NO_SCRIPTS"] == "1"
         assert env["APM_NON_INTERACTIVE"] == "1"
         assert session_skills == ("kit-python-service",)
+        assert timeout_seconds == 120
         profiles.append(profile)
         return 0
 
@@ -296,11 +387,11 @@ def test_smoke_never_invokes_foreign_path_launcher(
     captured = capsys.readouterr()
     if active_available:
         assert result == 0
-        assert len(commands) == 1
-        assert Path(commands[0][0]).parent == approved.parent
-        assert Path(commands[0][0]).parent != foreign
+        assert commands == []
         assert profiles == ["backend"]
         assert captured.out == (
+            "Checking source catalog...\n"
+            "Passed: source catalog validation\n"
             "Released APM smoke passed; no live agent session is certified.\n"
         )
         assert captured.err == ""
@@ -309,10 +400,10 @@ def test_smoke_never_invokes_foreign_path_launcher(
         assert commands == []
         assert profiles == []
         assert captured.out == ""
-        assert captured.err == "Use the locked toolkit environment.\n"
+        assert captured.err == "Use the locked APM environment.\n"
 
 
-def test_smoke_uses_shared_approved_launcher_resolver(
+def test_smoke_uses_approved_apm_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     approved = str(tmp_path / "approved-launcher")
@@ -331,7 +422,6 @@ def test_smoke_uses_shared_approved_launcher_resolver(
 
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", resolve)
-    monkeypatch.setattr(apm_smoke, "_toolkit_executable", lambda: "toolkit")
     monkeypatch.setattr(apm_smoke, "run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(apm_smoke, "smoke_profile", smoke)
 
@@ -349,11 +439,11 @@ def test_smoke_uses_shared_approved_launcher_resolver(
         ),
         (
             apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE,
-            "Use the locked toolkit environment.\n",
+            "Use the locked APM environment.\n",
         ),
     ],
 )
-def test_smoke_launcher_availability_errors_preserve_cli_diagnostics(
+def test_smoke_apm_availability_errors_preserve_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     issue: apm_adapter.ApmAvailabilityIssue,
@@ -365,11 +455,6 @@ def test_smoke_launcher_availability_errors_preserve_cli_diagnostics(
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", unavailable)
     monkeypatch.setattr(
-        apm_smoke,
-        "_toolkit_executable",
-        lambda: pytest.fail("tool lookup must follow approved APM discovery"),
-    )
-    monkeypatch.setattr(
         apm_smoke, "run", lambda *_args, **_kwargs: pytest.fail("must not run")
     )
 
@@ -379,20 +464,14 @@ def test_smoke_launcher_availability_errors_preserve_cli_diagnostics(
     assert captured.err == diagnostic
 
 
-def test_smoke_missing_toolkit_retains_locked_environment_diagnostic(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_smoke_does_not_require_toolkit_launcher(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
     monkeypatch.setattr(apm_adapter, "pinned_apm_executable", lambda: "approved")
-    monkeypatch.setattr(apm_smoke, "_toolkit_executable", lambda: None)
-    monkeypatch.setattr(
-        apm_smoke, "run", lambda *_args, **_kwargs: pytest.fail("must not run")
-    )
+    monkeypatch.setattr(apm_smoke, "smoke_profile", lambda *_args, **_kwargs: 0)
 
-    assert apm_smoke.main() == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "Use the locked toolkit environment.\n"
+    assert apm_smoke.main() == 0
 
 
 @pytest.mark.parametrize(
@@ -529,16 +608,15 @@ def test_bounded_smoke_matrix_covers_every_portable_bundle() -> None:
 
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
-def test_smoke_refuses_a_path_only_toolkit_launcher(
+def test_smoke_ignores_foreign_path_toolkit_launcher(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     platform: str,
 ) -> None:
-    """A toolkit found only on PATH is foreign; the smoke stops before running it."""
-    approved = _smoke_installation(tmp_path, monkeypatch, platform=platform)
+    """The smoke does not invoke a toolkit launcher from PATH."""
+    _smoke_installation(tmp_path, monkeypatch, platform=platform)
     toolkit = "agent-kit.exe" if platform == "win32" else "agent-kit"
-    (approved.parent / toolkit).unlink()
     foreign = tmp_path / "foreign"
     foreign.mkdir()
     (foreign / toolkit).write_bytes(b"foreign launcher")
@@ -549,10 +627,11 @@ def test_smoke_refuses_a_path_only_toolkit_launcher(
     monkeypatch.setattr(
         apm_smoke, "run", lambda command, **_kwargs: commands.append(command)
     )
+    monkeypatch.setattr(apm_smoke, "smoke_profile", lambda *_args, **_kwargs: 0)
     with monkeypatch.context() as platform_patch:
         platform_patch.setattr(sys, "platform", platform)
         result = apm_smoke.main()
 
-    assert result == 1
+    assert result == 0
     assert commands == []
-    assert capsys.readouterr().err == "Use the locked toolkit environment.\n"
+    assert capsys.readouterr().err == ""

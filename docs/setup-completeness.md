@@ -11,13 +11,13 @@ See [capability coverage](capability-review.md) for topic-specific work.
 | --- | --- | --- |
 | Inventory | Every recorded skill, instruction, role, prompt, script, integration, hook and asset category has a disposition | Recorded source baseline |
 | Resource depth | Every canonical skill has a reachable nonempty reference and usable asset; guides give concrete failure cases and gates | Owning audience and prior art |
-| Context | Existing description/body/policy budgets remain unchanged; session allowlists retain resources without projecting agents | Catalog and selection checks |
+| Profiles | Each named, portable profile is a compact APM meta-package resolving the catalog's pinned source-package closure | Catalog, manifest and APM dependency checks |
 | Instructions | Invariants are path-scoped; consumer facts/knowledge have a distinct owner | Native scope semantics |
-| Agents | Every declared role reaches a budget-compliant smoke selection in both native formats; flat native folders, hidden workers and least privilege | Native projection contracts |
+| Native roles | Repository-owned roles keep their native projections; consumer profile packages do not currently deliver roles | Native projection contracts and explicit limitation |
 | Knowledge/setup | Consumer project/knowledge/adoption/evidence templates and a read-only context check are delivered | Consumer fills actual facts |
 | Guards/scripts | Implemented replacements name real files; parser failures have runnable regressions | Explicit accepted input schema |
 | MCP | Recorded integrations have native examples, sources, approval and removal steps; delivered servers match the selected manifests | Consumer identity, version and policy review |
-| Integrity | Audit precedes regeneration; selected resources retain original bytes and provenance | Pinned APM |
+| Integrity | Generated profile manifests match the catalog; consumer lock and installed files pass APM audit | Pinned APM |
 | Open-source delivery | Community, ownership, workflow, release and publication checks are executable | Operator configures hosted controls |
 | Handoff | Full verification and actual APM smoke run after changes; limitations are reported separately | Integrated source |
 
@@ -32,42 +32,47 @@ Static checks do not certify native sessions. Test discovery, authentication,
 approval prompts and tool behavior in the intended host; repository verification
 does not start or authenticate MCP servers.
 
-## 2. Inspect the library, then select it
+## 2. Choose a profile in the consumer repository
 
-Choose a [profile](../README.md#select-capabilities), then load only task-relevant
-skills and their linked resources. Inspect resource depth without maintaining a
-second inventory:
-
-```powershell
-uv run --locked python -m scripts.check_resources
-uv run --locked python -m scripts.check_resources --json
-uv run agent-kit check --root . --json
-```
-
-Expect linked resource presence and Python syntax checks, not semantic
-certification. The coverage gate also checks structured-template syntax;
-consumer application tests remain necessary.
-
-## 3. Compose a project or a session
+The steps below run in the **consumer repository**, not this Agent Kit source
+checkout. Choose a [profile](../README.md#choose-a-profile), then add its pinned
+package reference to the consumer's root `apm.yml`. For example:
 
 ```powershell
-uv run agent-kit compose fullstack --feature iac --runtime copilot --runtime claude --output build/candidate
-uv run agent-kit provenance --root build/candidate
+name: my-service
+version: "0.1.0"
+targets: [copilot, claude]
+dependencies:
+  apm:
+    - lfr-ai/agent-kit/profiles/backend#<reviewed-tag>
+  mcp: []
 ```
 
-Compose into a **new** path; existing destinations fail. Review selection,
-provenance and roles before adoption. Unselected sibling packages stay dormant.
+`backend` groups `shared` and `backend`; the consumer needs one package
+reference. APM does not read Agent Kit's `catalog.json`; the source repository
+generates a small manifest at `profiles/backend/apm.yml` that declares those
+pinned source packages and the selected MCP configuration. APM resolves the
+closure; no capability files are copied into `profiles/`.
 
-For a narrow task:
+## 3. Install, compile and audit
 
 ```powershell
-uv run agent-kit compose backend --skill kit-python-service --runtime copilot --output build/session-candidate
+apm install --target copilot,claude --no-trust-bin
+apm compile --target copilot
+apm compile --target claude
+apm audit --ci --policy ./apm-policy.yml
 ```
 
-Session packages omit native roles, prompt facades and MCP, but keep the Git guard.
-`.apm/selection.json` records skills, retained instructions and authored character
-counts, not token/cache/latency/cost estimates. A subfolder cannot suppress
-parent/user/plugin skills, models or tools; use a separate reviewed workspace.
+Review the installed output and commit `apm.lock.yaml`. In CI, use
+`apm install --frozen --target copilot,claude --no-trust-bin`; it refuses a
+missing or stale lock. Use the consumer's reviewed APM policy and keep the audit
+in CI. A project-local policy file is not automatically enforced by every APM
+0.33.0 install path.
+
+Choose the smallest profile that fits the repository. APM installation does not
+narrow a profile to one skill, and a subfolder cannot suppress parent, user or
+plugin guidance, models or tools. Use the host's supported skill selection for
+task focus; use a separately reviewed workspace when native isolation matters.
 
 ### A comprehensive improvement entry point
 
@@ -99,12 +104,15 @@ Run its `--self-test`, then wire it into the consumer's existing runner.
 Keep behavioral, architecture, migration, license and integration gates there;
 metadata checks are not replacements.
 
-## 5. Review agents and native behavior
+## 5. Review native roles and host behavior
 
-Selected skill assets own role bodies; composition renders host-specific
-frontmatter. The [smoke matrix](../scripts/apm_smoke.py) and composition regression
-check both adapters, role coverage and resource bytes without raising budgets.
-Unselected stack roles must remain absent. See [native discovery and permissions](editor.md#native-discovery-and-menu).
+Consumer APM profile packages currently deliver APM primitives but not native
+agent-role files. Role metadata remains authored in skill assets and is
+rendered for this repository's own Copilot and Claude projections. Do not infer
+consumer role support from those generated source-repository files. The
+[APM smoke matrix](../scripts/apm_smoke.py) verifies package installation,
+compilation and resources. See
+[native discovery and permissions](editor.md#native-discovery-and-menu).
 
 Use the delivered runtime certification worksheet for discovery, selected/absent
 capabilities, read-only edit/shell/delegation denials, bounded implementation,
@@ -143,16 +151,23 @@ every example merely to match names.
 ```powershell
 task verify -- drift
 task verify -- source
+task verify -- profiles
 task verify -- coverage
 task verify -- roles
 task verify
 task apm:smoke
-task apm:smoke -- --session
 ```
 
 Audit **before** install or rendering can refresh hashes. After canonical edits,
-refresh only owned outputs with the pinned tools, then repeat drift/role checks.
-Do not repair evidence by weakening policy or hashes.
+regenerate profile manifests with `task profiles:build`, then repeat source,
+profile and drift checks. For this repository's own APM-managed output, use the
+pinned APM workflow after auditing it. Do not repair evidence by weakening
+policy or hashes.
+
+Replace `<reviewed-tag>` only with a published release that contains these
+profile manifests. The APM smoke exercises source-package installation and
+compilation in disposable projects; it does not certify consumer-to-meta-package
+dependency resolution.
 
 Expect check-only verification and disposable APM delivery; formatting is explicit.
 The [verification contract](verification.md) owns smoke isolation, resource-byte
@@ -167,6 +182,30 @@ Follow the [GitHub checklist](github-setup.md) and [release contract](releasing.
 Initialization, remotes, hosted controls and publication require operator work;
 local files cannot enable or certify them.
 
-Keep previous source, manifests, locks and native settings for rollback.
 Report exact results, unavailable host/cloud checks and operator steps.
 Production certification requires actual intended-host and application evidence.
+
+## 9. Migrate, update and roll back
+
+An APM profile is a dependency, not an automatic migration. Never overwrite an
+existing consumer's independently owned files.
+
+1. Record the consumer's existing repository, user and plugin capabilities,
+   file owners and name conflicts.
+2. Audit existing APM output and preserve its lock **before** installation or
+   regeneration; regenerating first can erase evidence of modified files.
+3. Add one reviewed Agent Kit profile reference to the consumer's `apm.yml`;
+   validate the consumer policy and install into a disposable copy first.
+4. Compile with pinned APM, inspect the lock and installed files, then verify
+   native discovery per host (section 5).
+5. Transfer ownership and remove old copies only in the same reviewed change.
+
+Updates: fix portable guidance once in the source repository
+([improvement loop](feedback.md)); consumers adopt a reviewed release tag and
+commit the lock that records its resolved revision. Project facts, application
+tests, private knowledge and memory stay local. Project generators render
+profile references rather than copying files
+([consumer templates](consumer-templates.md)).
+
+Rollback: keep the previous source, manifests, locks and native settings, and
+follow [roll back](feedback.md#roll-back).

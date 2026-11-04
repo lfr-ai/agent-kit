@@ -1,6 +1,6 @@
 ---
 name: kit-documentation
-description: Use when updating documentation for changed behavior, setup, supported scope, or failure handling.
+description: Use when documenting behavior, setup, scope or failure handling.
 license: MIT
 ---
 

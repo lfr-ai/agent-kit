@@ -141,6 +141,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Linters, secrets, spelling, links, duplication, and lockfile checks
         env:
+          # The branch-name hook guards local commits, not CI verification on main.
           SKIP: no-commit-to-branch
         run: uv run --locked pre-commit run --all-files --show-diff-on-failure
 

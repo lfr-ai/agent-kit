@@ -566,27 +566,18 @@ def test_observability_compose_pins_images_and_binds_locally() -> None:
 # Infra review
 
 
-def test_iac_roles_pair_the_devops_coordinator_with_the_infra_reviewer() -> None:
+def test_iac_adds_an_infra_reviewer_without_another_main_agent() -> None:
     document = json.loads((_INFRA / "assets/agents.json").read_text(encoding="utf-8"))
     assert document["schema_version"] == 1
-    devops, reviewer = document["roles"]
+    (reviewer,) = document["roles"]
     assert set(reviewer) == {"id", "kind", "tier", "description", "body", "workers"}
     assert reviewer["id"] == "kit-infra-reviewer"
     assert reviewer["kind"] == "worker"
     assert reviewer["tier"] == "verifier"
     assert reviewer["workers"] == []
     assert "delegate" in reviewer["body"]
-    assert (devops["id"], devops["kind"], devops["tier"]) == (
-        "kit-devops",
-        "primary",
-        "coordinator",
-    )
-    assert "kit-infra-reviewer" in devops["workers"]
-    assert "kit-devops-implementer" in devops["workers"]
-    assert "optional_workers" not in devops
-    for role in (devops, reviewer):
-        assert len(role["description"]) <= 180
-        assert len(role["body"].splitlines()) <= 125
+    assert len(reviewer["description"]) <= 180
+    assert len(reviewer["body"].splitlines()) <= 125
 
 
 def test_change_type_worksheet_covers_each_change_type() -> None:

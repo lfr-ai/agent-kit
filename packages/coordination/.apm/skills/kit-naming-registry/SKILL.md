@@ -1,6 +1,6 @@
 ---
 name: kit-naming-registry
-description: Use when backend and frontend share routes, event names, enum values or error codes that need one canonical registry.
+description: Use when centralizing shared routes, events, enums or error codes in one registry.
 license: MIT
 ---
 

@@ -51,10 +51,13 @@ products or overwrites the capability ZIP; remove only identified stale build
 files before intentionally rebuilding. A fork must review the fixed repository
 coordinate in `release:publish` before adopting this toolkit-specific task.
 
-1. Update Python, catalog, root APM, and every bundle version together.
+1. Update Python, catalog, root APM, and every bundle version together; run
+   `task profiles:build` so the compact profile manifests pin that release.
 2. Add a dated changelog entry and migration/rollback guidance.
 3. Audit existing delivery before intentionally regenerating APM-owned output.
-4. Run the same local/CI gates and the real APM smoke test.
+4. Run the same local/CI gates and `task apm:smoke`. The smoke checks APM
+   delivery of composed source packages, not resolution of a published profile
+   dependency closure; see [compatibility](compatibility.md#package-boundaries).
 5. Build only current wheel, source distribution, and fullstack-plus-IaC source ZIP.
 6. Run `uv run --locked python -m scripts.check_release`; it checks exact inventory, metadata, licenses,
    source ZIP provenance, produces basename-only `build/SHA256SUMS`, and stages

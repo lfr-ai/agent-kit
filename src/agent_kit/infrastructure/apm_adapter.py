@@ -1,4 +1,8 @@
-"""Controlled, non-interactive invocation of the pinned APM CLI."""
+"""Maintainer checks using Microsoft's pinned external APM executable.
+
+This adapter invokes APM policy and audit commands; it does not expose an
+Agent Kit CLI. Consumer installation is owned by APM, not this Python module.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,10 @@ import subprocess
 import sys
 import sysconfig
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 APM_VERSION = "0.33.0"
 _DEFAULT_TIMEOUT_SECONDS = 900.0
@@ -46,7 +54,7 @@ class ApmAvailabilityError(ApmCliError):
 
 @unique
 class ApmCommandIssue(StrEnum):
-    """Process failures that must not expose captured subprocess output."""
+    """Process failures reported without exposing vendor subprocess output."""
 
     TIMEOUT = "timed out"
     START = "could not start"
@@ -87,7 +95,7 @@ class InvalidApmTimeoutError(ValueError):
 
 
 class ApmCliAdapter:
-    """Run only explicit, read-oriented APM policy and audit commands."""
+    """Invoke Microsoft's APM policy and audit commands for maintainer checks."""
 
     def __init__(self, timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS) -> None:
         """Create the process adapter.
@@ -102,13 +110,23 @@ class ApmCliAdapter:
             raise InvalidApmTimeoutError
         self._timeout_seconds = timeout_seconds
 
-    def check(self, root: Path) -> None:
-        """Run explicit policy status and CI audit commands."""
+    def check(
+        self, root: Path, *, parent_environment: Mapping[str, str] | None = None
+    ) -> None:
+        """Run explicit policy status and CI audit commands.
+
+        Args:
+            root (Path): Composed workspace to check.
+            parent_environment (Mapping[str, str] | None): Parent process
+                environment to copy; defaults to the current process environment.
+        """
         executable = pinned_apm_executable()
-        environment = os.environ.copy()
+        environment = dict(
+            os.environ if parent_environment is None else parent_environment
+        )
         environment["APM_NO_SCRIPTS"] = "1"
         environment["APM_NON_INTERACTIVE"] = "1"
-        for label, arguments in _commands(executable):
+        for label, arguments in check_commands(executable):
             self._run(label, arguments, root=root, environment=environment)
 
     def _run(
@@ -182,7 +200,7 @@ def pinned_apm_executable() -> str:
     return str(executable)
 
 
-def _commands(executable: str) -> tuple[tuple[str, list[str]], ...]:
+def check_commands(executable: str) -> tuple[tuple[str, list[str]], ...]:
     """Build the fixed policy status and CI audit invocations.
 
     Args:

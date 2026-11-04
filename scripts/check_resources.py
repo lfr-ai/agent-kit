@@ -142,14 +142,7 @@ def _python_failures(resources: list[Path], root: Path) -> list[str]:
 
 
 def check(root: Path) -> list[str]:
-    """Reject checklist-only, undiscoverable, escaping or invalid Python resources.
-
-    Args:
-        root (Path): Repository root that holds the canonical skills.
-
-    Returns:
-        list[str]: Human-readable failures; empty when every skill passes.
-    """
+    """Return failures for checklist-only, undiscoverable, escaping or invalid resources."""
     failures: list[str] = []
     skills = _skills(root)
     if not skills:

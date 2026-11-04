@@ -4,6 +4,8 @@
 // /config.json. Everything here is visible to every user: never put secrets in it.
 import { z } from "zod";
 
+const DEFAULT_CONFIG_TIMEOUT_MS = 10_000;
+
 const httpsOrLocalUrl = z
   .url({ error: "must be an absolute URL" })
   .refine((value) => {
@@ -70,7 +72,7 @@ export async function loadRuntimeConfig(options: LoadOptions = {}): Promise<Runt
     response = await fetchImpl(options.url ?? "/config.json", {
       cache: "no-store",
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS),
     });
   } catch (error) {
     throw new RuntimeConfigError(`Runtime configuration could not be fetched: ${String(error)}`);

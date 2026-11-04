@@ -18,12 +18,16 @@ Desktop.ini
 __pycache__/
 *.py[cod]
 *.egg-info/
+# Includes evaluation observations and private traces in build/eval/.
 build/
 dist/
 
 # Virtual environments and tool caches
 .venv/
+venv/
 .tox/
+.nox/
+.uv-cache/
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
@@ -33,6 +37,8 @@ dist/
 .lycheecache
 jscpd-report/
 node_modules/
+.pre-commit-cache/
+*.log
 
 # Coverage
 .coverage
@@ -54,3 +60,7 @@ apm_modules/
 CLAUDE.local.md
 .claude/settings.local.json
 .github/copilot/settings.local.json
+
+# Local agent worktrees and diagnostic output; canonical roles stay tracked.
+.claude/worktrees/
+/logs/

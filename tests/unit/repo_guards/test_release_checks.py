@@ -24,7 +24,6 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         '[build-system]\nrequires=["hatchling==1.27.0"]\n'
         'build-backend="hatchling.build"\n'
         '[project]\nname="agent-kit"\nversion="0.1.0"\nlicense="MIT"\n'
-        '[project.scripts]\nagent-kit="agent_kit.main:main"\n'
         '[tool.hatch.build.targets.wheel]\npackages=["src/agent_kit"]\n',
         encoding="utf-8",
     )
@@ -62,10 +61,9 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         distributions / "agent_kit-0.1.0-py3-none-any.whl", "w"
     ) as archive:
         archive.writestr("agent_kit/__init__.py", "")
-        archive.writestr("agent_kit/main.py", "def main() -> int:\n    return 0\n")
         archive.writestr(
-            "agent_kit-0.1.0.dist-info/entry_points.txt",
-            "[console_scripts]\nagent-kit = agent_kit.main:main\n",
+            "agent_kit/application/services/catalog_service.py",
+            "class CatalogService:\n    pass\n",
         )
         archive.writestr(
             "agent_kit-0.1.0.dist-info/METADATA",
@@ -77,7 +75,9 @@ def release_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "LICENSE": license_bytes,
             "pyproject.toml": (root / "pyproject.toml").read_bytes(),
             "src/agent_kit/__init__.py": b"",
-            "src/agent_kit/main.py": b"def main() -> int:\n    return 0\n",
+            "src/agent_kit/application/services/catalog_service.py": (
+                b"class CatalogService:\n    pass\n"
+            ),
         }.items():
             entry = tarfile.TarInfo(f"agent_kit-0.1.0/{name}")
             entry.size = len(content)
@@ -337,14 +337,11 @@ def test_missing_license_in_wheel_is_rejected(release_root: Path) -> None:
     "member",
     [
         "agent_kit/__init__.py",
-        "agent_kit/main.py",
-        "agent_kit-0.1.0.dist-info/entry_points.txt",
+        "agent_kit/application/services/catalog_service.py",
     ],
 )
-def test_wheel_requires_package_code_and_console_entrypoint(
-    release_root: Path, member: str
-) -> None:
-    """Matching metadata and a license cannot substitute for the distributable CLI."""
+def test_wheel_requires_package_implementation(release_root: Path, member: str) -> None:
+    """Matching metadata and a license cannot substitute for package code."""
     path = release_root / "build/distributions/agent_kit-0.1.0-py3-none-any.whl"
     with zipfile.ZipFile(path) as archive:
         contents = {name: archive.read(name) for name in archive.namelist()}
@@ -359,7 +356,7 @@ def test_wheel_requires_package_code_and_console_entrypoint(
 @pytest.mark.parametrize(
     ("member", "content"),
     [
-        ("agent_kit/main.py", ""),
+        ("agent_kit/application/services/catalog_service.py", ""),
         (
             "agent_kit-0.1.0.dist-info/entry_points.txt",
             "[console_scripts]\nagent-kit = unrelated.main:main\n",
@@ -368,10 +365,16 @@ def test_wheel_requires_package_code_and_console_entrypoint(
             "agent_kit-0.1.0.dist-info/entry_points.txt",
             "[console_scripts]\nAgent-Kit = agent_kit.main:main\n",
         ),
+        (
+            "agent_kit-0.1.0.dist-info/entry_points.txt",
+            "[console_scripts]\nother-command = unrelated.main:main\n",
+        ),
         ("agent_kit-0.1.0.dist-info/entry_points.txt", "malformed entry points"),
+        ("agent_kit/main.py", "def main() -> int: return 0\n"),
+        ("agent_kit/__main__.py", "raise SystemExit(0)\n"),
     ],
 )
-def test_wheel_rejects_empty_code_or_invalid_console_entrypoint(
+def test_wheel_rejects_empty_code_or_public_cli(
     release_root: Path, member: str, content: str
 ) -> None:
     path = release_root / "build/distributions/agent_kit-0.1.0-py3-none-any.whl"
@@ -392,9 +395,9 @@ def test_wheel_rejects_empty_code_or_invalid_console_entrypoint(
     ("member", "replacement"),
     [
         ("src/agent_kit/__init__.py", None),
-        ("src/agent_kit/main.py", None),
+        ("src/agent_kit/application/services/catalog_service.py", None),
         ("pyproject.toml", None),
-        ("src/agent_kit/main.py", b""),
+        ("src/agent_kit/application/services/catalog_service.py", b""),
         ("pyproject.toml", b'[project]\nname="unrelated"\n'),
     ],
 )
@@ -413,6 +416,24 @@ def test_sdist_requires_implementation_and_build_metadata(
         del contents[f"agent_kit-0.1.0/{member}"]
     else:
         contents[f"agent_kit-0.1.0/{member}"] = replacement
+    with tarfile.open(path, "w:gz") as archive:
+        for name, content in contents.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, BytesIO(content))
+
+    assert any("sdist" in item for item in check(release_root, tag=""))
+
+
+def test_sdist_rejects_reintroduced_module_cli(release_root: Path) -> None:
+    path = release_root / "build/distributions/agent_kit-0.1.0.tar.gz"
+    with tarfile.open(path, "r:gz") as archive:
+        contents = {}
+        for item in archive.getmembers():
+            stream = archive.extractfile(item)
+            assert stream is not None
+            contents[item.name] = stream.read()
+    contents["agent_kit-0.1.0/src/agent_kit/__main__.py"] = b"raise SystemExit(0)\n"
     with tarfile.open(path, "w:gz") as archive:
         for name, content in contents.items():
             entry = tarfile.TarInfo(name)

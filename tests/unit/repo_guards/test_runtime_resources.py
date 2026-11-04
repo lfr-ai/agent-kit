@@ -839,8 +839,19 @@ def test_role_bodies_are_structured_and_valid() -> None:
         ("copilot", "claude"),
     )
     roles = json.loads(content)["roles"]
-    assert len(roles) == 14
-    assert "kit-devops" not in {role["id"] for role in roles}
+    assert {role["id"] for role in roles} == {
+        "kit-debug",
+        "kit-orchestrator",
+        "kit-deep-thinking",
+        "kit-codebase-researcher",
+        "kit-code-reviewer",
+        "kit-planner",
+        "kit-security-reviewer",
+        "kit-refactor",
+        "kit-devops-implementer",
+        "kit-docs-writer",
+        "kit-test-author",
+    }
     for role in roles:
         body = role["body"]
         assert 15 <= len(body.splitlines()) <= 60, role["id"]

@@ -19,5 +19,5 @@ Keep discovery metadata short and specific; full resources load only when needed
 
 Use the [review matrix](references/guide.md),
 [configuration evidence](assets/review.md.template) and, before adding always-on
-text or skills, [harness evaluation](references/harness-evaluation.md): measure
-the added context cost and prune what shows no effect.
+text or skills, [configuration evaluation](references/configuration-evaluation.md)
+to compare context cost and observed behavior.

@@ -55,7 +55,7 @@ def test_request_shape_disables_gateway_retries_and_sends_schema() -> None:
 
     async def capture(**kwargs: object) -> litellm.ModelResponse:
         captured.update(kwargs)
-        return await litellm.acompletion(**kwargs, mock_response="{}")  # type: ignore[arg-type]
+        return await litellm.acompletion(**kwargs, mock_response="{}")  # type: ignore[arg-type]  # forwarded untyped kwargs
 
     adapter = LiteLlmAdapter(aliases=_ALIASES, completion_fn=capture)
     request = CompletionRequest(

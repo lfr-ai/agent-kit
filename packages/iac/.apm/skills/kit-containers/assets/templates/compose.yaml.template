@@ -68,9 +68,9 @@ services:
           memory: 512M
 
 secrets:
-  database_credential: # pragma: allowlist secret
+  database_credential: # pragma: allowlist secret - secret name, not a value
     # Local file outside version control; generate with a password manager.
-    file: ./secrets/database_credential.txt # pragma: allowlist secret
+    file: ./secrets/database_credential.txt # pragma: allowlist secret - untracked file path
 
 volumes:
   db-data:

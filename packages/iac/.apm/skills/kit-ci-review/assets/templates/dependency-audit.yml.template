@@ -61,6 +61,7 @@ jobs:
         with:
           name: uv-audit
           path: ${{ runner.temp }}/uv-audit.json
+          # An earlier audit failure may leave no report; preserve that step's error.
           if-no-files-found: ignore
           retention-days: 30
       - name: Install dependencies from wheels only

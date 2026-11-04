@@ -27,7 +27,7 @@ A bundle reaches every profile that selects it directly or through `extends`
 | ai | `packages/ai` | ai |
 
 Feature profiles combine with a base profile, for example
-`compose fullstack --feature iac`.
+the effective selection `fullstack` plus `iac`.
 
 ## Matrix
 
@@ -57,7 +57,7 @@ asset defines it, because that is the bundle that delivers it.
 | Refactoring, readability and modernization | `kit-readability` (Python, TypeScript, JavaScript) | `kit-refactor` | `kit-refactor` (hidden worker), `kit-deep-thinking` (hidden adviser) |
 | Defect diagnosis and repair | none | `kit-test-first` | `kit-debug` |
 | Editor assistance and MCP servers | none | `kit-editor` (integration catalog, inactive examples), `kit-mcp-integration` | none |
-| Release readiness | none | `kit-release` | `kit-devops-implementer`; `kit-devops` with iac |
+| Release readiness | none | `kit-release` | `kit-devops-implementer`; `kit-orchestrator` |
 
 ### Backend (backend bundle)
 
@@ -118,7 +118,7 @@ asset defines it, because that is the bundle that delivers it.
 | Terraform and OpenTofu plans on Azure, AWS and Google Cloud (terraform feature) | `kit-terraform`, `kit-iac` | `kit-terraform-validation`, `kit-infra-review` | `kit-infra-reviewer` |
 | IaC tool choice and migration (Terraform, OpenTofu, Bicep, CloudFormation, CDK, Pulumi, Crossplane) | `kit-cloud-iac` (CloudFormation, SAM, CDK and Pulumi files), `kit-iac` | `kit-infra-review` (IaC selection reference) | `kit-infra-reviewer` |
 | API management and gateways (Azure API Management, Amazon API Gateway, Google API Gateway and Apigee, Kubernetes Gateway API) | `kit-api-management` (APIM, policy and gateway paths) | `kit-api-gateway` | `kit-infra-reviewer` |
-| Continuous delivery: build once, promote by digest, environments, rollout and rollback | `kit-ci-pipelines`, `kit-devops` | `kit-delivery-pipelines` | `kit-devops-implementer`; `kit-devops` with iac |
+| Continuous delivery: build once, promote by digest, environments, rollout and rollback | `kit-ci-pipelines`, `kit-devops` | `kit-delivery-pipelines` | `kit-devops-implementer`; `kit-orchestrator` |
 | Dockerfile, Containerfile and Compose files | `kit-containers`, `kit-iac` | `kit-containers` | `kit-infra-reviewer` |
 | GitHub Actions and Azure DevOps pipelines (security review) | `kit-ci-pipelines` (`.github/workflows/*.yml`, `.azuredevops/**`, `azure-pipelines*.yml`) | `kit-ci-review` | `kit-infra-reviewer` |
 | Shell and PowerShell scripts | `kit-shell` | `kit-infra-review` | none |
@@ -129,8 +129,8 @@ asset defines it, because that is the bundle that delivers it.
 Tool-specific skills ship as opt-in features that extend iac: `terraform`,
 `bicep` (the Azure-native tool) and `remote-access`. Cloud providers are not
 separate bundles; provider detail lives in templates that load only when used.
-The `kit-infra-reviewer` verifier and the `kit-devops` coordinator live in the
-iac bundle; the reviewer judges operator-produced plans and scans. The
+The `kit-infra-reviewer` verifier lives in the iac bundle and judges
+operator-produced plans and scans. The
 `kit-devops-implementer` worker lives in the shared bundle, so CI and container
 authoring is available in every profile through `kit-orchestrator`. The static contract reviewer
 `kit-contract-iac-lint` lives in the backend bundle, so an iac-only composition
@@ -203,7 +203,9 @@ Run these from the repository root. They read source only.
 
 ```powershell
 # Per-profile skill counts, body lines and description budgets
-uv run --locked agent-kit check --root . --json
+task verify -- source
+# Include per-profile counts in JSON
+uv run --locked python scripts/check_source.py --json
 
 # Instruction file patterns per bundle
 Get-ChildItem packages\*\.apm\instructions\*.md, .apm\instructions\*.md |
@@ -227,13 +229,15 @@ uv run --locked python -m scripts.check_resources --json
 uv run --locked python -m scripts.check_coverage
 ```
 
-To confirm what a profile actually delivers, compose it into a new directory and
-inspect `.apm/selection.json` and the rendered agent files:
+To check generated profile manifests and exercise source-package APM delivery:
 
 ```powershell
-uv run --locked agent-kit compose fullstack --feature iac --output build/coverage-probe
-uv run --locked agent-kit provenance --root build/coverage-probe
+task verify -- profiles
+task apm:smoke
 ```
+
+The smoke test does not certify dependency resolution of a released consumer
+profile; see the [profile guide](profiles.md#other-checks-and-limits).
 
 When updating this page, change a row only after the owning instruction, skill
 or role exists in source, and keep the bundle-to-profile table consistent with

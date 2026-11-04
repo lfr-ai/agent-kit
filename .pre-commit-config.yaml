@@ -196,9 +196,15 @@ repos:
         language: unsupported
         pass_filenames: false
         always_run: true
+      - id: toolkit-suppressions
+        name: Suppression reasons in owned sources
+        entry: uv run --locked python scripts/check_suppressions.py
+        language: unsupported
+        pass_filenames: false
+        always_run: true
       - id: toolkit-contract
         name: Canonical capability and policy contract
-        entry: uv run --locked agent-kit check --root .
+        entry: uv run --locked python scripts/check_source.py --root .
         language: unsupported
         pass_filenames: false
         always_run: true

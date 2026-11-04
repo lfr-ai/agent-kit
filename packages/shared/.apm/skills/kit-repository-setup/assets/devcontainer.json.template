@@ -23,6 +23,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "astral-sh.ty",
         "charliermarsh.ruff",
         "davidanson.vscode-markdownlint",
         "editorconfig.editorconfig",

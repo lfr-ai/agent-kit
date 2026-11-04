@@ -329,6 +329,39 @@ def test_editor_integration_catalog_stays_inactive() -> None:
     assert catalog["default_active"] == []
 
 
+def test_python_editor_templates_use_ty_without_competing_type_checkers() -> None:
+    """Portable setup keeps Python editor ownership aligned with the toolchain."""
+    assets = _SKILLS / "kit-editor/assets"
+    settings = json.loads(
+        (assets / "settings.json.template").read_text(encoding="utf-8")
+    )
+    extensions = json.loads(
+        (assets / "extensions.json.template").read_text(encoding="utf-8")
+    )
+    assert settings["python.languageServer"] == "None"
+    assert settings["ty.importStrategy"] == "fromEnvironment"
+    assert settings["ty.diagnosticMode"] == "workspace"
+    assert "astral-sh.ty" in extensions["recommendations"]
+    assert {
+        "ms-python.black-formatter",
+        "ms-python.autopep8",
+        "ms-python.flake8",
+        "ms-python.isort",
+        "ms-python.mypy-type-checker",
+        "ms-python.pylint",
+        "ms-python.vscode-pylance",
+    } <= set(extensions["unwantedRecommendations"])
+    assert not set(extensions["recommendations"]) & set(
+        extensions["unwantedRecommendations"]
+    )
+    container = json.loads(
+        (_SKILLS / "kit-repository-setup/assets/devcontainer.json.template").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "astral-sh.ty" in container["customizations"]["vscode"]["extensions"]
+
+
 @pytest.mark.parametrize("skill", _OWNED)
 def test_owned_skill_files_are_lf_utf8_with_final_newline(skill: str) -> None:
     for path in sorted((_SKILLS / skill).rglob("*")):

@@ -7,6 +7,7 @@
     "streetsidesoftware.code-spell-checker",
     "ms-python.python",
     "ms-python.debugpy",
+    "astral-sh.ty",
     "charliermarsh.ruff"
   ],
   "unwantedRecommendations": [
@@ -14,6 +15,8 @@
     "ms-python.isort",
     "ms-python.flake8",
     "ms-python.pylint",
-    "ms-python.autopep8"
+    "ms-python.autopep8",
+    "ms-python.mypy-type-checker",
+    "ms-python.vscode-pylance"
   ]
 }

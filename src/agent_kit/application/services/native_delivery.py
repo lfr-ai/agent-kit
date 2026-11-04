@@ -572,13 +572,7 @@ def _check_coordination(
 
 
 def _parse_role(value: object, asset_path: str, index: int) -> _NativeRole:
-    """Validate one role against the closed role schema.
-
-    Args:
-        value (object): Decoded role entry, including text and coordination fields.
-        asset_path (str): Source-relative asset path used in diagnostics.
-        index (int): Zero-based position in the asset's role list.
-    """
+    """Validate one role against the closed role schema."""
     location = f"{asset_path}:roles[{index}]"
     role = _require_fields(
         value,
@@ -774,12 +768,7 @@ def _claude_metadata(role: _NativeRole) -> str:
 
 
 def _render(metadata: str, body: str) -> bytes:
-    """Join provider metadata to the exact shared UTF-8 role body.
-
-    Args:
-        metadata (str): Complete provider frontmatter, including its trailing newline.
-        body (str): Authored role body appended without modification or separators.
-    """
+    """Join provider frontmatter to the unmodified shared role body as UTF-8."""
     return metadata.encode("utf-8") + body.encode("utf-8")
 
 

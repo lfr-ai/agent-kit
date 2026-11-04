@@ -78,7 +78,7 @@ services:
   grafana:
     image: grafana/grafana:PIN_VERSION@sha256:PIN_IMAGE_DIGEST
     environment:
-      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password # pragma: allowlist secret
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password # pragma: allowlist secret - secret file path, not a value
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -109,8 +109,8 @@ services:
     restart: unless-stopped
 
 secrets:
-  grafana_admin_password: # pragma: allowlist secret
-    file: ./secrets/grafana_admin_password.txt # pragma: allowlist secret
+  grafana_admin_password: # pragma: allowlist secret - secret name, not a value
+    file: ./secrets/grafana_admin_password.txt # pragma: allowlist secret - untracked file path
 
 volumes:
   prometheus-data:

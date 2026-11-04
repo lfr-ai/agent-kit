@@ -34,15 +34,18 @@ adapters, layered core) are defined in [architecture](architecture.md).
 - **Feature**: A profile passed with `--feature` to add its effective bundles to a base profile.
 - **Effective bundles**: The ordered, de-duplicated bundle union after resolving inheritance and
   features. Inheritance cycles are validation errors.
-- **Budget**: A catalog limit checked by `agent-kit check`: `policy_lines`,
+- **Budget**: A catalog limit checked by the source validator:
+  `policy_lines`,
   `skill_body_lines`, `description_chars` or `profile_description_chars`.
 - **Runtime (target)**: A supported host, currently `copilot` and `claude`.
 
 ## Composition and delivery
 
-- **Composition**: Planning and writing a new package for one profile plus features and
-  runtimes. Planning is pure and deterministic; writing goes through a staging
-  directory and an atomic no-replace rename.
+- **Composition**: An internal Python library workflow that plans and writes a
+  new package for one profile plus features and runtimes. Planning is pure and
+  deterministic; writing goes through a staging directory and an atomic
+  no-replace rename. Consumers install generated profile meta-packages through
+  APM; there is no consumer-facing Agent Kit command.
 - **Composed package (candidate)**: The output directory of composition. A reviewable delivery artifact, never an
   automatic change to a consumer repository.
 - **Project mode**: Composition without `--skill`: every skill of the effective bundles plus
@@ -61,8 +64,9 @@ adapters, layered core) are defined in [architecture](architecture.md).
 - **Ownership ledger (native lock)**: [native-lock.json](../agentic-setup/native-lock.json): SHA-256 hashes of the
   role files this repository owns. Writes refuse to replace files whose bytes
   no longer match the ledger.
-- **Advisory hook (session context)**: The `SessionStart` hook running `agent-kit context`. It reports the
-  workspace and missing entry files and grants or denies nothing.
+- **Advisory hook (session context)**: The `SessionStart` hook adapter in
+  [`scripts/session_context.py`](../../scripts/session_context.py). It reports
+  the workspace and missing entry files and grants or denies nothing.
 - **Opt-in MCP**: MCP integrations shipped as inactive, host-shaped examples in the editor
   skill. Active manifests and the policy allow-list stay empty until a consumer
   reviews and enables one.
@@ -70,18 +74,17 @@ adapters, layered core) are defined in [architecture](architecture.md).
 ## Integrity and verification
 
 - **Provenance**: `provenance.json` in a composed package: catalog version, profile, selected
-  bundles and a SHA-256 hash per file. `agent-kit provenance` compares it with
-  the files on disk. It is not a signature.
-- **Drift**: Any difference between recorded and actual bytes. Composition-level drift is
-  reported by `agent-kit provenance` (missing, extra, altered, or native
-  delivery files that differ from `apm.lock.yaml`); installed-output drift is
-  reported by `apm audit --ci` with `fail_on_drift`. Audit before regenerating.
+  bundles and a SHA-256 hash per file. The internal provenance workflow compares
+  it with files on disk. It is not a signature.
+- **Drift**: Any difference between recorded and actual bytes. The internal
+  provenance workflow reports composition-level drift (missing, extra, altered,
+  or native delivery files that differ from `apm.lock.yaml`); installed-output
+  drift is reported by `apm audit --ci` with `fail_on_drift`. Audit before
+  regenerating.
 - **APM ledger**: `apm.lock.yaml`, written by APM installation. Provenance admits only its
   first-party, project-scoped deployments under known delivery roots.
 - **Frozen installation**: `apm install --frozen`, reproducing delivery from the existing lock; used by
   smoke to confirm the result is stable.
-- **apm-check**: `agent-kit apm-check`: provenance first, then pinned `apm policy status` and
-  `apm audit --ci` with the package's policy file.
 - **APM smoke**: [apm_smoke.py](../../scripts/apm_smoke.py): compose, install, compile per
   runtime, verify rosters and resource bytes, audit and reinstall frozen, in a
   disposable package with an isolated home directory.

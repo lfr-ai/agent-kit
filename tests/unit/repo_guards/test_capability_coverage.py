@@ -141,6 +141,36 @@ def test_consumer_apm_policy_must_name_reviewed_servers(covered_root: Path) -> N
     assert any("named and reviewed" in item for item in check(covered_root))
 
 
+def test_consumer_apm_policy_must_allow_profile_dependencies(
+    tmp_path: Path,
+) -> None:
+    """The selected profile and its package closure remain explicitly allow-listed."""
+    relative = ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    shutil.copyfile(_ROOT / relative, path)
+    policy = yaml.safe_load(path.read_text())
+    policy["dependencies"]["allow"] = ["lfr-ai/agent-kit/profiles/*"]
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+
+    assert any(
+        "Agent Kit profiles and source packages" in item
+        for item in coverage_module._policy_failures(tmp_path)
+    )
+
+
+def test_consumer_apm_policy_allows_only_profile_and_source_paths(
+    tmp_path: Path,
+) -> None:
+    """The shipped consumer policy has the narrow package source allowlist."""
+    relative = ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    shutil.copyfile(_ROOT / relative, path)
+
+    assert coverage_module._policy_failures(tmp_path) == []
+
+
 def test_consumer_apm_policy_cannot_deny_all_executables(covered_root: Path) -> None:
     """A blanket executable denial would park every delivered hook and server."""
     path = covered_root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"

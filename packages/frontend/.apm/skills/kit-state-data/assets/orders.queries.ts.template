@@ -12,6 +12,8 @@ import {
 import type { Order, OrderFilters, OrderStatus } from "../model/order";
 import { ordersApi } from "./orders.api";
 
+const ORDER_DETAIL_STALE_TIME_MS = 60_000;
+
 /** Stable key shape: drop empty values so equivalent filters share one cache entry. */
 export function normalizeFilters(filters: OrderFilters): OrderFilters {
   const search = filters.search?.trim();
@@ -53,7 +55,7 @@ export const ordersQueries = {
     queryOptions({
       queryKey: orderKeys.detail(id),
       queryFn: ({ signal }) => ordersApi.get(id, signal),
-      staleTime: 60_000,
+      staleTime: ORDER_DETAIL_STALE_TIME_MS,
     }),
 };
 

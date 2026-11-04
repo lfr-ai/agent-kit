@@ -55,7 +55,7 @@ def test_invalid_envelopes_are_rejected(overrides: dict[str, object]) -> None:
     }
     fields.update(overrides)
     with pytest.raises(ValueError):  # noqa: PT011 - each case has its own message
-        TaskEnvelope(**fields)  # type: ignore[arg-type]
+        TaskEnvelope(**fields)  # type: ignore[arg-type]  # invalid input on purpose
 
 
 @pytest.mark.parametrize(

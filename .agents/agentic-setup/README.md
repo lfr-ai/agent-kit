@@ -4,8 +4,8 @@ This directory indexes the toolkit's canonical selection and coverage contracts.
 It is not another authored copy of skills or runtime configuration.
 
 - [Catalog](../../catalog.json): Profiles, bundles, inheritance, budgets.
-- [Profiles](profiles.md): Each profile's bundles, inheritance, roles, consumer,
-  composition and verification.
+- [Profiles](profiles.md): Each generated APM package, consumer installation,
+  native-role limitation and maintainer verification.
 - [Technology coverage](technology-coverage.md): Technologies mapped to owning
   instructions, skills, roles and profiles, with regeneration commands.
 - [Design rationale](design-rationale.md): Why APM-first, selected delivery,
@@ -14,7 +14,7 @@ It is not another authored copy of skills or runtime configuration.
   this repository's own roles; [ownership ledger](native-lock.json) records their hashes.
 - [Coverage](coverage.json): Every original capability and its disposition.
 - [Asset index](assets.json): Actual resource locations, not copied asset bodies.
-- [Migration analysis](../../docs/setup-review.md): Gaps, replacements, and exclusions.
+- [Migration analysis](../../docs/capability-review.md#exclusions-and-disposition): Gaps, replacements, and exclusions.
 - [Complete setup walkthrough](../../docs/setup-completeness.md): Acceptance plan,
   resource depth, consumer knowledge/gates and native/MCP adoption.
 - [Capability review](../../docs/capability-review.md): Requested topics mapped
@@ -23,8 +23,9 @@ It is not another authored copy of skills or runtime configuration.
 - [Guard](../guard/verify_agent_config.py): Relocation-safe facade for existing checks.
 
 Portable procedures and their resources live under package-owned `.apm/skills/`.
-Provider agents are rendered from selected role assets; their bodies share one
-source while tools and delegation metadata follow the native host contract.
+The catalog selects profile contents; generated packages under `profiles/`
+are the APM references consumers install. Native provider agents are rendered
+from role assets for this repository and are not included in consumer profiles.
 
 Run `task verify -- coverage` to detect missing/disappearing replacements and
 `task verify` for the full gate. Features remain opt-in; available is not active.

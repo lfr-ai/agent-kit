@@ -26,9 +26,10 @@ _CANONICAL_ROLES = [
     for content in _CANONICAL_ASSETS.values()
     for role in json.loads(content)["roles"]
 ]
-_MAIN_ROLES = {"kit-debug", "kit-devops", "kit-orchestrator"}
+_MAIN_ROLES = {"kit-debug", "kit-orchestrator"}
 _RETIRED_ROLES = {
     "kit-ai-engineer",
+    "kit-devops",
     "kit-frontend",
     "kit-fullstack",
     "kit-modernization",
@@ -72,8 +73,12 @@ def test_canonical_picker_roster_and_worker_links_are_deliberate() -> None:
     assert roles["kit-refactor"]["kind"] == "worker"
     assert roles["kit-refactor"]["tier"] == "implementer"
     assert "kit-refactor" in roles["kit-orchestrator"]["workers"]
-    assert "kit-infra-reviewer" in roles["kit-devops"]["workers"]
-    assert "optional_workers" not in roles["kit-devops"]
+    assert "kit-infra-reviewer" in roles["kit-orchestrator"]["optional_workers"]
+    assert {
+        "kit-devops-implementer",
+        "kit-test-author",
+        "kit-refactor",
+    } <= set(roles["kit-orchestrator"]["workers"])
     assert all(roles[name]["kind"] == "worker" for name in _ADVISERS)
     assert all(roles[name]["tier"] == "verifier" for name in _ADVISERS)
     referenced = set()
@@ -208,7 +213,7 @@ def _metadata(content: bytes) -> tuple[dict[str, object], bytes]:
     ("coordinator", "worker"),
     [
         ("kit-orchestrator", "kit-planner"),
-        ("kit-devops", "kit-devops-implementer"),
+        ("kit-orchestrator", "kit-devops-implementer"),
     ],
 )
 def test_workers_resolve_from_flat_discovery_without_picker_visibility(
@@ -714,7 +719,7 @@ def test_optional_workers_link_only_when_their_role_is_selected() -> None:
 
 def test_catalog_validation_requires_every_optional_worker_to_exist() -> None:
     """A misspelled optional worker fails the whole-catalog check, not composition."""
-    # cspell:ignore bilder
+    # Deliberate misspelling of a worker id; cspell:ignore bilder
     files = _assets(_coordinator(["kit-bilder"]), _role("kit-reader"))
 
     validate_native_assets(files, ("copilot",))

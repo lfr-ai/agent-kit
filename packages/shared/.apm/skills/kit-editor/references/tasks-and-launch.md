@@ -154,6 +154,10 @@ configuration. Replace `REPLACE_WITH_PACKAGE`, delete languages the repository
 does not use and keep `justMyCode` false only where stepping into dependencies
 is the point.
 
+The strict-JSON template's Node `skipFiles: ["<node_internals>/**"]` keeps
+single-stepping focused on application code instead of Node's runtime internals;
+remove that filter when investigating the runtime itself.
+
 ### Inputs and variables
 
 `${input:id}` prompts the user through an `inputs` entry (`promptString`,

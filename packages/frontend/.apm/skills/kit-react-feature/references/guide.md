@@ -11,6 +11,12 @@
   compiler, component runner and browser environment; missing tools are limits,
   not permission to install or create a new application.
 
+  The strict-JSON [TypeScript template](../assets/tsconfig.json.template) uses
+  `skipLibCheck` to avoid rechecking declaration files, not application
+  implementations. The `kit-frontend-build` skill explains strict compiler
+  options; declaration incompatibilities still need investigation when
+  upgrading dependencies.
+
 ## Design and implementation gates
 
 | Decision | Required evidence |

@@ -1,0 +1,42 @@
+{
+  "dependencies": {
+    "apm": [
+      "lfr-ai/agent-kit/packages/shared#v0.1.0"
+    ],
+    "mcp": [
+      {
+        "name": "context7",
+        "registry": false,
+        "transport": "http",
+        "url": "https://mcp.context7.com/mcp/oauth"
+      },
+      {
+        "name": "microsoft-learn",
+        "registry": false,
+        "transport": "http",
+        "url": "https://learn.microsoft.com/api/mcp"
+      },
+      {
+        "headers": {
+          "X-MCP-Lockdown": "true",
+          "X-MCP-Readonly": "true",
+          "X-MCP-Toolsets": "repos,issues,pull_requests,actions"
+        },
+        "name": "github",
+        "registry": false,
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/"
+      }
+    ]
+  },
+  "description": "Agent Kit shared profile.",
+  "executables": {},
+  "includes": [],
+  "license": "MIT",
+  "name": "agent-kit-profile-shared",
+  "targets": [
+    "copilot",
+    "claude"
+  ],
+  "version": "0.1.0"
+}

@@ -53,6 +53,7 @@ class _NativeRoleError(ValueError):
     """Report one native projection contract failure with optional role context."""
 
     def __init__(self, issue: _NativeRoleIssue, *, path: str | None = None) -> None:
+        """Retain ``issue`` and optional ``path``; append the path to the diagnostic."""
         self.issue = issue
         self.path = path
         message = f"{issue.value}: {path}" if path is not None else issue.value
@@ -156,8 +157,7 @@ def check(root: Path) -> list[str]:
     for directory, suffix in _DISCOVERY_ROOTS.items():
         discovered.update(_discovered_roles(root, directory, suffix))
     failures.extend(
-        f"unexpected native role: {name}"
-        for name in sorted(discovered - output.keys())
+        f"unexpected native role: {name}" for name in sorted(discovered - output.keys())
     )
     return failures
 
@@ -269,7 +269,7 @@ def _apply_roles(
 
 
 def write(root: Path) -> None:
-    """Refresh only attested role files; preserve any independently edited output."""
+    """Refresh changed attested files; preserve independently edited output."""
     output = expected(root)
     previous = _previous_roles(root)
     _check_previous_roles(root, previous)
@@ -289,7 +289,10 @@ def write(root: Path) -> None:
         else None
         for name in touched
     }
-    _apply_roles(root, planned, previous.keys() - output.keys(), before)
+    changed = {name: data for name, data in planned.items() if before[name] != data}
+    removed = previous.keys() - output.keys()
+    affected = changed.keys() | removed
+    _apply_roles(root, changed, removed, {name: before[name] for name in affected})
 
 
 def main() -> int:

@@ -56,6 +56,13 @@ CSpell checks prose and identifiers. Start from the
 - Enable language dictionaries for the languages in use.
 - Ignore generated paths and lockfiles; fix typos instead of adding them.
 
+The template is strict JSON, so its exception rationale belongs here:
+`.cspell/**` defines the vocabulary; `.git/**`, virtual environments and
+`node_modules/**` contain metadata or third-party code. `build/**`, `dist/**`
+and lockfiles are generated artifacts, while `.secrets.baseline` is a scanner
+record. SHA-256 digests and full commit hashes are opaque identifiers rather
+than natural-language words.
+
 ## Branch rulesets (operator action)
 
 Propose, do not apply. A ruleset for the default branch typically:

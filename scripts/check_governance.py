@@ -143,6 +143,7 @@ class _GovernanceInputError(ValueError):
     """Report one known governance input contract failure."""
 
     def __init__(self, issue: _GovernanceIssue, *, field: str | None = None) -> None:
+        """Prefix a contact ``issue`` with optional ``field``; retain both."""
         self.issue = issue
         self.field = field
         message = (
@@ -884,11 +885,7 @@ def _main_ruleset_parameters(rules: dict[str, object]) -> list[str]:
 
 
 def _labels(root: Path) -> set[str] | None:
-    """Read the declarative label inventory.
-
-    Returns:
-        set[str] | None: Unique label names, or ``None`` when the inventory is invalid.
-    """
+    """Return unique label names from the inventory, or ``None`` when it is invalid."""
     try:
         raw: object = yaml.safe_load(
             (root / ".github/labels.yml").read_text(encoding="utf-8")

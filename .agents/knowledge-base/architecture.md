@@ -6,13 +6,19 @@ folders or layer names.
 
 ```mermaid
 flowchart LR
-    CLI["Presentation: explicit CLI input"] --> APP["Application: validation and selection"]
+    S["Maintainer scripts and Task"] --> APP["Application: validation and selection"]
     APP --> CORE["Core: immutable catalog and ports"]
     IO["Infrastructure: files, YAML, APM process"] --> CORE
-    W["Composition: wiring"] --> CLI
+    W["Composition: wiring"] --> S
     W --> APP
     W --> IO
 ```
+
+Consumers use Microsoft's APM CLI to install generated profile meta-packages;
+Agent Kit's selection, composition and provenance operations remain internal
+Python library workflows exposed to maintainers through repository scripts.
+[`scripts/session_context.py`](../../scripts/session_context.py) is the native
+session-hook adapter, not an `agent-kit` command.
 
 ## Ownership
 

@@ -47,12 +47,16 @@ _BASELINE_COUNTS = {
     "assets": 5,
     "scripts": 22,
 }
-_BASELINE_KEYS_SHA256 = "0432d97293e5305af867e9751112b432f14766d79b35b3854ce0449959af4719"  # pragma: allowlist secret
+_BASELINE_KEYS_SHA256 = "0432d97293e5305af867e9751112b432f14766d79b35b3854ce0449959af4719"  # pragma: allowlist secret - public content digest
 _SCRIPT_DISPOSITIONS = {
     "superseded-by-apm-owned-drift",
     "consumer-owned",
     "operator-owned",
     "excluded-copier",
+}
+_PROFILE_DEPENDENCY_SOURCES = {
+    "lfr-ai/agent-kit/profiles/*",
+    "lfr-ai/agent-kit/packages/*",
 }
 _ACTIVE_MCP_SERVERS = {
     "context7": {
@@ -96,6 +100,7 @@ class _CoverageInputError(ValueError):
     """Report a known duplicate-key error from coverage JSON."""
 
     def __init__(self, issue: _CoverageIssue) -> None:
+        """Retain ``issue`` and use its fixed diagnostic as the message."""
         self.issue = issue
         super().__init__(issue.value)
 
@@ -757,9 +762,15 @@ def _editor_task_failures(root: Path) -> list[str]:
 
 
 def _policy_failures(root: Path) -> list[str]:
-    """Require the consumer policy template to keep MCP reviewed and executables on."""
+    """Require a narrow Agent Kit source allowlist and reviewed MCP policy."""
     template = root / ".apm/skills/kit-apm-adopt/assets/apm-policy.yml.template"
     policy = yaml.safe_load(template.read_text(encoding="utf-8"))
+    dependencies = policy.get("dependencies") if is_json_object(policy) else None
+    sources = dependencies.get("allow") if is_json_object(dependencies) else None
+    if not is_str_list(sources) or set(sources) != _PROFILE_DEPENDENCY_SOURCES:
+        return [
+            "consumer APM policy template must allow Agent Kit profiles and source packages"
+        ]
     mcp_policy = policy.get("mcp") if is_json_object(policy) else None
     if (
         not is_json_object(policy)

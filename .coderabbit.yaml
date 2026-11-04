@@ -13,6 +13,8 @@ reviews:
     enabled: true
     drafts: false
   path_filters:
+    # Tool-owned locks and generated projections are checked by repository gates;
+    # review the canonical source instead of duplicating generated findings.
     - "!uv.lock"
     - "!bun.lock"
     - "!apm.lock.yaml"
@@ -45,9 +47,9 @@ reviews:
     github-checks:
       enabled: true
     flake8:
-      enabled: false
+      enabled: false # Ruff owns these Python diagnostics in ruff.toml.
     pylint:
-      enabled: false
+      enabled: false # Ruff and the AST convention gate own these diagnostics.
     markdownlint:
       enabled: true
     yamllint:

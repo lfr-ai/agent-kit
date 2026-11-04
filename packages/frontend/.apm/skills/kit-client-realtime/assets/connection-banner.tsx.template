@@ -4,6 +4,8 @@
 import type { ReactElement } from "react";
 import type { ConnectionStatus } from "./reconnecting-socket";
 
+const MILLISECONDS_PER_SECOND = 1000;
+
 export type ConnectionBannerProps = Readonly<{
   status: ConnectionStatus;
   onRetry: () => void;
@@ -20,7 +22,7 @@ function describe(status: ConnectionStatus): string | null {
     case "stale":
       return "Live updates paused. Data may be out of date.";
     case "reconnecting":
-      return `Connection lost. Retrying in ${Math.ceil(status.delayMs / 1000)} seconds.`;
+      return `Connection lost. Retrying in ${Math.ceil(status.delayMs / MILLISECONDS_PER_SECOND)} seconds.`;
     case "failed":
       return "Live updates are unavailable. Data shown may be out of date.";
   }

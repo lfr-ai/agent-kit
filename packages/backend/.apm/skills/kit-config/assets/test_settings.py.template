@@ -12,9 +12,9 @@ from myapp.composition.settings import AppSettings, format_errors, load_settings
 
 _REQUIRED = {
     "ORDERS_DATABASE__URL": "postgresql://db.example.test:5432/orders",
-    "ORDERS_DATABASE__PASSWORD": "db-placeholder",  # pragma: allowlist secret
+    "ORDERS_DATABASE__PASSWORD": "db-placeholder",  # pragma: allowlist secret - synthetic database credential fixture
     "ORDERS_BILLING__BASE_URL": "https://billing.example.test",
-    "ORDERS_BILLING__API_KEY": "api-placeholder",  # pragma: allowlist secret
+    "ORDERS_BILLING__API_KEY": "api-placeholder",  # pragma: allowlist secret - synthetic billing credential fixture
 }
 
 
@@ -124,7 +124,7 @@ def test_settings_are_immutable(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = AppSettings()
 
     with pytest.raises(ValidationError):
-        settings.log_level = "DEBUG"  # type: ignore[misc]
+        settings.log_level = "DEBUG"  # type: ignore[misc]  # frozen model rejects assignment
 
 
 def test_loader_is_cached_and_resettable(monkeypatch: pytest.MonkeyPatch) -> None:

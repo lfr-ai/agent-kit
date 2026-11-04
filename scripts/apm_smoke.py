@@ -1,19 +1,27 @@
-"""Exercise pinned APM against selected packages in disposable workspaces."""
+"""Exercise Microsoft's pinned APM against composed source-package selections."""
 
 import argparse
+from contextlib import suppress
 from enum import Enum
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
-import sysconfig
 from tempfile import TemporaryDirectory
+import time
 
+from agent_kit.composition.root import (
+    compose_workspace,
+    validate_source,
+    verify_provenance,
+)
 from agent_kit.infrastructure import apm_adapter
 
 _ROOT = Path(__file__).resolve().parents[1]
-_TIMEOUT_SECONDS = 1800
+_TIMEOUT_SECONDS = 120
+_CLEANUP_TIMEOUT_SECONDS = 30
 _RUNTIMES = "copilot,claude"
 # Each selection must fit the profile description budget; together they cover
 # every portable bundle.
@@ -36,6 +44,7 @@ class _SmokeContractError(ValueError):
     """Report a fixed source-selection contract failure."""
 
     def __init__(self, issue: _SmokeIssue) -> None:
+        """Retain ``issue`` and use its fixed diagnostic as the message."""
         self.issue = issue
         super().__init__(issue.value)
 
@@ -44,6 +53,10 @@ class _SmokeCommandTimeout(SystemExit):
     """Exit with an actionable timeout diagnostic while retaining its cause."""
 
     def __init__(self, timeout: int, command: list[str]) -> None:
+        """Retain ``timeout`` seconds and ``command`` argv for inspection.
+
+        The timeout message displays the command without its launcher.
+        """
         self.timeout = timeout
         self.command = tuple(command)
         super().__init__(f"Timed out after {timeout}s: {' '.join(command[1:])}")
@@ -74,20 +87,29 @@ def resource_failures(expected: dict[str, bytes], *, destination: Path) -> list[
 
 
 def fixture_environment(parent: dict[str, str], *, home: Path) -> dict[str, str]:
-    """Keep APM's user-wide lock, cache and trust data inside the test fixture.
+    """Keep APM state and Git discovery inside the synthetic test fixture.
 
     Args:
         parent (dict[str, str]): Environment to extend.
         home (Path): Fixture directory that replaces the user home.
 
     Returns:
-        dict[str, str]: Copy of ``parent`` with ``HOME``, ``USERPROFILE`` and ``APM_HOME`` redirected.
+        dict[str, str]: Isolated home, APM state and Git repository discovery.
     """
     return {
-        **parent,
+        **{
+            key: value
+            for key, value in parent.items()
+            if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
+        },
         "HOME": str(home),
         "USERPROFILE": str(home),
         "APM_HOME": str(home / ".apm"),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+        # A fixture beneath build/ must not discover this checkout's remote and
+        # start fetching its organization's policy or probing personal gh auth.
+        "GIT_CEILING_DIRECTORIES": str(home.parent),
     }
 
 
@@ -175,75 +197,94 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
-def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+def _stop_process_tree(process: subprocess.Popen[bytes]) -> None:
+    """Terminate this command's descendants before reaping its launcher."""
+    if sys.platform == "win32":
+        # APM's Windows console launcher spawns Python; killing only the launcher
+        # leaves that interpreter running (and holding fixture files open).
+        powershell = (
+            Path(os.environ["SYSTEMROOT"])
+            / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        )
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            "$all = @(Get-CimInstance Win32_Process); "
+            "function Stop-Tree($parentId) { "
+            "foreach ($child in $all) { "
+            "if ($child.ParentProcessId -eq $parentId) { "
+            "Stop-Tree $child.ProcessId } }; "
+            "Stop-Process -Id $parentId -Force -ErrorAction SilentlyContinue }; "
+            f"Stop-Tree {process.pid}"
+        )
+        try:
+            subprocess.run(  # noqa: S603 - fixed system executable, integer PID only
+                [str(powershell), "-NoProfile", "-NonInteractive", "-Command", script],
+                stdin=subprocess.DEVNULL,
+                check=True,
+                timeout=_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            sys.stderr.write(f"Process-tree cleanup failed: {error}\n")
+    else:
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with suppress(ProcessLookupError):
+        process.kill()
+    process.wait(timeout=_CLEANUP_TIMEOUT_SECONDS)
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int = _TIMEOUT_SECONDS,
+) -> None:
     """Run a controlled boundary command and surface its exact failure.
 
     Args:
         command (list[str]): Executable followed by its arguments.
         cwd (Path): Working directory for the command.
         env (dict[str, str]): Complete environment for the command.
+        timeout_seconds (int): Positive per-command execution deadline.
 
     Raises:
         _SmokeCommandTimeout: The command exceeds the timeout.
         SystemExit: The command exits with a non-zero status.
+        apm_adapter.InvalidApmTimeoutError: The deadline is not positive.
+        KeyboardInterrupt: Execution is interrupted, after process-tree cleanup.
     """
+    if timeout_seconds <= 0:
+        raise apm_adapter.InvalidApmTimeoutError
+    label = " ".join(command[1:])
+    sys.stdout.write(f"Running (limit {timeout_seconds}s): {label}\n")
+    sys.stdout.flush()
+    started = time.monotonic()
     try:
-        result = subprocess.run(  # noqa: S603 - fixed executables and validated paths
+        process = subprocess.Popen(  # noqa: S603 - fixed executables and validated paths
             command,
             cwd=cwd,
             env=env,
-            capture_output=True,
-            check=False,
-            timeout=_TIMEOUT_SECONDS,
+            stdin=subprocess.DEVNULL,
+            start_new_session=sys.platform != "win32",
         )
+    except OSError as error:
+        sys.stderr.write(f"Could not start: {label}: {error}\n")
+        raise SystemExit(1) from error
+    try:
+        returncode = process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
-        raise _SmokeCommandTimeout(_TIMEOUT_SECONDS, command) from error
-    if result.returncode:
-        sys.stderr.write(
-            f"Failed (exit {result.returncode}): {' '.join(command[1:])}\n"
-        )
-        sys.stderr.write(
-            f"{result.stdout.decode('utf-8', errors='backslashreplace')}\n"
-        )
-        sys.stderr.write(
-            f"{result.stderr.decode('utf-8', errors='backslashreplace')}\n"
-        )
-        raise SystemExit(result.returncode)
-    sys.stdout.write(f"Passed: {' '.join(command[1:])}\n")
+        _stop_process_tree(process)
+        raise _SmokeCommandTimeout(timeout_seconds, command) from error
+    except KeyboardInterrupt:
+        _stop_process_tree(process)
+        raise
+    elapsed = time.monotonic() - started
+    if returncode:
+        sys.stderr.write(f"Failed (exit {returncode}): {label}\n")
+        raise SystemExit(returncode)
+    sys.stdout.write(f"Passed ({elapsed:.1f}s): {label}\n")
     sys.stdout.flush()
-
-
-def _compose_command(
-    toolkit: str,
-    profile: str,
-    *,
-    package: Path,
-    features: tuple[str, ...],
-    session_skills: tuple[str, ...],
-) -> list[str]:
-    """Build the bounded ``compose`` command for one disposable selection.
-
-    Args:
-        toolkit (str): Path of the toolkit launcher.
-        profile (str): Profile to compose.
-        package (Path): Output directory for the composed package.
-        features (tuple[str, ...]): Optional features to add to the profile.
-        session_skills (tuple[str, ...]): Explicit skill allowlist, or empty for the full profile.
-
-    Returns:
-        list[str]: The launcher followed by its ``compose`` arguments.
-    """
-    return [
-        toolkit,
-        "compose",
-        profile,
-        "--root",
-        str(_ROOT),
-        "--output",
-        str(package),
-        *[argument for feature in features for argument in ("--feature", feature)],
-        *[argument for skill in session_skills for argument in ("--skill", skill)],
-    ]
 
 
 def _selected_source(
@@ -314,14 +355,134 @@ def _delivered(
     return not failures
 
 
+def _report_provenance(package: Path, *, stage: str) -> bool:
+    """Report one composed package's provenance result."""
+    report = verify_provenance(package)
+    if report.valid:
+        sys.stdout.write(f"Passed: {stage}\n")
+        sys.stdout.flush()
+        return True
+    for finding in report.findings:
+        sys.stderr.write(f"{finding.path}: {finding.message} [{finding.code}]\n")
+    return False
+
+
+def _compose_source(
+    package: Path,
+    *,
+    profile: str,
+    features: tuple[str, ...],
+    session_skills: tuple[str, ...],
+) -> bool:
+    """Create and verify the source workspace before invoking APM."""
+    sys.stdout.write(f"Composing source selection: {profile}\n")
+    sys.stdout.flush()
+    try:
+        compose_workspace(_ROOT, profile, features, (), package, skills=session_skills)
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"Source composition failed: {error}\n")
+        return False
+    return _report_provenance(package, stage="composition provenance verification")
+
+
+def _install_and_audit(
+    package: Path,
+    *,
+    apm: str,
+    env: dict[str, str],
+    expected_skills: set[str],
+    expected_roles: set[str],
+    resources: dict[str, bytes],
+    session_skills: tuple[str, ...],
+    timeout_seconds: int,
+) -> bool:
+    """Install and inspect the initial APM delivery."""
+    run(
+        [
+            apm,
+            "policy",
+            "status",
+            "--policy-source",
+            "./apm-policy.yml",
+            "--check",
+            "--json",
+        ],
+        cwd=package,
+        env=env,
+        timeout_seconds=timeout_seconds,
+    )
+    run(
+        [apm, "install", "--target", _RUNTIMES, "--no-trust-bin"],
+        cwd=package,
+        env=env,
+        timeout_seconds=timeout_seconds,
+    )
+    for runtime in _RUNTIMES.split(","):
+        run(
+            [apm, "compile", "--target", runtime],
+            cwd=package,
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
+    if not _delivered(
+        package, skills=expected_skills, roles=expected_roles, resources=resources
+    ):
+        return False
+    for _, command in apm_adapter.check_commands(apm):
+        run(
+            command,
+            cwd=package,
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
+    if not session_skills and not expected_roles:
+        sys.stderr.write("Selected project has no native roles.\n")
+        return False
+    if not (package / "apm.lock.yaml").is_file():
+        sys.stderr.write("APM did not create its lockfile.\n")
+        return False
+    return True
+
+
+def _frozen_install(
+    package: Path,
+    *,
+    apm: str,
+    env: dict[str, str],
+    expected_skills: set[str],
+    expected_roles: set[str],
+    resources: dict[str, bytes],
+    timeout_seconds: int,
+) -> bool:
+    """Replay the APM lock and recheck provenance and installed resources."""
+    run(
+        [
+            apm,
+            "install",
+            "--frozen",
+            "--target",
+            _RUNTIMES,
+            "--no-trust-bin",
+        ],
+        cwd=package,
+        env=env,
+        timeout_seconds=timeout_seconds,
+    )
+    if not _report_provenance(package, stage="frozen install provenance verification"):
+        return False
+    return _delivered(
+        package, skills=expected_skills, roles=expected_roles, resources=resources
+    )
+
+
 def smoke_profile(
     profile: str,
     features: tuple[str, ...],
     *,
     apm: str,
-    toolkit: str,
     env: dict[str, str],
     session_skills: tuple[str, ...],
+    timeout_seconds: int = _TIMEOUT_SECONDS,
 ) -> int:
     """Install, compile, audit and verify one bounded disposable selection.
 
@@ -329,114 +490,104 @@ def smoke_profile(
         profile (str): Profile to compose and install.
         features (tuple[str, ...]): Optional features to add to the profile.
         apm (str): Path of the pinned APM launcher.
-        toolkit (str): Path of the toolkit launcher.
         env (dict[str, str]): Base environment for every command.
         session_skills (tuple[str, ...]): Explicit skill allowlist, or empty for the full profile.
+        timeout_seconds (int): Deadline for every APM command, including audit.
 
     Returns:
         int: ``0`` when delivery held, otherwise ``1``.
     """
-    with TemporaryDirectory(prefix="agent-kit-apm-") as temporary:
+    build = _ROOT / "build"
+    build.mkdir(exist_ok=True)
+    with TemporaryDirectory(prefix="agent-kit-apm-", dir=build) as temporary:
         home = Path(temporary) / "home"
         home.mkdir()
         env = fixture_environment(env, home=home)
         package = Path(temporary) / profile
-        run(
-            _compose_command(
-                toolkit,
-                profile,
-                package=package,
-                features=features,
-                session_skills=session_skills,
-            ),
-            cwd=_ROOT,
-            env=env,
-        )
-        run([toolkit, "provenance", "--root", str(package)], cwd=package, env=env)
+        if not _compose_source(
+            package,
+            profile=profile,
+            features=features,
+            session_skills=session_skills,
+        ):
+            return 1
         expected_skills, expected_roles, resources = _selected_source(
             package, session_skills=session_skills
         )
-        run(
-            [
-                apm,
-                "policy",
-                "status",
-                "--policy-source",
-                "./apm-policy.yml",
-                "--check",
-                "--json",
-            ],
-            cwd=package,
+        if not _install_and_audit(
+            package,
+            apm=apm,
             env=env,
-        )
-        run(
-            [
-                apm,
-                "install",
-                "--target",
-                _RUNTIMES,
-                "--no-trust-bin",
-            ],
-            cwd=package,
-            env=env,
-        )
-        for runtime in _RUNTIMES.split(","):
-            run([apm, "compile", "--target", runtime], cwd=package, env=env)
-        if not _delivered(
-            package, skills=expected_skills, roles=expected_roles, resources=resources
+            expected_skills=expected_skills,
+            expected_roles=expected_roles,
+            resources=resources,
+            timeout_seconds=timeout_seconds,
+            session_skills=session_skills,
         ):
             return 1
-        run([toolkit, "apm-check", "--root", str(package)], cwd=package, env=env)
-        if not session_skills and not expected_roles:
-            sys.stderr.write("Selected project has no native roles.\n")
-            return 1
-        if not (package / "apm.lock.yaml").is_file():
-            sys.stderr.write("APM did not create its lockfile.\n")
-            return 1
-        run(
-            [
-                apm,
-                "install",
-                "--frozen",
-                "--target",
-                _RUNTIMES,
-                "--no-trust-bin",
-            ],
-            cwd=package,
+        if not _frozen_install(
+            package,
+            apm=apm,
             env=env,
-        )
-        run([toolkit, "provenance", "--root", str(package)], cwd=package, env=env)
-        if not _delivered(
-            package, skills=expected_skills, roles=expected_roles, resources=resources
+            expected_skills=expected_skills,
+            expected_roles=expected_roles,
+            resources=resources,
+            timeout_seconds=timeout_seconds,
         ):
             return 1
     return 0
 
 
 def _smoke_apm_executable() -> str | None:
-    """Resolve the approved launcher while retaining smoke CLI diagnostics."""
+    """Resolve Microsoft's pinned APM launcher with smoke-runner diagnostics."""
     try:
         return apm_adapter.pinned_apm_executable()
     except apm_adapter.ApmAvailabilityError as error:
         if error.issue is apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE:
-            sys.stderr.write("Use the locked toolkit environment.\n")
+            sys.stderr.write("Use the locked APM environment.\n")
         else:
             sys.stderr.write(f"APM {apm_adapter.APM_VERSION} is required.\n")
         return None
 
 
-def _toolkit_executable() -> str | None:
-    """Resolve the toolkit launcher beside this interpreter, never from ``PATH``."""
-    launcher = "agent-kit.exe" if sys.platform == "win32" else "agent-kit"
-    executable = Path(sysconfig.get_path("scripts")) / launcher
-    if executable.is_file() and os.access(executable, os.X_OK):
-        return str(executable)
-    return None
+def _session_selection(
+    arguments: argparse.Namespace, parser: argparse.ArgumentParser
+) -> tuple[str, ...]:
+    """Resolve the optional, explicit session skill allowlist."""
+    if arguments.session_skill and not arguments.session:
+        parser.error("--session-skill requires --session")
+    if not arguments.session:
+        return ()
+    return tuple(arguments.session_skill or ["kit-python-service"])
+
+
+def _source_is_valid() -> bool:
+    """Validate the checkout before any APM install or compile command."""
+    sys.stdout.write("Checking source catalog...\n")
+    sys.stdout.flush()
+    try:
+        report = validate_source(_ROOT)
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"Source validation failed: {error}\n")
+        return False
+    if not report.valid:
+        for finding in report.findings:
+            sys.stderr.write(f"{finding.path}: {finding.message} [{finding.code}]\n")
+        return False
+    sys.stdout.write("Passed: source catalog validation\n")
+    sys.stdout.flush()
+    return True
 
 
 def main() -> int:
     """Verify the portable library in bounded packages, or one narrow session."""
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=_TIMEOUT_SECONDS,
+        help="positive deadline for each APM command (default: %(default)s)",
+    )
     parser.add_argument(
         "--session",
         action="store_true",
@@ -449,19 +600,13 @@ def main() -> int:
         help="skill allowed in a session package; repeat as needed",
     )
     arguments = parser.parse_args()
-    if arguments.session_skill and not arguments.session:
-        parser.error("--session-skill requires --session")
-    session_skills = (
-        tuple(arguments.session_skill or ["kit-python-service"])
-        if arguments.session
-        else ()
-    )
+    if arguments.timeout_seconds <= 0:
+        parser.error("--timeout-seconds must be positive")
+    session_skills = _session_selection(arguments, parser)
     apm = _smoke_apm_executable()
     if apm is None:
         return 1
-    toolkit = _toolkit_executable()
-    if toolkit is None:
-        sys.stderr.write("Use the locked toolkit environment.\n")
+    if not _source_is_valid():
         return 1
     env = {
         key: value
@@ -476,16 +621,15 @@ def main() -> int:
             "APM_E2E_TESTS": "1",
         }
     )
-    run([toolkit, "check", "--root", str(_ROOT)], cwd=_ROOT, env=env)
     selections = (("backend", ()),) if arguments.session else _SMOKE_SELECTIONS
     for profile, features in selections:
         result = smoke_profile(
             profile,
             features,
             apm=apm,
-            toolkit=toolkit,
             env=env,
             session_skills=session_skills,
+            timeout_seconds=arguments.timeout_seconds,
         )
         if result:
             return result

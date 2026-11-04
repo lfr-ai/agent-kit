@@ -1,249 +1,169 @@
 # GitHub setup
 
-## Identity first
+`@lfr-ai` owns the public `lfr-ai/agent-kit` repository on `main`. Committed
+files do not prove hosted settings; recheck them before each release.
 
-`@lfr-ai` owns the public `lfr-ai/agent-kit` repository on `main`.
-`uv run --locked python scripts/check_governance.py --publication` checks the
-ownership and reporting metadata. Committed files do not prove hosted settings;
-recheck rulesets, the dependency graph, Dependabot, secret scanning, push
-protection, and private vulnerability reporting before each release.
-The repository includes [Codecov](../.codecov.yml) and
-[CodeRabbit](../.coderabbit.yaml) configuration, a Codecov OIDC upload job in
-[CI](../.github/workflows/ci.yml), and the existing
-[pull request template](../.github/PULL_REQUEST_TEMPLATE.md). The hosted apps must
-still be installed; see [CodeRabbit and Codecov on free tiers](#coderabbit-and-codecov-on-free-tiers).
+```powershell
+uv run --locked python scripts/check_governance.py --publication
+```
 
-Set [.github/maintainers.json](../.github/maintainers.json) to the approved
-repository coordinate, code owners, and private HTTPS/mailto contact routes.
-Then set [.github/CODEOWNERS](../.github/CODEOWNERS) to one catch-all rule
-matching the owners in that file. GitHub handles begin with `@`; teams use
-`@organization/team`. The last matching rule wins, so this project avoids
-overrides that accidentally remove baseline coverage.
+That command checks ownership and reporting metadata only.
 
-Each owner must have write access and each team must be visible to the repository.
-Local validation checks syntax/consistency, not account access or authorization.
-An account can be real without being the approved publishing identity.
+## Identity
+
+- [.github/maintainers.json](../.github/maintainers.json) holds the repository
+  coordinate, code owners and private HTTPS/mailto contacts.
+- [.github/CODEOWNERS](../.github/CODEOWNERS) has one catch-all rule matching
+  those owners (`@user` or `@organization/team`). The last matching rule wins, so
+  avoid overrides that remove baseline coverage.
+- Each owner needs write access; each team must be visible. Local validation
+  checks syntax and consistency, not account access.
 
 ## Required hosted settings
 
 | Control | Operator action |
 | --- | --- |
-| Default branch | `main` was confirmed on 2026-10-21; update the scanning filters if it changes |
-| Branch ruleset | [rulesets/main.json](../.github/rulesets/main.json) defines pull requests, code-owner review, last-push approval, resolved conversations and stale-approval dismissal. Its admin PR bypass covers the entire ruleset, including status checks, not just approval. Not active as last checked on 2026-10-26; see [agent access and remediation](#agent-access-for-the-improvement-loop) before applying it |
-| Required checks | The committed ruleset requires `Required toolkit checks` for non-bypassed PRs; verify the context and hosted enforcement after applying it |
-| Merge queue | The verification workflow listens to `merge_group`; verify actual queue checks before enabling |
-| Dependency review | Runs on pull requests, where GitHub provides the dependency diff's base/head commits; merge queue remains covered by the CI matrix |
-| Dependency graph | Still disabled; enable it before relying on the dependency-review workflow, which currently fails. The required dependency-audit job does not depend on it |
-| Force/deletion protection | Included in the branch ruleset; the pull-request-only admin bypass never permits a direct or force push |
-| Release tags | [rulesets/release-tags.json](../.github/rulesets/release-tags.json) defines update/deletion protection with no bypass actors, but does not restrict new tag creation. Verify hosted application; a write collaborator can otherwise create a new `v*` tag |
-| Immutable releases | Enable immutable releases so a published release's tag and assets cannot change; the workflow already creates drafts, which remain editable until publication |
-| Actions policy | Require actions to be pinned to full-length commit SHAs; same-repository calls use `$/` and already satisfy that policy |
-| Release environment | Create `release`, restrict it to approved tags, require independent approval, disallow self-review where available |
-| Actions | Actions are currently unrestricted; workflow references are SHA-pinned and statically checked. Consider an allow-list after verifying every action |
-| Repository token | Keep the default token read-only; write permissions are narrowly job-scoped |
-| Vulnerability reporting | Private reporting and secret scanning/push protection are enabled; verify their current state before release |
-| Dependency visibility | Dependabot security updates are enabled; dependency graph is not. Version updates are configured in [dependabot.yml](../.github/dependabot.yml) and labels in [labels.yml](../.github/labels.yml) |
-| Code scanning | CodeQL and Scorecard succeeded on 2026-10-20; continue checking hosted runs. Scorecard reports same-repository `$/` workflow calls and the template's `pip install --no-deps .` as unpinned; both are false positives (GitHub recommends `$/`, and a local project cannot be hash-pinned), so dismiss them rather than change the syntax |
-| Supply-chain posture | Dependency review and OpenSSF Scorecard run only on public repositories; check their first hosted results |
-| Code coverage | Install the Codecov GitHub App for this repository only; CI uploads with OIDC. Codecov statuses stay advisory; the local 90% branch-coverage gate is authoritative |
-| Automated review | Install the CodeRabbit GitHub App for this repository only and check `@coderabbitai configuration` on a PR. Reviews are advisory; GitHub rulesets control required reviews and checks |
-| Review independence | With the branch ruleset applied, non-bypassed agent PRs need the owner's approval. Admin PR bypass also skips status-check requirements. Add a second maintainer and remove the bypass, or separately protect checks without bypass; see remediation below |
-| Labels | The twelve labels from [labels.yml](../.github/labels.yml) were applied on 2026-10-21; reconcile hosted labels after inventory changes |
-| Issue intake | Blank issues are disabled; the security contact links to GitHub's private advisory form, with the maintainer contact as fallback |
+| Default branch | `main` (confirmed 2026-10-21); update scanning filters if it changes |
+| Branch ruleset | [rulesets/main.json](../.github/rulesets/main.json): pull requests, code-owner review, last-push approval, resolved conversations, stale-approval dismissal. The admin PR bypass covers the whole ruleset, including status checks. Not active as of 2026-10-26; see [agent access](#agent-access-for-the-improvement-loop) first |
+| Required checks | `Required toolkit checks` for non-bypassed PRs; verify after applying |
+| Merge queue | Workflow listens to `merge_group`; verify queue checks before enabling |
+| Dependency review | Runs on pull requests; merge queue is covered by the CI matrix |
+| Dependency graph | Disabled; dependency review fails until enabled. The required audit job does not need it |
+| Force/deletion protection | In the branch ruleset; the PR-only bypass never permits direct or force pushes |
+| Release tags | [rulesets/release-tags.json](../.github/rulesets/release-tags.json) blocks update and deletion with no bypass, but not creation; a write collaborator can create a `v*` tag |
+| Immutable releases | Enable; the workflow creates drafts, editable until publication |
+| Actions policy | Require full-SHA pins; same-repository `$/` calls already comply. Consider an allow-list after review |
+| Release environment | Create `release`, restrict to approved tags, require independent approval |
+| Repository token | Default read-only; write permissions are job-scoped |
+| Vulnerability reporting | Private reporting, secret scanning and push protection enabled; verify before release |
+| Dependabot | Security updates on; versions in [dependabot.yml](../.github/dependabot.yml), labels in [labels.yml](../.github/labels.yml) (twelve applied 2026-10-21) |
+| Code scanning | CodeQL and Scorecard succeeded 2026-10-20. Dismiss Scorecard's false positives for `$/` calls and the template's `pip install --no-deps .` |
+| Supply-chain posture | Dependency review and Scorecard run only on public repositories |
+| Coverage, review apps | Install Codecov and CodeRabbit for this repository only; both advisory (below) |
+| Review independence | Non-bypassed agent PRs need owner approval; admin bypass also skips checks (see remediation) |
+| Issue intake | Blank issues disabled; security contact links to the private advisory form |
 
-CODEOWNERS alone does not enable required approval.
-Ruleset JSON files are importable definitions, not evidence they are applied.
-An environment name in YAML alone does not create reviewer protection.
-Workflow files alone do not prove Actions or code scanning ran.
-Codecov and CodeRabbit configuration files alone do not prove an integration,
-coverage upload, review, or required status check is active.
+CODEOWNERS, ruleset JSON, environment names, workflow files and app
+configuration files are definitions, not evidence that anything is enforced or ran.
 
 ## CodeRabbit and Codecov on free tiers
 
-Both services are free for this public repository. Neither is a merge gate:
-local verification remains authoritative. Hosted `Required toolkit checks` and
-code-owner review require an applied ruleset and are subject to its admin bypass;
-neither service removes that limitation.
+Both are free for this public repository and neither is a merge gate; local
+verification is authoritative.
 
 ### CodeRabbit
 
-Public repositories get CodeRabbit's open-source tier: Team-plan review features
-without a subscription. Private repositories on the Free plan get pull-request
-summaries only. Open-source review limits depend on the repository's popularity.
-While the repository has fewer than 10 stars, reviews must be triggered manually
-with `@coderabbitai review`.
+Public repositories get the open-source tier (Team-plan reviews); private Free
+repositories get summaries only. Under 10 stars, trigger reviews manually.
 
-1. Sign in at [app.coderabbit.ai](https://app.coderabbit.ai/login) with the
-   `lfr-ai` GitHub account.
-2. Install the CodeRabbit GitHub App and choose **Only select repositories** →
-   `lfr-ai/agent-kit`. Review the requested permissions before accepting.
-3. Keep repository settings in [.coderabbit.yaml](../.coderabbit.yaml); a
-   committed file takes precedence over UI settings. Pre-commit validates it
-   against CodeRabbit's published schema.
-4. Open a test pull request and comment `@coderabbitai configuration` to see the
-   resolved settings, then `@coderabbitai review` to request a review.
-5. Do not add CodeRabbit's status to required checks; keep it advisory.
+1. Sign in at [app.coderabbit.ai](https://app.coderabbit.ai/login) as `lfr-ai`.
+2. Install the GitHub App for **Only select repositories** > `lfr-ai/agent-kit`.
+3. Keep settings in [.coderabbit.yaml](../.coderabbit.yaml); it overrides the UI
+   and pre-commit validates it against the published schema.
+4. On a test PR comment `@coderabbitai configuration`, then `@coderabbitai review`.
+5. Do not make its status a required check.
 
-What the configuration does: assertive reviews; no request-changes or
-self-approval; generated outputs and lockfiles are excluded; Python, workflow,
-container and pinning paths receive focused instructions; Ruff, markdownlint,
-yamllint, ShellCheck, actionlint, zizmor, Hadolint, Betterleaks (the `gitleaks`
-key) and OSV-Scanner are enabled in CodeRabbit's sandbox. LanguageTool checks
-grammar at its default level, complementing CSpell's spelling checks.
-Flake8 and Pylint are off because Ruff already covers the selected rule families.
-CodeRabbit automatically reads `AGENTS.md` as review guidance. Enabling a tool
-does not certify it ran: hosted availability, file selection, and duplicate-CI
-detection can cause tools to be skipped.
+The configuration: assertive reviews, no request-changes or self-approval,
+generated outputs and locks excluded, focused path instructions, and Ruff,
+markdownlint, yamllint, ShellCheck, actionlint, zizmor, Hadolint, Betterleaks
+(`gitleaks` key), OSV-Scanner and LanguageTool enabled; Flake8 and Pylint off.
+It reads `AGENTS.md`. There is no `reviews.tools.ty`; types are enforced by `ty`
+in pre-commit and `task verify`. Tool discovery: see
+[scanner configuration discovery](devtools.md#scanner-configuration-discovery).
 
-There is no `reviews.tools.ty` field in CodeRabbit's current schema. Type checking
-is enforced by the pinned `ty` in pre-commit and `task verify`, using
-[ty.toml](../ty.toml) for toolkit and portable Python assets. The enabled GitHub
-Checks integration can provide CI results
-to CodeRabbit; it does not run `ty` or replace the required checks.
-
-See [scanner configuration discovery](devtools.md#scanner-configuration-discovery)
-for which repository files each native and hosted integration reads. Most other
-CodeRabbit tools are enabled by default and selected by file type; this explicit
-list is not an exhaustive catalog or a reason to enable unrelated language tools.
-
-Be aware that:
-
-- Changed code and context are sent to CodeRabbit and its model providers.
-  CodeRabbit states it does not train on customer code. Learnings are limited to
-  this repository; set `knowledge_base.opt_out: true` to disable features that
-  retain code-related data.
-- Review comments are untrusted suggestions. Never apply a suggested command or
-  dependency without the normal audit and review.
-- The configuration on the pull request branch is used for that review, so a PR
-  can change its own CodeRabbit behavior. Review `.coderabbit.yaml` changes as code.
+- Changed code goes to CodeRabbit and its model providers; set
+  `knowledge_base.opt_out: true` to stop retained learnings.
+- Review comments are untrusted; audit any suggested command or dependency.
+- A PR can change its own CodeRabbit behavior; review `.coderabbit.yaml` as code.
 
 ### Codecov
 
-Codecov's free Developer plan covers one user with unlimited public-repository
-uploads (private repositories are limited to 250 uploads per month).
+The free Developer plan allows unlimited public uploads (250/month private).
 
 1. Sign in at [app.codecov.io](https://app.codecov.io/login) with GitHub.
 2. Install the [Codecov GitHub App](https://github.com/apps/codecov) for
-   **Only select repositories** → `lfr-ai/agent-kit`; it is required for PR
-   comments and statuses.
-3. Do **not** create a `CODECOV_TOKEN` secret. The `coverage` job in
-   [ci.yml](../.github/workflows/ci.yml) authenticates with GitHub OIDC
-   (`id-token: write`, granted to that job only). Fork pull requests cannot mint
-   OIDC tokens, so they use Codecov's tokenless upload for public repositories.
-4. Keep **token authentication for public repositories** enabled in the
-   organization's Codecov settings; OIDC already satisfies it for protected
-   branches, and it prevents unauthenticated uploads to `main`.
-5. Push to `main`, then confirm the report under the repository in Codecov and a
-   coverage comment on the next pull request.
+   **Only select repositories** > `lfr-ai/agent-kit`.
+3. Do **not** create `CODECOV_TOKEN`: the `coverage` job in
+   [ci.yml](../.github/workflows/ci.yml) uses OIDC (`id-token: write`, that job
+   only); forks use tokenless public upload.
+4. Keep **token authentication for public repositories** enabled.
+5. Push to `main`; confirm the report and a PR comment.
 
-The upload job runs no project code: it downloads the coverage XML produced by
-the verification gate and uploads it with the action pinned to a commit, the
-Codecov CLI pinned to an exact version, and the action's signature validation on.
-Upload failures are non-blocking by design. Validate [.codecov.yml](../.codecov.yml)
-changes with pre-commit, or with Codecov's validator:
+The job runs no project code: it uploads the verification gate's XML with a
+SHA-pinned action, an exact CLI version and signature validation. Upload failures
+do not block; the local 90% branch-coverage gate is authoritative. Validate
+[.codecov.yml](../.codecov.yml) with pre-commit or
 `curl --data-binary @.codecov.yml https://api.codecov.io/validate`.
 
 Sources: [CodeRabbit plans](https://docs.coderabbit.ai/management/plans),
-[CodeRabbit YAML configuration](https://docs.coderabbit.ai/getting-started/yaml-configuration),
-[CodeRabbit FAQ](https://docs.coderabbit.ai/faq),
+[YAML configuration](https://docs.coderabbit.ai/getting-started/yaml-configuration),
+[FAQ](https://docs.coderabbit.ai/faq),
 [Codecov quick start](https://docs.codecov.com/docs/quick-start),
-[Codecov tokens](https://docs.codecov.com/docs/codecov-tokens),
-[Codecov action](https://github.com/codecov/codecov-action), and
-[Codecov pricing](https://about.codecov.io/pricing/).
+[tokens](https://docs.codecov.com/docs/codecov-tokens),
+[action](https://github.com/codecov/codecov-action),
+[pricing](https://about.codecov.io/pricing/).
 
 ## Agent access for the improvement loop
 
-The [improvement loop](feedback.md) lets an agent open pull requests against this
-repository from any project. The intended boundary uses a separate identity and
-hosted controls, not prompts. The permissions below are conditional on applying
-and testing those controls; committed files do not establish that they are active.
+The [improvement loop](feedback.md) lets an agent open pull requests from any
+project. The boundary is a separate identity plus hosted controls, and holds
+only once those controls are applied and tested.
 
-| Identity | Role | Can do | Cannot do |
+| Identity | Role | Can | Cannot |
 | --- | --- | --- | --- |
-| You (`@lfr-ai`) | Admin, code owner | Approve agent PRs; bypass the entire main ruleset through PRs, including its status checks | Use the PR-only bypass for a direct push to `main` |
-| Agent machine account | Write collaborator with the proposed token below | Push branches, open PRs, enable auto-merge; create new tags unless creation is separately restricted | Bypass an applied main ruleset, change settings, or edit workflows with a token lacking workflow scope |
+| You (`@lfr-ai`) | Admin, code owner | Approve agent PRs; bypass the whole main ruleset via PR, including checks | Directly push to `main` |
+| Agent machine account | Write collaborator | Push branches, open PRs, enable auto-merge; create tags unless restricted | Bypass the applied ruleset, change settings, edit workflows without `workflow` scope |
 
-[rulesets/main.json](../.github/rulesets/main.json) requires a pull request,
-one code-owner approval from someone other than the last pusher, resolved
-conversations and `Required toolkit checks`. The only bypass actor is the
-repository admin role in `pull_request` mode. `check_governance.py` rejects any
-other bypass, mode or role. The bypass is **not approval-only**: it applies to
-all rules in that main ruleset, including `Required toolkit checks`. Local
-validation checks empty ref exclusions, the reviewed one-approval count, strict
-status checks and unique reviewed rule types; it cannot prove server enforcement.
+The main ruleset requires a PR, one code-owner approval from someone other than
+the last pusher, resolved conversations and `Required toolkit checks`. Its only
+bypass is the admin role in `pull_request` mode; `check_governance.py` rejects
+any other. Local validation cannot prove server enforcement.
 
-**Operator remediation recommendation:** before relying on required checks for
-admin PRs, approve a policy change that moves status checks into a separate
-ruleset with no bypass actors, or add an independent maintainer and remove the
-admin bypass entirely. The existing committed rulesets are unchanged here.
-Until remediation, manually require successful checks even for admin merges;
-that convention is not server protection.
-
-The release-tag ruleset prevents updates and deletion when applied, not
-creation. A write-role machine account may create a new `v*` tag and trigger the
-release workflow. If only operators should create release tags, separately
-approve a creation restriction with narrowly reviewed operator bypass actors,
-and test both allowed and denied identities. Independently configure and test
-the protected `release` environment; its YAML name alone is not an approval gate.
+**Remediation (operator approval needed):** move status checks into a separate
+ruleset with no bypass, or add an independent maintainer and remove the admin
+bypass. Until then, wait for successful checks manually even on admin merges.
+To stop the machine account creating release tags, approve a separate creation
+restriction and test allowed and denied identities. Configure and test the
+`release` environment independently.
 
 ### Set it up once
 
-1. **Create a machine account** for the agent. GitHub's terms allow one free
-   machine account per person, used only for automation. Invite it to this
-   repository with the **Write** role, never Admin or Maintain.
-2. **Create a classic token on the machine account** with only the `public_repo`
-   scope. Fine-grained tokens cannot contribute to a repository where the account
-   is only a collaborator. Leave out the `workflow` scope so the agent cannot change
-   `.github/workflows`. The account has access to this repository only, which
-   bounds the token. Set an expiry and store it as `GH_TOKEN` in the agent's
-   environment only; the native rules refuse `gh auth` commands.
-3. **Review the bypass and tag-creation remediation above**, then apply the
-   approved branch ruleset and pull-request settings as the owner:
+1. Create a machine account (one free per person, automation only) and invite it
+   with **Write**, never Admin or Maintain.
+2. On it, create a classic token with only `public_repo` (fine-grained tokens
+   cannot contribute as a collaborator) and no `workflow` scope. Set an expiry
+   and store it as `GH_TOKEN` in the agent's environment only.
+3. After approving the remediation above, apply the ruleset and PR settings:
 
    ```powershell
    gh api --method POST repos/lfr-ai/agent-kit/rulesets --input .github/rulesets/main.json
    gh repo edit lfr-ai/agent-kit --enable-auto-merge --delete-branch-on-merge
    ```
 
-   After this, you change `main` only through pull requests too. Commit on a
-   branch and open a pull request. The current admin bypass permits merging
-   without approval **and without required checks**; manually wait for successful
-   checks until separately approved non-bypass protection is applied and tested.
-4. **Enable the dependency graph** under *Settings > Code security*. The
-   dependency-review workflow fails until it is on.
-5. **Prove the boundary** with the machine account's token: a push to `main` and
-   a change under `.github/workflows` must both be rejected, and an agent pull
-   request must wait for your approval and successful required checks. Test
-   admin PR checks and new-tag creation separately against the approved policy.
-   Record the date and result; this offline change does not perform those tests.
+   From then on you also change `main` only through pull requests.
+4. Enable the dependency graph under *Settings > Code security*.
+5. Prove it with the machine token: a push to `main` and a change under
+   `.github/workflows` are rejected; an agent PR waits for approval and checks.
+   Test admin PR checks and tag creation too, and record date and result.
 
-### Daily flow
-
-The agent pushes `fix/<capability>` and opens a pull request with auto-merge.
-With the required hosted controls active, you review it on GitHub and approve.
-Auto-merge completes once `Required toolkit checks` pass. The write-role agent
-cannot satisfy the independent approval itself. Admin bypass remains the
-separate limitation described above.
-
-Do not loosen the hosted ruleset by hand without updating the committed file; the
-two must agree.
+Daily flow: the agent pushes `fix/<capability>` and opens a PR with auto-merge;
+you approve; auto-merge completes once `Required toolkit checks` pass. Keep the
+hosted ruleset and the committed file in agreement.
 
 ## Fork contributions
 
-PR verification is read-only and receives no publishing credentials.
-The workflow does not use `pull_request_target`, interpolate untrusted event
-text directly into shell scripts, or inherit caller secrets.
-Never run public PR code on a privileged self-hosted runner.
+PR verification is read-only with no publishing credentials. Workflows do not
+use `pull_request_target`, interpolate untrusted event text into shell, or
+inherit caller secrets. Never run public PR code on a privileged self-hosted runner.
 
 ## Before the next release
 
-1. Reconfirm publication authority and all upstream licenses.
+1. Reconfirm publication authority and upstream licenses.
 2. Run `task verify`, `task apm:smoke`, build products, and
    `uv run --locked python -m scripts.check_release`.
-3. Run `uv run --locked python scripts/check_governance.py --publication`;
-   preserve the verified personal identity and contacts.
-4. Complete hosted controls and record actual enforcement evidence.
+3. Run the publication governance check above.
+4. Complete hosted controls and record enforcement evidence.
 5. Test a sample PR, a merge queue entry if used, and a nonproduction draft release.
 
-Reference: [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
-and [secure Actions use](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions).
+References: [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners),
+[secure Actions use](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions).

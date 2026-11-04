@@ -1,43 +1,34 @@
-"""End-to-end session delivery through the CLI, composition root, and real catalog."""
+"""Session composition and provenance checks against filesystem-backed catalogs."""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.application.services.catalog_service import (
+    CatalogService,
+    UnavailableSkillsError,
+)
 from agent_kit.application.services.provenance_service import ProvenanceService
-from agent_kit.composition.root import build_actions
+from agent_kit.composition.root import compose_workspace
 import agent_kit.infrastructure.catalog_adapter as catalog_module
 from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-from agent_kit.presentation.cli import main
 
 
-def test_cli_session_delivery_has_verifiable_integrity(
-    source_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_session_delivery_has_verifiable_integrity(
+    source_root: Path, tmp_path: Path
 ) -> None:
     output = tmp_path / "session"
 
-    result = main(
-        build_actions(),
-        [
-            "compose",
-            "backend",
-            "--root",
-            str(source_root),
-            "--output",
-            str(output),
-            "--skill",
-            "kit-backend",
-            "--runtime",
-            "copilot",
-        ],
+    compose_workspace(
+        source_root,
+        "backend",
+        (),
+        ("copilot",),
+        output,
+        skills=("kit-backend",),
     )
-    captured = capsys.readouterr()
 
-    assert result == 0, captured.err
-    assert "native roles omitted" in captured.out
-    assert "not billed tokens" in captured.out
     assert not (output / ".claude").exists()
     report = ProvenanceService().verify(FileCatalogAdapter().load_composed(output))
     assert report.valid
@@ -50,7 +41,6 @@ def test_cli_session_delivery_has_verifiable_integrity(
 def test_delivery_omits_source_bytecode_but_rejects_injected_output(
     source_root: Path,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     generated: str,
 ) -> None:
     assets = source_root / "packages/shared/.apm/skills/kit-shared/assets"
@@ -62,11 +52,7 @@ def test_delivery_omits_source_bytecode_but_rejects_injected_output(
     (assets / "image.bin").write_bytes(b"\xff\x00")
     output = tmp_path / "session"
 
-    result = main(
-        build_actions(),
-        ["compose", "shared", "--root", str(source_root), "--output", str(output)],
-    )
-    assert result == 0, capsys.readouterr().err
+    compose_workspace(source_root, "shared", (), (), output)
     delivered = output / ".apm/skills/kit-shared/assets"
     assert not (delivered / generated).exists()
     assert (delivered / "helper.py").read_text(encoding="utf-8") == "value = 1\n"
@@ -121,32 +107,21 @@ def test_source_inventory_does_not_descend_into_generated_directories(
 
 
 def test_hexagonal_architecture_skill_session_keeps_instructions_and_resources(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
 ) -> None:
     """The renamed shared capability keeps the established session delivery contract."""
     root = Path(__file__).resolve().parents[2]
     output = tmp_path / "hexagonal-session"
     skill_id = "kit-hexagonal-architecture"
 
-    result = main(
-        build_actions(),
-        [
-            "compose",
-            "shared",
-            "--root",
-            str(root),
-            "--output",
-            str(output),
-            "--skill",
-            skill_id,
-            "--runtime",
-            "copilot",
-        ],
+    compose_workspace(
+        root,
+        "shared",
+        (),
+        ("copilot",),
+        output,
+        skills=(skill_id,),
     )
-    captured = capsys.readouterr()
-
-    assert result == 0, captured.err
-    assert "native roles omitted" in captured.out
     files = {
         path.relative_to(output).as_posix(): path.read_bytes()
         for path in output.rglob("*")
@@ -176,29 +151,21 @@ def test_hexagonal_architecture_skill_session_keeps_instructions_and_resources(
 
 
 def test_clean_architecture_alias_is_not_selectable_for_session(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
 ) -> None:
     """The renamed capability has no legacy runtime alias or shim."""
     root = Path(__file__).resolve().parents[2]
     output = tmp_path / "legacy-session"
 
-    result = main(
-        build_actions(),
-        [
-            "compose",
+    with pytest.raises(UnavailableSkillsError, match="kit-clean-architecture"):
+        compose_workspace(
+            root,
             "shared",
-            "--root",
-            str(root),
-            "--output",
-            str(output),
-            "--skill",
-            "kit-clean-architecture",
-        ],
-    )
-    captured = capsys.readouterr()
-
-    assert result == 1
-    assert "kit-clean-architecture" in captured.err
+            (),
+            (),
+            output,
+            skills=("kit-clean-architecture",),
+        )
     assert not output.exists()
 
 

@@ -123,12 +123,12 @@ tasks:
     cmds:
       - uv run --locked python scripts/build_capabilities.py {{.CLI_ARGS}}
 
+  profiles:build:
+    desc: Generate compact catalog-backed APM profile manifests
+    cmds:
+      - uv run --locked python scripts/build_profiles.py --write
+
   apm:smoke:
-    desc: Exercise the released APM CLI in disposable selected packages
+    desc: Exercise selected source-package delivery in disposable consumer projects
     cmds:
       - uv run --locked python scripts/apm_smoke.py {{.CLI_ARGS}}
-
-  eval:harness:
-    desc: Measure AGENTS.md and toolkit skills in pi-harness-lab (free scripted model; set HARNESS_LAB)
-    cmds:
-      - uv run --locked python -m scripts.eval_harness {{.CLI_ARGS}}

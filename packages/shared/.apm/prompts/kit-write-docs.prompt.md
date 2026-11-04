@@ -26,9 +26,10 @@ session's context can succeed. Accuracy beats volume.
    pages, README sections, and changelog entries that already cover the topic.
 4. Read the code, configuration, and tests that define the behavior. Every
    command, option, default, and error message you document must appear there.
-5. Write task-first: prerequisites, steps with exact commands, expected
-   result, and what to do when it fails. State supported scope and known
-   limitations explicitly.
+5. Write only what the reader needs: prerequisites, exact steps, expected
+   result and failure recovery. Prefer a short checklist or example over long
+   prose; link the owning conventions instead of repeating them. State scope
+   and limitations without generic advice or unsupported claims.
 6. Use neutral, synthetic examples. Never include secrets, internal host
    names, or personal data.
 7. Update cross-references and any table of contents. Add a changelog entry

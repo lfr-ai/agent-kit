@@ -1,131 +1,106 @@
 # Improve the kit from any project
 
-Agent Kit is the one place reusable agent guidance lives. Projects consume it;
-they do not keep local copies or workarounds. When a skill, instruction, prompt
-or template misbehaves in a project, fix it once in this repository and every
-project receives the change.
+Reusable agent guidance lives only here. When a skill, instruction, prompt or
+template misbehaves in a project, fix it once in this repository; every project
+receives the change on its next update.
 
-## Install once per machine
-
-### Locate the source checkout automatically
-
-Inside the agent-kit clone, `task bootstrap` sets `AGENT_KIT_DIR` for its Task
-subprocesses. On Windows it also calls `task checkout:register`, which stores the
-checkout path in the current user's environment (never the machine environment).
-It is idempotent and uses the script's location, not the current directory.
-After moving the clone, rerun registration and fully restart VS Code/terminals.
-No hook, credential or shell profile is modified by registration.
-
-For a dry run before touching the Windows user environment:
+## Adopt a profile in a consumer project
 
 ```powershell
-powershell -NoProfile -File scripts/register_checkout.ps1 -WhatIf
+apm install
+apm compile --target copilot
+apm compile --target claude
+apm audit --ci --policy ./apm-policy.yml
 ```
 
-New integrated terminals in this repository receive the workspace path directly.
-Dev-container processes started by VS Code receive the container workspace path.
-Neither sets a variable in the already-running parent editor or an unrelated
-repository. On Linux/macOS, Task provides process scope only: set the variable
-in the personal shell environment for unrelated repositories if needed.
+First add one reviewed profile reference to the **consumer repository's** root
+`apm.yml`, for example
+`lfr-ai/agent-kit/profiles/backend#<reviewed-tag>`. Replace the placeholder
+with a published release that contains the profile manifests. The `backend`
+profile already includes `shared`. APM owns the consumer's manifest, lockfile,
+generated files and updates; no Agent Kit CLI or globally installed Agent Kit
+package is required. See the [consumer walkthrough](setup-completeness.md) and
+[policy limits](policy.md).
 
-The value helps find source; a Git guard must never trust it as authorization.
-
-Install the packages you use every day at user scope. Nothing is copied into a
-project repository.
-
-```powershell
-apm install -g lfr-ai/agent-kit/packages/shared
-apm install -g lfr-ai/agent-kit/packages/backend
-```
-
-Packages do not depend on each other, so name each one: `shared` plus the
-profile packages you need. Keep `ai`, `iac`, `workflows` and the IaC tool
-features (`terraform`, `bicep`, `remote-access`) for the projects that use
-them; every installed skill adds its description to every session.
-
-Refresh and inspect:
-
-```powershell
-apm outdated -g
-apm update -g --yes
-```
-
-### What user scope delivers
-
-Observed with APM 0.33.0 installing `packages/shared` with `--target claude,copilot`:
-
-| Primitive | Location |
-| --- | --- |
-| Skills | `~/.agents/skills/` and `~/.claude/skills/` |
-| Instructions | `~/.claude/rules/` and `~/.copilot/instructions/` |
-| Prompts | `~/.claude/commands/` and `~/.copilot/prompts/` |
-| Native agent roles | Not delivered; they come from `agent-kit compose` or a project install |
-
-APM warns that Claude commands drop the Copilot-only `agent:` field and that an
-unpinned dependency follows the default branch. Both are expected here: the
-lockfile records the exact commit, and `apm update -g` moves it deliberately.
-Re-check this table after upgrading APM.
+To update, change the profile tag to a reviewed release, run `apm install`,
+review the lock and installed-file diff, then commit both. For routine work in
+the **Agent Kit source repository**, maintainers instead edit canonical source,
+regenerate `profiles/`, and run the repository verification tasks.
 
 ## Change a capability
 
-Use `/kit-improve <what went wrong>` in the session where you saw the problem.
-The [kit-improve skill](../packages/shared/.apm/skills/kit-improve/SKILL.md) does
-the following:
+Run `/kit-improve <what went wrong>` in the session where you saw the problem.
+The [kit-improve skill](../packages/shared/.apm/skills/kit-improve/SKILL.md):
 
 1. Classifies the change; a fact about one project stays in that project.
-2. Traces the installed file to its package with `apm find <path> --source`.
-3. Verifies your kit checkout (origin and clean tree), then edits only its
-   source under `.apm/` or `packages/*/.apm/`.
-4. Reproduces the problem with a synthetic example and runs `task verify`.
-5. Commits on a branch when you asked for the change, then waits for your
-   approval before it pushes, opens the pull request and enables auto-merge.
-6. You approve the pull request on GitHub; auto-merge completes when the
-   required checks pass.
+2. Traces the installed file with `apm find <path> --source`.
+3. Verifies the kit checkout (origin, clean tree) and edits only `.apm/` or
+   `packages/*/.apm/` source.
+4. Reproduces the problem with a synthetic example, retains a regression and
+   runs `task verify`. Changed agent behavior also needs observed evaluation,
+   not a Markdown or packaging pass.
+5. Commits on a branch when asked, then waits for your approval before pushing,
+   opening the pull request and enabling auto-merge.
+6. You approve on GitHub; auto-merge completes when required checks pass.
 
-When the pull request merges, run `apm update -g` (or `apm update` in a project)
-and confirm the installed file changed. Ideas you will not do now belong in an
-issue using the *Capability change* form.
+After merge and release, update the consumer's pinned profile and lock, then
+confirm the installed file changed. Deferred ideas go in a *Capability change*
+issue.
 
-### Change classes
+## Close the evidence loop
+
+1. Define the expected outcome and failure case before changing guidance. Use
+   synthetic inputs; do not copy private traces into a public issue or bundle.
+2. Keep the failing baseline and a regression. For agent behavior, include
+   positive, negative and boundary cases; freeze the candidate before testing
+   held-out tasks. Use the existing [evaluation contract](../tests/evals/README.md).
+3. Compare baseline and candidate under the same host, model, tools and context,
+   in fresh sessions. Inspect actual outputs and workspace changes. Repeat
+   consequential cases and report every attempt, not just the best run.
+4. Run deterministic gates after the final edit. Report checks, costs/latency
+   when measured, regressions and missing evidence separately. The observation
+   checker validates record completeness; only observed runs in the named host
+   provide behavioral evidence.
+5. After approved release and consumer update, rerun the original case against
+   the installed revision. Roll back on a regression rather than relaxing the
+   acceptance check. No publishing or permission widening is automatic.
+
+The [source record](sources.md#feedback-and-hygiene-review-2026-11-04) separates
+official guidance from empirical research. These practices support a feedback
+loop; they do not establish that this kit improves every model or task.
 
 | Class | Lane | Version effect |
 | --- | --- | --- |
-| Project fact | The project's own instructions; never the kit | None |
+| Project fact | The project's own instructions | None |
 | Trivial (typo, link, wording) | Pull request | Patch |
-| Behavior (wrong steps, broken template) | Pull request with the failing prompt and expected result | Patch or minor |
-| Contract (rename, remove, widen tools or policy) | Issue first, then a pull request labelled `breaking` | Minor while 0.x |
-| Security | Private advisory, immediate patch release | Patch |
+| Behavior (wrong steps, broken template) | Pull request with failing prompt and expected result | Patch or minor |
+| Contract (rename, remove, widen tools or policy) | Issue, then a `breaking` pull request | Minor while 0.x |
+| Security | Private advisory, immediate patch | Patch |
 
 ## Approval boundaries
 
-Git is allowed in this repository under the rules in [AGENTS.md](../AGENTS.md):
-read-only commands freely, branch and commit on request, and every push, pull
-request or auto-merge only after you approve the exact command. Never the default
-branch, force-push, rewritten pushed history, tags, releases or repository settings.
+Git rules are in [AGENTS.md](../AGENTS.md). Host enforcement is a speed bump:
 
-| Host | Enforcement in this repository | Limit |
+| Host | Enforcement | Limit |
 | --- | --- | --- |
-| Claude Code | `ask` and `deny` rules in `.claude/settings.json` | Prefix rules miss other spellings such as `git -C . push` |
-| VS Code | `false` rules in `chat.tools.terminal.autoApprove` | They require approval; they cannot block, and `/yolo` bypasses them |
-| GitHub Copilot CLI | Start sessions with `--deny-tool='shell(git push --force)'` and never `--allow-all-tools` here | Per-session flags, not repository files |
+| Claude Code | `ask` and `deny` rules in `.claude/settings.json` | Prefix rules miss spellings such as `git -C . push` |
+| VS Code | `false` rules in `chat.tools.terminal.autoApprove` | Require approval but cannot block; `/yolo` bypasses them |
+| GitHub Copilot CLI | `--deny-tool='shell(git push --force)'`, never `--allow-all-tools` | Per-session flags |
 
-These are speed bumps. The boundary is on GitHub: the agent works as a
-write-role machine account, and the `main` ruleset requires your approval before
-anything merges. See [agent access](github-setup.md#agent-access-for-the-improvement-loop).
+The real boundary is GitHub: a write-role machine account and a `main` ruleset
+that needs your approval. See [agent access](github-setup.md#agent-access-for-the-improvement-loop).
 
 ## Roll back
 
-- Revert the merge commit through a pull request; projects pick it up on the
-  next update.
+- Revert the merge commit through a pull request; projects pick it up on update.
 - Hold one project back by pinning its dependency to a commit or tag in its
   `apm.yml`, then reinstall. Never edit `apm.lock.yaml` by hand.
-- A published release is never replaced; publish a corrected one.
+- Never replace a published release; publish a corrected one.
 
 ## Limits
 
-- APM has no live link between a checkout and an installed copy; update after a
-  merge to see the change.
-- `apm find` traces project installs; for user scope, identify the package from
+- No live link between checkout and installed copy; update after a merge.
+- `apm find` traces project installs; for user scope, infer the package from
   the `kit-<topic>` skill name.
-- A file test does not show that a host session follows new guidance; name the
-  host and version you observed.
+- A file test does not show a host follows new guidance; name the host and
+  version you observed.

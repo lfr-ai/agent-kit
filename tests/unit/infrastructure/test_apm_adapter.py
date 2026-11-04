@@ -1,4 +1,4 @@
-"""Pinned APM CLI subprocess adapter contracts without the real executable."""
+"""Microsoft APM subprocess adapter contracts without the external executable."""
 
 from __future__ import annotations
 
@@ -186,6 +186,38 @@ def test_apm_commands_use_fixed_version_no_scripts_and_explicit_policy(
     assert all(call[1] == tmp_path for call in calls)
     assert all(call[2]["APM_NO_SCRIPTS"] == "1" for call in calls)
     assert all(call[2]["APM_NON_INTERACTIVE"] == "1" for call in calls)
+
+
+def test_apm_check_copies_supplied_parent_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = {"HOME": "isolated-home", "APM_HOME": "isolated-apm", "PATH": ""}
+    calls: list[dict[str, str]] = []
+
+    def run(
+        _arguments: list[str],
+        *,
+        env: dict[str, str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append(env.copy())
+        return subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+
+    _installed_apm(tmp_path, monkeypatch)
+    monkeypatch.setattr(apm_module.subprocess, "run", run)
+
+    ApmCliAdapter().check(tmp_path, parent_environment=parent)
+
+    assert len(calls) == 2
+    assert all(call["HOME"] == "isolated-home" for call in calls)
+    assert all(call["APM_HOME"] == "isolated-apm" for call in calls)
+    assert all(call["APM_NO_SCRIPTS"] == "1" for call in calls)
+    assert all(call["APM_NON_INTERACTIVE"] == "1" for call in calls)
+    assert parent == {
+        "HOME": "isolated-home",
+        "APM_HOME": "isolated-apm",
+        "PATH": "",
+    }
 
 
 def test_apm_version_mismatch_fails_before_discovery(

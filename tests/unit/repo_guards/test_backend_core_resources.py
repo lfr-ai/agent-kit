@@ -91,6 +91,20 @@ def test_python_checker_magic_numbers_are_opt_in_and_allow_named_constants() -> 
     ]
 
 
+def test_python_checker_accepts_nested_constant_destructuring() -> None:
+    source = "[MAX_SIZE, (_MIN_SIZE, _DEPTH)] = [40, (4, 2)]\n"
+    findings = _PYTHON["violations"](source, "m.py", rules=frozenset({"magic-number"}))
+    assert findings == []
+
+    alias_source = "size, _MAX_SIZE = 30, 40\n"
+    assert _PYTHON["violations"](
+        alias_source, "m.py", rules=frozenset({"magic-number"})
+    ) == [
+        "m.py:1: magic number 30; name it as an UPPER_CASE constant",
+        "m.py:1: magic number 40; name it as an UPPER_CASE constant",
+    ]
+
+
 def test_python_checker_main_enables_magic_numbers_by_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

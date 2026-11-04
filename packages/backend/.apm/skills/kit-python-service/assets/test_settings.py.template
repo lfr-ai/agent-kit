@@ -59,4 +59,4 @@ def test_settings_are_immutable() -> None:
     """Configuration cannot drift after startup."""
     settings = Settings.from_environ(_MINIMAL)
     with pytest.raises(AttributeError):
-        setattr(settings, "log_level", "DEBUG")  # noqa: B010
+        setattr(settings, "log_level", "DEBUG")  # noqa: B010 - avoids a static frozen-field error

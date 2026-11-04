@@ -29,7 +29,8 @@ type _ArtifactKind = Literal["wheel", "sdist", "source"]
 
 _ROOT = Path(__file__).resolve().parents[1]
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
-_CONSOLE_ENTRY_POINT = "agent_kit.main:main"
+_WHEEL_IMPLEMENTATION = "agent_kit/application/services/catalog_service.py"
+_SDIST_IMPLEMENTATION = "src/agent_kit/application/services/catalog_service.py"
 _BUNDLES = (
     "shared",
     "backend",
@@ -50,7 +51,7 @@ class _ReleaseIssue(Enum):
     """Stable diagnostics for release metadata, archives, and staging."""
 
     INVALID_PROJECT_VERSION = "project version must be a numeric three-part release"
-    INVALID_WHEEL = "wheel code, entry point, metadata or license is invalid"
+    INVALID_WHEEL = "wheel code, public CLI, metadata or license contract is invalid"
     UNSAFE_SDIST = "sdist contains unsafe members"
     INVALID_SDIST_LICENSE = "sdist license does not match"
     INVALID_SDIST_CONTENT = "sdist implementation or build metadata is invalid"
@@ -77,6 +78,7 @@ class _ReleaseContractError(ValueError):
     """Report one fixed release contract failure without ad-hoc messages."""
 
     def __init__(self, issue: _ReleaseIssue) -> None:
+        """Retain ``issue`` and use its fixed diagnostic as the message."""
         self.issue = issue
         super().__init__(issue.value)
 
@@ -85,6 +87,7 @@ class _ReleaseValidationError(ValueError):
     """Preserve the complete validation findings when checksum creation is refused."""
 
     def __init__(self, findings: list[str]) -> None:
+        """Retain ``findings`` as an immutable tuple and join them for the message."""
         self.findings = tuple(findings)
         super().__init__("; ".join(findings))
 
@@ -137,14 +140,14 @@ def _artifacts(root: Path, version: str) -> dict[Path, _ArtifactKind]:
 class _EntryPointParser(configparser.ConfigParser):
     """Keep installed console command names case-sensitive."""
 
-    # cspell:ignore optionstr
+    # ConfigParser hook parameter name; cspell:ignore optionstr
     def optionxform(self, optionstr: str) -> str:
         """Preserve the exact console command name during parsing and lookup."""
         return optionstr
 
 
 def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
-    """Require package code, the declared CLI, metadata, and the bundled license.
+    """Require package implementation, metadata, license, and no public CLI.
 
     Args:
         path (Path): Wheel archive to inspect.
@@ -156,16 +159,28 @@ def _wheel(path: Path, version: str, license_bytes: bytes) -> None:
     """
     with zipfile.ZipFile(path) as archive:
         prefix = f"agent_kit-{version}.dist-info"
+        names = set(archive.namelist())
         archive.read("agent_kit/__init__.py")
-        entry_points = _EntryPointParser(interpolation=None)
-        entry_points.read_string(
-            archive.read(f"{prefix}/entry_points.txt").decode("utf-8")
+        implementation = archive.read(_WHEEL_IMPLEMENTATION)
+        entry_points_path = f"{prefix}/entry_points.txt"
+        entry_points_content = (
+            archive.read(entry_points_path) if entry_points_path in names else b""
         )
+        entry_points = _EntryPointParser(interpolation=None)
+        if entry_points_content:
+            try:
+                entry_points.read_string(entry_points_content.decode("utf-8"))
+            except configparser.Error as error:
+                raise _ReleaseContractError(_ReleaseIssue.INVALID_WHEEL) from error
         metadata = BytesParser().parsebytes(archive.read(f"{prefix}/METADATA"))
         if (
-            not archive.read("agent_kit/main.py").strip()
-            or entry_points.get("console_scripts", "agent-kit", fallback="")
-            != _CONSOLE_ENTRY_POINT
+            not implementation.strip()
+            or (
+                entry_points.has_section("console_scripts")
+                and entry_points.items("console_scripts")
+            )
+            or "agent_kit/main.py" in names
+            or "agent_kit/__main__.py" in names
             or metadata.get_all("Version") != [version]
             or metadata.get_all("Name") != ["agent-kit"]
             or metadata.get_all("License-Expression") != ["MIT"]
@@ -228,9 +243,15 @@ def _sdist(
             _sdist_file(archive, f"{prefix}/pyproject.toml").decode("utf-8")
         )
         expected = tomllib.loads(project_bytes.decode("utf-8"))
-        if not _sdist_file(archive, f"{prefix}/src/agent_kit/main.py").strip() or any(
-            metadata.get(section) != expected.get(section)
-            for section in ("build-system", "project")
+        names = {item.name.removeprefix(f"{prefix}/") for item in archive.getmembers()}
+        if (
+            not _sdist_file(archive, f"{prefix}/{_SDIST_IMPLEMENTATION}").strip()
+            or "src/agent_kit/main.py" in names
+            or "src/agent_kit/__main__.py" in names
+            or any(
+                metadata.get(section) != expected.get(section)
+                for section in ("build-system", "project")
+            )
         ):
             raise _ReleaseContractError(_ReleaseIssue.INVALID_SDIST_CONTENT)
 

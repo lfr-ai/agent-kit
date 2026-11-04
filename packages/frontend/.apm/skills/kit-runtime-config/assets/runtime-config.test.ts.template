@@ -33,7 +33,7 @@ describe("parseRuntimeConfig", () => {
     [{ ...valid, apiBaseUrl: "http://api.example.test" }, "apiBaseUrl"],
     [{ ...valid, environment: "prod" }, "environment"],
     [{ ...valid, features: { "Bad Name": true } }, "features"],
-    [{ ...valid, clientSecret: "should-not-be-here" }, "(root)"], // pragma: allowlist secret
+    [{ ...valid, clientSecret: "should-not-be-here" }, "(root)"], // pragma: allowlist secret - rejected fixture value
   ])("rejects %j with an issue at %s", (input, path) => {
     const error = (() => {
       try {

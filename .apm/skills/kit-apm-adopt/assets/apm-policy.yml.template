@@ -3,7 +3,9 @@ version: "1.0.0"
 enforcement: block
 fetch_failure: block
 dependencies:
-  allow: []
+  allow:
+    - lfr-ai/agent-kit/profiles/*
+    - lfr-ai/agent-kit/packages/*
 mcp:
   allow: [azure, chrome-devtools, context7, github, langfuse-docs, microsoft-learn, playwright, postman, shadcn, storybook, temporal-docs, terraform]
   self_defined: allow

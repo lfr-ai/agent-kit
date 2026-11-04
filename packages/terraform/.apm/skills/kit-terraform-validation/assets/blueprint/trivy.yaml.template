@@ -11,6 +11,7 @@ ignorefile: .trivyignore
 scan:
   scanners:
     - misconfig
+  # Terraform's downloaded provider/module cache is not first-party source.
   skip-dirs:
     - .terraform
 

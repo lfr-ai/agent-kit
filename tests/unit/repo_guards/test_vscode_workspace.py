@@ -1,4 +1,4 @@
-"""Workspace editor settings match the CLI toolchain without hiding owned source."""
+"""Workspace editor settings match the repository toolchain without hiding source."""
 
 import json
 from pathlib import Path
@@ -123,26 +123,22 @@ def test_workspace_does_not_import_machine_or_legacy_settings() -> None:
     assert associations["*.json.template"] == "json"
 
 
-def test_debug_composition_requires_an_explicit_new_output_path() -> None:
+def test_debug_configuration_runs_tests_without_a_public_cli() -> None:
     launch = _json("launch.json")
     configurations = launch["configurations"]
-    inputs = launch["inputs"]
     assert isinstance(configurations, list)
-    assert isinstance(inputs, list)
-    assert all(item["type"] == "debugpy" for item in configurations)
-    assert all(item["cwd"] == "${workspaceFolder}" for item in configurations)
-    compose = next(
-        item for item in configurations if item.get("args", [None])[0] == "compose"
-    )
-    assert compose["args"][compose["args"].index("--output") + 1] == (
-        "${input:composeOutput}"
-    )
-    output = next(item for item in inputs if item["id"] == "composeOutput")
-    assert output["type"] == "promptString"
-    assert output["default"].startswith("build/")
-    profiles = next(item for item in inputs if item["id"] == "profile")
-    catalog = json.loads((_ROOT / "catalog.json").read_text(encoding="utf-8"))
-    assert set(profiles["options"]) == set(catalog["profiles"])
+    assert configurations == [
+        {
+            "name": "Debug current test file",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${file}", "-p", "no:xdist"],
+            "cwd": "${workspaceFolder}",
+            "justMyCode": False,
+        }
+    ]
+    assert "inputs" not in launch
 
 
 def test_editor_tasks_are_manual_unique_wrappers() -> None:

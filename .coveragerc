@@ -2,7 +2,7 @@
 source = agent_kit
 branch = true
 parallel = true
-# Measure `python -m agent_kit` child processes started by integration tests.
+# Measure repository helper subprocesses started by integration tests.
 patch = subprocess
 relative_files = true
 
@@ -10,6 +10,8 @@ relative_files = true
 show_missing = true
 skip_empty = true
 fail_under = 90
+# Static typing branches, CLI launchers and abstract placeholders are not
+# application behavior; concrete implementations and CLI entry points are tested.
 exclude_also =
     if TYPE_CHECKING:
     if __name__ == .__main__.:

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "files": {
+    "profiles/ai/apm.yml": "10c9308d143afb70b884c37d21596328a4a8f8c3e319d7f759c75cf0a3fb44c7",
+    "profiles/backend/apm.yml": "9d6c46ea6430c5121e82ed9bd3a3d552a311223f5af80e0954f7859e69ecb691",
+    "profiles/bicep/apm.yml": "cbc62cf38d8f9020070ccaa5a23a2cb801d34beaef68e09e48e5803ad1bc36d8",
+    "profiles/frontend/apm.yml": "255b0d16cc852993099bb77c5c2a92365c9629d295d2ad0bb4c716b432063610",
+    "profiles/fullstack/apm.yml": "5082b7302bd72d4b167b979c54cf638dd6dea901f477fa2279283466caf9138a",
+    "profiles/iac/apm.yml": "d89379f02367d66b248face45619c9c8a98103e008da6a97ceffb99c233413c9",
+    "profiles/identity/apm.yml": "f7f91407cabd44d828015019a7d9386ffc542fb6bb7d12cf2107e2fca5f229b8",
+    "profiles/remote-access/apm.yml": "4616e4e1e2bd1275dc2e8b9e4bef22e380d8df334329fcbc5da30316c4b94b67",
+    "profiles/shared/apm.yml": "669d3a109ca0b0e28dbd423ee5c12cf6707e15f2472127058846f47c34f745f6",
+    "profiles/temporal/apm.yml": "184c7d825dc9d4c9352df63f900a4debee7a16ff4172e2b6adcffff660dbec97",
+    "profiles/terraform/apm.yml": "dbb16893f652675e7c7c8f490fa24215df7244bd33a314fee3bb43490865a94f",
+    "profiles/workflows/apm.yml": "9926c46fdfd42f40398a6a6bc93c970dd9a3890331aab6a40501a9b051fc35d0"
+  }
+}

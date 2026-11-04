@@ -65,7 +65,7 @@ include = [
     "LICENSE",
 ]
 exclude = [
-    "**/__pycache__",
-    "**/*.pyc",
-    ".env*",
+    "**/__pycache__", # Interpreter caches are rebuilt, not distributed.
+    "**/*.pyc",      # Ship source, not interpreter-specific bytecode.
+    ".env*",         # Local environment files may contain credentials.
 ]

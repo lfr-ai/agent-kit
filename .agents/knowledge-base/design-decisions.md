@@ -16,10 +16,10 @@ Status values:
 
 | Date | Decision | Status | Enforced by |
 | --- | --- | --- | --- |
-| 2026-10-08 | [Canonical APM source, selected delivery](../../memories/decisions.md#2026-10-08-canonical-apm-source-selected-delivery) | Accepted | [catalog.json](../../catalog.json), `agent-kit check`, composition |
-| 2026-10-08 | [Advisory hook instead of an incomplete shell filter](../../memories/decisions.md#2026-10-08-advisory-hook-instead-of-an-incomplete-shell-filter) | Accepted | `agent-kit context`, [check_native.py](../../scripts/check_native.py) |
+| 2026-10-08 | [Canonical APM source, selected delivery](../../memories/decisions.md#2026-10-08-canonical-apm-source-selected-delivery) | Accepted | [catalog.json](../../catalog.json), [source check](../../scripts/check_source.py), composition library |
+| 2026-10-08 | [Advisory hook instead of an incomplete shell filter](../../memories/decisions.md#2026-10-08-advisory-hook-instead-of-an-incomplete-shell-filter) | Accepted | [session hook adapter](../../scripts/session_context.py), [check_native.py](../../scripts/check_native.py) |
 | 2026-10-09 | [Pydantic v2 and Polars 2 stay backend opt-in](../../memories/decisions.md#2026-10-09-pydantic-v2-and-polars-2-stay-backend-opt-in) | Accepted | Backend bundle contents, data-library capability tests |
-| 2026-10-09 | [Explicit session allowlists, not global runtime switches](../../memories/decisions.md#2026-10-09-explicit-session-allowlists-not-global-runtime-switches) | Accepted | `compose --skill`, session selection tests, `task apm:smoke -- --session` |
+| 2026-10-09 | [Explicit session allowlists, not global runtime switches](../../memories/decisions.md#2026-10-09-explicit-session-allowlists-not-global-runtime-switches) | Accepted | Internal composition library, session selection tests, `task apm:smoke -- --session` |
 | 2026-10-09 | [Verified personal publishing identity](../../memories/decisions.md#2026-10-09-verified-personal-publishing-identity) | Accepted | `task governance:check`, `task publication:check`, `task release:check` |
 | 2026-10-09 | [Completeness is an inventory contract, not a small pilot claim](../../memories/decisions.md#2026-10-09-completeness-is-an-inventory-contract-not-a-small-pilot-claim) | Accepted | [coverage.json](../agentic-setup/coverage.json), `scripts.check_coverage`, role rendering |
 | 2026-10-10 | [Hexagonal Architecture is the canonical label](../../memories/decisions.md#2026-10-10-hexagonal-architecture-is-the-canonical-label) | Accepted | [architecture](architecture.md), import contracts |

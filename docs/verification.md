@@ -28,6 +28,7 @@ owns its minimum, and [tox.ini](../tox.ini) reuses the installed uv.
 | Completeness | Original skill/rule/role inventory, replacements, exclusions, task resources |
 | Resource depth | Reachable references/assets for every skill, Python resource syntax, exact implemented-script paths and both optional native MCP inventories |
 | Conventions | One portable AST checker plus Ruff, types and import boundaries |
+| Suppression reasons | Supported active directive comments in authored source/templates need an explanation; native tools validate directive semantics, reviewers assess the reason |
 | Existing delivery drift | Explicit APM policy and native output audit before regeneration |
 | Open-source governance | Ownership consistency, community entries, immutable workflow pins and narrow permissions |
 | Dependency licenses | Installed distributions against the reviewed, expiring license policy |
@@ -37,10 +38,16 @@ owns its minimum, and [tox.ini](../tox.ini) reuses the installed uv.
 | Unit/property tests | Synthetic profile, collision, path, provenance, and process boundaries |
 | Architecture | Declarative inward import contracts |
 | Documentation | Source entry files and local links, excluding consumer templates |
-| Actual APM | [Smoke selections](../scripts/apm_smoke.py) cover portable bundles within budgets: install/compile, both native rosters, exact resource bytes, explicit policy, audit and frozen reproduction |
-| Session context | Explicit allowlist, selected-skill instruction links, role omission and real narrowed APM delivery |
+| Actual APM | [Smoke selections](../scripts/apm_smoke.py) install selected source-package closures in disposable consumer projects, compile both targets, compare selected resources and replay the lock; it does not verify a published profile meta-package |
+| Session context | The repository-owned hook script emits bounded advisory JSON; its native registration and interpreter are checked |
 | Distribution | Build the Python wheel/sdist with the declared build backend |
-| Native host | Separate live-session certification, not inferred from CLI tests |
+| Native host | Separate live-session certification, not inferred from file or APM tests |
+
+For capability behavior, use the [repository evaluation cases](../tests/evals/README.md)
+and record observations from the relevant named host and version. The
+observation checker verifies record completeness only: it does not run a model,
+authenticate observations or prove model quality. Offline `task verify` checks
+repository contracts, not live agent behavior.
 
 `uv run --locked python scripts/check_governance.py --publication` additionally
 requires approved ownership/private contacts. It does not certify hosted account
@@ -48,7 +55,7 @@ permissions or branch rules.
 
 ## Failure behavior
 
-- Invalid or unknown policy fails before a composition destination is created.
+- Invalid source or policy fails before generated profile output is refreshed.
 - Existing destinations and unsafe paths are never overwritten.
 - Hash drift fails before installation can replace evidence.
 - A process failure or timeout is not converted into success.
@@ -67,23 +74,23 @@ self-checks and compose the smoke matrix, comparing resource bytes and requiring
 every declared role in both adapters. They execute no consumer code or MCP servers.
 See the [setup walkthrough](setup-completeness.md) for consumer/host gates.
 
-APM smoke isolates the CLI's user-wide lock/cache with a disposable home/package.
-Compilation runs per native host to preserve instruction deduplication.
-Source and installed skills must stay byte-identical, with no injected resources,
-after compilation and frozen installation. Skill trees are excluded only from
-application-placement analysis, not native installation, discovery or audit.
+APM smoke isolates APM's user-wide lock/cache with a disposable home and consumer
+project. Compilation runs per native host to preserve instruction deduplication.
+Selected source and installed skills must stay byte-identical, with no injected
+resources, after compilation and frozen installation. Skill trees are
+excluded only from application-placement analysis, not native installation,
+discovery or audit.
 
 For simultaneous validation in a shared checkout, give coverage its own output
 path, for example `$env:COVERAGE_FILE = Join-Path $env:TEMP "agent-kit-$PID.coverage"`
 before `task verify`. Keep that environment for later coverage-report commands.
 This isolates output files; it does not change the 90% branch-coverage gate.
 
-Provenance checks authored source/configuration and ledger-attested native files.
+Generated profile and native-role ledgers check source-to-output bytes.
 Copilot prompts/Claude commands also need an authored `.apm/prompts` facade;
-runtime location alone is not approval. Ledger ownership and native/source hashes
-remain required; sessions omit these facades. Inspect compiled root context,
-lock and ignore metadata separately with explicit APM audit. Provenance is not
-a signature or authorization.
+runtime location alone is not approval. Inspect compiled root context, lock
+and ignore metadata separately with explicit APM audit. Hashes are not a
+signature or authorization.
 
 Release checks compare archives byte-for-byte with fresh trusted composition;
 updating ZIP hashes cannot legitimize edits. Packaged-text changes make old

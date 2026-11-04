@@ -66,6 +66,31 @@ def test_projection_updates_only_attested_files(
     assert (tmp_path / target).read_bytes() == b"independent change"
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_refresh_does_not_replace_unchanged_attested_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: bool
+) -> None:
+    first = ".github/agents/kit-a.agent.md"
+    untouched = ".claude/agents/kit-a.md"
+    output = {first: b"original", untouched: b"original"}
+    monkeypatch.setattr(renderer, "expected", lambda _root: output)
+    renderer.write(tmp_path)
+    if changed:
+        output[first] = b"updated"
+    replaced: set[str] = set()
+    replace = renderer._replace
+
+    def record(path: Path, content: bytes) -> None:
+        replaced.add(path.relative_to(tmp_path).as_posix())
+        replace(path, content)
+
+    monkeypatch.setattr(renderer, "_replace", record)
+    renderer.write(tmp_path)
+
+    assert replaced == ({first, renderer._LOCK_PATH} if changed else set())
+    assert renderer.check(tmp_path) == []
+
+
 @pytest.mark.parametrize(
     ("directory", "suffix"),
     [(".github/agents", ".agent.md"), (".claude/agents", ".md")],

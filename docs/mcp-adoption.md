@@ -174,21 +174,23 @@ on, and tests fail when they drift:
 1. `mcp.allow` in the root [apm-policy.yml](../apm-policy.yml), which the
    repository's own checks enforce.
 2. The generated policy in the toolkit (`_POLICY` in the catalog service),
-   which `agent-kit check` compares with the root file.
+   which `task verify -- source` compares with the root file.
 3. The consumer template `.apm/skills/kit-apm-adopt/assets/apm-policy.yml.template`,
-   which must mirror the root `mcp` section.
+   which shares the reviewed server-name allowlist but permits the selected
+   profile package's declared MCP configuration.
 4. Every `dependencies.mcp` entry in `packages/*/apm.yml`, which must name an
    allow-listed server.
 
-The root policy is the workspace's single allow list: it lists the defaults
-and the opt-in servers that packages ship, so that composing any profile
-passes. It does not mean the workspace starts them. The workspace's own
-manifests (`.mcp.json`, `.vscode/mcp.json`) hold only the defaults. A consumer
-repository copies the template and then removes the names it does not use;
-removing names is always safe, adding a name needs the review described above.
-The policy file also restricts `transport` to `http` and `stdio`, requires
-`self_defined: allow` (servers are declared in place) and sets
-`trust_transitive: false`.
+The root policy is the source repository's allowlist: it covers defaults and
+opt-in servers declared directly by its packages. It does not mean the
+workspace starts them. The workspace's own manifests (`.mcp.json`,
+`.vscode/mcp.json`) hold only the defaults. A consumer copies the template,
+keeps only the names used by its selected profile, and allows the profile and
+source-package paths in `dependencies.allow`. The profile manifest declares the
+selected MCP configuration directly, so the consumer template keeps
+`trust_transitive: false`; keep its `mcp.allow` list narrow. Both policies
+restrict transport to `http` and `stdio` and require `self_defined: allow`.
+Adding a server name still needs the review described above.
 
 To add a server: declare it in the owning package, add its name to the shared
 list (all four places), review its pin and executables, and add a negative

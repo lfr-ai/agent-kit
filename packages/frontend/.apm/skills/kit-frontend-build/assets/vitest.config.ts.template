@@ -37,6 +37,7 @@ export default mergeConfig(
             environment: "jsdom",
             include: ["src/**/*.test.tsx"],
             setupFiles: ["./src/test/setup.ts"],
+            // DOM-emulator tests assert behavior; browser tests verify rendered styling.
             css: false,
           },
         },
@@ -44,6 +45,7 @@ export default mergeConfig(
       coverage: {
         provider: "v8",
         include: ["src/**/*.{ts,tsx}"],
+        // Harnesses, Storybook examples, and declarations are not executable app logic.
         exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.stories.tsx", "src/test/**", "src/**/*.d.ts"],
         reporter: ["text-summary", "lcov"],
         thresholds: {

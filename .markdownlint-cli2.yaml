@@ -4,6 +4,7 @@ globs:
 gitignore: true
 
 ignores:
+  # Dependencies, build products and reports are not authored documentation.
   - "**/node_modules/**"
   - ".venv/**"
   - ".tox/**"
@@ -16,6 +17,7 @@ ignores:
   - ".claude/**"
   - ".github/agents/**"
   - ".github/instructions/**"
+  # Templates contain placeholders rather than finished Markdown documents.
   - "**/*.template.md"
   # Deployed by APM with pinned hashes; restyle only together with an APM refresh.
   - ".apm/skills/kit-capability-authoring/SKILL.md"
@@ -25,8 +27,8 @@ config:
   MD013: false
   MD024:
     siblings_only: true
-  MD033: false
-  MD041: false
+  MD033: false # HTML comments and details elements carry templates and guidance.
+  MD041: false # Frontmatter, badges and reusable fragments may precede a heading.
   MD046:
     style: fenced
   MD048:

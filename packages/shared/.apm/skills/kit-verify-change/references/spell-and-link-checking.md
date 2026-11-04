@@ -23,6 +23,16 @@ configuration:
 - `overrides` adjust settings per file type (for example ignore fenced code
   blocks in Markdown).
 
+The template stays strict JSON, so exclusion reasons live here: dictionary
+files define accepted vocabulary rather than prose to recheck; Git metadata,
+virtual environments, dependencies, build output and coverage HTML are not
+authored text. Lockfiles, minified JavaScript and SVG are machine-oriented
+artifacts; `.secrets.baseline` contains scanner records, not documentation.
+Hash, integrity, URL and long-token patterns avoid treating opaque identifiers
+as words. Markdown fences hold code and command samples rather than prose;
+surrounding prose remains checked. Review samples separately, and remove this
+override if the project's fences contain prose that needs spell checking.
+
 Running it:
 
 ```text

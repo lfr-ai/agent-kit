@@ -118,11 +118,12 @@ template: [dataclasses and enums](dataclasses-enums.md).
 
 ```python
 API_VERSION: Final = "2026-10-01"  # public constant: annotated, never rebound
-_RETRY_DELAY_SECONDS = 0.5  # private constant: unannotated toolkit convention
+_RETRY_DELAY_SECONDS: Final = 0.5  # private constant: Final or unannotated
 ```
 
 Annotate public module constants with `Final` so a type checker rejects
-rebinding. Toolkit convention leaves private `_UPPER` constants unannotated.
+rebinding. Private `_UPPER` constants may also use bare `Final`; any other
+annotation only restates the inferred type and is rejected by `private-constant`.
 `Final` does not make a mutable value immutable; pair it with a tuple,
 `frozenset`, or `types.MappingProxyType`.
 

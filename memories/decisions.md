@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-11-03: Native refresh validates everything but writes only changes
+
+- Replacing an identical attested agent file failed with Windows access denied
+  during an explicit refresh. Ownership checks still passed after rollback.
+- Keep full path, hash and collision validation before comparing bytes. Refresh
+  only changed files and ledger bytes; rollback only the affected paths.
+  Do not weaken permissions or add retries to rewrite unchanged output.
+- Evidence: two regression cases failed before the repair; all 110
+  [projection and rollback tests](../tests/unit/repo_guards/test_native_projection.py)
+  passed afterward, followed by a successful explicit refresh.
+
 ## 2026-10-20: One uv, parallel CI jobs and an aggregate required check
 
 - `tox-uv` installed a second uv (0.13.x) into the project environment, which
@@ -106,7 +117,7 @@
   and guard facades call the canonical implementation.
 - Render shared role bodies with native permissions rather than copying one
   provider's frontmatter to another.
-- Evidence: [setup review](../docs/setup-review.md) and its coverage/native tests.
+- Evidence: [exclusions and disposition](../docs/capability-review.md#exclusions-and-disposition) and its coverage/native tests.
 
 ## 2026-10-26: One kit, installed once, improved at its source
 

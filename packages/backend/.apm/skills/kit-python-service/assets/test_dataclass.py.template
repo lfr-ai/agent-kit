@@ -51,7 +51,7 @@ def test_record_is_immutable() -> None:
     """Attributes cannot be rebound after validation; 'setattr' avoids a static error."""
     line = _line()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        setattr(line, "quantity", 5)  # noqa: B010
+        setattr(line, "quantity", 5)  # noqa: B010 - avoids a static frozen-field error
 
 
 def test_positional_construction_is_rejected() -> None:

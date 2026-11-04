@@ -1,6 +1,6 @@
 # Evaluate capabilities without teaching to one conversation
 
-Reviewed: 2026-10-28.
+Reviewed: 2026-11-04.
 
 A skill's Markdown can validate while its behavior regresses. Keep both layers:
 source checks prove packaging and contracts; recorded native sessions demonstrate
@@ -17,6 +17,9 @@ invocation and behavior for one host, model and installed revision.
 3. Use a disposable project and the same host, model, tools and context for the
    baseline and candidate. Restart sessions between cases; parent/global skills
    are part of the environment and can invalidate isolation.
+   Record OS/runtime, resource limits, time/token budgets, concurrency and
+   exposed sampling settings in the run evidence. Keep them fixed across the
+   comparison; a seed alone does not establish reproducibility.
 4. Observe the actual invocation and outputs. Record each result in the
    [result format](../assets/skill-evaluation-results.json.template):
 
@@ -43,9 +46,14 @@ invocation and behavior for one host, model and installed revision.
    recorded passes, 1 for an observed failure, and 2 for missing cases, checks,
    booleans or metadata. The starter result intentionally fails until populated.
    The checker validates observations; it cannot prove the evidence is genuine.
-6. Repeat consequential permission or safety cases in fresh sessions. Report
-   every attempt and host version, not only the best trajectory. Fix regressions
-   before adoption; do not lower assertions or delete a failing case.
+6. Repeat consequential permission or safety cases in fresh sessions using a
+   trial count and retry policy chosen before the run. Report every attempt and
+   the denominator, not only the best trajectory; keep a separate result file
+   for each trial so case identifiers remain unique per run. Distinguish task failures,
+   infrastructure failures and disputed grader outcomes; retain failed attempts
+   when retrying. Inspect final artifacts and investigate grader disagreements
+   before changing either the candidate or the grader. Fix regressions before
+   adoption; do not lower assertions or delete a failing case.
 7. Propose the smallest reusable source change through `kit-improve`. One
    project's facts stay in its own project context. Never rewrite a shared skill,
    widen permissions or publish automatically from an evaluation result.
@@ -71,6 +79,8 @@ invocation and behavior for one host, model and installed revision.
 - [Demystifying evaluations for agents](https://www.anthropic.com/research/demystifying-evals-for-ai-agents):
   repeat trials, inspect outcomes rather than claims, and separate graders from
   the model and agent harness under test.
+- [Infrastructure noise in coding evaluations](https://www.anthropic.com/research/infrastructure-noise):
+  resource limits and harness setup affect scores; control and disclose them.
 - [Langfuse experiments](https://langfuse.com/docs/evaluation/experiments/overview):
   optional history for consumers that already need a model evaluation service.
 

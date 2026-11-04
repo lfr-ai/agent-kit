@@ -41,8 +41,13 @@ decide whether the change is reusable at all.
 6. Follow the kit's own `AGENTS.md`, `PROJECT.md` and authoring skill for the
    file type. Record the failing prompt and the expected behavior in the pull
    request body using the [pull request template](assets/pull-request.md.template).
+   Retain an executable regression where possible. For changed agent behavior,
+   use the [capability evaluation loop](../kit-feedback-loop/references/skill-evaluations.md);
+   passing source checks alone does not demonstrate improved behavior.
 7. Run the checks the kit names for the change from inside the checkout, ending
-   with `task verify`, and read the result; do not paraphrase it.
+   with `task verify`, and read the result; do not paraphrase it. If Git
+   mutations are forbidden, hand back the unstaged diff and check results and
+   stop before the next step.
 8. Create a `fix/<capability>` or `feat/<capability>` branch and commit with a
    Conventional Commit message. This step applies only to a change the user
    asked for in this session.
@@ -50,9 +55,11 @@ decide whether the change is reusable at all.
    after approval:
    `git push -u origin <branch>`, `gh pr create --fill`, then
    `gh pr merge --auto --squash` once the user also approves merging.
-10. Report the pull request link and the checks it must pass. After it merges,
-    tell the user to refresh with `apm update` (project) or `apm update -g`
-    (user level), then confirm the installed file changed.
+10. Report the pull request link and the checks it must pass. After merge and
+    release, change the consumer's pinned profile to the reviewed release and
+    run `apm install` (or its user-scope equivalent). Review the lock and
+    installed-file diff, audit it, and rerun the original synthetic case.
+    A merge alone does not change a pinned consumer install.
 
 ## Boundaries
 

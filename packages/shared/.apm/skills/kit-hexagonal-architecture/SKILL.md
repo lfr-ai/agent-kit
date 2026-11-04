@@ -1,6 +1,6 @@
 ---
 name: kit-hexagonal-architecture
-description: Use when defining or reviewing Hexagonal Architecture (Ports and Adapters) boundaries in a layered application core.
+description: Use when reviewing Hexagonal Architecture (Ports and Adapters) boundaries.
 license: MIT
 ---
 

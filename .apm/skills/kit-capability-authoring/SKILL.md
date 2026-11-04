@@ -20,7 +20,8 @@ license: MIT
 
 # Verify
 
-1. Run `task verify -- source`; `uv run agent-kit check --root . --json` reports per-profile description totals.
+1. Run `task verify -- source`; `uv run --locked python scripts/check_source.py --json`
+   reports per-profile description totals.
 2. If root `.apm/` changed, run `task verify -- drift` first, then refresh output with the pinned APM install used by `task apm:smoke`, then `task verify -- drift` again.
 3. If role assets changed, run `task verify -- roles`; refresh with `uv run --locked python -m scripts.render_native --write` only for this repository's own selection.
 4. Run `task verify`; run `task apm:smoke` after APM-facing changes. Use `task verify -- <gate>` for focused checks, not another one-command Task target. Keep devtool defaults unless an intentional policy override is needed.

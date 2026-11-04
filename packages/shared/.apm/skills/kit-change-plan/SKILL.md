@@ -1,6 +1,6 @@
 ---
 name: kit-change-plan
-description: Use when a change spans modules, modifies a shared contract, or needs phased rollout.
+description: Use when planning cross-module changes, shared contracts or phased rollout.
 license: MIT
 ---
 

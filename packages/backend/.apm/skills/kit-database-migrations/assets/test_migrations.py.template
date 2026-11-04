@@ -99,7 +99,7 @@ def test_models_match_latest_revision(
 def test_customer_note_backfill_preserves_rows(
     alembic_config: Config, engine: sa.Engine
 ) -> None:
-    before, target = "8e41b0c5a2f3", "4a7d9e2c1b05"  # pragma: allowlist secret
+    before, target = "8e41b0c5a2f3", "4a7d9e2c1b05"  # pragma: allowlist secret - Alembic revision ids
     orders = sa.table(
         "orders",
         sa.column("id", sa.BigInteger),

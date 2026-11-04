@@ -119,7 +119,7 @@
     "ddd": "kit-ddd",
     "debug": "kit-debug",
     "deep-thinking": "kit-deep-thinking",
-    "devops": "kit-devops",
+    "devops": "kit-orchestrator",
     "frontend": "kit-orchestrator",
     "fullstack": "kit-orchestrator",
     "modernization": "kit-deep-thinking",

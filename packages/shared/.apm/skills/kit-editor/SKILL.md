@@ -1,6 +1,6 @@
 ---
 name: kit-editor
-description: Use when configuring repository-scoped editor assistance or reviewing optional MCP integrations and their native setup.
+description: Use when configuring repository editors, ty/Ruff or optional native MCP integrations.
 license: MIT
 ---
 
@@ -27,7 +27,7 @@ license: MIT
    only for languages the repository uses, using the same entry points and
    arguments as the matching Taskfile target and `preLaunchTask` for setup.
 6. Recommend the extensions that match the repository's tools and mark
-   competing formatters/linters unwanted, per
+   competing formatters, linters and type checkers unwanted, per
    [extensions and keybindings](references/extensions-and-keybindings.md),
    starting from the [extensions template](assets/extensions.json.template).
 7. Document optional personal chords from the
@@ -46,7 +46,9 @@ license: MIT
     [integration catalog](assets/integration-catalog.json) has no default
     active server; never install the example roster wholesale.
 11. Preserve unrelated workspace settings and never rewrite user or global
-    editor configuration on someone else's behalf.
+    editor configuration on someone else's behalf. Keep the commit-message
+    draft instruction aligned with the repository's commit convention; it
+    never grants permission to stage, commit or publish.
 12. State which files changed, which checks ran, and which behavior still
     needs a live editor session.
 

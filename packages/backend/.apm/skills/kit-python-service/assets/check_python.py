@@ -11,7 +11,7 @@ contract rules below are opt-in; others default on):
 - ``any-cast``: no ``typing.Any`` or ``typing.cast``, imported or attribute-accessed.
 - ``logging-import``: use ``import logging``, not names imported from it.
 - ``quoted-annotation``: no string-literal argument, return, or variable annotations.
-- ``private-constant``: ``_UPPER`` module constants are unannotated.
+- ``private-constant``: ``_UPPER`` module constants are unannotated or ``Final``.
 - ``initializer-return``: ``__init__`` and ``__post_init__`` declare ``-> None``.
 - ``dataclass-kw-only``: dataclasses pass ``kw_only=True``.
 - ``dataclass-frozen-slots``: frozen dataclasses also pass ``slots=True``.
@@ -25,22 +25,22 @@ contract rules below are opt-in; others default on):
   passes a keyword argument equal to that parameter's default (a literal, an
   ``UPPER_CASE`` constant, or a ``Class.MEMBER`` reference); omit the argument
   (enable with ``--redundant-defaults``). Methods and imported callees are not traced.
-- ``docstring-args``: a public callable with two or more parameters has an ``Args:``
-  section; any ``Args:`` section lists each parameter in signature order (enable
+- ``docstring-args``: explanatory initializer prose names every parameter in double
+  backticks, or uses ``Args:``; any ``Args:`` header is unindented and lists each
+  parameter in signature order (enable
   the docstring rules with ``--docstrings``).
 - ``docstring-args-type``: each ``Args:`` entry reads ``name (type): meaning`` where
   ``type`` equals the unparsed annotation (whitespace and quotes normalised).
-- ``docstring-one-line``: a callable with at most one parameter and a return that
-  needs no ``Returns:`` uses a one-line docstring instead of a summary followed only
-  by ``Args:`` or ``Returns:`` (``__init__`` is exempt).
-- ``docstring-returns``: a tuple of two or more elements, mapping, nested generic,
-  ``Callable``, or union of two or more non-``None`` types needs ``Returns:``
-  (generators document ``Yields:`` instead; ``TypeGuard``/``TypeIs`` are bool-like).
+- ``docstring-returns``: a multi-line docstring for a tuple of two or more elements,
+  mapping, nested generic, ``Callable``, or union of two or more non-``None`` types
+  needs ``Returns:``; a one-line summary may state the shape instead (generators
+  document ``Yields:``; ``TypeGuard``/``TypeIs`` are bool-like).
 - ``docstring-returns-none``: ``Returns:`` is not allowed on ``-> None``.
 
 The docstring rules exempt test modules, dunder methods other than ``__init__``,
-``@overload`` stubs, properties, ``@override`` methods, and private or nested helpers
-without a docstring.
+``@overload`` stubs, properties, and ``@override`` methods. Missing docstrings
+outside parameterized initializers are left to the project's documentation linter.
+Concision and caller-relevant detail need review, not a parameter-count heuristic.
 """
 
 import argparse
@@ -74,18 +74,15 @@ _DOCSTRING_RULES = frozenset(
     {
         "docstring-args",
         "docstring-args-type",
-        "docstring-one-line",
         "docstring-returns",
         "docstring-returns-none",
     }
 )
-_ONE_LINE_SECTIONS = frozenset({"Args", "Returns"})
 ALL_RULES = (
     _DEFAULT_RULES
     | _DOCSTRING_RULES
     | {"bool-trap", "magic-number", "redundant-default"}
 )
-_ARGS_THRESHOLD = 2
 _RECEIVERS = frozenset({"self", "cls"})
 _EXEMPT_DECORATORS = frozenset(
     {
@@ -102,11 +99,15 @@ _MAPPING_NAMES = frozenset(
     {"dict", "Dict", "Mapping", "MutableMapping", "OrderedDict", "defaultdict"}
 )
 _TUPLE_NAMES = frozenset({"tuple", "Tuple"})
+_MULTI_FIELD_TUPLE_LENGTH = 2
 _PREDICATE_NAMES = frozenset({"TypeGuard", "TypeIs"})
 _SECTION_HEADER = re.compile(
     r"^(Args|Returns|Yields|Raises|Attributes|Examples?|Notes?|Todo|Warnings?"
-    r"|References|See Also|Keyword Args|Other Parameters):\s*$"
+    r"|References|See Also|Keyword Args|Other Parameters):\s*$",
+    re.MULTILINE,
 )
+_REFERENCE_SECTIONS = frozenset({"Example", "Examples", "References", "See Also"})
+_INDENTED_ARGS_HEADER = re.compile(r"^[ \t]+Args:\s*$", re.MULTILINE)
 _ENTRY = re.compile(r"^(\*{0,2}\w+)\s*(.*)$")
 _NAMED_NUMBERS = frozenset({0, 1, -1})
 _CONSTANT_NAME = re.compile(r"^_*[A-Z][A-Z0-9_]*$")
@@ -313,14 +314,17 @@ def _assigns_constant(node: ast.AST) -> bool:
         targets = [node.target]
     else:
         return False
-    names = [
-        item
-        for target in targets
-        for item in (target.elts if isinstance(target, ast.Tuple) else [target])
-    ]
-    return all(
-        isinstance(name, ast.Name) and _CONSTANT_NAME.match(name.id) for name in names
-    )
+    return all(_is_constant_target(target) for target in targets)
+
+
+def _is_constant_target(target: ast.expr) -> bool:
+    if isinstance(target, ast.Name):
+        return _CONSTANT_NAME.match(target.id) is not None
+    if isinstance(target, ast.Tuple | ast.List):
+        return all(_is_constant_target(item) for item in target.elts)
+    if isinstance(target, ast.Starred):
+        return _is_constant_target(target.value)
+    return False
 
 
 def _node_findings(node: ast.AST) -> Iterator[tuple[str, int, str]]:
@@ -390,12 +394,19 @@ def _annotated_assignment_findings(
         isinstance(node.target, ast.Name)
         and node.target.id.startswith("_")
         and node.target.id.isupper()
+        and not _is_final(node.annotation)
     ):
         yield (
             "private-constant",
             node.lineno,
-            "internal constant must be unannotated",
+            "internal constant must be unannotated or Final",
         )
+
+
+def _is_final(annotation: ast.expr) -> bool:
+    target = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    label = target.id if isinstance(target, ast.Name) else _attribute_name(target)
+    return label == "Final"
 
 
 def _function_findings(
@@ -459,7 +470,9 @@ def _is_string(annotation: ast.expr | None) -> bool:
 
 def _contract_findings(tree: ast.Module, path: str) -> Iterator[tuple[str, int, str]]:
     if not _is_test_module(path):
-        yield from _walk_callables(tree, public=True)
+        for node in ast.walk(tree):
+            if isinstance(node, _FUNCTIONS):
+                yield from _callable_findings(node)
 
 
 def _is_test_module(path: str) -> bool:
@@ -470,22 +483,6 @@ def _is_test_module(path: str) -> bool:
         or parts.name == "conftest.py"
         or "tests" in parts.parts
     )
-
-
-def _walk_callables(node: ast.AST, *, public: bool) -> Iterator[tuple[str, int, str]]:
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, _FUNCTIONS):
-            exposed = public and (
-                not child.name.startswith("_") or child.name == "__init__"
-            )
-            yield from _callable_findings(child, public=exposed)
-            yield from _walk_callables(child, public=False)
-        elif isinstance(child, ast.ClassDef):
-            yield from _walk_callables(
-                child, public=public and not child.name.startswith("_")
-            )
-        else:
-            yield from _walk_callables(child, public=public)
 
 
 def _is_exempt(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -521,54 +518,45 @@ def _parameters(
 
 
 def _callable_findings(
-    function: ast.FunctionDef | ast.AsyncFunctionDef, *, public: bool
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> Iterator[tuple[str, int, str]]:
     if _is_exempt(function):
         return
     parameters = _parameters(function)
     docstring = ast.get_docstring(function)
-    needs_args = public and len(parameters) >= _ARGS_THRESHOLD
+    sections = _sections(docstring or "")
+    prose = "\n".join(
+        line
+        for section, lines in sections.items()
+        if section not in _REFERENCE_SECTIONS
+        for line in lines
+    )
+    needs_args = function.name == "__init__" and any(
+        f"``{label}``" not in prose for label, _ in parameters
+    )
     if docstring is None:
         if needs_args:
             yield (
                 "docstring-args",
                 function.lineno,
-                f"'{function.name}' needs a docstring with an Args: section",
+                f"'{function.name}' needs a docstring documenting its parameters",
             )
         return
-    sections = _sections(docstring)
+    if _INDENTED_ARGS_HEADER.search(prose):
+        yield (
+            "docstring-args",
+            function.lineno,
+            "Args: header must align with the docstring's explanatory prose",
+        )
     if needs_args or "Args" in sections:
         yield from _args_findings(function, parameters, sections)
-    if (
-        len(parameters) < _ARGS_THRESHOLD
-        and function.name != "__init__"
-        and not _requires_returns(function)
-        and _only_summary_and(docstring, _ONE_LINE_SECTIONS)
-    ):
-        yield (
-            "docstring-one-line",
-            function.lineno,
-            f"'{function.name}' is obvious from its signature; use a one-line docstring",
-        )
-    yield from _returns_findings(function, sections)
-
-
-def _only_summary_and(docstring: str, allowed: frozenset[str]) -> bool:
-    found = False
-    in_section = False
-    for line in docstring.splitlines()[1:]:
-        header = _SECTION_HEADER.match(line)
-        if header:
-            if header.group(1) not in allowed:
-                return False
-            found = in_section = True
-        elif line.strip() and not (in_section and line[:1].isspace()):
-            return False
-    return found
+    yield from _returns_findings(
+        function, sections, one_line="\n" not in docstring.strip()
+    )
 
 
 def _sections(docstring: str) -> dict[str, list[str]]:
-    sections: dict[str, list[str]] = {}
+    sections = {"": _SECTION_HEADER.split(docstring, maxsplit=1)[0].splitlines()}
     current: list[str] | None = None
     for line in docstring.splitlines():
         header = _SECTION_HEADER.match(line)
@@ -588,7 +576,11 @@ def _args_findings(
 ) -> Iterator[tuple[str, int, str]]:
     expected = [label for label, _ in parameters]
     if "Args" not in sections:
-        yield "docstring-args", function.lineno, f"add Args: for {expected}"
+        yield (
+            "docstring-args",
+            function.lineno,
+            f"document {expected} in prose with double backticks or add Args:",
+        )
         return
     documented = _documented_args(sections["Args"])
     if [label for label, _ in documented] != expected:
@@ -648,7 +640,10 @@ def _normalise_type(text: str) -> str:
 
 
 def _returns_findings(
-    function: ast.FunctionDef | ast.AsyncFunctionDef, sections: dict[str, list[str]]
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    sections: dict[str, list[str]],
+    *,
+    one_line: bool,
 ) -> Iterator[tuple[str, int, str]]:
     returns = function.returns
     if returns is None:
@@ -661,7 +656,7 @@ def _returns_findings(
                 function.lineno,
                 "remove Returns: from a function annotated -> None",
             )
-    elif not described and _requires_returns(function):
+    elif not described and not one_line and _requires_returns(function):
         yield (
             "docstring-returns",
             function.lineno,
@@ -702,7 +697,7 @@ def _is_structured(annotation: ast.expr) -> bool:
         return True
     if base in _TUPLE_NAMES and isinstance(member, ast.Subscript):
         elements = _elements(member.slice)
-        if len(elements) >= _ARGS_THRESHOLD and not any(
+        if len(elements) >= _MULTI_FIELD_TUPLE_LENGTH and not any(
             isinstance(item, ast.Constant) and item.value is Ellipsis
             for item in elements
         ):
@@ -823,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--docstrings",
         action="store_true",
-        help="also enforce the docstring-* rules (Args, one-line, Returns)",
+        help="also enforce the docstring-* rules (Args and Returns)",
     )
     parser.add_argument(
         "--templates",

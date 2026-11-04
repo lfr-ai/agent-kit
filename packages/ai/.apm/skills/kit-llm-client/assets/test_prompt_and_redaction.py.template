@@ -69,7 +69,7 @@ def test_invalid_requests_are_rejected(kwargs: dict[str, object]) -> None:
     }
     fields.update(kwargs)
     with pytest.raises(LlmInvalidRequestError):
-        CompletionRequest(**fields)  # type: ignore[arg-type]
+        CompletionRequest(**fields)  # type: ignore[arg-type]  # invalid input on purpose
 
 
 @pytest.mark.parametrize(

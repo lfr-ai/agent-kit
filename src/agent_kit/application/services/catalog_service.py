@@ -248,14 +248,7 @@ def _is_semantic_version(value: object) -> TypeGuard[str]:
 
 
 def _finding(findings: list[Finding], code: str, message: str, path: str) -> None:
-    """Append one source-relative diagnostic.
-
-    Args:
-        findings (list[Finding]): Accumulator that receives the finding.
-        code (str): Stable dotted diagnostic code.
-        message (str): Safe human-readable explanation.
-        path (str): Source-relative location of the problem.
-    """
+    """Append a ``Finding`` with a dotted ``code`` at a source-relative ``path``."""
     findings.append(Finding(code=code, message=message, path=path))
 
 
@@ -265,18 +258,7 @@ def _exact_mapping(
     path: str,
     findings: list[Finding],
 ) -> JsonObject | None:
-    """Require a mapping with exactly the declared keys.
-
-    Args:
-        value (object): Decoded value to inspect.
-        expected (set[str]): Exact field names the mapping must declare.
-        path (str): Source-relative location used in findings.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        JsonObject | None: ``value`` when it is a string-keyed mapping, even if
-        fields are missing or unknown (each is reported); ``None`` otherwise.
-    """
+    """Return the mapping, reporting missing or unknown keys; ``None`` if not one."""
     if not is_json_object(value):
         _finding(findings, "schema.mapping", "expected an object", path)
         return None
@@ -291,18 +273,7 @@ def _exact_mapping(
 def _string_list(
     value: object, path: str, findings: list[Finding]
 ) -> tuple[str, ...] | None:
-    """Validate a list of unique, non-empty strings.
-
-    Args:
-        value (object): Decoded value to inspect.
-        path (str): Source-relative location used in findings.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        tuple[str, ...] | None: Entries in source order, duplicates included
-        after reporting them; ``None`` when ``value`` is not a list or holds an
-        empty or non-string entry.
-    """
+    """Return the strings, reporting duplicates; ``None`` for a non-list or bad item."""
     if not isinstance(value, list):
         _finding(findings, "schema.list", "expected a list of strings", path)
         return None
@@ -323,12 +294,7 @@ def _string_list(
 
 
 def _same_value(actual: object, expected: object) -> bool:
-    """Compare nested policy values without Python bool/integer equivalence.
-
-    Args:
-        actual (object): Decoded value from the source policy.
-        expected (object): Released contract value.
-    """
+    """Compare nested policy values without Python bool/integer equivalence."""
     if type(actual) is not type(expected):
         return False
     if is_json_object(actual) and is_json_object(expected):
@@ -369,16 +335,7 @@ def _contained_catalog_path(value: object) -> str | None:
 
 
 def _unvisited_members(current: object, visited: set[int]) -> tuple[object, ...]:
-    """Return the keys, values, or items of a container not yet traversed.
-
-    Args:
-        current (object): Decoded value that may be a container.
-        visited (set[int]): Identities of containers already traversed; updated.
-
-    Returns:
-        tuple[object, ...]: Dict keys and values, or list items, flattened; empty
-        for scalars and containers seen before.
-    """
+    """Flatten an unseen dict or list into members, marking it visited; else ``()``."""
     if not isinstance(current, dict | list) or id(current) in visited:
         return ()
     visited.add(id(current))
@@ -400,13 +357,7 @@ def _contains_hidden_unicode(value: object) -> bool:
 
 
 def _check_hidden_unicode(value: object, path: str, findings: list[Finding]) -> None:
-    """Record a safe diagnostic without including the offending text.
-
-    Args:
-        value (object): Decoded content to scan.
-        path (str): Source-relative location used in the finding.
-        findings (list[Finding]): Accumulator for the finding.
-    """
+    """Record a safe diagnostic without including the offending text."""
     if _contains_hidden_unicode(value):
         _finding(
             findings,
@@ -441,29 +392,14 @@ def _is_project_contact(parsed: SplitResult) -> bool:
 
 
 def _external_link_allowed(parsed: SplitResult, *, base_is_bundle: bool) -> bool:
-    """Allow web links everywhere and project contacts outside bundles.
-
-    Args:
-        parsed (SplitResult): Link with a scheme or network location.
-        base_is_bundle (bool): Whether the owning document lives in a bundle,
-            where project contacts are not allowed.
-    """
+    """Allow web links everywhere and project contacts outside bundles."""
     if parsed.scheme.lower() in {"http", "https"} and parsed.netloc:
         return True
     return not base_is_bundle and _is_project_contact(parsed)
 
 
 def _resolved_link(raw_path: str, document_path: str) -> str | None:
-    """Resolve a relative link beside its document.
-
-    Args:
-        raw_path (str): Decoded relative link path.
-        document_path (str): Source-relative path of the linking document.
-
-    Returns:
-        str | None: Source-relative target path, or ``None`` when the link
-        climbs above the source root.
-    """
+    """Resolve a link beside its document; ``None`` if it escapes the source root."""
     stack = list(PurePosixPath(document_path).parent.parts)
     for part in PurePosixPath(raw_path).parts:
         if part == "..":
@@ -490,17 +426,7 @@ def _link_index(available_paths: Iterable[str]) -> frozenset[str]:
 def _local_link_issue(
     raw_path: str, document_path: str, link_index: AbstractSet[str]
 ) -> tuple[str, str] | None:
-    """Classify an invalid local link, matching exact case-sensitive spelling.
-
-    Args:
-        raw_path (str): Decoded relative link path.
-        document_path (str): Source-relative path of the linking document.
-        link_index (AbstractSet[str]): Every file and directory path available.
-
-    Returns:
-        tuple[str, str] | None: Finding ``(code, message)`` for an invalid link,
-        or ``None`` when the target exists.
-    """
+    """Return ``(code, message)`` for an invalid link (case-sensitive) or ``None``."""
     if "\\" in raw_path:
         return "links.path", "resource link is not a portable path"
     target = None if _is_absolute(raw_path) else _resolved_link(raw_path, document_path)
@@ -519,15 +445,7 @@ def _link_target(
     *,
     base_is_bundle: bool,
 ) -> None:
-    """Verify a Markdown resource target stays in its owning source root.
-
-    Args:
-        link (str): Raw Markdown link target.
-        document_path (str): Source-relative path of the linking document.
-        link_index (AbstractSet[str]): Every file and directory path available.
-        findings (list[Finding]): Accumulator for link findings.
-        base_is_bundle (bool): Whether the document lives in a bundle.
-    """
+    """Verify a Markdown resource target stays in its owning source root."""
     parsed = urlsplit(link)
     if parsed.scheme or parsed.netloc:
         if not _external_link_allowed(parsed, base_is_bundle=base_is_bundle):
@@ -554,15 +472,7 @@ def _check_links(
     *,
     base_is_bundle: bool,
 ) -> None:
-    """Validate Markdown documents, not Python expressions or template data.
-
-    Args:
-        document (SourceDocument): Captured document; non-Markdown, template, or
-            non-text documents are skipped.
-        link_index (AbstractSet[str]): Every file and directory path available.
-        findings (list[Finding]): Accumulator for link findings.
-        base_is_bundle (bool): Whether the document lives in a bundle.
-    """
+    """Check Markdown document links; skip templates and non-text documents."""
     text = document.text
     name = PurePosixPath(document.relative_path).name.casefold()
     markdown = PurePosixPath(name).suffix in {".md", ".markdown"} or name == "llms.txt"
@@ -579,24 +489,12 @@ def _check_links(
 
 
 def _policy_value_finding(findings: list[Finding], key: str, path: str) -> None:
-    """Report one policy value that differs from the released contract.
-
-    Args:
-        findings (list[Finding]): Accumulator for the finding.
-        key (str): Policy field whose value is unsupported.
-        path (str): Source-relative policy location.
-    """
+    """Report one policy value that differs from the released contract."""
     _finding(findings, "policy.value", f"unsupported policy value for '{key}'", path)
 
 
 def _policy_scalars_valid(top: JsonObject, path: str, findings: list[Finding]) -> bool:
-    """Compare top-level scalar policy values with the released contract.
-
-    Args:
-        top (JsonObject): Policy document with exactly the declared fields.
-        path (str): Source-relative policy location.
-        findings (list[Finding]): Accumulator for value findings.
-    """
+    """Compare top-level scalar policy values with the released contract."""
     valid = True
     for key in _POLICY_SCALARS:
         if top.get(key) != _POLICY[key]:
@@ -608,13 +506,7 @@ def _policy_scalars_valid(top: JsonObject, path: str, findings: list[Finding]) -
 def _security_policy_valid(
     security: JsonObject, path: str, findings: list[Finding]
 ) -> bool:
-    """Require the exact nested integrity and audit security settings.
-
-    Args:
-        security (JsonObject): The policy's ``security`` section.
-        path (str): Source-relative policy location.
-        findings (list[Finding]): Accumulator for shape and value findings.
-    """
+    """Require the exact nested integrity and audit ``security`` settings."""
     valid = True
     for child, expected in _SECURITY_POLICY.items():
         nested = _exact_mapping(
@@ -631,14 +523,7 @@ def _security_policy_valid(
 def _policy_section_valid(
     top: JsonObject, key: str, path: str, findings: list[Finding]
 ) -> bool:
-    """Require one nested policy section to match its released shape and values.
-
-    Args:
-        top (JsonObject): Policy document with exactly the declared fields.
-        key (str): Name of the section to validate.
-        path (str): Source-relative policy location.
-        findings (list[Finding]): Accumulator for shape and value findings.
-    """
+    """Require one nested policy section to match its released shape and values."""
     nested = _exact_mapping(
         top.get(key), _POLICY_SECTIONS[key], f"{path}:{key}", findings
     )
@@ -653,13 +538,7 @@ def _policy_section_valid(
 
 
 def _policy_mapping(value: object, path: str, findings: list[Finding]) -> bool:
-    """Require the exact released strict policy contract.
-
-    Args:
-        value (object): Decoded policy document.
-        path (str): Source-relative policy location.
-        findings (list[Finding]): Accumulator for shape and value findings.
-    """
+    """Require the exact released strict policy contract."""
     top = _exact_mapping(value, set(_POLICY), path, findings)
     if top is None:
         return False
@@ -671,12 +550,7 @@ def _policy_mapping(value: object, path: str, findings: list[Finding]) -> bool:
 
 
 def _catalog_schema_version(raw: JsonObject, findings: list[Finding]) -> int | None:
-    """Return the supported catalog schema version or report it.
-
-    Args:
-        raw (JsonObject): Decoded catalog document.
-        findings (list[Finding]): Accumulator for version findings.
-    """
+    """Return the supported catalog schema version or report it."""
     value = raw.get("schema_version")
     if is_int(value) and value == 1:
         return value
@@ -685,12 +559,7 @@ def _catalog_schema_version(raw: JsonObject, findings: list[Finding]) -> int | N
 
 
 def _catalog_version(raw: JsonObject, findings: list[Finding]) -> str | None:
-    """Return the semantic catalog version or report it.
-
-    Args:
-        raw (JsonObject): Decoded catalog document.
-        findings (list[Finding]): Accumulator for version findings.
-    """
+    """Return the semantic catalog version or report it."""
     value = raw.get("version")
     if _is_semantic_version(value):
         return value
@@ -706,16 +575,7 @@ def _catalog_version(raw: JsonObject, findings: list[Finding]) -> str | None:
 def _catalog_runtimes(
     raw: JsonObject, findings: list[Finding]
 ) -> tuple[str, ...] | None:
-    """Return the exact supported runtime list or report it.
-
-    Args:
-        raw (JsonObject): Decoded catalog document.
-        findings (list[Finding]): Accumulator for runtime findings.
-
-    Returns:
-        tuple[str, ...] | None: ``("copilot", "claude")`` in that order, or
-        ``None`` when the list is malformed or differs.
-    """
+    """Return exactly ``("copilot", "claude")`` or report it and return ``None``."""
     location = "catalog.json:supported_runtimes"
     runtimes = _string_list(raw.get("supported_runtimes"), location, findings)
     if runtimes is None or runtimes == ("copilot", "claude"):
@@ -732,16 +592,7 @@ def _catalog_runtimes(
 def _catalog_budgets(
     raw: JsonObject, findings: list[Finding]
 ) -> tuple[tuple[str, int], ...]:
-    """Return every valid positive budget in sorted field order.
-
-    Args:
-        raw (JsonObject): Decoded catalog document.
-        findings (list[Finding]): Accumulator for budget findings.
-
-    Returns:
-        tuple[tuple[str, int], ...]: ``(field, limit)`` pairs sorted by field;
-        fields with invalid values are reported and omitted.
-    """
+    """Return positive ``(field, limit)`` budgets sorted by field; report the rest."""
     budgets_raw = _exact_mapping(
         raw.get("budgets"), _BUDGET_FIELDS, "catalog.json:budgets", findings
     )
@@ -765,15 +616,7 @@ def _catalog_budgets(
 def _parse_catalog(
     snapshot: CatalogSnapshot, findings: list[Finding]
 ) -> Catalog | None:
-    """Validate exact catalog fields and build typed selection values.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        Catalog | None: Typed catalog, or ``None`` when any part is unusable.
-    """
+    """Validate exact catalog fields into a typed ``Catalog``; ``None`` if unusable."""
     if snapshot.catalog_error or snapshot.catalog is None:
         _finding(
             findings,
@@ -817,13 +660,7 @@ def _parse_catalog(
 def _parse_bundle(
     name: str, raw_bundle: object, findings: list[Finding]
 ) -> Bundle | None:
-    """Validate one named source bundle declaration.
-
-    Args:
-        name (str): Bundle name from the catalog.
-        raw_bundle (object): Decoded bundle declaration.
-        findings (list[Finding]): Accumulator for schema findings.
-    """
+    """Validate one named source bundle declaration."""
     location = f"catalog.json:bundles:{name}"
     if _CATALOG_NAME.fullmatch(name) is None:
         _finding(findings, "catalog.name", "bundle name is not legal", location)
@@ -855,19 +692,7 @@ def _parse_section[T](
     parse: Callable[[str, object, list[Finding]], T | None],
     findings: list[Finding],
 ) -> tuple[T, ...] | None:
-    """Validate every named entry of a catalog section such as ``bundles``.
-
-    Args:
-        value (object): Decoded section object.
-        section (str): Plural section name, such as ``bundles``.
-        parse (Callable[[str, object, list[Finding]], T | None]): Entry parser
-            taking the entry name, its decoded value, and the findings list.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        tuple[T, ...] | None: Entries that parsed, in source order (reported
-        when empty); ``None`` when ``value`` is not an object.
-    """
+    """Parse a section's named entries in order; ``None`` if it is not an object."""
     if not is_json_object(value):
         _finding(
             findings,
@@ -889,28 +714,14 @@ def _parse_section[T](
 
 
 def _parse_bundles(value: object, findings: list[Finding]) -> tuple[Bundle, ...] | None:
-    """Validate every named source bundle.
-
-    Args:
-        value (object): Decoded ``bundles`` section.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        tuple[Bundle, ...] | None: Valid bundles, or ``None`` for a non-object.
-    """
+    """Validate every named source bundle; ``None`` if ``bundles`` is not an object."""
     return _parse_section(value, "bundles", _parse_bundle, findings)
 
 
 def _parse_profile(
     name: str, raw_profile: object, findings: list[Finding]
 ) -> Profile | None:
-    """Validate one profile's inheritance and direct bundle references.
-
-    Args:
-        name (str): Profile name from the catalog.
-        raw_profile (object): Decoded profile declaration.
-        findings (list[Finding]): Accumulator for schema findings.
-    """
+    """Validate one profile's inheritance and direct bundle references."""
     location = f"catalog.json:profiles:{name}"
     if _CATALOG_NAME.fullmatch(name) is None:
         _finding(findings, "catalog.name", "profile name is not legal", location)
@@ -927,15 +738,7 @@ def _parse_profile(
 def _parse_profiles(
     value: object, findings: list[Finding]
 ) -> tuple[Profile, ...] | None:
-    """Validate profile inheritance and direct bundle references.
-
-    Args:
-        value (object): Decoded ``profiles`` section.
-        findings (list[Finding]): Accumulator for schema findings.
-
-    Returns:
-        tuple[Profile, ...] | None: Valid profiles, or ``None`` for a non-object.
-    """
+    """Validate every profile; ``None`` if ``profiles`` is not an object."""
     return _parse_section(value, "profiles", _parse_profile, findings)
 
 
@@ -944,13 +747,7 @@ def _check_references(
     profiles: tuple[Profile, ...],
     findings: list[Finding],
 ) -> None:
-    """Report missing bundle or profile references.
-
-    Args:
-        bundles (tuple[Bundle, ...]): Declared bundles.
-        profiles (tuple[Profile, ...]): Declared profiles.
-        findings (list[Finding]): Accumulator for reference findings.
-    """
+    """Report missing bundle or profile references."""
     bundle_names = {item.name for item in bundles}
     profile_names = {item.name for item in profiles}
     for profile in profiles:
@@ -975,12 +772,7 @@ def _check_references(
 def _check_profile_cycles(
     profiles: tuple[Profile, ...], findings: list[Finding]
 ) -> None:
-    """Report all profiles participating in inheritance cycles.
-
-    Args:
-        profiles (tuple[Profile, ...]): Declared profiles.
-        findings (list[Finding]): Accumulator for cycle findings.
-    """
+    """Report all profiles participating in inheritance cycles."""
     profile_map = {item.name: item for item in profiles}
     active: set[str] = set()
     complete: set[str] = set()
@@ -1039,17 +831,7 @@ def _include_profile(
 def _effective_bundles(
     catalog: Catalog, profile_names: tuple[str, ...]
 ) -> tuple[str, ...]:
-    """Resolve profile inheritance into an ordered unique bundle union.
-
-    Args:
-        catalog (Catalog): Validated catalog.
-        profile_names (tuple[str, ...]): Profiles whose bundles are unioned; an
-            unknown name propagates ``UnknownProfileError``.
-
-    Returns:
-        tuple[str, ...]: Bundle names, inherited ones before direct ones, in
-        first-seen order without repeats.
-    """
+    """Resolve inheritance into ordered unique bundles; unknown profiles raise."""
     profiles = {item.name: item for item in catalog.profiles}
     selected: list[str] = []
     visited: set[str] = set()
@@ -1080,25 +862,14 @@ def _resolved_profiles(
 
 
 def _covers(prefix: str, path: str) -> bool:
-    """Check whether ``path`` equals ``prefix`` or lies beneath it.
-
-    Args:
-        prefix (str): Include path, file or directory.
-        path (str): Candidate resource path.
-    """
+    """Check whether ``path`` equals ``prefix`` or lies beneath it."""
     return path == prefix or path.startswith(f"{prefix}/")
 
 
 def _manifest_mapping(
     bundle: BundleSource, location: str, findings: list[Finding]
 ) -> JsonObject | None:
-    """Return a readable manifest object or report why it is unusable.
-
-    Args:
-        bundle (BundleSource): Captured bundle whose manifest is read.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for manifest findings.
-    """
+    """Return a readable manifest object or report why it is unusable."""
     if bundle.manifest_error or bundle.manifest is None:
         _finding(findings, "manifest.read", "apm.yml is missing or invalid", location)
         return None
@@ -1112,13 +883,7 @@ def _manifest_mapping(
 def _check_manifest_fields(
     manifest: JsonObject, location: str, findings: list[Finding]
 ) -> None:
-    """Report missing, unknown, prohibited, and unlicensed manifest fields.
-
-    Args:
-        manifest (JsonObject): Decoded bundle manifest.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for manifest findings.
-    """
+    """Report missing, unknown, prohibited, and unlicensed manifest fields."""
     for field in sorted(_MANIFEST_REQUIRED - set(manifest)):
         _finding(findings, "manifest.missing", f"missing field '{field}'", location)
     for field in sorted(set(manifest) - _MANIFEST_ALLOWED):
@@ -1138,14 +903,7 @@ def _check_manifest_fields(
 def _check_manifest_version(
     manifest: JsonObject, version: str, location: str, findings: list[Finding]
 ) -> None:
-    """Require a semantic manifest version equal to the catalog version.
-
-    Args:
-        manifest (JsonObject): Decoded bundle manifest.
-        version (str): Catalog version the manifest must match.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for manifest findings.
-    """
+    """Require a semantic manifest version equal to the catalog version."""
     manifest_version = manifest.get("version")
     if not _is_semantic_version(manifest_version):
         _finding(findings, "manifest.version", "manifest version is invalid", location)
@@ -1164,15 +922,7 @@ def _check_manifest_targets(
     location: str,
     findings: list[Finding],
 ) -> None:
-    """Require non-empty manifest targets drawn from supported runtimes.
-
-    Args:
-        targets (tuple[str, ...] | None): Declared targets; ``None`` when the
-            field was already reported as malformed.
-        supported_runtimes (tuple[str, ...]): Runtimes the catalog supports.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for manifest findings.
-    """
+    """Require non-empty supported targets; ``None`` means already reported."""
     if targets is not None and (
         not targets or any(runtime not in supported_runtimes for runtime in targets)
     ):
@@ -1182,13 +932,7 @@ def _check_manifest_targets(
 def _check_manifest_executables(
     manifest: JsonObject, location: str, findings: list[Finding]
 ) -> None:
-    """Require empty ``executables`` and only validated MCP dependencies.
-
-    Args:
-        manifest (JsonObject): Decoded bundle manifest.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for manifest findings.
-    """
+    """Require empty ``executables`` and only validated MCP dependencies."""
     if manifest.get("executables") != {}:
         _finding(
             findings, "manifest.executables", "executables must be empty", location
@@ -1207,12 +951,7 @@ def _check_manifest_executables(
 
 
 def _include_issue(include: str, path: PurePosixPath) -> str | None:
-    """Return why an include is not a contained ``.apm`` path, if it is not.
-
-    Args:
-        include (str): Raw manifest include.
-        path (PurePosixPath): ``include`` without trailing slashes.
-    """
+    """Return why an include is not a contained ``.apm`` path, if it is not."""
     if not include.startswith(".apm/") or "\\" in include:
         return "includes must name paths beneath .apm"
     if path.is_absolute() or any(part in {"..", "."} for part in path.parts[1:]):
@@ -1223,13 +962,7 @@ def _include_issue(include: str, path: PurePosixPath) -> str | None:
 def _normalized_includes(
     includes: tuple[str, ...], location: str, findings: list[Finding]
 ) -> tuple[str, ...]:
-    """Return valid includes relative to ``.apm`` and report the others.
-
-    Args:
-        includes (tuple[str, ...]): Declared manifest include paths.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for include findings.
-    """
+    """Return valid includes relative to ``.apm`` and report the others."""
     normalized: list[str] = []
     for include in includes:
         path = PurePosixPath(include.rstrip("/"))
@@ -1247,14 +980,7 @@ def _check_include_coverage(
     location: str,
     findings: list[Finding],
 ) -> None:
-    """Require every include to match resources and every resource to be included.
-
-    Args:
-        bundle (BundleSource): Captured bundle with its resource files.
-        normalized (tuple[str, ...]): Includes relative to ``.apm``.
-        location (str): Source-relative manifest path used in findings.
-        findings (list[Finding]): Accumulator for include findings.
-    """
+    """Require every include to match resources and every resource to be included."""
     available = {item.relative_path for item in bundle.files}
     for include in normalized:
         if not any(_covers(include, item) for item in available):
@@ -1280,18 +1006,7 @@ def _included_paths(
     version: str,
     supported_runtimes: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Validate source APM metadata and return explicit ``.apm`` include roots.
-
-    Args:
-        bundle (BundleSource): Captured bundle whose manifest is validated.
-        findings (list[Finding]): Accumulator for manifest findings.
-        version (str): Catalog version the manifest must match.
-        supported_runtimes (tuple[str, ...]): Runtimes the catalog supports.
-
-    Returns:
-        tuple[str, ...]: Valid include paths relative to ``.apm``; empty when the
-        manifest or its ``includes`` field is unusable.
-    """
+    """Validate the manifest; return ``.apm``-relative includes, ``()`` if unusable."""
     location = f"{bundle.path}/apm.yml"
     manifest = _manifest_mapping(bundle, location, findings)
     if manifest is None:
@@ -1320,17 +1035,7 @@ def _included_paths(
 def _usable_document(
     document: SourceDocument, bundle: BundleSource, findings: list[Finding]
 ) -> bool:
-    """Report unsafe or malformed documents; reject symlinks from validation.
-
-    Args:
-        document (SourceDocument): Captured source document.
-        bundle (BundleSource): Bundle that owns the document.
-        findings (list[Finding]): Accumulator for source findings.
-
-    Returns:
-        bool: ``False`` for a symlink or a misplaced resource root, which
-        callers skip; ``True`` otherwise, even after reporting parse errors.
-    """
+    """Report bad documents; ``False`` (skip) only for symlinks and misplaced roots."""
     location = f"{bundle.path}/.apm/{document.relative_path}"
     if document.is_symlink:
         _finding(
@@ -1374,13 +1079,7 @@ def _is_markdown_source(relative_path: str) -> bool:
 def _validate_hook_file(
     document: SourceDocument, bundle: BundleSource, findings: list[Finding]
 ) -> None:
-    """Validate a hook registration or script beneath ``.apm/hooks``.
-
-    Args:
-        document (SourceDocument): Captured document under ``hooks/``.
-        bundle (BundleSource): Bundle that owns the document.
-        findings (list[Finding]): Accumulator for hook findings.
-    """
+    """Validate a hook registration or script beneath ``.apm/hooks``."""
     location = f"{bundle.path}/.apm/{document.relative_path}"
     parts = PurePosixPath(document.relative_path).parts
     if document.is_directory:
@@ -1415,17 +1114,7 @@ def _validate_metadata(
     description_limit: int,
     body_limit: int,
 ) -> None:
-    """Dispatch a document to its instruction, prompt, or skill validator.
-
-    Args:
-        document (SourceDocument): Captured source document.
-        bundle (BundleSource): Bundle that owns the document.
-        records (dict[str, _SkillRecord]): Validated skills by name; extended.
-        prompts (set[str]): Prompt names seen so far; extended.
-        findings (list[Finding]): Accumulator for metadata findings.
-        description_limit (int): Maximum description characters.
-        body_limit (int): Maximum skill body lines.
-    """
+    """Dispatch a document to its validator, recording skills and prompt names."""
     relative = document.relative_path
     if relative.startswith("hooks/"):
         _validate_hook_file(document, bundle, findings)
@@ -1445,17 +1134,7 @@ def _skill_records(
     description_limit: int,
     body_limit: int,
 ) -> dict[str, _SkillRecord]:
-    """Validate skill metadata and return each skill's description and body.
-
-    Args:
-        bundles (tuple[BundleSource, ...]): Captured bundles to validate.
-        findings (list[Finding]): Accumulator for source and metadata findings.
-        description_limit (int): Maximum description characters.
-        body_limit (int): Maximum skill body lines.
-
-    Returns:
-        dict[str, _SkillRecord]: Valid skills keyed by skill name.
-    """
+    """Validate bundle documents and links; return valid skills keyed by name."""
     records: dict[str, _SkillRecord] = {}
     prompts: set[str] = set()
     for bundle in bundles:
@@ -1484,13 +1163,7 @@ def _validate_instruction(
     bundle: BundleSource,
     findings: list[Finding],
 ) -> None:
-    """Require portable instruction discovery metadata.
-
-    Args:
-        document (SourceDocument): Captured instruction document.
-        bundle (BundleSource): Bundle that owns the document.
-        findings (list[Finding]): Accumulator for instruction findings.
-    """
+    """Require portable instruction discovery metadata."""
     location = f"{bundle.path}/.apm/{document.relative_path}"
     metadata = document.frontmatter
     if not is_json_object(metadata):
@@ -1525,12 +1198,7 @@ def _prompt_name(relative_path: str) -> str | None:
 
 
 def _one_line(value: object, limit: int) -> TypeGuard[str]:
-    """Check for a non-blank, single-line string within ``limit`` characters.
-
-    Args:
-        value (object): Decoded candidate.
-        limit (int): Maximum characters.
-    """
+    """Check for a non-blank, single-line string within ``limit`` characters."""
     return is_nonempty_text(value) and "\n" not in value and len(value) <= limit
 
 
@@ -1540,14 +1208,7 @@ def _check_prompt_metadata(
     findings: list[Finding],
     description_limit: int,
 ) -> None:
-    """Allow only discovery metadata and a bounded one-line description.
-
-    Args:
-        metadata (JsonObject): Decoded prompt frontmatter.
-        location (str): Source-relative prompt path used in findings.
-        findings (list[Finding]): Accumulator for prompt findings.
-        description_limit (int): Maximum description characters.
-    """
+    """Allow only discovery metadata and a bounded one-line description."""
     for field in sorted(set(metadata) - _PROMPT_FIELDS):
         _finding(
             findings,
@@ -1571,15 +1232,7 @@ def _validate_prompt(
     findings: list[Finding],
     description_limit: int,
 ) -> None:
-    """Require a flat, uniquely named prompt with discovery-only metadata.
-
-    Args:
-        document (SourceDocument): Captured prompt document.
-        bundle (BundleSource): Bundle that owns the document.
-        names (set[str]): Prompt names seen so far; extended.
-        findings (list[Finding]): Accumulator for prompt findings.
-        description_limit (int): Maximum description characters.
-    """
+    """Require a flat, uniquely named prompt with discovery-only metadata."""
     location = f"{bundle.path}/.apm/{document.relative_path}"
     if document.is_directory:
         return
@@ -1621,16 +1274,7 @@ def _check_skill_identity(
     location: str,
     findings: list[Finding],
 ) -> None:
-    """Check skill placement, uniqueness, and absence of native scope metadata.
-
-    Args:
-        name (str): Legal skill name from frontmatter.
-        metadata (JsonObject): Decoded skill frontmatter.
-        relative_path (str): Path of the skill document beneath ``.apm``.
-        records (dict[str, _SkillRecord]): Skills validated so far.
-        location (str): Source-relative skill path used in findings.
-        findings (list[Finding]): Accumulator for identity findings.
-    """
+    """Check skill placement, uniqueness, and absence of native scope metadata."""
     parts = PurePosixPath(relative_path).parts
     if (
         len(parts) != _SKILL_PATH_DEPTH
@@ -1669,14 +1313,7 @@ def _skill_description(
     location: str,
     findings: list[Finding],
 ) -> str | None:
-    """Return a required skill description, reporting budget overruns.
-
-    Args:
-        metadata (JsonObject): Decoded skill frontmatter.
-        description_limit (int): Maximum description characters.
-        location (str): Source-relative skill path used in findings.
-        findings (list[Finding]): Accumulator for description findings.
-    """
+    """Return a required skill description, reporting budget overruns."""
     description = metadata.get("description")
     if not _is_text(description):
         _finding(
@@ -1696,14 +1333,7 @@ def _skill_description(
 def _skill_body_lines(
     document: SourceDocument, body_limit: int, location: str, findings: list[Finding]
 ) -> int | None:
-    """Return the skill body line count, reporting delimiters and budget.
-
-    Args:
-        document (SourceDocument): Captured ``SKILL.md`` document.
-        body_limit (int): Maximum skill body lines.
-        location (str): Source-relative skill path used in findings.
-        findings (list[Finding]): Accumulator for body findings.
-    """
+    """Return the skill body line count, reporting delimiters and budget."""
     body = _body_text(document.text or "")
     if body is None:
         _finding(
@@ -1729,16 +1359,7 @@ def _validate_skill(
     description_limit: int,
     body_limit: int,
 ) -> None:
-    """Validate a skill name, description, body, and portable metadata.
-
-    Args:
-        document (SourceDocument): Captured ``SKILL.md`` document.
-        bundle (BundleSource): Bundle that owns the document.
-        records (dict[str, _SkillRecord]): Validated skills by name; extended.
-        findings (list[Finding]): Accumulator for skill findings.
-        description_limit (int): Maximum description characters.
-        body_limit (int): Maximum skill body lines.
-    """
+    """Validate a skill name, description, body, and portable metadata."""
     location = f"{bundle.path}/.apm/{document.relative_path}"
     metadata = document.frontmatter
     if not is_json_object(metadata):
@@ -1762,12 +1383,7 @@ def _validate_skill(
 
 
 def _check_root_symlinks(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
-    """Report a symlinked source root and any captured root links.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        findings (list[Finding]): Accumulator for symlink findings.
-    """
+    """Report a symlinked source root and any captured root links."""
     if snapshot.root_is_symlink:
         _finding(findings, "source.symlink", "source root is a symlink", ".")
     for relative in snapshot.root_symlinks:
@@ -1780,12 +1396,7 @@ def _check_root_symlinks(snapshot: CatalogSnapshot, findings: list[Finding]) -> 
 
 
 def _check_policy(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
-    """Require a readable policy document with the strict released contract.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        findings (list[Finding]): Accumulator for policy findings.
-    """
+    """Require a readable policy document with the strict released contract."""
     if snapshot.policy_error or snapshot.policy_document is None:
         _finding(
             findings,
@@ -1798,12 +1409,7 @@ def _check_policy(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
 
 
 def _check_source_unicode(snapshot: CatalogSnapshot, findings: list[Finding]) -> None:
-    """Reject hidden Unicode in catalog, policy, manifest, and bundle content.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        findings (list[Finding]): Accumulator for Unicode findings.
-    """
+    """Reject hidden Unicode in catalog, policy, manifest, and bundle content."""
     if snapshot.catalog_document is not None:
         _check_hidden_unicode(
             snapshot.catalog_document.text or "", "catalog.json", findings
@@ -1841,13 +1447,7 @@ def _check_root_files(
     policy_limit: int,
     findings: list[Finding],
 ) -> None:
-    """Require the MIT license and docs index and bound ``AGENTS.md``.
-
-    Args:
-        root_documents (dict[str, SourceDocument]): Root documents by path.
-        policy_limit (int): Maximum ``AGENTS.md`` lines.
-        findings (list[Finding]): Accumulator for root file findings.
-    """
+    """Require the MIT license and docs index and bound ``AGENTS.md`` lines."""
     license_document = root_documents.get("LICENSE")
     if (
         license_document is None
@@ -1881,13 +1481,7 @@ def _check_root_documentation(
     root_documents: dict[str, SourceDocument],
     findings: list[Finding],
 ) -> None:
-    """Require readable, link-safe, non-symlink root documentation.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        root_documents (dict[str, SourceDocument]): Root documents by path.
-        findings (list[Finding]): Accumulator for documentation findings.
-    """
+    """Require readable, link-safe, non-symlink root documentation."""
     root_available = _link_index(
         (
             *snapshot.root_paths,
@@ -1921,17 +1515,7 @@ def _check_root_documentation(
 def _native_assets(
     bundles: tuple[BundleSource, ...], *, selection: _SkillSelection | None = None
 ) -> dict[str, bytes]:
-    """Map authored files, optionally restricted to a composition's selection.
-
-    Args:
-        bundles (tuple[BundleSource, ...]): Captured bundles to read.
-        selection (_SkillSelection | None): Composition selection that filters
-            documents; ``None`` keeps every file.
-
-    Returns:
-        dict[str, bytes]: File content keyed by output path
-        ``<bundle>/.apm/<relative path>``.
-    """
+    """Map ``<bundle>/.apm/<path>`` to bytes, optionally filtered by ``selection``."""
     assets: dict[str, bytes] = {}
     for bundle in bundles:
         prefix = "" if bundle.path == "." else f"{bundle.path}/"
@@ -1951,15 +1535,7 @@ def _check_native_selection(
     *,
     require_optional: bool = False,
 ) -> None:
-    """Report native roles whose explicit dependencies cannot be rendered.
-
-    Args:
-        assets (dict[str, bytes]): Authored file content by output path.
-        runtimes (tuple[str, ...]): Native runtimes to render for.
-        location (str): Source-relative location used in the finding.
-        findings (list[Finding]): Accumulator for native findings.
-        require_optional (bool): Whether optional role dependencies must resolve.
-    """
+    """Report native roles whose explicit dependencies cannot be rendered."""
     try:
         validate_native_assets(assets, runtimes, require_optional=require_optional)
     except (ValueError, InputTypeError) as error:
@@ -1977,14 +1553,7 @@ def _check_native_assets(
     skills: dict[str, _SkillRecord],
     findings: list[Finding],
 ) -> None:
-    """Validate every authored asset and each effective profile's role closure.
-
-    Args:
-        snapshot (CatalogSnapshot): Captured source inputs.
-        catalog (Catalog): Validated catalog.
-        skills (dict[str, _SkillRecord]): Validated skills by name.
-        findings (list[Finding]): Accumulator for native findings.
-    """
+    """Validate every authored asset and each effective profile's role closure."""
     _check_native_selection(
         _native_assets(snapshot.bundles),
         catalog.supported_runtimes,
@@ -2017,14 +1586,7 @@ def _check_bundle_source(
     source_paths: dict[str, BundleSource],
     findings: list[Finding],
 ) -> None:
-    """Require a captured bundle to match its declaration and safe ``.apm`` root.
-
-    Args:
-        definition (Bundle): Catalog declaration of the bundle.
-        source (BundleSource): Captured bundle source.
-        source_paths (dict[str, BundleSource]): Captured bundles by path.
-        findings (list[Finding]): Accumulator for bundle findings.
-    """
+    """Require a captured bundle to match its declaration and safe ``.apm`` root."""
     if source.path != definition.path or source.kind != definition.kind:
         _finding(
             findings,
@@ -2166,12 +1728,7 @@ def _is_instruction(document: SourceDocument) -> bool:
 
 
 def _document_selected(document: SourceDocument, selection: _SkillSelection) -> bool:
-    """Select a source file for the composition's project or session mode.
-
-    Args:
-        document (SourceDocument): Captured source document.
-        selection (_SkillSelection): Resolved skills for the composition.
-    """
+    """Select a source file for the composition's project or session mode."""
     if document.is_symlink or document.is_directory:
         return False
     parts = PurePosixPath(document.relative_path).parts
@@ -2212,16 +1769,7 @@ def _add_output(outputs: _Outputs, relative: str, content: bytes) -> None:
 def _retained_includes(
     included: tuple[str, ...], documents: tuple[SourceDocument, ...]
 ) -> set[str]:
-    """Keep only includes backed by retained files, preserving path types.
-
-    Args:
-        included (tuple[str, ...]): Include paths relative to ``.apm``.
-        documents (tuple[SourceDocument, ...]): Documents kept by the selection.
-
-    Returns:
-        set[str]: Include paths prefixed with ``.apm/``; directory includes end
-        in a slash and file includes do not.
-    """
+    """Return ``.apm/`` includes backed by retained files; directories end in ``/``."""
     paths = {item.relative_path for item in documents}
     retained: set[str] = set()
     for prefix in included:
@@ -2286,12 +1834,7 @@ def _require_session_resources(outputs: _Outputs) -> None:
 
 
 def _json_bytes(value: object, *, ensure_ascii: bool) -> bytes:
-    """Serialize deterministic, newline-terminated, indented JSON.
-
-    Args:
-        value (object): JSON-serializable document.
-        ensure_ascii (bool): Whether to escape non-ASCII characters.
-    """
+    """Serialize deterministic, newline-terminated, indented JSON."""
     text = json.dumps(value, indent=_JSON_INDENT, ensure_ascii=ensure_ascii)
     return f"{text}\n".encode()
 
@@ -2300,11 +1843,6 @@ def _selection_record(
     selection: _SkillSelection, outputs: _Outputs, native_role_files: int
 ) -> JsonObject:
     """Describe the composition mode, active skills, and instruction budget.
-
-    Args:
-        selection (_SkillSelection): Resolved skills for the composition.
-        outputs (_Outputs): Planned authored files and documents.
-        native_role_files (int): Count of generated native role files.
 
     Returns:
         JsonObject: ``mode`` (``session`` or ``project``), sorted ``skills`` and
@@ -2371,13 +1909,6 @@ def _manifest_record(
 ) -> JsonObject:
     """Build the composed APM manifest for the selected runtimes.
 
-    Args:
-        profile (str): Selected base profile.
-        catalog (Catalog): Validated catalog.
-        runtimes (tuple[str, ...]): Selected native runtimes.
-        include_paths (set[str]): Include paths for retained resources.
-        mcp (list[JsonObject]): Merged MCP declarations; omitted when empty.
-
     Returns:
         JsonObject: Manifest with ``name``, ``version``, ``targets``, sorted
         ``includes``, ``dependencies``, empty ``executables``, ``license``, and
@@ -2433,12 +1964,6 @@ def _provenance_record(
 ) -> JsonObject:
     """Record source bundles and content hashes for every planned file.
 
-    Args:
-        catalog (Catalog): Validated catalog.
-        profile (str): Selected base profile.
-        selected (tuple[str, ...]): Effective bundle names.
-        files (dict[str, bytes]): Planned file content by output path.
-
     Returns:
         JsonObject: ``schema_version``, a ``source`` object (catalog version,
         profile, and bundle names with paths), and ``files`` mapping each output
@@ -2468,13 +1993,7 @@ class CatalogService:
         """Create the stateless catalog application service."""
 
     def validate(self, snapshot: CatalogSnapshot) -> CheckReport:
-        """Validate every source bundle, catalog profile, and strict policy.
-
-        Returns:
-            CheckReport: Unique findings ordered by path, code, and message,
-            plus effective profile summaries. Findings are empty on success;
-            profiles are empty and version is ``None`` if catalog parsing fails.
-        """
+        """Validate every bundle, profile, and policy; findings are empty on success."""
         findings: list[Finding] = []
         catalog = _parse_catalog(snapshot, findings)
         _check_root_symlinks(snapshot, findings)
@@ -2605,16 +2124,7 @@ class CatalogService:
         catalog: Catalog,
         findings: list[Finding],
     ) -> dict[str, _SkillRecord]:
-        """Validate source roots, manifests, metadata, and every inactive bundle.
-
-        Args:
-            snapshot (CatalogSnapshot): Captured source inputs.
-            catalog (Catalog): Validated catalog.
-            findings (list[Finding]): Accumulator for bundle findings.
-
-        Returns:
-            dict[str, _SkillRecord]: Valid skills keyed by skill name.
-        """
+        """Validate bundle sources and manifests; return valid skills by name."""
         sources = {item.name: item for item in snapshot.bundles}
         source_paths = {item.path: item for item in snapshot.bundles}
         for definition in catalog.bundles:
@@ -2645,13 +2155,7 @@ class CatalogService:
         skills: dict[str, _SkillRecord],
         findings: list[Finding],
     ) -> None:
-        """Require non-empty effective profiles and bound their descriptions.
-
-        Args:
-            catalog (Catalog): Validated catalog.
-            skills (dict[str, _SkillRecord]): Validated skills by name.
-            findings (list[Finding]): Accumulator for budget findings.
-        """
+        """Require non-empty effective profiles and bound their descriptions."""
         limit = dict(catalog.budgets)["profile_description_chars"]
         for profile, selected in _resolved_profiles(catalog):
             location = f"catalog.json:profiles:{profile.name}"
@@ -2681,18 +2185,7 @@ class CatalogService:
         skills: dict[str, _SkillRecord],
         policy_lines: int,
     ) -> tuple[ProfileSummary, ...]:
-        """Build effective profile counts without mutating source data.
-
-        Args:
-            catalog (Catalog | None): Validated catalog, or ``None`` when parsing
-                failed.
-            skills (dict[str, _SkillRecord]): Validated skills by name.
-            policy_lines (int): Readable policy line count.
-
-        Returns:
-            tuple[ProfileSummary, ...]: One summary per resolvable profile, in
-            catalog order; empty when ``catalog`` is ``None``.
-        """
+        """Summarize resolvable profiles in catalog order; ``()`` with no catalog."""
         if catalog is None:
             return ()
         limits = tuple(sorted(catalog.budgets))

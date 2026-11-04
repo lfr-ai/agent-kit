@@ -30,11 +30,19 @@ EXPECTED: dict[str, frozenset[str]] = {
             "kit-hand-off",
             "kit-run-feedback-loop",
             "kit-improve",
+            "kit-new-project",
+            "kit-align-structure",
+            "kit-align-agent-docs",
+            "kit-reduce-cognitive-load",
         }
     ),
     "backend": frozenset(
         {
             "kit-align-python-conventions",
+            "kit-align-docstrings",
+            "kit-align-typing",
+            "kit-align-ordering",
+            "kit-centralize-cross-cutting",
             "kit-add-endpoint",
             "kit-add-migration",
             "kit-model-domain",
@@ -194,3 +202,43 @@ def test_improvement_prompt_ships_with_its_procedures_but_not_narrow_sessions() 
     assert not any(
         item.relative_path.startswith(".apm/prompts/") for item in session.files
     )
+
+
+def test_new_project_prompt_reuses_existing_setup_owners() -> None:
+    """One portable entry point combines setup without embedding another framework."""
+    text = _prompt_path("shared", "kit-new-project").read_text(encoding="utf-8")
+    assert {
+        "kit-change-plan",
+        "kit-repository-setup",
+        "kit-editor",
+        "kit-verify-change",
+        "kit-documentation",
+    } <= set(_SKILL_LINK.findall(text))
+    for boundary in ("approval", "user-global", "publication", "existing"):
+        assert boundary in text
+
+
+@pytest.mark.parametrize(
+    "skills",
+    [
+        ("kit-repository-setup",),
+        (
+            "kit-change-plan",
+            "kit-repository-setup",
+            "kit-editor",
+            "kit-verify-change",
+            "kit-documentation",
+        ),
+    ],
+    ids=("repository-only", "combined-setup"),
+)
+def test_setup_skills_compose_without_projecting_prompts(
+    skills: tuple[str, ...],
+) -> None:
+    """Setup skills remain independently selectable without their prompt facade."""
+    snapshot = FileCatalogAdapter().load(ROOT)
+    session = CatalogService().compose(snapshot, "shared", (), (), skills=skills)
+    paths = {item.relative_path for item in session.files}
+
+    assert {f".apm/skills/{skill}/SKILL.md" for skill in skills} <= paths
+    assert not any(path.startswith(".apm/prompts/") for path in paths)

@@ -71,12 +71,12 @@ All are standard-library scripts that parse source without importing it, print
 
 | Script | Purpose |
 | --- | --- |
-| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap`, `--magic-numbers`, and `--redundant-defaults`. |
+| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap`, `--magic-numbers`, `--redundant-defaults`, and `--docstrings` section validation. |
 | [check_method_ordering.py](assets/check_method_ordering.py) | Private helper placed after its sole caller (`--order`, `--scope`, `--ignore`). |
 | [check_backend_wiring.py](assets/check_backend_wiring.py) | Layer import rules (`--package`, `--forbid`, `--forbid-module`). |
 
 ```text
-python check_python.py src --bool-trap --magic-numbers --redundant-defaults
+python check_python.py src --bool-trap --magic-numbers --redundant-defaults --docstrings
 python check_python.py tests --bool-trap
 python check_python.py --only docstring-backtick packages
 python check_python.py --templates --only magic-number packages
@@ -108,11 +108,12 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
   Markdown prose keeps normal CommonMark single-backtick syntax.
 - Keep summaries useful and concise. Expand Google-style sections only for
   caller-relevant semantics, constraints, side effects, and expected failures.
-- Use one line when a callable has at most one parameter, needs no `Returns:`,
-  and has no constraint, effect, or failure worth a section; private and nested
-  helpers may stay one-line. Public callables with two or more parameters need
-  `Args:`. See [docstrings](references/docstrings.md) for the decision table.
-  Structured return docs describe fields/keys, ordering, and empty cases.
+- Choose detail by the caller's contract, not parameter count: simple wrappers
+  and delegates may use one line even with several parameters. Preserve real
+  inputs, errors, constraints, and effects in concise prose or meaningful sections.
+  Document initializer arguments. See [docstrings](references/docstrings.md) for
+  the decision table and mechanical checks; structured return docs describe
+  fields/keys, ordering, and empty cases.
 - Google permits descriptive or imperative summaries, consistently within a file,
   and does not require repeating annotated types. The toolkit includes types
   when `Args:`, `Returns:`, or `Yields:` sections are present.

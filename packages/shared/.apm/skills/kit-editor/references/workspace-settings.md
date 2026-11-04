@@ -61,6 +61,13 @@ The starting point is the [settings template](../assets/settings.json.template).
 Merge it into an existing file key by key; never overwrite a contributor's
 workspace file wholesale.
 
+The Python example uses the repository environment for Ruff and ty, with
+`python.languageServer: "None"` to avoid a second Python language server.
+Keep rules in `ruff.toml` and `ty.toml`, not duplicated editor arguments.
+Remove the Python-specific keys and language block for non-Python projects.
+The commit-message example drafts Conventional Commits from the staged diff;
+it does not authorize staging or committing.
+
 ## JSON with comments
 
 `settings.json`, `tasks.json`, `launch.json`, `keybindings.json` and

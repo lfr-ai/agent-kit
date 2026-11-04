@@ -11,16 +11,19 @@ export default mergeConfig(
       globals: false,
       setupFiles: ["./src/test/setup.ts"],
       include: ["src/**/*.test.{ts,tsx}"],
+      // Playwright owns e2e; dependencies and compiled output are not unit tests.
       exclude: ["e2e/**", "node_modules/**", "dist/**"],
       // Fresh mocks and stubs in every test; no leaked state between tests.
       restoreMocks: true,
       unstubGlobals: true,
       unstubEnvs: true,
       testTimeout: 10_000,
+      // DOM-emulator tests assert behavior; browser tests verify rendered styling.
       css: false,
       coverage: {
         provider: "v8",
         include: ["src/**/*.{ts,tsx}"],
+        // Measure app logic, not test harnesses, bootstrap wiring, or type declarations.
         exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/main.tsx", "src/**/*.d.ts"],
         reporter: ["text-summary", "html", "lcov"],
         thresholds: {
