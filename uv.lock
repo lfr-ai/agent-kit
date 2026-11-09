@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13, <3.15"
 
 [manifest]
@@ -40,7 +40,7 @@ requires-dist = [{ name = "pyyaml", specifier = ">=6.0.2,<7" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "apm-cli", specifier = "==0.33.0" },
+    { name = "apm-cli", specifier = "==0.35.0" },
     { name = "commitizen", specifier = "==4.19.2" },
     { name = "hypothesis", specifier = "==6.168.5" },
     { name = "import-linter", specifier = "==2.15" },
@@ -181,7 +181,7 @@ wheels = [
 
 [[package]]
 name = "apm-cli"
-version = "0.33.0"
+version = "0.35.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -202,9 +202,9 @@ dependencies = [
     { name = "watchdog" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/3f/e383f7c304d46656d77e5959db7d914e590c283af5b407ddf94205d02edb/apm_cli-0.33.0.tar.gz", hash = "sha256:a523805a3cc9b51f80573c1efce13982b3a5665c8ae749a51e5648575a1d6633", size = 1808097, upload-time = "2026-10-02T22:38:59.356Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/20/9ca9b61b362e0f1fb465931d0dd76150a5f23b98b2249663e7edbacc6c0c/apm_cli-0.35.0.tar.gz", hash = "sha256:9f1b06ee7c35485d2b65a8e974fbc7195f358e2149913a8312f17506698e1363", size = 1913526, upload-time = "2026-10-22T22:52:47.648Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/88/16cfdc0e81c8fcb958d93dfb9b4dd6b7d2c45220ffd069417678330f4840/apm_cli-0.33.0-py3-none-any.whl", hash = "sha256:fefb48bea312ca5f2de8f8b162fffef5609f4d2ec4a35568b7a1451d10b7ac43", size = 1971255, upload-time = "2026-10-02T22:38:57.3Z" },
+    { url = "https://files.pythonhosted.org/packages/89/7f/1f83e2537343f1d4a808dd1a2e98ab62ca5c0168dae56fc2bf797b8b2771/apm_cli-0.35.0-py3-none-any.whl", hash = "sha256:535f9478fdfeb7acf586af96cbf1428ef128f76fdf89a9c084df04b88bebc1af", size = 2087790, upload-time = "2026-10-22T22:52:45.645Z" },
 ]
 
 [[package]]
