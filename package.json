@@ -4,6 +4,6 @@
   "description": "Locked JavaScript developer tooling; not part of any published package.",
   "license": "MIT",
   "devDependencies": {
-    "jscpd": "5.4.1"
+    "jscpd": "5.4.2"
   }
 }
