@@ -16,7 +16,6 @@ usage errors.
 import argparse
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 import re
 import shlex
@@ -67,7 +66,7 @@ def ref_problems(name: str, *, label: str, ancestry: bool = False) -> list[str]:
             commit-ish.
 
     Returns:
-        Human-readable problems; empty when the name is acceptable.
+        list[str]: Human-readable problems; empty when the name is acceptable.
     """
     if not name:
         return [f"{label} is empty"]
@@ -107,7 +106,7 @@ def path_problems(path: Path, *, repository: Path) -> list[str]:
         repository (Path): The repository working directory.
 
     Returns:
-        Human-readable problems; empty when the path is acceptable.
+        list[str]: Human-readable problems; empty when the path is acceptable.
     """
     problems: list[str] = []
     text = str(path)
@@ -133,7 +132,7 @@ def default_path(repository: Path, branch: str) -> Path:
         branch (str): The validated branch name.
 
     Returns:
-        A sibling directory such as ``../project-agent-docs``.
+        Path: A sibling directory such as ``../project-agent-docs``.
     """
     slug = _SLUG.sub("-", branch.replace("/", "-")).strip("-.") or "worktree"
     resolved = repository.resolve()
@@ -153,7 +152,7 @@ def build_plan(
         git (str): The Git executable to place in each command.
 
     Returns:
-        The validated plan.
+        Plan: The validated plan.
 
     Raises:
         ValueError: An input is unsafe; the message lists every problem.
@@ -211,7 +210,7 @@ def execute(
             its exit status.
 
     Returns:
-        The failing exit status and its rendered command, or (0, None).
+        tuple[int, str | None]: The failing exit status and its rendered command, or (0, None).
     """
     for command in plan.commands:
         status = runner(command)
@@ -220,89 +219,54 @@ def execute(
     return 0, None
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    VALID_BRANCH_REJECTED = "valid branch rejected: {good}"
-    INVALID_BRANCH_ACCEPTED = "invalid branch accepted: {bad}"
-    ANCESTRY_BASE_REJECTED = "an ancestry commit-ish must be accepted as a base"
-    DEFAULT_PATH = "default path must be a sibling of the repository"
-    OPTION_SEPARATOR = "worktree command must separate options from paths"
-    INTERNAL_PATH_ACCEPTED = "a path inside the repository must be rejected"
-    EXECUTION_CONTINUED = "execution must stop at the first failing command"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self, issue: SelfTestIssue, *, good: str | None = None, bad: str | None = None
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            good (str | None): Observed good for the failing case.
-            bad (str | None): Observed bad for the failing case.
-        """
-        super().__init__(issue.value.format(good=good, bad=bad))
-
-
-def self_test() -> None:
-    """Exercise validation, planning and execution with in-memory fakes.
-
-    Raises:
-        AssertionError: A synthetic case produced an unexpected result.
-    """
-    _self_test_ref_names()
-    plan = _self_test_plan()
-    _self_test_execute(plan)
-
-
-def _self_test_ref_names() -> None:
-    """Check accepted and rejected branch and base names.
-
-    Raises:
-        SelfTestError: A branch or base name is misjudged.
-    """
-    for good in ("agent/docs-update", "feature/orders-42", "fix_invoice.total"):
-        if ref_problems(good, label="branch"):
-            raise SelfTestError(SelfTestIssue.VALID_BRANCH_REJECTED, good=good)
-    for bad in ("-x", "a..b", "a b", "a~1", "x.lock", "a//b", ".hidden", "a/", "@"):
-        if not ref_problems(bad, label="branch"):
-            raise SelfTestError(SelfTestIssue.INVALID_BRANCH_ACCEPTED, bad=bad)
-    if ref_problems("HEAD~2", label="base", ancestry=True):
-        raise SelfTestError(SelfTestIssue.ANCESTRY_BASE_REJECTED)
-
-
-def _self_test_plan() -> Plan:
-    """Check default paths, option separation and in-repository rejection.
-
-    Raises:
-        SelfTestError: Planning returns an unexpected result.
-    """
+def self_test() -> list[str]:
+    """Exercise validation, planning and execution with in-memory fakes."""
     repository = Path.cwd()
     plan = build_plan(
         repository=repository, branch="agent/docs", base="HEAD", path=None
     )
+    return [
+        *_ref_name_failures(),
+        *_plan_failures(plan, repository),
+        *_execute_failures(plan),
+    ]
+
+
+def _ref_name_failures() -> list[str]:
+    """Return accepted and rejected branch and base names that were misjudged."""
+    failures = [
+        f"valid branch rejected: {good}"
+        for good in ("agent/docs-update", "feature/orders-42", "fix_invoice.total")
+        if ref_problems(good, label="branch")
+    ]
+    failures.extend(
+        f"invalid branch accepted: {bad}"
+        for bad in ("-x", "a..b", "a b", "a~1", "x.lock", "a//b", ".hidden", "a/", "@")
+        if not ref_problems(bad, label="branch")
+    )
+    if ref_problems("HEAD~2", label="base", ancestry=True):
+        failures.append("an ancestry commit-ish must be accepted as a base")
+    return failures
+
+
+def _plan_failures(plan: Plan, repository: Path) -> list[str]:
+    """Return regressions in default paths, option separation and path containment."""
+    failures: list[str] = []
     if plan.path.parent != repository.resolve().parent:
-        raise SelfTestError(SelfTestIssue.DEFAULT_PATH)
+        failures.append("default path must be a sibling of the repository")
     expected_tail = ("--", str(plan.path), "HEAD")
     if plan.commands[-1][-len(expected_tail) :] != expected_tail:
-        raise SelfTestError(SelfTestIssue.OPTION_SEPARATOR)
+        failures.append("worktree command must separate options from paths")
     try:
         build_plan(repository=repository, branch="ok", base="HEAD", path=repository)
     except ValueError:
-        return plan
-    raise SelfTestError(SelfTestIssue.INTERNAL_PATH_ACCEPTED)
+        return failures
+    failures.append("a path inside the repository must be rejected")
+    return failures
 
 
-def _self_test_execute(plan: Plan) -> None:
-    """Check that execution stops at the first failing command.
-
-    Raises:
-        SelfTestError: Execution continues after a failure.
-    """
+def _execute_failures(plan: Plan) -> list[str]:
+    """Return a failure unless execution stops at the first failing command."""
     calls: list[Sequence[str]] = []
 
     def failing(command: Sequence[str]) -> int:
@@ -315,7 +279,8 @@ def _self_test_execute(plan: Plan) -> None:
         or len(calls) != _SELF_TEST_FAILING_CALL
         or failed is None
     ):
-        raise SelfTestError(SelfTestIssue.EXECUTION_CONTINUED)
+        return ["execution must stop at the first failing command"]
+    return []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -336,9 +301,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Worktree planner self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Worktree planner self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.branch:
         parser.error("--branch is required")
     plan = _plan_or_report(args)

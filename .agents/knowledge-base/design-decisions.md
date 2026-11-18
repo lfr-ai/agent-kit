@@ -16,15 +16,20 @@ Status values:
 
 | Date | Decision | Status | Enforced by |
 | --- | --- | --- | --- |
-| 2026-10-08 | [Canonical APM source, selected delivery](../../memories/decisions.md#2026-10-08-canonical-apm-source-selected-delivery) | Accepted | [catalog.json](../../catalog.json), [source check](../../scripts/check_source.py), composition library |
-| 2026-10-08 | [Advisory hook instead of an incomplete shell filter](../../memories/decisions.md#2026-10-08-advisory-hook-instead-of-an-incomplete-shell-filter) | Accepted | [session hook adapter](../../scripts/session_context.py), [check_native.py](../../scripts/check_native.py) |
+| 2026-10-08 | [Canonical APM source, selected delivery](../../memories/decisions.md#2026-10-08-canonical-apm-source-selected-delivery) | Accepted | [catalog.json](../../catalog.json), [source check](../../scripts/checks/source.py), composition library |
+| 2026-10-08 | [Advisory hook instead of an incomplete shell filter](../../memories/decisions.md#2026-10-08-advisory-hook-instead-of-an-incomplete-shell-filter) | Accepted | [session hook adapter](../../scripts/session_context.py), [check_native.py](../../scripts/checks/native.py) |
 | 2026-10-09 | [Pydantic v2 and Polars 2 stay backend opt-in](../../memories/decisions.md#2026-10-09-pydantic-v2-and-polars-2-stay-backend-opt-in) | Accepted | Backend bundle contents, data-library capability tests |
 | 2026-10-09 | [Explicit session allowlists, not global runtime switches](../../memories/decisions.md#2026-10-09-explicit-session-allowlists-not-global-runtime-switches) | Accepted | Internal composition library, session selection tests, `task apm:smoke -- --session` |
-| 2026-10-09 | [Verified personal publishing identity](../../memories/decisions.md#2026-10-09-verified-personal-publishing-identity) | Accepted | `task governance:check`, `task publication:check`, `task release:check` |
-| 2026-10-09 | [Completeness is an inventory contract, not a small pilot claim](../../memories/decisions.md#2026-10-09-completeness-is-an-inventory-contract-not-a-small-pilot-claim) | Accepted | [coverage.json](../agentic-setup/coverage.json), `scripts.check_coverage`, role rendering |
+| 2026-10-09 | [Verified personal publishing identity](../../memories/decisions.md#2026-10-09-verified-personal-publishing-identity) | Accepted | `task verify -- governance`, `python -m scripts.checks.governance --publication`, `task release:build` |
+| 2026-10-09 | [Completeness is an inventory contract, not a small pilot claim](../../memories/decisions.md#2026-10-09-completeness-is-an-inventory-contract-not-a-small-pilot-claim) | Accepted | [coverage.json](../agentic-setup/coverage.json), `scripts.checks.coverage`, role rendering |
 | 2026-10-10 | [Hexagonal Architecture is the canonical label](../../memories/decisions.md#2026-10-10-hexagonal-architecture-is-the-canonical-label) | Accepted | [architecture](architecture.md), import contracts |
 | 2026-10-19 | [Keep capability resources out of application placement](../../memories/decisions.md#2026-10-19-keep-capability-resources-out-of-application-placement) | Accepted | Composed `apm.yml` compilation exclusions, [apm_smoke.py](../../scripts/apm_smoke.py) |
-| 2026-10-19 | [Identity coverage is not resource-depth evidence](../../memories/decisions.md#2026-10-19-identity-coverage-is-not-resource-depth-evidence) | Accepted | [check_resources.py](../../scripts/check_resources.py), coverage regressions |
+| 2026-10-19 | [Identity coverage is not resource-depth evidence](../../memories/decisions.md#2026-10-19-identity-coverage-is-not-resource-depth-evidence) | Accepted | [check_resources.py](../../scripts/checks/resources.py), coverage regressions |
+| 2026-10-20 | [One uv, parallel CI jobs and an aggregate required check](../../memories/decisions.md#2026-10-20-one-uv-parallel-ci-jobs-and-an-aggregate-required-check) | Accepted | [toolkit-ci.yml](../../.github/workflows/toolkit-ci.yml) |
+| 2026-10-26 | [One kit, installed once, improved at its source](../../memories/decisions.md#2026-10-26-one-kit-installed-once-improved-at-its-source) | Accepted | [improvement loop](../../docs/feedback.md), native-rule behavior tests |
+| 2026-11-03 | [Native refresh validates everything but writes only changes](../../memories/decisions.md#2026-11-03-native-refresh-validates-everything-but-writes-only-changes) | Accepted | `task verify -- native`, native refresh regressions |
+| 2026-11-06 | [Docstrings are proportional; Raises lists only what the body raises](../../memories/decisions.md#2026-11-06-docstrings-are-proportional-raises-lists-only-what-the-body-raises) | Accepted | `task verify -- conventions`, [docstring contract tests](../../tests/unit/repo_guards/test_docstring_contract.py) |
+| 2026-11-06 | [Lean always-on context; reviewed second pass; checked acronyms](../../memories/decisions.md#2026-11-06-lean-always-on-context-reviewed-second-pass-checked-acronyms) | Accepted | [context budget tests](../../tests/unit/repo_guards/test_context_budget.py), `acronym-case` checker rule |
 
 ## Decisions evidenced in source
 
@@ -33,15 +38,15 @@ These are enforced and documented but have no dated log entry. Record one in
 
 | Decision | Status | Source of truth |
 | --- | --- | --- |
-| Catalog budgets bound always-on context: policy lines, skill body lines, description characters and per-profile description totals | Implemented, unrecorded | [catalog_service.py](../../src/agent_kit/application/services/catalog_service.py), [catalog.json](../../catalog.json) |
+| Catalog budgets bound always-on context: policy lines, skill body lines, description characters and per-profile description totals | Implemented, unrecorded | [application/catalog/](../../src/agent_kit/application/catalog/schema.py), [catalog.json](../../catalog.json) |
 | Strict deny-by-default APM policy with unknown keys rejected | Implemented, unrecorded | [apm-policy.yml](../../apm-policy.yml), [policy](../../docs/policy.md) |
-| Composition never replaces an existing destination and publishes atomically | Implemented, unrecorded | [output_adapter.py](../../src/agent_kit/infrastructure/output_adapter.py) |
-| Provenance hashes every composed file and admits only first-party APM deployments | Implemented, unrecorded | [provenance_service.py](../../src/agent_kit/application/services/provenance_service.py) |
-| Native role projections are rendered per host from one body with tier-bounded tools | Implemented, unrecorded | [native_delivery.py](../../src/agent_kit/application/services/native_delivery.py) |
+| Composition never replaces an existing destination and publishes atomically | Implemented, unrecorded | [infrastructure/output.py](../../src/agent_kit/infrastructure/output.py), [infrastructure/owned_output.py](../../src/agent_kit/infrastructure/owned_output.py) |
+| Provenance hashes every composed file and admits only first-party APM deployments | Implemented, unrecorded | [application/provenance/](../../src/agent_kit/application/provenance/hashes.py) |
+| Native role projections are rendered per host from one body with tier-bounded tools | Implemented, unrecorded | [application/native_delivery/](../../src/agent_kit/application/native_delivery/rendering.py) |
 | Repository role projections are refreshed only explicitly through an ownership ledger | Implemented, unrecorded | [render_native.py](../../scripts/render_native.py), [native-lock.json](../agentic-setup/native-lock.json) |
 | MCP integrations ship as inactive examples; active manifests stay empty | Implemented, unrecorded | [compatibility](../../docs/compatibility.md), [setup walkthrough](../../docs/setup-completeness.md) |
-| The pinned APM CLI version is checked at the process boundary | Implemented, unrecorded | [apm_adapter.py](../../src/agent_kit/infrastructure/apm_adapter.py), [apm_smoke.py](../../scripts/apm_smoke.py) |
-| Release artifacts must match a fresh composition from the trusted checkout | Implemented, unrecorded | [check_release.py](../../scripts/check_release.py), [releasing](../../docs/releasing.md) |
+| The pinned APM CLI version is checked at the process boundary | Implemented, unrecorded | [infrastructure/apm.py](../../src/agent_kit/infrastructure/apm.py), [apm_smoke.py](../../scripts/apm_smoke.py) |
+| Release artifacts must match a fresh composition from the trusted checkout | Implemented, unrecorded | [release.py](../../scripts/checks/release.py), [releasing](../../docs/releasing.md) |
 | Local and CI gates share one read-only sequence | Implemented, unrecorded | [verify.py](../../scripts/verify.py), [verification](../../docs/verification.md) |
 
 ## Adding a decision
@@ -53,4 +58,4 @@ These are enforced and documented but have no dated log entry. Record one in
    mark the earlier row **Superseded** and link the replacement.
 4. Update the [design rationale](../agentic-setup/design-rationale.md) when the
    reasoning or rejected alternatives change.
-5. Run `uv run --locked python scripts/check_docs.py` to confirm local links.
+5. Run `uv run --locked python -m scripts.checks.docs` to confirm local links.

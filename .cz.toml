@@ -1,8 +1,12 @@
 [tool.commitizen]
+# Use pyproject.toml's [project].version as the single source of truth.
 version_provider = "pep621"
+# Release tags use vX.Y.Z, as expected by publishing and the release workflow.
 tag_format = "v$version"
+# Before 1.0, breaking changes bump the minor version.
 major_version_zero = true
-# CHANGELOG.md is curated by hand; check_release.py keeps these files equal to the pyproject version.
+# Keep CHANGELOG.md curated by hand; check_release.py verifies version metadata
+# against pyproject.toml.
 version_files = [
   "catalog.json:\"version\"",
   "apm.yml:^version",
@@ -18,4 +22,7 @@ version_files = [
   "packages/remote-access/apm.yml:^version",
   "packages/temporal/apm.yml:^version",
   "packages/identity/apm.yml:^version",
+  "packages/runtime/pyproject.toml:^version",
+  "pyproject.toml:platform-kit-runtime.*==",
+  "packages/starter/template/apm.yml.jinja:#v",
 ]

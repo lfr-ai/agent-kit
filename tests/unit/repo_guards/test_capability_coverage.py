@@ -5,11 +5,14 @@ from pathlib import Path
 import shutil
 
 import pytest
-import scripts.check_coverage as coverage_module
-from scripts.check_coverage import check
+from scripts.checks.coverage import check
+from scripts.checks.coverage.inputs import read_json
+from scripts.checks.coverage.policy import policy_failures
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
+# Each case copies and checks the whole capability tree; `task check` skips them.
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(scope="module")
@@ -26,8 +29,10 @@ def coverage_inputs(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "Taskfile.yml",
         ".mcp.json",
         "scripts/verify.py",
-        "scripts/check_docs.py",
-        "scripts/check_coverage.py",
+        "scripts/checks/__init__.py",
+        "scripts/checks/docs.py",
+        "scripts/checks/coverage/editor.py",
+        "scripts/checks/resources.py",
     ):
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +60,7 @@ def test_duplicate_inventory_json_key_has_a_stable_input_diagnostic(
     path.write_text('{"skills": {}, "skills": {}}', encoding="utf-8")
 
     with pytest.raises(ValueError, match="duplicate coverage or asset key"):
-        coverage_module._json(path)
+        read_json(path)
 
 
 def test_deleted_skill_replacement_fails_coverage(covered_root: Path) -> None:
@@ -155,7 +160,7 @@ def test_consumer_apm_policy_must_allow_profile_dependencies(
 
     assert any(
         "Agent Kit profiles and source packages" in item
-        for item in coverage_module._policy_failures(tmp_path)
+        for item in policy_failures(tmp_path)
     )
 
 
@@ -168,7 +173,7 @@ def test_consumer_apm_policy_allows_only_profile_and_source_paths(
     path.parent.mkdir(parents=True)
     shutil.copyfile(_ROOT / relative, path)
 
-    assert coverage_module._policy_failures(tmp_path) == []
+    assert policy_failures(tmp_path) == []
 
 
 def test_consumer_apm_policy_cannot_deny_all_executables(covered_root: Path) -> None:

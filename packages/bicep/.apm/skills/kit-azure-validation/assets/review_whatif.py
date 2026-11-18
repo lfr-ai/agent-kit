@@ -11,7 +11,7 @@ authentication, network access or resource mutations are supported.
 
 import argparse
 from collections.abc import Callable
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import sys
@@ -19,6 +19,7 @@ import sys
 _INVALID = 2
 _DELETE = 3
 _REVIEW = 4
+_SUCCEEDED = "Succeeded"
 _KINDS = {
     "Create": "create",
     "Modify": "modify",
@@ -31,6 +32,7 @@ _KINDS = {
 }
 
 
+@unique
 class WhatIfInputIssue(StrEnum):
     """Supported what-if input validation failures and their stable messages."""
 
@@ -54,7 +56,8 @@ class WhatIfInputError(ValueError):
 
         Args:
             issue (WhatIfInputIssue): The violated input invariant.
-            value (str | None): Diagnostic value for the invalid input.
+            value (str | None): Rejected JSON constant, such as ``NaN``, substituted
+                into the message.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -87,10 +90,7 @@ def _invalid_constant(value: str) -> object:
 def _check_status(value: dict[object, object]) -> None:
     if "status" in value and not isinstance(value["status"], str):
         raise WhatIfInputTypeError(WhatIfInputIssue.UNFINISHED_RESULT)
-    if (
-        value.get("error") is not None
-        or value.get("status", "Succeeded") != "Succeeded"
-    ):
+    if value.get("error") is not None or value.get("status", _SUCCEEDED) != _SUCCEEDED:
         raise WhatIfInputError(WhatIfInputIssue.UNFINISHED_RESULT)
 
 
@@ -140,16 +140,13 @@ def _change_kind(change: dict[object, object]) -> str:
 
 
 def analyze_whatif(value: object) -> dict[str, list[str]]:
-    """Classify explicit resource changes; never guess missing IDs or actions.
+    """Return resource IDs keyed by change kind; never guess missing IDs or actions.
 
-    Returns:
-        Resource IDs keyed by change kind (``create``, ``modify``, ``no-change``,
-        ``delete``, ``recreate``, ``review``); every kind is present, empty when unused,
-        and IDs keep document order.
-
-    Raises:
-        ValueError: A required field is missing or a change value is unsupported.
-        WhatIfInputTypeError: The document or a present field has the wrong type.
+    Kinds are ``create``, ``modify``, ``no-change``, ``delete``, ``recreate`` and
+    ``review``; every kind is present, empty when unused, and IDs keep document order.
+    Raises ``WhatIfInputTypeError`` when the document or a present field has the wrong
+    type; a missing field or unsupported value propagates from the field helpers as
+    ``WhatIfInputError`` (a ``ValueError``).
     """
     groups: dict[str, list[str]] = {kind: [] for kind in _KINDS.values()}
     seen: set[str] = set()
@@ -169,39 +166,19 @@ def _read(text: str) -> dict[str, list[str]]:
     )
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    CLASSIFICATION = "what-if classification regressed"
-    INVALID_RESULT_ACCEPTED = "unsupported what-if result was accepted"
-    INVALID_JSON_ACCEPTED = "malformed JSON was accepted"
-    EMPTY_PREVIEW = "explicit empty preview must have zero changes"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-        """
-        super().__init__(issue.value)
-
-
-def _expect_rejected(
+def _accepts_any(
     values: tuple[object, ...],
     check: Callable[[object], object],
     errors: type[Exception] | tuple[type[Exception], ...],
-    issue: SelfTestIssue,
-) -> None:
+) -> bool:
+    """Return whether ``check`` completes for any value without raising ``errors``."""
     for value in values:
         try:
             check(value)
         except errors:
             continue
-        raise SelfTestError(issue)
+        return True
+    return False
 
 
 def _read_object(value: object) -> object:
@@ -210,18 +187,19 @@ def _read_object(value: object) -> object:
     return _read(value)
 
 
-def self_test() -> None:
-    """Exercise supported, risky, malformed and incomplete preview inputs.
+def _classifies(action: str, kind: str) -> bool:
+    """Return whether a one-change preview of ``action`` is grouped under ``kind``."""
+    groups = analyze_whatif(
+        {"changes": [{"resourceId": "/example", "changeType": action}]}
+    )
+    return groups[kind] == ["/example"]
 
-    Raises:
-        SelfTestError: A preview is misclassified or wrongly accepted.
-    """
-    for action, kind in _KINDS.items():
-        groups = analyze_whatif(
-            {"changes": [{"resourceId": "/example", "changeType": action}]}
-        )
-        if groups[kind] != ["/example"]:
-            raise SelfTestError(SelfTestIssue.CLASSIFICATION)
+
+def self_test() -> list[str]:
+    """Exercise supported, risky, malformed and incomplete preview inputs."""
+    failures: list[str] = []
+    if not all(_classifies(action, kind) for action, kind in _KINDS.items()):
+        failures.append("what-if classification regressed")
     invalid: tuple[object, ...] = (
         {},
         {"status": "Failed", "changes": []},
@@ -230,23 +208,17 @@ def self_test() -> None:
         {"changes": [{"resourceId": "/example", "changeType": "Unknown"}]},
         {"changes": [], "properties": {"changes": []}},
     )
-    _expect_rejected(
-        invalid, analyze_whatif, ValueError, SelfTestIssue.INVALID_RESULT_ACCEPTED
-    )
-    _expect_rejected(
-        ([], {"changes": None}),
-        analyze_whatif,
-        WhatIfInputTypeError,
-        SelfTestIssue.INVALID_RESULT_ACCEPTED,
-    )
-    _expect_rejected(
-        ("{", '{"changes":[],"changes":[]}', "NaN"),
-        _read_object,
-        ValueError,
-        SelfTestIssue.INVALID_JSON_ACCEPTED,
-    )
+    wrong_types = ([], {"changes": None})
+    if _accepts_any(invalid, analyze_whatif, ValueError) or _accepts_any(
+        wrong_types, analyze_whatif, WhatIfInputTypeError
+    ):
+        failures.append("unsupported what-if result was accepted")
+    malformed = ("{", '{"changes":[],"changes":[]}', "NaN")
+    if _accepts_any(malformed, _read_object, ValueError):
+        failures.append("malformed JSON was accepted")
     if any(analyze_whatif({"properties": {"changes": []}}).values()):
-        raise SelfTestError(SelfTestIssue.EMPTY_PREVIEW)
+        failures.append("explicit empty preview must have zero changes")
+    return failures
 
 
 def main() -> int:
@@ -256,9 +228,11 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
-        sys.stdout.write("Azure what-if reviewer self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Azure what-if reviewer self-test {verdict}.\n")
+        return int(bool(failures))
     if args.file is None:
         parser.error("--file is required unless --self-test is selected")
     try:

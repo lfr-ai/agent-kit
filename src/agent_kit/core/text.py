@@ -11,20 +11,15 @@ _MARKDOWN_LINK = re.compile(
     r"!?\[[^\]]*\]\(\s*(?:<(?P<angled>[^>]+)>|(?P<bare>[^\s)]+))"
 )
 _MARKDOWN_FENCE = re.compile(r" {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)")
+_BACKTICK = "`"
 
 
 def visible_text(value: str) -> bool:
-    """Reject control and format characters other than tab, newline and return.
+    """Return whether ``value`` is free of hidden control and format characters.
 
-    ASCII is checked with one compiled pattern; only the non-ASCII remainder is
-    classified character by character, because format characters (``Cf``) are
-    never ASCII.
-
-    Args:
-        value (str): Decoded text to inspect.
-
-    Returns:
-        bool: Whether the text contains no hidden control or format characters.
+    Tab, newline and carriage return are allowed. ASCII is checked with one
+    compiled pattern; only the non-ASCII remainder is classified character by
+    character, because format characters (``Cf``) are never ASCII.
     """
     if _ASCII_CONTROL.search(value):
         return False
@@ -39,16 +34,11 @@ def visible_text(value: str) -> bool:
 def markdown_link_targets(text: str) -> Iterator[str]:
     """Yield inline-style Markdown link/image targets outside fenced code.
 
-    This is a bounded inline-link scanner, not a complete Markdown parser.
-    It recognizes backtick/tilde fences indented by up to three spaces and
-    ignores an unclosed fence through the end of the document.
-
-    Args:
-        text (str): Markdown source to inspect.
-
-    Yields:
-        str: Targets in source order, preserving duplicates and URL escapes but
-        removing angle brackets. Yields nothing when no supported links occur.
+    Targets come in source order, preserving duplicates and URL escapes but
+    removing angle brackets; nothing is yielded without a supported link. This is
+    a bounded inline-link scanner, not a complete Markdown parser. It recognizes
+    backtick/tilde fences indented by up to three spaces and ignores an unclosed
+    fence through the end of the document.
     """
     for match in _MARKDOWN_LINK.finditer("".join(_prose_lines(text))):
         target = match.group("angled") or match.group("bare")
@@ -57,6 +47,7 @@ def markdown_link_targets(text: str) -> Iterator[str]:
 
 
 def _prose_lines(text: str) -> Iterator[str]:
+    """Mask fenced code with newlines while preserving unfenced source."""
     fence: str | None = None
     for line in text.splitlines(keepends=True):
         if fence is not None:
@@ -71,20 +62,21 @@ def _prose_lines(text: str) -> Iterator[str]:
 
 
 def _opens_fence(line: str) -> str | None:
+    """Return the opening fence marker; backtick fences reject backtick info."""
     match = _MARKDOWN_FENCE.fullmatch(line.rstrip("\r\n"))
     if match is None:
         return None
     marker = match.group("marker")
-    if marker[0] == "`" and "`" in match.group("info"):
+    if marker.startswith(_BACKTICK) and _BACKTICK in match.group("info"):
         return None
     return marker
 
 
 def _closes_fence(line: str, fence: str) -> bool:
+    """Report whether a line closes the fence, per CommonMark closing rules."""
     match = _MARKDOWN_FENCE.fullmatch(line.rstrip("\r\n"))
-    return (
-        match is not None
-        and match.group("marker")[0] == fence[0]
-        and len(match.group("marker")) >= len(fence)
-        and not match.group("info").strip()
-    )
+    if match is None:
+        return False
+    # A closing run uses the opening character and is at least as long.
+    closes = match.group("marker").startswith(fence)
+    return closes and not match.group("info").strip()

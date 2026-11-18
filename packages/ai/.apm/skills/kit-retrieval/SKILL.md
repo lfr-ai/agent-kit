@@ -1,6 +1,6 @@
 ---
 name: kit-retrieval
-description: Use when designing retrieval pipelines that preserve source provenance, access controls, and useful failure behavior.
+description: Use when designing retrieval with provenance, access controls and failure handling.
 license: MIT
 ---
 
@@ -28,6 +28,9 @@ license: MIT
    only when measured ([retrieval-strategies.md](references/retrieval-strategies.md),
    [rrf_fusion.py.template](assets/rrf_fusion.py.template),
    [retriever_adapters.py.template](assets/retriever_adapters.py.template)).
+   On Azure, try AI Search hybrid query (built-in RRF), semantic ranker and
+   agentic retrieval before a hand-rolled fusion or corrective loop
+   (`kit-infra-review` reference `azure-native-services.md`).
 6. Apply tenant, access-list, and metadata filters inside the store before
    ranking, reranking, grading, or prompt assembly; re-check after fusion
    ([access-control-and-deletion.md](references/access-control-and-deletion.md)).

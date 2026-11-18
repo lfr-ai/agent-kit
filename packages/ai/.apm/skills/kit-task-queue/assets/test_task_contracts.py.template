@@ -25,6 +25,28 @@ def test_envelope_round_trips_through_json() -> None:
     assert parse_envelope(envelope.to_json()) == envelope
 
 
+def test_envelope_without_correlation_id_omits_it_and_round_trips() -> None:
+    envelope = new_envelope(task_type="t", version=1, idempotency_key="k", payload={})
+
+    assert envelope.correlation_id is None
+    assert b"correlation_id" not in envelope.to_json()
+    assert parse_envelope(envelope.to_json()) == envelope
+
+
+@pytest.mark.parametrize(
+    "correlation", ["", ',"correlation_id":null', ',"correlation_id":""']
+)
+def test_missing_null_or_legacy_empty_correlation_id_decodes_to_none(
+    correlation: str,
+) -> None:
+    raw = (
+        '{"task_id":"1","task_type":"t","version":1,"idempotency_key":"k",'
+        f'"payload":{{}},"created_at":"2026-01-01T00:00:00+00:00"{correlation}}}'
+    ).encode()
+
+    assert parse_envelope(raw).correlation_id is None
+
+
 def test_task_ids_are_unique_but_keys_are_business_derived() -> None:
     first = new_envelope(task_type="t", version=1, idempotency_key="k", payload={})
     second = new_envelope(task_type="t", version=1, idempotency_key="k", payload={})

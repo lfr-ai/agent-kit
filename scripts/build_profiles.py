@@ -1,4 +1,4 @@
-"""Verify or refresh catalog-generated APM profile manifests."""
+"""Verify or refresh ledger-owned APM profiles and native role packages."""
 
 from __future__ import annotations
 
@@ -6,27 +6,38 @@ import argparse
 from enum import StrEnum, unique
 import hashlib
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 import re
 import sys
-from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.application.catalog import CatalogService
+from agent_kit.application.native_delivery import render_native_agents
 from agent_kit.core.errors import InputTypeError
-from agent_kit.core.guards import JsonObject, is_json_object
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.core.guards import JSONObject, is_json_object
+from agent_kit.core.models import BundleKind
+from agent_kit.core.primitives import JSON_INDENT, NativeRuntime
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from agent_kit.infrastructure.owned_output import (
+    OwnedPathError,
+    OwnedPathIssue,
+    ledger_entries,
+    ledger_hashes,
+    owned_path,
+    publish_owned,
+)
 
 if TYPE_CHECKING:
     from agent_kit.core.models import BundleSource
 
+PACKAGE_SOURCE: Final[str] = "lfr-ai/agent-kit"
+PACKAGE_GIT: Final[str] = f"https://github.com/{PACKAGE_SOURCE}.git"
+LICENSE: Final[str] = "MIT"  # SPDX expression of every generated or released package
 _ROOT = Path(__file__).resolve().parents[1]
 _LOCK_PATH = ".agents/agentic-setup/profile-lock.json"
 _PROFILE_ROOT = "profiles"
-_PACKAGE_SOURCE_ROOT = "lfr-ai/agent-kit"
-_SCHEMA_VERSION = 1
-_JSON_INDENT = 2
-_RUNTIMES = ("copilot", "claude")
+_RUNTIMES = tuple(NativeRuntime)
+_NATIVE_ROOT = f"{_PROFILE_ROOT}/native"
 _VERSION_PREFIX = "v"
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -66,12 +77,15 @@ class ProfileBuildError(ValueError):
         super().__init__(message)
 
 
-def _resolve_root(root: Path) -> Path:
-    """Resolve a checkout root only after rejecting linked path components.
+_PATH_ISSUES = {
+    OwnedPathIssue.UNSAFE: _ProfileIssue.UNSAFE_PATH,
+    OwnedPathIssue.LINKED: _ProfileIssue.LINKED_PATH,
+    OwnedPathIssue.ESCAPING: _ProfileIssue.ESCAPING_PATH,
+}
 
-    Raises:
-        ProfileBuildError: The root or an ancestor is a link or junction.
-    """
+
+def _resolve_root(root: Path) -> Path:
+    """Resolve ``root``; a linked root or ancestor raises ``ProfileBuildError``."""
     absolute = root.absolute()
     for path in (absolute, *absolute.parents):
         if path.is_symlink() or path.is_junction():
@@ -80,40 +94,18 @@ def _resolve_root(root: Path) -> Path:
 
 
 def _owned_path(root: Path, relative: str) -> Path:
-    """Resolve a generated path without crossing links or leaving the checkout.
-
-    Raises:
-        ProfileBuildError: The generated path is linked, unsafe, or escapes ``root``.
-    """
-    parts = PurePosixPath(relative)
-    if (
-        root.is_symlink()
-        or root.is_junction()
-        or parts.is_absolute()
-        or PureWindowsPath(relative).drive
-        or "\\" in relative
-        or ".." in parts.parts
-    ):
-        raise ProfileBuildError(_ProfileIssue.UNSAFE_PATH, path=relative)
-    current = root
-    for part in parts.parts:
-        current = current / part
-        if current.is_symlink() or current.is_junction():
-            raise ProfileBuildError(_ProfileIssue.LINKED_PATH, path=relative)
-    if not current.resolve(strict=False).is_relative_to(root.resolve()):
-        raise ProfileBuildError(_ProfileIssue.ESCAPING_PATH, path=relative)
-    return current
+    """Resolve a generated path beneath ``root``; violations raise ``ProfileBuildError``."""
+    try:
+        return owned_path(root, relative)
+    except OwnedPathError as error:
+        raise ProfileBuildError(_PATH_ISSUES[error.issue], path=relative) from error
 
 
 def _planned_profiles(root: Path) -> dict[str, bytes]:
-    """Create one small meta-package manifest for each portable catalog profile.
+    """Plan one small meta-package manifest for each portable catalog profile.
 
-    Returns:
-        dict[str, bytes]: Sorted output paths mapped to UTF-8 manifest bytes;
-            an empty plan is rejected.
-
-    Raises:
-        ProfileBuildError: The catalog is invalid or has no portable profiles.
+    Sorted output paths map to UTF-8 file bytes. An invalid catalog or one without
+    portable profiles raises ``ProfileBuildError``.
     """
     snapshot = FileCatalogAdapter().load(root)
     service = CatalogService()
@@ -137,12 +129,49 @@ def _planned_profiles(root: Path) -> dict[str, bytes]:
         )
     if not planned:
         raise ProfileBuildError(_ProfileIssue.NO_PORTABLE_PROFILES)
+    planned.update(_native_packages(snapshot.bundles, version=report.version))
     return dict(sorted(planned.items()))
 
 
-def _is_portable(bundle_names: tuple[str, ...], kinds: dict[str, str]) -> bool:
+def _native_packages(
+    bundles: tuple[BundleSource, ...], *, version: str
+) -> dict[str, bytes]:
+    """Package the shared renderer's bytes without translating native metadata."""
+    assets = {
+        f"{bundle.path}/.apm/{document.relative_path}": document.content
+        for bundle in bundles
+        for document in bundle.files
+        if not document.is_directory
+    }
+    files: dict[str, bytes] = {}
+    for runtime in _RUNTIMES:
+        package = f"{_NATIVE_ROOT}/{runtime}"
+        manifest: JSONObject = {
+            "name": f"agent-kit-native-{runtime}",
+            "version": version,
+            "license": LICENSE,
+            "description": f"Agent Kit native {runtime} roles.",
+            "targets": [runtime],
+            "includes": [".apm/agents/"],
+            "dependencies": {},
+            "executables": {},
+        }
+        files[f"{package}/apm.yml"] = _manifest_bytes(manifest)
+        for path, content in render_native_agents(assets, (runtime,)).items():
+            files[f"{package}/.apm/agents/{PurePosixPath(path).name}"] = content
+    return files
+
+
+def _manifest_bytes(manifest: JSONObject) -> bytes:
+    """Encode deterministic JSON, an APM-compatible YAML subset."""
+    return (json.dumps(manifest, indent=JSON_INDENT, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+
+
+def _is_portable(bundle_names: tuple[str, ...], kinds: dict[str, str | None]) -> bool:
     """Require every catalog bundle in a profile closure to be portable."""
-    return all(kinds[name] == "portable" for name in bundle_names)
+    return all(kinds[name] == BundleKind.PORTABLE for name in bundle_names)
 
 
 def _profile_file(
@@ -153,21 +182,30 @@ def _profile_file(
 ) -> dict[str, bytes]:
     """Build a compact profile manifest from its catalog bundle closure.
 
+    Invalid or conflicting MCP data in a selected bundle raises
+    ``ProfileBuildError``.
+
     Returns:
         dict[str, bytes]: One profile-relative output path mapped to its UTF-8
             manifest bytes.
-
-    Raises:
-        ProfileBuildError: A selected bundle has invalid or conflicting MCP data.
     """
-    references = [
-        f"{_PACKAGE_SOURCE_ROOT}/{bundles[name].path}#{_VERSION_PREFIX}{version}"
+    references: list[object] = [
+        f"{PACKAGE_SOURCE}/{bundles[name].path}#{_VERSION_PREFIX}{version}"
         for name in bundle_names
     ]
+    references.extend(
+        {
+            "git": PACKAGE_GIT,
+            "path": f"{_NATIVE_ROOT}/{runtime}",
+            "ref": f"{_VERSION_PREFIX}{version}",
+            "targets": [runtime],
+        }
+        for runtime in _RUNTIMES
+    )
     manifest = {
         "name": f"agent-kit-profile-{profile}",
         "version": version,
-        "license": "MIT",
+        "license": LICENSE,
         "description": f"Agent Kit {profile} profile.",
         "targets": list(_RUNTIMES),
         "includes": [],
@@ -177,23 +215,25 @@ def _profile_file(
         },
         "executables": {},
     }
-    content = (json.dumps(manifest, indent=_JSON_INDENT, sort_keys=True) + "\n").encode(
-        "utf-8"
+    relative = (
+        f"{_PROFILE_ROOT}/starters/{profile.removeprefix('starter-')}"
+        if profile.startswith("starter-")
+        else f"{_PROFILE_ROOT}/{profile}"
     )
-    return {f"{_PROFILE_ROOT}/{profile}/apm.yml": content}
+    return {f"{relative}/apm.yml": _manifest_bytes(manifest)}
 
 
 def _profile_mcp(
     profile: str,
     bundle_names: tuple[str, ...],
     bundles: dict[str, BundleSource],
-) -> list[JsonObject]:
+) -> list[JSONObject]:
     """Merge each selected bundle's validated, direct MCP declarations.
 
     Raises:
         ProfileBuildError: A bundle has invalid MCP data or conflicting declarations.
     """
-    servers: dict[str, JsonObject] = {}
+    servers: dict[str, JSONObject] = {}
     for name in bundle_names:
         bundle = bundles[name]
         for server in _bundle_mcp(bundle):
@@ -210,11 +250,10 @@ def _profile_mcp(
     return list(servers.values())
 
 
-def _bundle_mcp(bundle: BundleSource) -> list[JsonObject]:
+def _bundle_mcp(bundle: BundleSource) -> list[JSONObject]:
     """Extract direct MCP declarations from one source package manifest.
 
-    Raises:
-        ProfileBuildError: The bundle manifest does not contain validated MCP data.
+    A manifest without validated MCP data raises ``ProfileBuildError``.
     """
     if not is_json_object(bundle.manifest):
         raise ProfileBuildError(_ProfileIssue.INVALID_SOURCE, path=bundle.path)
@@ -224,7 +263,7 @@ def _bundle_mcp(bundle: BundleSource) -> list[JsonObject]:
     mcp = dependencies.get("mcp", [])
     if not isinstance(mcp, list):
         raise ProfileBuildError(_ProfileIssue.INVALID_SOURCE, path=bundle.path)
-    servers: list[JsonObject] = []
+    servers: list[JSONObject] = []
     for server in mcp:
         if not is_json_object(server) or not isinstance(server.get("name"), str):
             raise ProfileBuildError(_ProfileIssue.INVALID_SOURCE, path=bundle.path)
@@ -235,8 +274,8 @@ def _bundle_mcp(bundle: BundleSource) -> list[JsonObject]:
 def _files_under_profiles(root: Path) -> set[str]:
     """Inventory generated profile files without following links.
 
-    Raises:
-        ProfileBuildError: The package tree contains a linked or unsupported path.
+    The set is empty when the profile root is absent; an entry that is neither a
+    directory nor a regular file raises ``ProfileBuildError``.
     """
     base = _owned_path(root, _PROFILE_ROOT)
     if not base.exists():
@@ -258,119 +297,62 @@ def _files_under_profiles(root: Path) -> set[str]:
 
 
 def _load_ledger(root: Path) -> dict[str, str]:
-    """Load the generated-file ledger and reject malformed or unowned entries.
+    """Return the ledger's owned output paths mapped to SHA-256 digests.
 
-    Returns:
-        dict[str, str]: Owned output paths mapped to SHA-256 digests, or an empty
-            mapping when the ledger does not exist.
-
-    Raises:
-        ProfileBuildError: The ledger cannot be read or contains invalid entries.
+    A missing ledger gives an empty mapping; an unreadable or malformed ledger,
+    or an unowned entry, raises ``ProfileBuildError``.
     """
     path = _owned_path(root, _LOCK_PATH)
     if not path.exists():
         return {}
     try:
-        ledger = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ProfileBuildError(_ProfileIssue.UNREADABLE_LEDGER) from error
-    if (
-        not isinstance(ledger, dict)
-        or set(ledger) != {"schema_version", "files"}
-        or ledger.get("schema_version") != _SCHEMA_VERSION
-        or not isinstance(ledger.get("files"), dict)
-    ):
+    files = ledger_entries(document)
+    if files is None:
         raise ProfileBuildError(_ProfileIssue.INVALID_LEDGER)
-    files = ledger["files"]
-    if not all(
-        isinstance(name, str)
-        and name.startswith(f"{_PROFILE_ROOT}/")
+    hashes = {
+        name: digest
+        for name, digest in files.items()
+        if name.startswith(f"{_PROFILE_ROOT}/")
         and isinstance(digest, str)
         and _DIGEST.fullmatch(digest) is not None
-        for name, digest in files.items()
-    ):
+    }
+    if len(hashes) != len(files):
         raise ProfileBuildError(_ProfileIssue.INVALID_LEDGER_ENTRY)
-    return files
+    return hashes
 
 
-def _check_previous(root: Path, previous: dict[str, str]) -> None:
+def _check_previous(
+    root: Path, previous: dict[str, str], planned: dict[str, bytes]
+) -> None:
     for name, digest in previous.items():
         path = _owned_path(root, name)
-        if path.exists() and (
-            not path.is_file()
-            or hashlib.sha256(path.read_bytes()).hexdigest() != digest
+        if not path.exists():
+            continue
+        if not path.is_file():
+            raise ProfileBuildError(_ProfileIssue.EDITED_OUTPUT, path=name)
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != digest and content != planned.get(
+            name
         ):
+            # A failed prior publication may leave canonical bytes before the ledger.
             raise ProfileBuildError(_ProfileIssue.EDITED_OUTPUT, path=name)
 
 
-def _ledger_bytes(planned: dict[str, bytes]) -> bytes:
-    hashes = {
-        name: hashlib.sha256(content).hexdigest()
-        for name, content in sorted(planned.items())
-    }
-    return (
-        json.dumps(
-            {"schema_version": _SCHEMA_VERSION, "files": hashes},
-            indent=_JSON_INDENT,
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def _replace(path: Path, content: bytes) -> None:
-    """Atomically replace one generated file after its parents are validated."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with NamedTemporaryFile(
-            dir=path.parent, prefix=".profile-", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(content)
-        temporary.replace(path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-
-
-def _restore(root: Path, before: dict[str, bytes | None]) -> None:
-    for name, content in before.items():
-        path = _owned_path(root, name)
-        if content is None:
-            path.unlink(missing_ok=True)
-        else:
-            _replace(path, content)
-
-
-def _apply(
-    root: Path,
-    planned: dict[str, bytes],
-    removed: set[str],
-    before: dict[str, bytes | None],
-) -> None:
-    complete = False
-    try:
-        for name, content in planned.items():
-            _replace(_owned_path(root, name), content)
-        for name in removed:
-            _owned_path(root, name).unlink(missing_ok=True)
-        complete = True
-    finally:
-        if not complete:
-            _restore(root, before)
-
-
 def write(root: Path) -> None:
-    """Refresh only profile outputs still matching their prior ownership hashes.
+    """Refresh profiles and native packages only after auditing prior ownership.
 
-    Raises:
-        ProfileBuildError: An output is unowned, linked, or independently edited.
+    Unowned generated output raises ``ProfileBuildError``; a failed publication
+    rolls back the files already written.
     """
     root = _resolve_root(root)
-    output = _planned_profiles(root)
     previous = _load_ledger(root)
-    _check_previous(root, previous)
+    # Audit generated links first; the source scan would report them as invalid.
     actual = _files_under_profiles(root)
+    output = _planned_profiles(root)
+    _check_previous(root, previous, output)
     unowned = actual - previous.keys()
     if unowned:
         raise ProfileBuildError(
@@ -381,39 +363,23 @@ def write(root: Path) -> None:
         path = _owned_path(root, name)
         if path.exists() and name not in previous:
             raise ProfileBuildError(_ProfileIssue.EXISTING_UNOWNED_OUTPUT, path=name)
-    planned = {
-        **output,
-        _LOCK_PATH: _ledger_bytes(output),
-    }
-    touched = set(planned) | previous.keys()
-    before = {
-        name: _owned_path(root, name).read_bytes()
-        if _owned_path(root, name).is_file()
-        else None
-        for name in touched
-    }
-    changed = {
-        name: content for name, content in planned.items() if before[name] != content
-    }
-    removed = previous.keys() - output.keys()
-    _apply(
-        root,
-        changed,
-        removed,
-        {name: before[name] for name in changed.keys() | removed},
+    publish_owned(
+        output,
+        previous,
+        ledger=_LOCK_PATH,
+        resolve=lambda name: _owned_path(root, name),
     )
 
 
 def check(root: Path) -> list[str]:
     """Report profile manifest, ownership-ledger, and catalog drift."""
     root = _resolve_root(root)
+    actual = _files_under_profiles(root)
     output = _planned_profiles(root)
     previous = _load_ledger(root)
-    expected_hashes = json.loads(_ledger_bytes(output))["files"]
     failures: list[str] = []
-    if previous != expected_hashes:
+    if previous != ledger_hashes(output):
         failures.append("profile ownership ledger differs from catalog output")
-    actual = _files_under_profiles(root)
     failures.extend(
         f"missing profile output: {name}" for name in sorted(output.keys() - actual)
     )

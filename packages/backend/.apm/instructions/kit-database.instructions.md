@@ -3,9 +3,6 @@ description: Apply to persistence adapters, SQL, schemas, and database migration
 applyTo: "**/*repository*.py,**/*model*.py,**/alembic/**,**/migrations/**,**/*.sql"
 ---
 
-- Keep database sessions and ORM types at persistence boundaries, not in domain policy; return domain objects or DTOs.
-- Bind values as parameters; never interpolate untrusted values into SQL, and allow-list dynamic table or column names.
-- Make transaction ownership explicit: one unit of work per use case, committed or rolled back by its owner, not inside a repository helper.
 - Avoid N+1 access: load related rows deliberately with joins or batched queries, and select only the needed columns.
 - Paginate list queries with a stable order; prefer keyset pagination for large or changing tables.
 - Back every uniqueness and referential rule with a database constraint, not only application checks.

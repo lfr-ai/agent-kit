@@ -8,7 +8,7 @@ pytest plugin that ships with ``anyio``.
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Final
 
 import httpx
 import pytest
@@ -26,12 +26,12 @@ from shop.api.rate_limit import (
     RatePolicy,
     SubjectRateLimit,
 )
-from shop.api.settings import HttpSettings
+from shop.api.settings import HTTPSettings
 from shop.application.ports import Item
 from shop.core.exceptions import NotFoundError
 
-PROBLEM = "application/problem+json"
-ITEM = Item(item_id="sku-1", name="Lamp", price_cents=1999)
+PROBLEM: Final[str] = "application/problem+json"
+ITEM: Final[Item] = Item(item_id="sku-1", name="Lamp", price_cents=1999)
 
 
 class FakeCatalog:
@@ -65,7 +65,7 @@ def build(
     store: RateLimitStore | None = None,
     **overrides: object,
 ) -> FastAPI:
-    settings = HttpSettings.model_validate(
+    settings = HTTPSettings.model_validate(
         {
             "trusted_hosts": ["testserver"],
             "docs_enabled": True,

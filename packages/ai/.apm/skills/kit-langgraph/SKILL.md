@@ -1,6 +1,6 @@
 ---
 name: kit-langgraph
-description: Use when designing or reviewing bounded LangGraph workflows with explicit state, control flow, and recovery.
+description: Use when designing bounded LangGraph state, control flow and recovery.
 license: MIT
 ---
 

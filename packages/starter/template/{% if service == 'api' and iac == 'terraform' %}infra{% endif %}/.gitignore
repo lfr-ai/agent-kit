@@ -1,0 +1,7 @@
+.terraform/
+*.tfstate*
+tfplan
+*.tfplan
+crash.log
+crash.*.log
+# Commit .terraform.lock.hcl after the approved provider bootstrap.

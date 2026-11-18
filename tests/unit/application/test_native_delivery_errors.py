@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import json
+from typing import Final
 
 import pytest
 
-from agent_kit.application.services.native_delivery import (
-    InvalidNativeJsonError,
-    _checked_runtimes,
-    _model_settings,
-    _object_pairs,
+from agent_kit.application.native_delivery import (
+    InvalidNativeJSONError,
     render_native_agents,
 )
-from agent_kit.core.errors import DuplicateJsonFieldError
+from agent_kit.application.native_delivery.validation import (
+    checked_runtimes,
+    model_settings,
+)
+from agent_kit.core.errors import DuplicateJSONFieldError
+from agent_kit.core.primitives import NativeRuntime
 
-ASSET_PATH = ".apm/skills/kit-runtime/assets/agents.json"
+ASSET_PATH: Final[str] = ".apm/skills/kit-runtime/assets/agents.json"
 
 
 @pytest.mark.parametrize(
@@ -23,13 +26,13 @@ ASSET_PATH = ".apm/skills/kit-runtime/assets/agents.json"
     [
         (b"\xff", UnicodeDecodeError),
         (b"{", json.JSONDecodeError),
-        (b'{"roles":[],"roles":[]}', DuplicateJsonFieldError),
+        (b'{"roles":[],"roles":[]}', DuplicateJSONFieldError),
     ],
 )
 def test_invalid_native_json_retains_its_original_cause(
     content: bytes, cause_type: type[Exception]
 ) -> None:
-    with pytest.raises(InvalidNativeJsonError, match="invalid JSON") as raised:
+    with pytest.raises(InvalidNativeJSONError, match="invalid JSON") as raised:
         render_native_agents({ASSET_PATH: content}, ("copilot",))
 
     assert isinstance(raised.value.__cause__, cause_type)
@@ -181,39 +184,41 @@ def test_worker_list_and_coordinator_constraints_are_enforced(
         render_native_agents({ASSET_PATH: _asset_bytes(full)}, ("copilot",))
 
 
-def test_object_pairs_rejects_duplicate_json_field() -> None:
-    """The JSON loader used by native assets must reject duplicate keys."""
-    with pytest.raises(ValueError, match="duplicate JSON field"):
-        # emulate object_pairs_hook behavior that raises on duplicate keys
-        _object_pairs([("schema_version", 1), ("schema_version", 1)])
-
-
 def test_checked_runtimes_rejects_invalid_and_empty() -> None:
     """Runtime selection must be non-empty and contain only supported runtimes."""
     with pytest.raises(ValueError, match="runtime targets must be non-empty"):
-        _checked_runtimes(())
+        checked_runtimes(())
     with pytest.raises(ValueError, match="runtime targets must be non-empty"):
-        _checked_runtimes(("other",))
+        checked_runtimes(("other",))
+    with pytest.raises(ValueError, match="runtime targets must be non-empty"):
+        checked_runtimes(("copilot", NativeRuntime.COPILOT))
+
+
+def test_checked_runtimes_parses_members_without_reordering() -> None:
+    targets = checked_runtimes(("claude", "copilot"))
+    assert targets[0] is NativeRuntime.CLAUDE
+    assert targets[1] is NativeRuntime.COPILOT
+    assert [target.value for target in NativeRuntime] == ["copilot", "claude"]
 
 
 def test_model_settings_rejects_unknown_and_invalid_models() -> None:
     """Model settings must be a mapping with explicit provider declarations and valid values."""
     with pytest.raises(TypeError, match="models must be an object"):
-        _model_settings([], "loc")
+        model_settings([], "loc")
     with pytest.raises(ValueError, match="has unknown provider"):
-        _model_settings({"unknown": {}}, "loc")
+        model_settings({"unknown": {}}, "loc")
     with pytest.raises(ValueError, match="must not be empty"):
-        _model_settings({}, "loc")
+        model_settings({}, "loc")
     with pytest.raises(ValueError, match=r"models\.copilot must be a non-empty list"):
-        _model_settings({"copilot": []}, "loc")
+        model_settings({"copilot": []}, "loc")
     with pytest.raises(TypeError, match=r"copilot.*must be strings"):
-        _model_settings({"copilot": [1]}, "loc")
+        model_settings({"copilot": [1]}, "loc")
     with pytest.raises(ValueError, match="contains duplicate models"):
-        _model_settings({"copilot": ["GPT-5 mini", "GPT-5 mini"]}, "loc")
+        model_settings({"copilot": ["GPT-5 mini", "GPT-5 mini"]}, "loc")
     with pytest.raises(ValueError, match="unsupported Copilot model"):
-        _model_settings({"copilot": ["Unknown Model"]}, "loc")
+        model_settings({"copilot": ["Unknown Model"]}, "loc")
     with pytest.raises(ValueError, match="unsupported Claude model"):
-        _model_settings({"claude": "bad"}, "loc")
+        model_settings({"claude": "bad"}, "loc")
 
 
 @pytest.mark.parametrize(

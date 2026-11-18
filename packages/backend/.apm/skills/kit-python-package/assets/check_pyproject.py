@@ -16,7 +16,6 @@ Run ``--self-test`` for built-in regressions.
 
 import argparse
 from collections.abc import Iterable
-from enum import StrEnum
 from pathlib import Path
 import re
 import sys
@@ -429,14 +428,7 @@ def _check_entry_points(
 
 
 def _entry_point_groups(project: dict[str, object]) -> dict[str, object]:
-    """Collect script and plugin entry-point tables by group label.
-
-    Args:
-        project (dict[str, object]): The ``[project]`` table.
-
-    Returns:
-        Group labels mapped to their raw tables.
-    """
+    """Return the ``[project]`` script and plugin entry-point tables by group label."""
     groups: dict[str, object] = {
         "scripts": project.get("scripts", {}),
         "gui-scripts": project.get("gui-scripts", {}),
@@ -510,41 +502,8 @@ def check_pyproject(
     return [f"{path}:{line}: {message}" for line, message in sorted(issues)]
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    VALID_METADATA_REJECTED = "valid metadata must pass"
-    DYNAMIC_VERSION_REJECTED = "dynamic version must pass"
-    MISSED_METADATA_ISSUE = "missed '{fragment}': {found}"
-    LEGACY_LICENSE_REJECTED = "legacy license must pass when explicitly allowed"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        fragment: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            fragment (str | None): Observed fragment for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(fragment=fragment, found=found))
-
-
-def self_test() -> None:
-    """Exercise valid, legacy, dynamic, dependency, and entry-point cases.
-
-    Raises:
-        SelfTestError: A regression was detected.
-    """
+def self_test() -> list[str]:
+    """Return regressions for valid, legacy, dynamic, dependency and entry points."""
     root = Path(__file__).parent
     valid = (
         '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n\n'
@@ -553,11 +512,12 @@ def self_test() -> None:
         '[project.scripts]\norder-tools = "order_tools.cli:main"\n\n'
         '[dependency-groups]\ndev = ["pytest", "ruff"]\n'
     )
+    failures: list[str] = []
     if check_pyproject(valid, "pyproject.toml", root=root):
-        raise SelfTestError(SelfTestIssue.VALID_METADATA_REJECTED)
+        failures.append("valid metadata must pass")
     dynamic = valid.replace('version = "1.2.0"', 'dynamic = ["version"]')
     if check_pyproject(dynamic, "pyproject.toml", root=root):
-        raise SelfTestError(SelfTestIssue.DYNAMIC_VERSION_REJECTED)
+        failures.append("dynamic version must pass")
     broken = {
         valid.replace("[build-system]", "[tool.other]"): "build-system",
         valid.replace('"1.2.0"', '"one"'): "PEP 440",
@@ -584,12 +544,11 @@ def self_test() -> None:
     for text, fragment in broken.items():
         found = check_pyproject(text, "pyproject.toml", root=root)
         if not any(fragment in item for item in found):
-            raise SelfTestError(
-                SelfTestIssue.MISSED_METADATA_ISSUE, fragment=fragment, found=found
-            )
+            failures.append(f"missed '{fragment}': {found}")
     legacy = valid.replace('license = "MIT"', 'license = {text = "MIT"}')
     if check_pyproject(legacy, "pyproject.toml", root=root, allow_legacy_license=True):
-        raise SelfTestError(SelfTestIssue.LEGACY_LICENSE_REJECTED)
+        failures.append("legacy license must pass when explicitly allowed")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -610,9 +569,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_pyproject self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_pyproject self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     findings: list[str] = []

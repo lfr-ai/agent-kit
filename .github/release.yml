@@ -1,3 +1,5 @@
+# Generated release notes. Each pull request lands in the first matching category, so
+# Dependencies precedes the categories that Dependabot's secondary labels would match.
 changelog:
   exclude:
     labels:
@@ -5,6 +7,8 @@ changelog:
   categories:
     - title: Breaking changes
       labels: [breaking]
+    - title: Dependencies
+      labels: [dependencies]
     - title: Capabilities
       labels: [skill, instruction, agent, enhancement]
     - title: Verification and delivery

@@ -1,6 +1,6 @@
 ---
 name: kit-secure-code
-description: Use when code handles untrusted input, files, subprocesses, outbound requests, deserialization, secrets or crypto.
+description: Use when handling untrusted input, files, subprocesses, requests, deserialization, secrets or crypto.
 license: MIT
 ---
 

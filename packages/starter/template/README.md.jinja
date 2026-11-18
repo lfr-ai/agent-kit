@@ -1,0 +1,284 @@
+# {{ project_name }}
+
+This is the APM onboarding foundation for a {{ kind }} project. The `ai` and
+`identity` answers select guidance, not executable services. Nothing is installed
+or provisioned by Copier. Prerequisites: Python 3.13+, uv 0.12/0.13, Git and Task.
+
+1. Review `apm.yml` and `apm-policy.yml`. The selected profile must exist in the
+   reviewed toolkit release; unpublished coordinates cannot be installed.
+2. Run `task setup` when you want agent capabilities. It installs the pinned APM
+   CLI and profile, compiles {{ agent_provider | join(' and ') }}, and audits them.
+3. Review installed files and commit `uv.lock`, `apm.lock.yaml` and the Copier
+   answers. Never edit generated capabilities or lockfile hashes by hand.
+4. Run `task verify` locally. CI runs `task ci` from committed locks.
+
+APM owns skill, instruction, agent and hook delivery. Both the orchestrator and
+debugger and their workers arrive through the profile's native agent packages.
+To update capabilities, select a reviewed profile release, run setup, and review
+the lock and installed-file differences. To roll back, restore the previous
+reviewed manifests and locks and reinstall frozen. Dependency bots are not
+assumed to update APM coordinates automatically.
+
+The APM manifest starts with a restrictive `LicenseRef-Proprietary` placeholder,
+not an open-source license grant. Choose your application's license explicitly,
+independently of whether it is hosted on GitHub or Azure DevOps.
+{%- if service == 'api' %}
+
+## Application service
+
+The FastAPI application serves `/health/live` and `/health/ready` through the
+runtime's public `create_app` factory. Interactive docs are off. There is no
+business logic, frontend, database schema, migration or seed data.
+`kind=fullstack` still generates only the API.
+
+The runtime Git dependency is pinned by `rev` to the explicitly reviewed
+`kit_commit`: `{{ kit_commit }}`. That commit must be published and contain the
+runtime before a fresh consumer can resolve it. A synthetic SHA used in offline
+tests is not a usable release. APM separately retains its reviewed profile tag.
+
+### Configuration
+
+`src/app/settings.py` alone reads environment values: process environment,
+then `.env`, then runtime defaults. Copy `.env.example` to the git-ignored `.env`.
+Stage-specific examples are `.env.dev.example`, `.env.test.example`,
+`.env.staging.example` and `.env.prod.example`; each sets `APP_ENVIRONMENT`
+explicitly. For example, `cp .env.dev.example .env` (PowerShell:
+`Copy-Item .env.dev.example .env`). Select one file, fill its required fields,
+and run `task start`; files are not automatically merged or selected by stage.
+Keep only secret-free examples in Git: `.env` and working `.env.*` files are ignored.
+Required feature configuration fails at startup without echoing credentials.
+Errors name declared fields and the configuration exception class, without
+retaining exception context. When a runtime factory does not identify a single
+field, the diagnostic names its relevant settings group for review.
+Compose 2.24+ loads this optional file; the Docker image never contains it.
+Keep secrets in local environment/secret stores, never Copier answers.
+Use `.env.example` for local Compose. The other examples keep remote database TLS
+enabled and leave endpoints/identities blank until configured. Compose remains
+local-only; staging/prod use deployment-injected settings, not the Compose
+overrides. Choosing `APP_ENVIRONMENT` labels the application; it does not provision
+infrastructure, configure identities, or select a cloud deployment.
+
+Dependencies and build metadata live in `pyproject.toml`; tool configuration
+stays in `ruff.toml` and `pytest.ini`. Optional runtime extras are `auth`, `ai`,
+`telemetry`, `database`, `retrieval`, `ocr` and `ratelimit`.
+The selected executable options already add their extras and wiring. For other
+features use `platform-kit-runtime[<extra>]` and explicitly compose their public
+APIs; installing an extra alone does not enable behavior. `APP_TRACING=true`
+needs the `telemetry` extra and configured `OTEL_*` variables to export spans.
+{%- if telemetry == 'application-insights' %}
+
+This project explicitly selected Application Insights. The Azure deployment
+supplies `APPLICATIONINSIGHTS_CONNECTION_STRING` and `AZURE_CLIENT_ID`;
+ingestion authenticates as that runtime managed identity through
+`ManagedIdentityCredential`. Only traces are exported: console collection owns
+logs, and no second FastAPI instrumentor or SDK log/metric exporter is enabled.
+Exported server spans keep the `http.route` template but drop the raw
+`url.path` and `url.query` attributes.
+Leave the connection string unset locally; Azure telemetry and credentials are
+loaded only for configured export. Verify actual spans and delivery separately.
+{%- else %}
+
+Application Insights is not selected. No Azure telemetry dependency or exporter
+is needed for local or non-Azure execution. Cloud console collection and
+platform alerts remain independent of tracing.
+{%- endif %}
+
+The application selects the runtime's opt-in stdlib JSON console logging (INFO
+for the application, runtime and Uvicorn; WARNING for other libraries)
+and request-context filtering. Access records contain only
+method, route template, status, duration and correlation IDs. A handled failure
+also logs one `runtime.problem` record with `problem_code`, `instance` and
+`failure_reason`, next to its access record, so count requests from
+`runtime.http_request`. Raw URLs,
+headers, bodies, arbitrary messages and exception text are not serialized.
+Errors retain logger/module/function/line, exception class and up to 16 traceback
+frame identifiers. Frames contain module/function/line only, never filenames,
+source code or locals. Configuration errors also carry field names and cause
+class in structured records; ordinary application/Uvicorn errors retain their
+code location instead of collapsing into an indistinguishable message.
+Health access events remain DEBUG. Uvicorn's raw access logging is disabled.
+
+### Run locally
+
+For the default API, no Azure account, CLI login, cloud resource or APM install
+is needed:
+
+```sh
+cp .env.example .env
+task local:setup
+task start
+```
+
+PowerShell: `Copy-Item .env.example .env`. Do not overwrite an existing `.env`;
+review its values instead. Fill required selected-service settings before startup.
+
+`local:setup` resolves, audits and installs the uv environment only. Review and
+commit `uv.lock`; subsequent starts use it without syncing. `task start` runs
+`uvicorn app.main:app` on loopback port 8080 with reload and `--no-access-log`.
+To debug, run the VS Code **API** launch configuration; it uses the same command.
+Dependency downloads and the published toolkit commit are prerequisites, not
+steps proven by offline generation tests. Local startup may be quick once
+those prerequisites are ready; this is not a measured five-minute installer.
+
+Selected executable options:
+
+- Database: `{{ data }}`.
+- Shared rate limiting: `{{ cache }}`.
+- Bearer authentication: `{{ auth }}`.
+- Internal text generation: `{{ ai_service }}`.
+- Azure tracing: `{{ telemetry }}`.
+{% if data == 'postgresql' %}
+
+PostgreSQL requires the `APP_POSTGRES_*` settings. Start its local container with
+`docker compose --profile postgres up -d postgres`, then `task start`.
+For a containerized app include that same profile in `docker compose up --build`.
+Compose gives the app container `postgres:5432` and publishes the server on
+loopback port `APP_POSTGRES_PORT`; change it if a native PostgreSQL holds 5432.
+Host-process settings use loopback.
+Keep TLS enabled remotely; `.env.example` disables it only for local development.
+The app owns the database lifespan, exposes `app.state.database`, and registers
+its actual database probe on `/health/ready`. Consumers can use
+`database.session` as a FastAPI dependency or `database.sessions` with the
+runtime's `transaction` context. Shutdown disposes the pool.
+
+Local password authentication remains the default and does not import the Azure
+identity SDK. For a deployed user-assigned managed identity, explicitly set
+`APP_POSTGRES_ENTRA_AUTHENTICATION=true`,
+`APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID` to its client UUID and
+`APP_POSTGRES_REQUIRE_TLS=true`. Remove `APP_POSTGRES_PASSWORD` entirely, including
+an empty value. A client ID without Entra mode, a missing/invalid client ID,
+a supplied password or disabled TLS in Entra mode stops startup safely.
+The app constructs `azure.identity.aio.ManagedIdentityCredential` with that
+explicit client ID and closes it after database shutdown, including lifespan
+startup failure. It never uses `DefaultAzureCredential` or ambient CLI login.
+The runtime `database` extra already includes `azure-identity`.
+The host identity assignment, PostgreSQL Entra configuration and database-role
+mapping to `APP_POSTGRES_USER` remain operator prerequisites; local Compose
+PostgreSQL is password-only and does not emulate Entra authentication.
+{% endif %}
+{% if cache == 'redis' %}
+
+Redis requires both `APP_REDIS_URL` and an explicit JSON `APP_RATE_LIMIT` policy.
+Start `docker compose --profile redis up -d redis`, then `task start`.
+For a containerized app include that profile in `docker compose up --build`.
+Compose uses the internal hostname; host-process settings use loopback.
+Remote Redis requires TLS and private access. The app supplies the runtime's
+`RedisRateLimitStore` with bounded timeouts and closes its client on shutdown.
+Replicas share counters in the project namespace. Runtime rate limiting
+**fails open** on Redis failure: this is not an authorization or billing control.
+Redis has no generated readiness probe.
+{% endif %}
+{% if auth == 'entra-bearer' %}
+
+Bearer authentication requires an approved Entra registration and all
+`APP_AUTH_*` trust settings. `/technical/identity` requires a validated bearer
+token and every configured scope/role, returning only verified tenant/subject
+identifiers. The public `open_entra_bearer` factory owns validator HTTP resources.
+There are no browser login/session routes; `APP_AUTH_ORIGIN` is required by the
+shared runtime configuration but is not a callback registration in this API.
+Health remains public. Live token validation needs Entra discovery/JWKS access;
+offline tests substitute the validator and do not certify an Entra tenant.
+{% endif %}
+{% if ai_service == 'text' %}
+
+Local text generation requires explicit `APP_AI_MODEL` and `APP_AI_API_KEY`
+settings, plus provider-specific endpoint/version where applicable. Cloud
+provisioning instead supplies the OpenAI v1 endpoint, deployment model and
+user-assigned Entra identity; no API key is accepted for the provisioned service.
+The lifespan creates
+the runtime's `TextGenerator` on `app.state.text_generator` and removes that
+reference on shutdown. Its public API has no close method or owned client
+lifespan. Consumers inject that value into their application service:
+
+```python
+generator: TextGenerator = request.app.state.text_generator
+result = await generator.generate(request=text_request)
+```
+
+Import `TextGenerator` and `TextRequest` from `platform_kit_runtime.ai`; bound
+the request's output tokens. No inference route is exposed, and startup makes
+no paid model call. Before adding a route, supply authentication, authorization,
+budget limits and content handling. Real inference requires separately approved
+provider credentials and may incur costs.
+{% endif %}
+
+Only opted-in PostgreSQL/Redis services appear in Compose, behind their named
+profiles; ports bind to `127.0.0.1`. With both selected, enable both profiles.
+No optional service is started automatically by `task start`. For a host port
+that is busy on one machine, put a `ports: !override` entry (Compose 2.24.4+) in
+the git-ignored `compose.override.yaml`; Compose merges it automatically.
+
+### Test
+
+Start with `task test -- tests/test_health.py -k live` or the test for the
+behavior being changed. `task test -- --lf` reruns the last failures;
+`task test` runs all application tests. Default discovery is limited to `tests`,
+not installed agent capabilities. `task check` fixes formatting/lint and runs
+the application suite before integration. `task verify` additionally audits APM
+and checks application formatting/lint without changing files; it is not the
+per-edit loop.
+Tests mock dependency probes; they do not prove live database, Redis, Entra or
+model connectivity. Validate real dependencies explicitly in your environment.
+
+### Build the image
+
+```sh
+docker build -t {{ project_name }}:local .
+```
+
+The locked multi-stage Dockerfile runs as non-root on port 8080. Docker and
+network access to published dependencies are needed; rendering proves neither
+an image build nor its supply-chain attestation.
+
+### Deployment boundaries
+
+See the [pinned toolkit deployment guide](https://github.com/lfr-ai/agent-kit/blob/{{ kit_commit }}/packages/starter/DEPLOYMENT.md)
+for the reviewed deployment contracts and operator prerequisites.
+
+{% if iac == 'none' %}
+`iac=none` emits no infrastructure or deployment scaffold. Dockerfile, Compose
+and image-publication tooling are still available; none provisions Azure.
+{% else %}
+`iac={{ iac }}` selects infrastructure and deployment templates. Review their
+parameters, secret references, permissions and operator prerequisites before use.
+Rendering is not deployment or cloud certification.
+
+Cloud parameters are separate for `dev`, `test`, `staging` and `prod`, each with
+its exact stage and distinct names/state. Local is Compose only. Run
+`task infra:check-environment ENVIRONMENT=dev` after completing caller-owned
+configuration; dispatch rejects mismatching stages before building or logging in.
+Protect each {{ 'Azure DevOps' if ci == 'azure-devops' else 'GitHub' }} environment and select a reviewed runner with private-network
+access when needed.
+{%- if registry == 'acr' %}
+Images go to each environment's own Azure Container Registry (`registryName` /
+`registry_name`, globally unique); the first deployment of an environment is a
+registry bootstrap without the app.
+{%- else %}
+Images are published to GHCR and must be publicly readable; use this for dev or
+evaluation only.
+{%- endif %}
+Cloud app settings always include the provisioner-owned `APP_ENVIRONMENT` equal
+to that selected stage; local settings use `local`.
+
+Dev exposes HTTPS through ACA. Test keeps selected data services private.
+Staging and prod are production-like: an internal ACA environment, private DNS,
+zone redundancy, at least two replicas and locks; both require an email or
+existing-action-group alert destination. Dev/test can explicitly opt out.
+ACA handles TLS/load balancing;
+`ingress.external=true` in that internal environment means VNet reachability.
+Supply your own network CIDRs, resource group and regional model configuration.
+PostgreSQL is private even in dev and requires the separate Entra administrator
+database-principal/grant step in the deployment guide; first-run readiness is not
+unattended. Provisioner-owned service settings cannot be overridden through user
+environment values or secrets.
+
+Azure Redis provisioning is currently blocked pending a supported Entra token
+renewal/shutdown lifecycle. Existing local Redis with `iac=none` is unaffected;
+no cloud key/secret fallback is supplied.
+{% endif %}
+CI, image publication and any cloud deployment require separate repository
+setup, reviewed immutable pins and operator approval. Alert destinations are
+environment/IaC parameters, never secrets in Copier answers. Cloud setup,
+federation, migrations, production secrets and rollback rehearsal have no
+promised completion time and are not part of local startup.
+{%- endif %}

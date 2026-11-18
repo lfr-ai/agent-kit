@@ -15,7 +15,7 @@ the content or that an agent performs better.
    ```powershell
    task verify -- source
    task verify -- docs
-   uv run --locked --no-sync python scripts/check_source.py --json
+   uv run --locked --no-sync python -m scripts.checks.source --json
    ```
 
    Source character counts are only a size proxy. They are not token counts,

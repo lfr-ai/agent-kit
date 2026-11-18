@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Tool-version pins in workflow callers and Azure DevOps pipelines: uv, Bicep, Bun, Terraform and TFLint, as inputs (uv-version) or parameters (uvVersion).",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "uv pins as inputs, parameters and setup-uv versions.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": [
+        "(?:uv-version|uvVersion): \"(?<currentValue>[^\"]+)\"",
+        "astral-sh/setup-uv@\\S+ # v[\\d.]+\\n\\s+with:\\n\\s+version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "pypi",
+      "depNameTemplate": "uv"
+    },
+    {
+      "customType": "regex",
+      "description": "Bicep CLI pins.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["(?:bicep-version|bicepVersion): \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "Azure/bicep",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bun pins.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["(?:bun-version|bunVersion): \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "oven-sh/bun",
+      "extractVersionTemplate": "^bun-v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Terraform pins.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["(?:terraform-version|terraformVersion): \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "hashicorp/terraform",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "TFLint pins.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["(?:tflint-version|tflintVersion): \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "terraform-linters/tflint",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Digest-pinned scanner and runner images (Trivy, Renovate) as inputs or parameters.",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": [
+        "(?:trivyImage|trivy-image|renovateImage|renovate-image): \"?(?<depName>[^\"@\\s]+):(?<currentValue>[^\"@:\\s]+)@(?<currentDigest>sha256:[0-9a-f]{64})\"?"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

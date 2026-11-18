@@ -36,7 +36,7 @@ remain, 2 on a usage error or a missing, unreadable or malformed report.
 import argparse
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 import json
 from pathlib import Path
 import re
@@ -55,16 +55,17 @@ _NO_LOCATION = "(no location)"
 _DRIVE_URI = re.compile(r"^/[A-Za-z]:/")
 
 
+@unique
 class Level(StrEnum):
     """Normalized finding level, ordered from least to most severe."""
 
-    NOTE = "note"
-    WARNING = "warning"
-    ERROR = "error"
+    NOTE = auto()
+    WARNING = auto()
+    ERROR = auto()
 
     @property
     def rank(self) -> int:
-        """Return the sort weight; a higher value is more severe."""
+        """Sort weight; a higher value is more severe."""
         return tuple(Level).index(self)
 
 
@@ -83,6 +84,7 @@ _GITLAB_LEVELS = {
 }
 
 
+@unique
 class ReportIssue(StrEnum):
     """Supported report validation failures and their stable messages."""
 
@@ -124,7 +126,7 @@ class ReportTypeError(TypeError):
 class Finding:
     """One normalized finding.
 
-    Args:
+    Attributes:
         tool: Producing tool, such as ``ruff``.
         rule: Rule identifier reported by the tool.
         level: Normalized level.
@@ -142,7 +144,7 @@ class Finding:
 
     @property
     def location(self) -> str:
-        """Return ``path:line`` or the bare path when the line is unknown."""
+        """``path:line``, or the bare path when the line is unknown."""
         return f"{self.path}:{self.line}" if self.line else self.path
 
 
@@ -150,7 +152,7 @@ class Finding:
 class RuleGroup:
     """All findings that share a tool and rule.
 
-    Args:
+    Attributes:
         tool: Producing tool.
         rule: Rule identifier.
         findings: Findings sorted by location and message.
@@ -162,16 +164,11 @@ class RuleGroup:
 
     @property
     def level(self) -> Level:
-        """Return the most severe level in the group."""
+        """Most severe level among the group's findings."""
         return max((item.level for item in self.findings), key=lambda lvl: lvl.rank)
 
     def sort_key(self) -> tuple[int, int, str, str]:
-        """Return the ranking key: level, count, tool, rule.
-
-        Returns:
-            Negated severity rank, negated finding count, tool and rule; smaller sorts
-            first.
-        """
+        """Return negated severity, negated count, tool and rule; smaller sorts first."""
         return (-self.level.rank, -len(self.findings), self.tool, self.rule)
 
 
@@ -179,47 +176,31 @@ class RuleGroup:
 class Options:
     """Normalization settings shared by every parser.
 
-    Args:
-        root: Path prefix removed from reported paths, or an empty string.
+    Attributes:
+        root: Path prefix removed from reported paths, or ``None`` to keep them.
         error_prefixes: Ruff code prefixes treated as ``error``.
     """
 
-    root: str
+    root: str | None
     error_prefixes: tuple[str, ...]
 
 
 def _object(value: object, where: str) -> dict[str, object]:
-    """Return a JSON object or raise a located type error.
-
-    Returns:
-        The object with string keys.
-
-    Raises:
-        ReportTypeError: The value is not an object.
-    """
+    """Return a JSON object with string keys; raise a type error at ``where``."""
     if not isinstance(value, dict):
         raise ReportTypeError(ReportIssue.OBJECT_REQUIRED, where=where)
     return {str(key): item for key, item in value.items()}
 
 
 def _list(value: object, where: str) -> list[object]:
-    """Return a JSON list or raise a located type error.
-
-    Raises:
-        ReportTypeError: The value is not a list.
-    """
+    """Return a copy of a JSON list; raise a type error at ``where`` otherwise."""
     if not isinstance(value, list):
         raise ReportTypeError(ReportIssue.LIST_REQUIRED, where=where)
     return list(value)
 
 
 def _text(value: object, where: str) -> str:
-    """Return a non-empty string or raise a located error.
-
-    Raises:
-        ReportTypeError: The value is not a string.
-        ReportError: The string is empty.
-    """
+    """Return a non-empty string; raise a type or value error at ``where``."""
     if not isinstance(value, str):
         raise ReportTypeError(ReportIssue.TEXT_REQUIRED, where=where)
     if not value:
@@ -228,12 +209,7 @@ def _text(value: object, where: str) -> str:
 
 
 def _line(value: object, where: str) -> int:
-    """Return a positive line number; ``None`` means unknown and maps to 0.
-
-    Raises:
-        ReportTypeError: The value is not an integer.
-        ReportError: The line is not positive.
-    """
+    """Return a positive line, or 0 for ``None``; raise a type or value error."""
     if value is None:
         return 0
     if isinstance(value, bool) or not isinstance(value, int):
@@ -248,12 +224,13 @@ def _optional_text(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
-def normalize_path(raw: str, *, root: str) -> str:
+def normalize_path(raw: str, *, root: str | None) -> str:
     """Return a forward-slash path relative to ``root`` when it is a prefix.
 
     Args:
         raw (str): Path or ``file://`` URI as written by the tool.
-        root (str): Prefix to remove; an empty string keeps the path unchanged.
+        root (str | None): Prefix to remove; ``None`` or an empty prefix keeps the
+            path unchanged.
 
     Returns:
         The normalized path.
@@ -261,18 +238,14 @@ def normalize_path(raw: str, *, root: str) -> str:
     text = unquote(raw.removeprefix("file://")).replace("\\", "/")
     if _DRIVE_URI.match(text):
         text = text.removeprefix("/")
+    if not root:
+        return text
     prefix = root.replace("\\", "/").rstrip("/") + "/"
-    if root and text.startswith(prefix):
-        return text.removeprefix(prefix)
-    return text
+    return text.removeprefix(prefix)
 
 
 def _sarif_location(result: dict[str, object], where: str) -> tuple[str, int]:
-    """Return the first physical location of a SARIF result.
-
-    Returns:
-        The artifact URI and one-based start line.
-    """
+    """Return the artifact URI and one-based start line of the first location."""
     locations = _list(result.get("locations", []), f"{where}.locations")
     if not locations:
         return _NO_LOCATION, 0
@@ -286,11 +259,7 @@ def _sarif_location(result: dict[str, object], where: str) -> tuple[str, int]:
 
 
 def _level(raw: object, table: dict[str, Level], where: str) -> Level:
-    """Map a tool level string to a normalized level.
-
-    Raises:
-        ReportError: The level is unknown.
-    """
+    """Map a tool level string through ``table``; raise a value error if unknown."""
     level = table.get(_text(raw, where))
     if level is None:
         raise ReportError(ReportIssue.UNKNOWN_LEVEL, where=where)
@@ -298,11 +267,7 @@ def _level(raw: object, table: dict[str, Level], where: str) -> Level:
 
 
 def _sarif_rule_levels(driver: dict[str, object], where: str) -> dict[str, str]:
-    """Return the default level declared for each SARIF rule identifier.
-
-    Returns:
-        Default levels keyed by rule identifier; empty when no rule declares one.
-    """
+    """Return each SARIF rule's declared default level, keyed by rule identifier."""
     levels: dict[str, str] = {}
     for index, raw in enumerate(_list(driver.get("rules", []), f"{where}.rules")):
         rule = _object(raw, f"{where}.rules[{index}]")
@@ -315,7 +280,7 @@ def _sarif_rule_levels(driver: dict[str, object], where: str) -> dict[str, str]:
 
 
 def _sarif_result(
-    raw: object, *, tool: str, defaults: dict[str, str], where: str, root: str
+    raw: object, *, tool: str, defaults: dict[str, str], where: str, root: str | None
 ) -> Finding | None:
     """Normalize one SARIF result, or return ``None`` for a non-failure kind."""
     result = _object(raw, where)
@@ -607,53 +572,27 @@ _SELF_TEST_BROKEN = (
 )
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by ``--self-test``."""
-
-    RANKING = "ranked table rows differ from the expected rows"
-    MALFORMED_ACCEPTED = "malformed report accepted: {case}"
-
-
-class SelfTestError(RuntimeError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue, *, case: str = "") -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            case (str): Input that exposed the failure, when relevant.
-        """
-        super().__init__(issue.value.format(case=case))
-
-
-def self_test() -> None:
-    """Exercise parsing, ranking, rendering and malformed input.
-
-    Raises:
-        SelfTestError: A documented behavior regressed.
-    """
+def self_test() -> list[str]:
+    """Exercise parsing, ranking, rendering and malformed input; return failures."""
     findings = [
         *parse_document(_SELF_TEST_SARIF, tool="unused", options=_SELF_TEST_OPTIONS),
         *parse_document(_SELF_TEST_LIST, tool="ty", options=_SELF_TEST_OPTIONS),
     ]
     rows = render(rank(findings, min_level=Level.NOTE), max_locations=1).splitlines()
+    failures: list[str] = []
     if rows[_TABLE_HEADER_ROWS:-_TABLE_FOOTER_ROWS] != _SELF_TEST_EXPECTED:
-        raise SelfTestError(SelfTestIssue.RANKING)
+        failures.append("ranked table rows differ from the expected rows")
     for broken in _SELF_TEST_BROKEN:
         try:
             parse_document(broken, tool="x", options=_SELF_TEST_OPTIONS)
         except (ReportError, ReportTypeError):
             continue
-        raise SelfTestError(SelfTestIssue.MALFORMED_ACCEPTED, case=repr(broken))
+        failures.append(f"malformed report accepted: {broken!r}")
+    return failures
 
 
 def _positive(text: str) -> int:
-    """Parse a positive integer command-line value.
-
-    Raises:
-        argparse.ArgumentTypeError: The value is not a positive integer.
-    """
+    """Parse a positive integer; raise ``argparse.ArgumentTypeError`` otherwise."""
     value = int(text)
     if value < 1:
         message = "must be a positive integer"
@@ -665,7 +604,7 @@ def _parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(description=_DESCRIPTION)
     parser.add_argument("reports", nargs="*", type=Path, help="report files")
-    parser.add_argument("--root", default="", help="path prefix to remove")
+    parser.add_argument("--root", help="path prefix to remove")
     parser.add_argument(
         "--min-level", choices=[level.value for level in Level], default="note"
     )
@@ -709,10 +648,11 @@ def _summarize(args: argparse.Namespace) -> int:
 
 def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
-    try:
-        self_test()
-    except SelfTestError as error:
-        sys.stderr.write(f"summarize_findings self-test failed: {error}\n")
+    failures = self_test()
+    sys.stderr.writelines(
+        f"summarize_findings self-test failed: {failure}\n" for failure in failures
+    )
+    if failures:
         return _EXIT_FINDINGS
     sys.stdout.write("summarize_findings self-test passed.\n")
     return 0

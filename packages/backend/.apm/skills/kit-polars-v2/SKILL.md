@@ -1,6 +1,6 @@
 ---
 name: kit-polars-v2
-description: Use when building or upgrading Polars 2 DataFrame, LazyFrame, expression, streaming, schema, or Parquet/CSV pipelines.
+description: Use when building Polars 2 DataFrame/LazyFrame, expression, streaming, schema or Parquet/CSV pipelines.
 license: MIT
 ---
 

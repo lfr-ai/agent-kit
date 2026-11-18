@@ -1,6 +1,6 @@
 ---
 name: kit-server-streaming
-description: Use when designing server-to-client streaming with bounded resources, cancellation, and clear partial-result semantics.
+description: Use when designing server-to-client streaming, resource bounds, cancellation or partial results.
 license: MIT
 ---
 

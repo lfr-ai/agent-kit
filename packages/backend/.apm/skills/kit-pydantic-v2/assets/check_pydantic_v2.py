@@ -18,7 +18,6 @@ Run ``--self-test`` for built-in regressions.
 import argparse
 import ast
 from collections.abc import Sequence
-from enum import StrEnum
 from pathlib import Path
 import sys
 
@@ -202,14 +201,11 @@ def check_source(text: str, path: str) -> list[str]:
     """Report v1 API usage in one source file.
 
     Args:
-        text (str): Python source.
+        text (str): Python source; unparsable text raises ``SyntaxError``.
         path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     imports_pydantic = any(
@@ -237,14 +233,7 @@ def check_source(text: str, path: str) -> list[str]:
 
 
 def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
-    """Expand targets into Python files.
-
-    Args:
-        targets (Sequence[Path]): Files or directories.
-
-    Returns:
-        Sorted files and findings for missing targets.
-    """
+    """Return sorted Python files below ``targets`` and findings for missing ones."""
     files: set[Path] = set()
     problems: list[str] = []
     for target in targets:
@@ -262,39 +251,8 @@ def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     return sorted(files), problems
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSED_V1_USAGE = "missed v1 usage: {source!r} {found}"
-    FALSE_POSITIVE = "false positive: {source!r}"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        source: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            source (str | None): Observed source for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(source=source, found=found))
-
-
-def self_test() -> None:
-    """Exercise each v1 pattern, waivers, and clean v2 code.
-
-    Raises:
-        SelfTestError: A regression was detected.
-    """
+def self_test() -> list[str]:
+    """Return regressions for each v1 pattern, waivers and clean v2 code."""
     risky = {
         "from pydantic.v1 import BaseModel\n": "pydantic.v1",
         "from pydantic import BaseSettings\n": "pydantic-settings",
@@ -307,12 +265,11 @@ def self_test() -> None:
         "import pydantic\nOrder.parse_obj({})\n": "model_validate",
         "import pydantic\norder.dict(exclude_unset=True)\n": "model_dump",
     }
+    failures: list[str] = []
     for source, fragment in risky.items():
         found = check_source(source, "app/models.py")
         if not any(fragment in item for item in found):
-            raise SelfTestError(
-                SelfTestIssue.MISSED_V1_USAGE, source=source, found=found
-            )
+            failures.append(f"missed v1 usage: {source!r} {found}")
     clean = (
         (
             "from pydantic import BaseModel, ConfigDict, field_validator\n"
@@ -323,9 +280,12 @@ def self_test() -> None:
         "import pydantic\nOrder.parse_obj({})  # pydantic: reviewed\n",
         "class Config:\n    orm_mode = True\n",
     )
-    for source in clean:
-        if check_source(source, "app/models.py"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+    failures.extend(
+        f"false positive: {source!r}"
+        for source in clean
+        if check_source(source, "app/models.py")
+    )
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -338,9 +298,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_pydantic_v2 self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_pydantic_v2 self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     files, findings = _python_files(args.paths)

@@ -63,7 +63,7 @@ contract test assert that exit without commit discards changes.
 
 ## Hidden composition
 
-**Smell:** adapters constructed at import time (`client = HttpClient()` at
+**Smell:** adapters constructed at import time (`client = HTTPClient()` at
 module scope), environment variables read inside adapters or use cases, or a
 global registry looked up by string.
 **Repair:** construct in the composition root, read configuration once, pass

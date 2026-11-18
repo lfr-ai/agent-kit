@@ -120,8 +120,7 @@ class InMemoryBroker:
     async def ack(self, delivery: Delivery) -> None:
         """Delete the message.
 
-        Raises:
-            LeaseLostError: If the lease expired or the message was redelivered.
+        An expired or redelivered lease propagates ``LeaseLostError``.
         """
         del self._messages[self._leased(delivery).message_id]
 

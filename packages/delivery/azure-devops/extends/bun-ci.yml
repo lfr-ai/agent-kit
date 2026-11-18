@@ -1,0 +1,56 @@
+# Extends template: frozen install, then a caller-owned check-only package.json script.
+# Protect consumer pipelines with a Required template check; see docs/consuming.md.
+parameters:
+  - name: bunVersion
+    type: string
+  # SHA-256 of bun-linux-x64-baseline.zip from the release's SHASUMS256.txt.
+  - name: bunSha256
+    type: string
+  - name: script
+    type: string
+    default: check
+  - name: workingDirectory
+    type: string
+    default: .
+  - name: vmImage
+    type: string
+    default: ubuntu-24.04
+  - name: timeoutMinutes
+    type: number
+    default: 20
+  - name: extraSteps
+    type: stepList
+    default: []
+
+stages:
+  - stage: ci
+    displayName: Bun gate
+    jobs:
+      - job: gate
+        displayName: bun run ${{ parameters.script }}
+        timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+        cancelTimeoutInMinutes: 1
+        pool:
+          vmImage: ${{ parameters.vmImage }}
+        steps:
+          - checkout: self
+            persistCredentials: false
+
+          - template: ../steps/setup-bun.yml
+            parameters:
+              bunVersion: ${{ parameters.bunVersion }}
+              bunSha256: ${{ parameters.bunSha256 }}
+              lockfile: ${{ parameters.workingDirectory }}/bun.lock
+
+          - bash: bun install --frozen-lockfile
+            displayName: Install locked dependencies
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+          - bash: bun run "${SCRIPT_NAME}"
+            displayName: bun run ${{ parameters.script }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            env:
+              SCRIPT_NAME: ${{ parameters.script }}
+
+          - ${{ each step in parameters.extraSteps }}:
+              - ${{ step }}

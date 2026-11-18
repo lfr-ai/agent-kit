@@ -1,6 +1,6 @@
 ---
 name: kit-pydantic-v2
-description: Use when defining Pydantic v2 models, validators, serialization, or JSON Schema, or migrating from v1.
+description: Use when modeling Pydantic v2 validators, serialization, JSON Schema or v1 migration.
 license: MIT
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: kit-agent-systems
-description: Use when designing or reviewing agentic or multi-agent systems, their tools, guardrails, and budgets.
+description: Use when designing agent or multi-agent systems, tools, guardrails and budgets.
 license: MIT
 ---
 

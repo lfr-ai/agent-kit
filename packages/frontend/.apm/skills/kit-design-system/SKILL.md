@@ -1,6 +1,6 @@
 ---
 name: kit-design-system
-description: Use when defining design tokens, Tailwind v4 themes, dark mode, shadcn/ui theming, variants or Storybook docs.
+description: Use when designing Tailwind v4 tokens/themes, dark mode, shadcn/ui variants or Storybook docs.
 license: MIT
 ---
 

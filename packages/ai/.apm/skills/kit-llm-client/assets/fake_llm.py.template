@@ -1,4 +1,4 @@
-"""Deterministic ``LlmClient`` fake for application tests.
+"""Deterministic ``LLMClient`` fake for application tests.
 
 Copy to ``llm/fakes.py`` (or a tests helper package). The fake honors the port
 contract: it records every request, returns scripted completions or raises
@@ -7,7 +7,7 @@ scripted typed errors in order, and never touches the network.
 
 from collections.abc import Sequence
 
-from llm.port import Completion, CompletionRequest, LlmError, Usage
+from llm.port import Completion, CompletionRequest, LLMError, Usage
 
 _DEFAULT_INPUT_TOKENS = 10
 _DEFAULT_OUTPUT_TOKENS = 5
@@ -44,36 +44,29 @@ def completion(
     )
 
 
-class ScriptedLlmClient:
+class ScriptedLLMClient:
     """Returns or raises scripted outcomes in order and records requests."""
 
-    def __init__(self, outcomes: Sequence[Completion | LlmError]) -> None:
+    def __init__(self, outcomes: Sequence[Completion | LLMError]) -> None:
         """Store the script.
 
         Args:
-            outcomes (Sequence[Completion | LlmError]): Completions to return or errors
+            outcomes (Sequence[Completion | LLMError]): Completions to return or errors
                 to raise, in call order.
         """
         self._outcomes = list(outcomes)
         self.requests: list[CompletionRequest] = []
 
     async def complete(self, request: CompletionRequest) -> Completion:
-        """Record the request and play the next scripted outcome.
+        """Record the request and return or raise the next scripted outcome.
 
-        Args:
-            request (CompletionRequest): Request under test.
-
-        Returns:
-            The next scripted completion.
-
-        Raises:
-            LlmError: The next scripted error.
-            AssertionError: If the script is exhausted.
+        Outcomes are completions or ``LLMError`` instances; an exhausted script
+        raises ``AssertionError``.
         """
         self.requests.append(request)
         if not self._outcomes:
-            raise AssertionError("ScriptedLlmClient script exhausted")
+            raise AssertionError("ScriptedLLMClient script exhausted")
         outcome = self._outcomes.pop(0)
-        if isinstance(outcome, LlmError):
+        if isinstance(outcome, LLMError):
             raise outcome
         return outcome

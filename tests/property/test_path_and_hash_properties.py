@@ -1,22 +1,21 @@
 """Hypothesis invariants for provenance paths, hashing, and output containment."""
 
 import hashlib
+import ntpath
 from pathlib import Path, PurePosixPath
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from agent_kit.application.services.provenance_service import (
-    ProvenanceService,
-    _path_is_relative,
-)
+from agent_kit.application.provenance import ProvenanceService
 from agent_kit.core.models import (
     ComposedSnapshot,
     CompositionPlan,
     PlannedFile,
     SourceDocument,
 )
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.core.paths import is_relative_file_path
+from agent_kit.infrastructure.output import OutputAdapter
 
 _SEGMENT = st.text(
     alphabet=st.characters(
@@ -24,7 +23,11 @@ _SEGMENT = st.text(
     ),
     min_size=1,
     max_size=12,
-).filter(lambda part: part not in {".", ".."})
+).filter(
+    lambda part: (
+        part not in {".", ".."} and ":" not in part and not ntpath.isreserved(part)
+    )
+)
 _RELATIVE = st.lists(_SEGMENT, min_size=1, max_size=4).map("/".join)
 _REQUIRED = ("apm.yml", "apm-policy.yml", "LICENSE")
 
@@ -33,7 +36,7 @@ _REQUIRED = ("apm.yml", "apm-policy.yml", "LICENSE")
 def test_canonical_relative_paths_are_accepted(relative: str) -> None:
     """Every slash-joined path of ordinary segments is a valid ledger key."""
     if PurePosixPath(relative).as_posix() == relative and ":" not in relative:
-        assert _path_is_relative(relative)
+        assert is_relative_file_path(relative)
 
 
 @given(_RELATIVE, st.sampled_from(["../", "/", "./", "a/../", "x//"]))
@@ -41,13 +44,18 @@ def test_traversal_and_noncanonical_prefixes_are_rejected(
     relative: str, prefix: str
 ) -> None:
     """Parent references, absolute, and non-canonical spellings never pass."""
-    assert not _path_is_relative(prefix + relative)
+    assert not is_relative_file_path(prefix + relative)
 
 
 @given(_RELATIVE)
 def test_backslash_paths_are_rejected(relative: str) -> None:
     """Windows separators are refused regardless of the remaining text."""
-    assert not _path_is_relative(relative.replace("/", "\\") + "\\x")
+    assert not is_relative_file_path(relative.replace("/", "\\") + "\\x")
+
+
+def test_windows_reserved_path_segments_are_rejected() -> None:
+    for segment in ("CON", "con.txt", "LPT9", "trailing."):
+        assert not is_relative_file_path(f"docs/{segment}")
 
 
 def _document(relative: str, content: bytes) -> SourceDocument:

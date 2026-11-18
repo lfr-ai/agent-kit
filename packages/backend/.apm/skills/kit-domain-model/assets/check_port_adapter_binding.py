@@ -29,7 +29,7 @@ import argparse
 import ast
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from pathlib import Path
 import re
 import sys
@@ -42,12 +42,13 @@ _SPECIAL_MEMBERS = frozenset(
 _EXIT_USAGE = 2
 
 
+@unique
 class _CallableKind(StrEnum):
     """Syntactic execution kinds, independent of method binding."""
 
-    NORMAL = "normal"
-    GENERATOR = "generator"
-    COROUTINE = "coroutine"
+    NORMAL = auto()
+    GENERATOR = auto()
+    COROUTINE = auto()
     ASYNC_GENERATOR = "async generator"
 
 

@@ -1,6 +1,6 @@
 ---
 name: kit-git-hooks
-description: Use when adding or reviewing pre-commit, commit-msg and pre-push hooks.
+description: Use when reviewing pre-commit, commit-msg or pre-push hooks.
 license: MIT
 ---
 

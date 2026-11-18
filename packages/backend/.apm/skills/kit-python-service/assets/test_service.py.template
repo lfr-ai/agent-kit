@@ -1,6 +1,6 @@
 """Unit tests for the application service template using in-memory fakes.
 
-Replace 'shop.application.invoicing' with the module that holds the copied
+Replace ``shop.application.invoicing`` with the module that holds the copied
 service. Fakes implement the ports structurally; no mocking library is needed.
 """
 

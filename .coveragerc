@@ -1,19 +1,36 @@
 [run]
-source = agent_kit
+# Measure toolkit, runtime, and delivery helper code.
+source =
+    agent_kit
+    platform_kit_runtime
+    packages/delivery/delivery_tools
+# Measure control-flow branches as well as executed lines.
 branch = true
+# Keep process data separate and measure Python child processes.
 parallel = true
-# Measure repository helper subprocesses started by integration tests.
 patch = subprocess
+# Store checkout-relative paths so reports combine across machines.
 relative_files = true
+
+# Merge source and installed copies of the runtime into one file set.
+[paths]
+runtime =
+    packages/runtime/src/platform_kit_runtime
+    installed/platform_kit_runtime
+    */installed/platform_kit_runtime
 
 [report]
 show_missing = true
+# Omit files with no executable statements from the report.
 skip_empty = true
 fail_under = 90
-# Static typing branches, CLI launchers and abstract placeholders are not
-# application behavior; concrete implementations and CLI entry points are tested.
+# Exclude typing-only code, script entry guards, and abstract placeholders.
 exclude_also =
     if TYPE_CHECKING:
     if __name__ == .__main__.:
     raise NotImplementedError
-    \.\.\.
+    ^\s*\.\.\.\s*$
+
+# One XML report location for CI uploads and tox runs.
+[xml]
+output = build/coverage/coverage.xml

@@ -20,7 +20,6 @@ Run ``--self-test`` for built-in regressions.
 import argparse
 import ast
 from collections.abc import Sequence
-from enum import StrEnum
 from pathlib import Path
 import re
 import sys
@@ -260,16 +259,13 @@ def check_revision(
     """Report risky operations in one Alembic revision.
 
     Args:
-        text (str): Revision source.
+        text (str): Revision source; unparsable text raises ``SyntaxError``.
         path (str): Display path.
         dialect (str): ``postgresql`` enables index-concurrency checks.
         include_downgrade (bool): Also scan the ``downgrade`` function.
 
     Returns:
         Findings formatted as ``path:line: message``.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     targets = {"upgrade", "downgrade"} if include_downgrade else {"upgrade"}
@@ -291,14 +287,9 @@ def check_revision(
 
 
 def _revision_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
-    """Expand targets into revision files.
+    """Return sorted revision files below ``targets`` and findings for missing ones.
 
-    Args:
-        targets (Sequence[Path]): Files or directories (for example
-            ``migrations/versions``).
-
-    Returns:
-        Sorted Python files and findings for missing targets.
+    Targets are files or directories such as ``migrations/versions``.
     """
     files: set[Path] = set()
     problems: list[str] = []
@@ -322,53 +313,13 @@ _SELF_TEST_HEADER = (
 )
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSED_RISKY_OPERATION = "missed risky operation: {body!r} {found}"
-    FALSE_POSITIVE = "false positive: {body!r}"
-    DOWNGRADE_SCANNED = "downgrade must be skipped by default"
-    DOWNGRADE_SKIPPED = "downgrade must be scanned when requested"
-    GENERIC_DIALECT_RESTRICTED = "generic dialect must not require CONCURRENTLY"
+def self_test() -> list[str]:
+    """Return regressions for risky, safe, waived, batch and autocommit cases."""
+    return [*_risky_failures(), *_safe_failures(), *_option_failures()]
 
 
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        body: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            body (str | None): Observed body for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(body=body, found=found))
-
-
-def self_test() -> None:
-    """Exercise risky, safe, waived, batch, and autocommit cases.
-
-    Raises:
-        AssertionError: A regression was detected.
-    """
-    _self_test_risky()
-    _self_test_safe()
-    _self_test_options()
-
-
-def _self_test_risky() -> None:
-    """Require one finding for each risky operation form.
-
-    Raises:
-        SelfTestError: A risky operation was missed.
-    """
+def _risky_failures() -> list[str]:
+    """Return risky operation forms that did not produce exactly one finding."""
     risky = {
         "    op.drop_column('orders', 'note')\n": "destructive",
         "    op.drop_table('orders')\n": "destructive",
@@ -388,20 +339,16 @@ def _self_test_risky() -> None:
             "        batch.drop_column('note')\n"
         ): "destructive",
     }
+    failures: list[str] = []
     for body, fragment in risky.items():
         found = check_revision(_SELF_TEST_HEADER + body, "versions/a.py")
         if len(found) != 1 or fragment not in found[0]:
-            raise SelfTestError(
-                SelfTestIssue.MISSED_RISKY_OPERATION, body=body, found=found
-            )
+            failures.append(f"missed risky operation: {body!r} {found}")
+    return failures
 
 
-def _self_test_safe() -> None:
-    """Require no findings for additive, waived, and autocommit operations.
-
-    Raises:
-        SelfTestError: A safe operation was reported.
-    """
+def _safe_failures() -> list[str]:
+    """Return additive, waived and autocommit operations that were reported."""
     safe = (
         "    op.add_column('orders', sa.Column('note', sa.Text(), nullable=True))\n",
         (
@@ -418,26 +365,26 @@ def _self_test_safe() -> None:
             "    op.drop_column('orders', 'note')\n"
         ),
     )
-    for body in safe:
-        if check_revision(_SELF_TEST_HEADER + body, "versions/a.py"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, body=body)
+    return [
+        f"false positive: {body!r}"
+        for body in safe
+        if check_revision(_SELF_TEST_HEADER + body, "versions/a.py")
+    ]
 
 
-def _self_test_options() -> None:
-    """Require downgrade and dialect options to change the scanned scope.
-
-    Raises:
-        SelfTestError: An option did not change the result.
-    """
+def _option_failures() -> list[str]:
+    """Return downgrade and dialect options that did not change the scanned scope."""
     header = _SELF_TEST_HEADER
     downgrade = header + "    pass\n\n\ndef downgrade():\n    op.drop_table('t')\n"
+    failures: list[str] = []
     if check_revision(downgrade, "versions/a.py"):
-        raise SelfTestError(SelfTestIssue.DOWNGRADE_SCANNED)
+        failures.append("downgrade must be skipped by default")
     if not check_revision(downgrade, "versions/a.py", include_downgrade=True):
-        raise SelfTestError(SelfTestIssue.DOWNGRADE_SKIPPED)
+        failures.append("downgrade must be scanned when requested")
     generic = header + "    op.create_index('ix_a', 'orders', ['a'])\n"
     if check_revision(generic, "versions/a.py", dialect="generic"):
-        raise SelfTestError(SelfTestIssue.GENERIC_DIALECT_RESTRICTED)
+        failures.append("generic dialect must not require CONCURRENTLY")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -452,9 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_migration_safety self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_migration_safety self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     files, findings = _revision_files(args.paths)

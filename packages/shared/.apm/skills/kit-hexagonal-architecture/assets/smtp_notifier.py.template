@@ -17,11 +17,11 @@ from app.application.ports.notifications import (
     NotificationError,
 )
 
-type SmtpFactory = Callable[[], smtplib.SMTP]
+type SMTPFactory = Callable[[], smtplib.SMTP]
 type AddressLookup = Callable[[str], str]
 
 
-def starttls_factory(*, host: str, port: int, timeout: float) -> SmtpFactory:
+def starttls_factory(*, host: str, port: int, timeout: float) -> SMTPFactory:
     """Build a factory that opens a verified STARTTLS connection per message.
 
     Args:
@@ -30,7 +30,7 @@ def starttls_factory(*, host: str, port: int, timeout: float) -> SmtpFactory:
         timeout (float): Socket timeout in seconds for connect and each command.
 
     Returns:
-        A zero-argument callable returning a connected, encrypted client.
+        SMTPFactory: A zero-argument callable returning a connected, encrypted client.
     """
 
     def connect() -> smtplib.SMTP:
@@ -41,20 +41,20 @@ def starttls_factory(*, host: str, port: int, timeout: float) -> SmtpFactory:
     return connect
 
 
-class SmtpInvoiceNotifier(InvoiceNotifier):
+class SMTPInvoiceNotifier(InvoiceNotifier):
     """Send invoice notices as plain-text e-mail."""
 
     def __init__(
         self,
         *,
-        connect: SmtpFactory,
+        connect: SMTPFactory,
         sender: str,
         address_of: AddressLookup,
     ) -> None:
         """Store collaborators; no connection is opened until a message is sent.
 
         Args:
-            connect (SmtpFactory): Opens an authenticated SMTP client.
+            connect (SMTPFactory): Opens an authenticated SMTP client.
             sender (str): Envelope and header sender address.
             address_of (AddressLookup): Resolves a customer identifier to an e-mail
                 address.
@@ -66,11 +66,7 @@ class SmtpInvoiceNotifier(InvoiceNotifier):
     def invoice_paid(self, notice: InvoicePaidNotice) -> None:
         """Format and send the payment confirmation.
 
-        Args:
-            notice (InvoicePaidNotice): What happened, in application terms.
-
-        Raises:
-            NotificationError: If address lookup or SMTP delivery fails.
+        A failed address lookup or SMTP delivery raises ``NotificationError``.
         """
         try:
             recipient = self._address_of(notice.customer_id)

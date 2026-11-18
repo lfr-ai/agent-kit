@@ -1,5 +1,86 @@
 # Decisions
 
+## 2026-11-12: Tiered development loop
+
+- Edit: advisory file-scoped Ruff hook. Iterate: `task check` or one test.
+  Commit: file-scoped hooks. Push: repository-wide, pin, duplication and link
+  hooks. Handoff and CI: `task verify` (coverage runs here, not locally).
+- CI must run `pre-commit run --all-files --hook-stage pre-push` as well, or
+  pre-push hooks silently skip CI.
+- prek, testmon and a PR-only reduced matrix were considered and deferred: they
+  add tools or governance surface without measured need.
+- Measured on a 4-core laptop: unit and property took 664 s; `slow` on four
+  whole-catalog guard modules (70% of guard time, 4% of guard tests) brings
+  `task check` tests to 215 s. Verify and CI still run them.
+- Hooks use `uv run --locked --no-sync` (each sync check costs 0.3-1 s and a
+  commit must not install); only `dependency-licenses` syncs, after the audit.
+- CI `push` covers `main` only; branches verify once through `pull_request`.
+
+## 2026-11-11: Tool configuration stays in dedicated files
+
+- `ruff.toml`, `ty.toml`, `pytest.ini`, `.coveragerc`, `.cz.toml`,
+  `.importlinter` and `tox.ini` stay separate, by owner decision. `pyproject.toml`
+  holds packaging, dependencies, uv and the build backend only.
+- Do not merge tool sections into `pyproject.toml` or delete these files. A
+  consolidation attempt was reverted at the owner's request.
+
+## 2026-11-11: Azure-native services first; repository azapi modules before AVM
+
+- On Azure, guidance and application compositions should prefer managed services with Entra-only
+  auth (no shared keys or local auth) before self-hosted software: Key Vault
+  references, Storage without shared keys, Cosmos DB NoSQL with data-plane
+  RBAC, Managed Redis, Service Bus, App Configuration, Monitor/OpenTelemetry,
+  AI Search hybrid ranking and Foundry. Container Apps stays the default
+  compute; AKS needs a named trigger such as operators, GPUs or a mesh.
+- Cosmos DB Gremlin is not provided: its client quickstarts connect with account
+  keys. Graphs use NoSQL adjacency or PostgreSQL with
+  Apache AGE until evidence justifies a dedicated graph database.
+- Delivery modules stay hand-written azapi bodies so Bicep and Terraform send
+  the same ARM request and are tested offline without restated defaults. Azure
+  Verified Modules, pinned by Renovate, cover resources the kit does not ship.
+- These are selection preferences, not a claim that Copier wires every service.
+  The selection table is
+  [azure-native-services.md](../packages/iac/.apm/skills/kit-infra-review/references/azure-native-services.md).
+  Delivery includes an opt-in general blob storage composition; Cosmos DB,
+  Service Bus and App Configuration are not provided as compositions.
+- Evidence: [delivery inventory](../packages/delivery/README.md),
+  [cloud target guidance](../packages/iac/.apm/skills/kit-delivery-pipelines/references/cloud-targets.md)
+  and the offline `tests/integration/delivery` module tests.
+
+## 2026-11-06: Lean always-on context; reviewed second pass; checked acronyms
+
+- Stale native profile projections and contradictory reviewer contracts reached
+  the gates because agent-facing text duplicated policy and no step required an
+  independent review after `task verify`.
+- AGENTS.md stays language-neutral; Python rules live once in the path-scoped
+  `kit-python` instruction. Growth moves to on-demand skills, not instructions.
+- After `task verify`, the read-only `kit-code-reviewer` reviews the diff; read-only
+  roles may run focused offline checks but never edit or delegate.
+- Every skill description starts with "Use when" and every role description with
+  "Use"; descriptions are unique, because they are the routing surface.
+- PEP 8 CapWords acronyms are uppercase (`SMTPFactory`); the checker's default
+  `acronym-case` rule covers class and type alias names, excluding Id/Db/Io/Os.
+- The repository declares no packages; the git guard arrives through the
+  user-scope install, and `AGENT_KIT_DIR` lets requested commits reach approval.
+- Evidence: [context budget tests](../tests/unit/repo_guards/test_context_budget.py),
+  [convention tests](../tests/unit/repo_guards/test_convention_asset.py) and
+  `task verify -- profiles`.
+
+## 2026-11-06: Docstrings are proportional; Raises lists only what the body raises
+
+- Reviews kept accepting multi-line Args/Returns on single-input delegators and
+  `Raises:` entries that only propagate from callees, because policy text said
+  propagated entries were legitimate and the gate checked only missing raises.
+- Google §3.8.3, PEP 257 and pydoclint DOC501/DOC502 agree: omit sections the
+  signature already conveys; document direct raises, `from` translations and
+  re-raises. Ruff DOC501/DOC502 stay off (preview, name-only, no factory or
+  contract awareness); the conventions checker owns `docstring-raises-extra`,
+  `docstring-one-line` and `docstring-class-sections`.
+- Protocol, abstract and stub contracts keep their `Raises:`. Mention an
+  essential propagated failure in prose, or raise it in the public method.
+- Evidence: [docstring contract tests](../tests/unit/repo_guards/test_docstring_contract.py)
+  and `task verify -- conventions` over source, scripts, packages and templates.
+
 ## 2026-11-03: Native refresh validates everything but writes only changes
 
 - Replacing an identical attested agent file failed with Windows access denied
@@ -20,7 +101,7 @@
 - CI runs `verify`, `precommit` and `smoke` as parallel jobs with explicit
   timeouts. `Required toolkit checks` must need every other job, so a new job
   cannot fail without blocking merges; governance tests enforce both rules.
-- Evidence: [CI workflow](../.github/workflows/ci.yml),
+- Evidence: [CI workflow](../.github/workflows/toolkit-ci.yml),
   [governance regressions](../tests/unit/repo_guards/test_governance.py) and
   [toolchain alignment tests](../tests/unit/repo_guards/test_devcontainer.py).
 

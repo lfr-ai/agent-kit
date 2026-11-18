@@ -12,6 +12,14 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
+from shop.cache.port import (
+    DEFAULT_JITTER_RATIO,
+    DEFAULT_LOCK_POLL_SECONDS,
+    DEFAULT_LOCK_TTL_SECONDS,
+    DEFAULT_LOCK_WAIT_SECONDS,
+    MAX_JITTER_RATIO,
+)
+
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 0.5
 _DEFAULT_SOCKET_TIMEOUT_SECONDS = 0.1
 _DEFAULT_OPERATION_TIMEOUT_SECONDS = 0.25
@@ -24,11 +32,6 @@ _DEFAULT_MAX_CONNECTIONS = 50
 _DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 5
 _DEFAULT_TTL_SECONDS = 300.0
 _DEFAULT_NEGATIVE_TTL_SECONDS = 30.0
-_DEFAULT_JITTER_RATIO = 0.1
-_MAX_JITTER_RATIO = 0.5
-_DEFAULT_LOCK_TTL_SECONDS = 10.0
-_DEFAULT_LOCK_WAIT_SECONDS = 2.0
-_DEFAULT_LOCK_POLL_SECONDS = 0.05
 _TLS_SCHEME = "rediss"
 _PLAINTEXT_SCHEME = "redis"
 
@@ -72,22 +75,15 @@ class CacheSettings(BaseModel):
     default_ttl_seconds: float = Field(default=_DEFAULT_TTL_SECONDS, gt=0)
     negative_ttl_seconds: float = Field(default=_DEFAULT_NEGATIVE_TTL_SECONDS, gt=0)
     jitter_ratio: float = Field(
-        default=_DEFAULT_JITTER_RATIO, ge=0, le=_MAX_JITTER_RATIO
+        default=DEFAULT_JITTER_RATIO, ge=0, le=MAX_JITTER_RATIO
     )
-    lock_ttl_seconds: float = Field(default=_DEFAULT_LOCK_TTL_SECONDS, gt=0)
-    lock_wait_seconds: float = Field(default=_DEFAULT_LOCK_WAIT_SECONDS, ge=0)
-    lock_poll_seconds: float = Field(default=_DEFAULT_LOCK_POLL_SECONDS, gt=0)
+    lock_ttl_seconds: float = Field(default=DEFAULT_LOCK_TTL_SECONDS, gt=0)
+    lock_wait_seconds: float = Field(default=DEFAULT_LOCK_WAIT_SECONDS, ge=0)
+    lock_poll_seconds: float = Field(default=DEFAULT_LOCK_POLL_SECONDS, gt=0)
 
     @model_validator(mode="after")
     def _reject_unsafe_url(self) -> Self:
-        """Reject credentials in the URL and plaintext transport outside development.
-
-        Returns:
-            The validated settings.
-
-        Raises:
-            ValueError: The URL scheme is not allowed or the URL embeds credentials.
-        """
+        """Raise ``ValueError`` for URL credentials or plaintext outside development."""
         parts = urlsplit(self.url)
         allowed = (
             {_TLS_SCHEME, _PLAINTEXT_SCHEME} if self.allow_plaintext else {_TLS_SCHEME}
@@ -102,14 +98,7 @@ class CacheSettings(BaseModel):
 
     @model_validator(mode="after")
     def _reject_inverted_budgets(self) -> Self:
-        """Reject timeout, TTL, lock, and backoff values that contradict each other.
-
-        Returns:
-            The validated settings.
-
-        Raises:
-            ValueError: A pair of related durations is inverted.
-        """
+        """Raise ``ValueError`` when timeout, TTL, lock or backoff values contradict."""
         if self.operation_timeout_seconds < self.socket_timeout_seconds:
             msg = "operation_timeout_seconds must cover at least one socket timeout"
             raise ValueError(msg)

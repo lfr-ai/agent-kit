@@ -6,6 +6,7 @@ app factory with fakes (see the ``kit-fastapi-service`` skill).
 """
 
 from datetime import UTC, datetime
+from typing import Final
 from email.utils import format_datetime
 
 import pytest
@@ -23,9 +24,9 @@ from shop.api.etag import (
     strong_etag,
 )
 
-BODY = b'{"id":981,"name":"lamp"}'
-MODIFIED = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
-TAG = strong_etag(BODY)
+BODY: Final[bytes] = b'{"id":981,"name":"lamp"}'
+MODIFIED: Final[datetime] = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+TAG: Final[str] = strong_etag(BODY)
 
 
 async def product(request: Request) -> Response:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Final, Protocol
 
 from jinja2 import (
     Environment,
@@ -21,9 +21,9 @@ from jinja2 import (
 )
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
 
-DEFAULT_CACHE_SIZE = 400
-MAX_UNTRUSTED_TEMPLATE_CHARS = 10_000
-MAX_RENDERED_CHARS = 100_000
+DEFAULT_CACHE_SIZE: Final[int] = 400
+MAX_UNTRUSTED_TEMPLATE_CHARS: Final[int] = 10_000
+MAX_RENDERED_CHARS: Final[int] = 100_000
 
 
 class TemplateRenderer(Protocol):
@@ -74,7 +74,7 @@ def _html_environment(package: str, folder: str) -> Environment:
 class JinjaRenderer:
     """Render allow-listed templates packaged with the application.
 
-    Args:
+    Attributes:
         package: Import name of the package that ships the templates.
         folder: Folder inside the package that holds template files.
         allowed: Template names callers may request.
@@ -125,7 +125,7 @@ class PromptRenderer:
     Prompts are text, not HTML, so escaping is disabled; the sandbox still
     blocks unsafe attribute access and StrictUndefined rejects missing values.
 
-    Args:
+    Attributes:
         templates: Mapping of prompt name to trusted template source.
     """
 

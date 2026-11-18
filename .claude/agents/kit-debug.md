@@ -45,3 +45,4 @@ Turn a reported symptom into a verified root-cause fix with a retained regressio
 - Root cause in one or two sentences with file and line references.
 - Changed paths, regression test names, exact verification commands and results.
 - Related occurrences left unfixed and remaining limitations.
+- A request for a second-pass review of the diff by the read-only code reviewer.

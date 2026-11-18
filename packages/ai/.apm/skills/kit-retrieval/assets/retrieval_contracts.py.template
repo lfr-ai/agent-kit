@@ -14,11 +14,11 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from enum import StrEnum
-from typing import Protocol, Self
+from enum import StrEnum, auto, unique
+from typing import Final, Protocol, Self
 
-MAX_QUERY_CHARS = 2000
-MAX_TOP_K = 100
+MAX_QUERY_CHARS: Final[int] = 2000
+MAX_TOP_K: Final[int] = 100
 
 _DEFAULT_TOP_K_RESULTS = 8
 
@@ -39,12 +39,13 @@ class SourceDeletedError(RetrievalError):
     """A write targeted a source that was deleted and must stay deleted."""
 
 
+@unique
 class EvidenceStatus(StrEnum):
     """How well the retrieved hits support answering the query."""
 
-    SUFFICIENT = "sufficient"
-    INSUFFICIENT = "insufficient"
-    NO_EVIDENCE = "no_evidence"
+    SUFFICIENT = auto()
+    INSUFFICIENT = auto()
+    NO_EVIDENCE = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -248,7 +249,7 @@ def is_visible_to(chunk: Chunk, principal: Principal) -> bool:
 
 
 def chunk_from_mapping(
-    *, text: str, metadata: Mapping[str, object], score_key: str = ""
+    *, text: str, metadata: Mapping[str, object], score_key: str | None = None
 ) -> Chunk:
     """Rebuild a chunk from adapter metadata, failing closed on gaps.
 
@@ -259,7 +260,8 @@ def chunk_from_mapping(
     Args:
         text (str): Chunk text returned by the store.
         metadata (Mapping[str, object]): Flat metadata stored beside the vector.
-        score_key (str): Metadata key to exclude from the copied attributes.
+        score_key (str | None): Metadata key to exclude from the copied attributes,
+            or ``None`` when the store keeps no score in metadata.
 
     Returns:
         The validated chunk.
@@ -296,7 +298,9 @@ def chunk_from_mapping(
         if isinstance(updated, datetime)
         else datetime.fromisoformat(str(updated))
     )
-    reserved = {*required, "section", score_key}
+    reserved = {*required, "section"}
+    if score_key is not None:
+        reserved.add(score_key)
     return Chunk(
         chunk_id=str(metadata["chunk_id"]),
         source_id=str(metadata["source_id"]),
@@ -341,12 +345,7 @@ class Embedder(Protocol):
         ...
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed texts in order.
-
-        Returns:
-            list[list[float]]: One vector per input text, in input order,
-            each containing ``dimensions`` floating-point components.
-        """
+        """Embed texts in order, one ``dimensions``-long vector per input text."""
         ...
 
 

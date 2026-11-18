@@ -36,14 +36,14 @@ Time box: <hours or days>
 
 | Concern | Tool | Version | Already configured | Judgment (recency, maintainers, downloads, license) | Output file |
 | --- | --- | --- | --- | --- | --- |
-| Lint and complexity | Ruff | `<x.y.z>` | yes / no | `<evidence and date>` | `audit/ruff.json` |
-| Types | `<ty, mypy, pyright>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.json` |
-| Import contracts | import-linter | `<version>` | yes / no | `<evidence>` | `audit/lint-imports.txt` |
-| Dead code | vulture | `<version>` | yes / no | `<evidence>` | `audit/vulture.txt` |
-| Dependencies | deptry | `<version>` | yes / no | `<evidence>` | `audit/deptry.json` |
-| Duplication | jscpd | `<version>` | yes / no | `<evidence>` | `audit/jscpd-report.json` |
-| Vulnerabilities | `<uv audit, pip-audit or osv-scanner>` | `<version>` | yes / no | `<evidence>` | `audit/<tool>.<json or sarif>` |
-| Spelling | cspell | `<version>` | yes / no | `<evidence>` | `audit/cspell.txt` |
+| Lint and complexity | Ruff | `<x.y.z>` | yes / no | `<evidence and date>` | `$AUDIT_DIR/ruff.json` |
+| Types | `<ty, mypy, pyright>` | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/<tool>.json` |
+| Import contracts | import-linter | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/lint-imports.txt` |
+| Dead code | vulture | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/vulture.txt` |
+| Dependencies | deptry | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/deptry.json` |
+| Duplication | jscpd | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/jscpd-report.json` |
+| Vulnerabilities | `<uv audit, pip-audit or osv-scanner>` | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/<tool>.<json or sarif>` |
+| Spelling | cspell | `<version>` | yes / no | `<evidence>` | `$AUDIT_DIR/cspell.txt` |
 
 ## Manual review sample
 

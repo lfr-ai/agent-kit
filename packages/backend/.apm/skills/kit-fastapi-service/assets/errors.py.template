@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from types import MappingProxyType
+from typing import Final
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -45,7 +46,7 @@ class ProblemSpec:
     title: str
 
 
-PROBLEMS: Mapping[type[ServiceError], ProblemSpec] = MappingProxyType(
+PROBLEMS: Final[Mapping[type[ServiceError], ProblemSpec]] = MappingProxyType(
     {
         NotFoundError: ProblemSpec(
             status=HTTPStatus.NOT_FOUND, slug="not-found", title="Resource not found"

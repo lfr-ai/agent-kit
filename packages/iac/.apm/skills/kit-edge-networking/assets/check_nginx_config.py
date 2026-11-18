@@ -162,16 +162,9 @@ class Finding:
 
 
 def tokenize(text: str) -> list[Token]:
-    """Split configuration text into comments, punctuation, and words.
+    """Tokenize text in source order; raise ``NginxConfigError`` on an open quote.
 
-    Args:
-        text (str): Complete configuration text.
-
-    Returns:
-        Tokens in source order without whitespace.
-
-    Raises:
-        NginxConfigError: If a quoted string is not terminated.
+    Tokens are comments, punctuation, and words; whitespace is dropped.
     """
     tokens: list[Token] = []
     position = 0
@@ -214,11 +207,7 @@ def _directive(words: Sequence[Token], terminator: Token) -> Directive:
 
 
 def _require_terminated(words: Sequence[Token]) -> None:
-    """Reject words left over before a closing brace or the end of input.
-
-    Raises:
-        NginxConfigError: A directive is missing ``;``.
-    """
+    """Raise ``NginxConfigError`` for words left before ``}`` or EOF (missing ``;``)."""
     if words:
         raise NginxConfigError(
             line=words[0].line, problem=f"directive '{words[0].text}' is missing ';'"
@@ -320,16 +309,9 @@ def _block(
 
 
 def parse(text: str) -> Block:
-    """Parse configuration text into its main-context block.
+    """Parse complete configuration text into its main-context block.
 
-    Args:
-        text (str): Complete configuration text.
-
-    Returns:
-        The main context with nested blocks.
-
-    Raises:
-        NginxConfigError: If the text is not well-formed nginx syntax.
+    Text that is not well-formed nginx syntax propagates ``NginxConfigError``.
     """
     block, _ = _parse_block(tokenize(text), 0, None)
     return block
@@ -590,12 +572,12 @@ def _keepalive_findings(
     return list(reported.values())
 
 
-def _zone_name(args: Sequence[str]) -> str:
-    """Return the zone name from a ``zone=name[:size]`` argument, or empty."""
+def _zone_name(args: Sequence[str]) -> str | None:
+    """Return the zone name from a ``zone=name[:size]`` argument, or ``None``."""
     for arg in args:
         if arg.startswith("zone="):
             return arg.removeprefix("zone=").split(":", 1)[0]
-    return ""
+    return None
 
 
 def _zone_findings(
@@ -650,15 +632,14 @@ def _zone_findings(
 def scan_text(path: Path, text: str) -> list[Finding]:
     """Check one configuration file and return its findings in line order.
 
+    Text that is not well-formed nginx syntax propagates ``NginxConfigError``.
+
     Args:
         path (Path): Path reported in findings.
         text (str): File content.
 
     Returns:
         Findings sorted by line number and message.
-
-    Raises:
-        NginxConfigError: If the text is not well-formed nginx syntax.
     """
     blocks = [
         (block, chain)
@@ -692,17 +673,10 @@ class MissingPathError(ValueError):
 
 
 def collect_files(paths: Iterable[Path]) -> list[Path]:
-    """Expand directories into sorted configuration files.
+    """Expand paths into sorted config files; raise ``MissingPathError`` if absent.
 
-    Args:
-        paths (Iterable[Path]): Files or directories supplied by the operator.
-            Directories contribute files ending in ``.conf`` or ``.conf.template``.
-
-    Returns:
-        Sorted, de-duplicated file list.
-
-    Raises:
-        MissingPathError: If a path does not exist.
+    Directories contribute files ending in ``.conf`` or ``.conf.template``; the
+    result is de-duplicated.
     """
     files: set[Path] = set()
     for path in paths:

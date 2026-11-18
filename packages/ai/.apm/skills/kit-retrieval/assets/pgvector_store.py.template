@@ -192,11 +192,10 @@ class _PgBase:
 
     @staticmethod
     def _filters(query: Query) -> dict[str, object]:
-        """Build the shared tenant, access and metadata parameters.
+        """Build the shared ``tenant``, ``tokens`` and ``filters`` SQL parameters.
 
-        Returns:
-            dict[str, object]: SQL parameters ``tenant`` (str), ``tokens``
-            (sorted principal-token list), and ``filters`` (JSONB metadata map).
+        ``tokens`` is the sorted principal-token list and ``filters`` the JSONB
+        metadata map.
         """
         return {
             "tenant": query.principal.tenant,
@@ -230,15 +229,9 @@ class PgVectorRetriever(_PgBase):
         return "dense"
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Return visible hits ordered by cosine similarity.
+        """Return visible hits in rank order by cosine similarity.
 
         Iterative index scans use relaxed ordering, so rows are re-sorted.
-
-        Args:
-            query (Query): Request to execute.
-
-        Returns:
-            Hits in rank order.
         """
         (vector,) = await self._embedder.embed([query.text])
         rows = await self._fetch(
@@ -309,16 +302,9 @@ class PgIndexWriter(_PgBase):
         self._batch_size = batch_size
 
     async def upsert(self, chunks: Sequence[Chunk]) -> int:
-        """Embed and write chunks, refusing deleted sources.
+        """Embed and write chunks; raise ``SourceDeletedError`` for a deleted source.
 
-        Args:
-            chunks (Sequence[Chunk]): Chunks to write.
-
-        Returns:
-            Number of chunks written.
-
-        Raises:
-            SourceDeletedError: If a chunk belongs to a tombstoned source.
+        The result is the number of chunks written.
         """
         written = 0
         for offset in range(0, len(chunks), self._batch_size):

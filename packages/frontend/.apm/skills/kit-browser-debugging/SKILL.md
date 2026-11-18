@@ -1,6 +1,6 @@
 ---
 name: kit-browser-debugging
-description: Use when diagnosing a reproducible browser defect from runtime evidence without exposing user data.
+description: Use when diagnosing browser defects with runtime evidence and data privacy.
 license: MIT
 ---
 

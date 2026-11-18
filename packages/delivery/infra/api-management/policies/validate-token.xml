@@ -1,0 +1,5 @@
+<validate-azure-ad-token tenant-id="{tenant-id}" output-token-variable-name="caller">
+      <audiences>
+        <audience>{audience}</audience>
+      </audiences>
+    </validate-azure-ad-token>

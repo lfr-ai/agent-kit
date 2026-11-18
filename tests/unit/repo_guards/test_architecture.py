@@ -6,8 +6,9 @@ import ast
 from configparser import ConfigParser
 from pathlib import Path
 import sys
+from typing import Final
 
-SOURCE = Path(__file__).parents[3] / "src" / "agent_kit"
+SOURCE: Final[Path] = Path(__file__).parents[3] / "src" / "agent_kit"
 
 
 def test_import_linter_enforces_the_infrastructure_boundary() -> None:
@@ -27,10 +28,38 @@ def test_import_linter_enforces_the_infrastructure_boundary() -> None:
     )
 
 
+def test_runtime_layers_include_adapters_and_public_composition_facades() -> None:
+    config = ConfigParser()
+    config.read(SOURCE.parents[1] / ".importlinter", encoding="utf-8")
+    layers = config["importlinter:contract:runtime-layers"]["layers"].split()
+
+    assert {
+        "platform_kit_runtime.ai",
+        "platform_kit_runtime.identity",
+        "platform_kit_runtime.composition",
+        "platform_kit_runtime.infrastructure",
+        "platform_kit_runtime.presentation",
+        "platform_kit_runtime.application",
+        "platform_kit_runtime.core",
+    } <= set(layers)
+
+
+def test_runtime_adapters_do_not_depend_on_presentation_or_application() -> None:
+    config = ConfigParser()
+    config.read(SOURCE.parents[1] / ".importlinter", encoding="utf-8")
+    contract = config["importlinter:contract:runtime-infrastructure"]
+
+    assert contract["type"] == "forbidden"
+    assert contract["source_modules"].split() == ["platform_kit_runtime.infrastructure"]
+    assert set(contract["forbidden_modules"].split()) == {
+        "platform_kit_runtime.presentation",
+        "platform_kit_runtime.application",
+    }
+
+
 def test_architecture_guard_rejects_outward_infrastructure_imports() -> None:
     tree = ast.parse(
-        "from agent_kit.application.services import catalog_service\n"
-        "from agent_kit.core import models\n"
+        "from agent_kit.application import catalog\nfrom agent_kit.core import models\n"
     )
 
     assert _layer_violations("infrastructure/adapter.py", tree) == [

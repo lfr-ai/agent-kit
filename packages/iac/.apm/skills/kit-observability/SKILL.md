@@ -1,6 +1,6 @@
 ---
 name: kit-observability
-description: Use when designing or reviewing metrics, traces, logs, dashboards, alerts, or SLOs.
+description: Use when designing metrics, traces, logs, dashboards, alerts or SLOs.
 license: MIT
 ---
 

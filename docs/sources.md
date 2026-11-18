@@ -9,7 +9,7 @@ documentation is upgrade evidence, not proof of behavior in a pinned version.
 
 | Item | Pin | Note |
 | --- | --- | --- |
-| APM CLI | 0.33.0 | Its [source tag](https://github.com/microsoft/apm/releases/tag/v0.33.0) is the runtime contract. 0.35.0 (2026-10-22, per [release](https://api.github.com/repos/microsoft/apm/releases/latest) and [PyPI](https://pypi.org/pypi/apm-cli/json) metadata) waits out the 14-day cooldown; reassess on or after 2026-11-05 |
+| APM CLI | 0.35.0 | Upgraded after the 14-day cooldown on 2026-11-05; [release notes](https://github.com/microsoft/apm/releases/tag/v0.35.0) describe frozen-install integrity and deployment ownership fixes. The dependency audit passed before synchronization. The legacy local-owner ledger limitation remains documented in [compatibility](compatibility.md). |
 | Actions, hooks, images | Commit SHA or digest | Resolved from release/tag metadata, not version names; pre-commit runs `actionlint` and `zizmor` |
 | `filelock`, `setuptools` | 4.2.1, 84.1.0 | Advisory fixes resolved 2026-10-24 and audited before sync; security fixes skip the cooldown |
 | Pydantic, Polars | Consumer lock | Backend capability guidance only; the toolkit resolves Pydantic 2.13.5 transitively and does not install Polars |
@@ -17,6 +17,27 @@ documentation is upgrade evidence, not proof of behavior in a pinned version.
 The [pinned artifact uploader](https://github.com/actions/upload-artifact/blob/v7.0.2/README.md)
 preserves hierarchy for multiple paths, so release staging flattens the verified
 inventory before upload.
+
+## Infrastructure and feedback-loop review, 2026-11-16
+
+Current official documentation was consulted for the focused cleanup, without
+deploying resources or upgrading the pinned toolchain. Supported platform
+features are not evidence that an existing environment is correctly configured.
+
+| Source | Applied constraint |
+| --- | --- |
+| [Container Apps ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview), [networking](https://learn.microsoft.com/en-us/azure/container-apps/networking), [custom domains](https://learn.microsoft.com/en-us/azure/container-apps/custom-domains-certificates) | Native ingress/TLS needs no default Front Door. Environment accessibility and app ingress differ; keep private DNS and domain ownership explicit. |
+| [Azure load-balancing choices](https://learn.microsoft.com/en-us/azure/architecture/guide/technology-choices/load-balancing-overview), [Front Door WAF](https://learn.microsoft.com/en-us/azure/web-application-firewall/afds/afds-overview) | Add an edge or gateway for an actual WAF/global-routing/API-policy requirement; never replace a configured WAF with unprotected ingress silently. |
+| [Container Apps secrets](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets), [GitHub Azure OIDC](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure) | Runtime managed identities read Key Vault references; deployment federation and data-plane RBAC remain separately scoped. |
+| [Terraform Azure backend](https://developer.hashicorp.com/terraform/language/backend/azurerm), [remote-state bootstrap](https://learn.microsoft.com/en-us/azure/developer/terraform/store-state-in-azure-storage), [Bicep deployment modes](https://learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-modes) | Separate backend bootstrap, Entra/OIDC and native blob locking; incremental Bicep does not delete omitted resources or merge omitted properties. |
+| [Container Apps log options](https://learn.microsoft.com/en-us/azure/container-apps/log-options), [retention](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-archive), [OpenTelemetry](https://learn.microsoft.com/en-us/azure/azure-monitor/app/opentelemetry-enable) | Console collection owns logs; optional Insights owns traces. Avoid duplicate instrumentation/exporters. Live streaming is not retained history. |
+| [Container Apps metrics](https://learn.microsoft.com/en-us/azure/container-apps/metrics), [metric alerts](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-metric-overview), [action groups](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups) | Use supported Requests/RestartCount metrics; reference a caller-owned Teams-capable group or create email receivers. Test real delivery separately. |
+| [Activity Log](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/activity-log) | Subscription control-plane export is distinct from Entra, resource-internal and business auditing; source retention and exported-data retention differ. |
+| [VS Code customization](https://code.visualstudio.com/docs/copilot/copilot-customization), [scoped instructions](https://code.visualstudio.com/docs/copilot/customization/custom-instructions), [pytest cache](https://docs.pytest.org/en/stable/how-to/cache.html), [pre-commit](https://pre-commit.com/), [Task up-to-date checks](https://taskfile.dev/docs/guide/up-to-date) | Prefer task-relevant context and focused tests; reuse installed tool environments. Do not add caching to correctness gates without proving complete input coverage. |
+
+No preview metric, new orchestration layer or automatic platform detection was
+adopted. Native IDE discovery, cloud reachability, notification delivery and
+measured developer latency need separate observed evidence.
 
 ## Feedback and hygiene review, 2026-11-04
 

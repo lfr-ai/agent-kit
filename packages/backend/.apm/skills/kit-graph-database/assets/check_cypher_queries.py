@@ -142,14 +142,11 @@ def check_python(text: str, path: str) -> list[Finding]:
     """Return formatting and unbounded-read findings for one Python module.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text; invalid Python raises ``SyntaxError``.
         path (str): File name used in syntax errors.
 
     Returns:
         Findings ordered by line, excluding waived lines.
-
-    Raises:
-        SyntaxError: If ``text`` is not valid Python.
     """
     tree = ast.parse(text, filename=path)
     lines = text.splitlines()

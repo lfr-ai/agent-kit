@@ -1,6 +1,6 @@
 ---
 name: kit-supply-chain
-description: Use when adding or auditing dependencies, lockfiles, pins, SBOMs or provenance, or a package is compromised.
+description: Use when auditing dependencies, lockfiles, pins, SBOMs, provenance or compromised packages.
 license: MIT
 ---
 
@@ -53,8 +53,8 @@ which routes each concern to the skill that owns it.
    templates owned by the `kit-repository-setup` skill.
 9. For automation and releases, follow
    [provenance and SBOM](references/provenance-and-sbom.md): actions pinned by
-   full commit SHA and scanned with zizmor (`kit-ci-review`), images pinned by
-   digest (`kit-containers`), build provenance for published artifacts, and
+   full commit SHA and scanned with zizmor (`kit-ci-review`, when installed), images pinned by
+   digest (`kit-containers`, when installed), build provenance for published artifacts, and
    trusted publishing (`kit-release`). Adopt the
    [SBOM workflow](assets/sbom.yml.template) only for an explicit consumer,
    compliance, or release-inventory requirement; reuse existing audit tools.

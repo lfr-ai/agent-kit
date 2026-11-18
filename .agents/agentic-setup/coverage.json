@@ -214,7 +214,7 @@
     "subagent-driven-development/scripts/review_package.py": "packages/shared/.apm/skills/kit-subagent-delivery/assets/check_handoff.py",
     "testing-conventions/scripts/check_test_hygiene.py": "packages/shared/.apm/skills/kit-test-first/assets/check_test_layout.py",
     "testing-conventions/scripts/check_test_naming.py": "consumer-owned",
-    "vscode-workspace/scripts/check_task_wiring.py": "scripts/check_coverage.py"
+    "vscode-workspace/scripts/check_task_wiring.py": "scripts/checks/coverage/editor.py"
   },
   "guard_migration": {
     "skill_metadata_resources_and_names": "source gate, duplicate-key and containment tests",

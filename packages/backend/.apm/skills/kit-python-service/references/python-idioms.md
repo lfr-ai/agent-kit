@@ -3,6 +3,10 @@
 Reviewed 2026-10-23 for Python 3.13 (the toolkit baseline) with notes for 3.14.
 Each section gives the rule, a short bad and good example, and the reason.
 Topics with a dedicated reference link to it instead of repeating it.
+Focused signature fragments below omit bodies and docstrings to isolate an
+idiom; they are not complete copy-ready APIs. Implementations follow the
+[local docstring policy](docstrings.md) and the production templates. Complete
+one-line summaries are valid; sections are not mandatory signature repetition.
 
 ## Parameters
 
@@ -82,8 +86,8 @@ or at statement level where `=` works.
 if retries > 3 and elapsed > 30.0:
     ...
 # Good
-MAX_RETRIES = 3
-TIMEOUT_SECONDS = 30.0
+MAX_RETRIES: Final[int] = 3
+TIMEOUT_SECONDS: Final[float] = 30.0
 if retries > MAX_RETRIES and elapsed > TIMEOUT_SECONDS:
     ...
 ```
@@ -92,14 +96,73 @@ Name every literal other than `0`, `1`, and `-1` with intent and unit. Ruff
 `PLR2004` covers comparisons; `check_python.py --magic-numbers` covers all
 non-constant positions.
 
+### Repeated comparison literals
+
+```python
+# Bad: the vocabulary is respelled at every decision point.
+if order.status == "shipped":
+    ...
+if status in ("shipped", "cancelled"):
+    ...
+
+
+# Good: the closed vocabulary has one owner.
+@unique
+class OrderStatus(StrEnum):
+    SHIPPED = auto()
+    CANCELLED = auto()
+
+
+_TERMINAL = frozenset({OrderStatus.SHIPPED, OrderStatus.CANCELLED})
+```
+
+Name a literal once two places compare against it, so a typo or rename has one
+owner. Values code branches on form a closed vocabulary: use a `StrEnum` with
+`auto()` (see [enums](#enums-instead-of-string-literals)); one shared token
+becomes a private `_UPPER` constant beside its owner. A schema key, wire field
+or option compared once stays inline: the external format owns it, and a name
+only adds indirection. `check_python.py --repeated-literals` reports the second
+and later `==`, `!=`, `in`, `not in` and `case` uses of one `str`, `bytes` or
+number per module. It skips `0`, `1`, `-1`, `""`, tests, entry guards and
+`sys.platform`, which type checkers narrow only against literals.
+
+### Named conditions
+
+```python
+# Bad: four clauses, repeated lookups, intent left to the reader.
+return (
+    match is not None
+    and match.group("marker")[0] == fence[0]
+    and len(match.group("marker")) >= len(fence)
+    and not match.group("info").strip()
+)
+
+
+# Good: guard clause for None, then one name per rule.
+if match is None:
+    return False
+marker = match.group("marker")
+same_character = marker[0] == fence[0]
+long_enough = len(marker) >= len(fence)
+has_info = bool(match.group("info").strip())
+return same_character and long_enough and not has_info
+```
+
+Return a boolean expression directly (Ruff `SIM103`), but apply Fowler's
+[Extract Variable](https://refactoring.com/catalog/extractVariable.html) or
+[Decompose Conditional](https://refactoring.com/catalog/decomposeConditional.html)
+once a condition joins three or more operands, repeats a sub-expression or
+indexes into values. Ruff `PLR0916` only counts `if` statements, so review owns
+compound `return` expressions. Indexing with `[0]` is not a magic number.
+
 ## Closed sets and constants
 
 ### Enums instead of string literals
 
 | Need | Use |
 | --- | --- |
-| Closed set of text values crossing a boundary (status, kind) | `enum.StrEnum` with explicit values and `@enum.unique` |
-| Closed set of integers for a numeric protocol | `enum.IntEnum` |
+| Closed set of text values crossing a boundary (status, kind) | `enum.StrEnum` with `auto()` for lowercase-name values, explicit values otherwise, and `@enum.unique` or `@enum.verify(enum.UNIQUE)` |
+| Closed set of integers for a numeric protocol | `enum.IntEnum` with explicit values and uniqueness |
 | Combinable options | `enum.Flag` (`Permission.READ \| Permission.WRITE`) |
 | Two or three literal values in one signature, no behavior | `typing.Literal["asc", "desc"]` |
 | Open set (user-defined tags) | `str` validated at the boundary |
@@ -117,15 +180,26 @@ template: [dataclasses and enums](dataclasses-enums.md).
 ### `typing.Final` (PEP 591)
 
 ```python
-API_VERSION: Final = "2026-10-01"  # public constant: annotated, never rebound
-_RETRY_DELAY_SECONDS: Final = 0.5  # private constant: Final or unannotated
+API_VERSION: Final[str] = "2026-10-01"  # public constant: explicit type
+_RETRY_DELAY_SECONDS = 0.5  # private implementation constant: unannotated
 ```
 
-Annotate public module constants with `Final` so a type checker rejects
-rebinding. Private `_UPPER` constants may also use bare `Final`; any other
-annotation only restates the inferred type and is rejected by `private-constant`.
-`Final` does not make a mutable value immutable; pair it with a tuple,
-`frozenset`, or `types.MappingProxyType`.
+Bare `Final` is valid typing syntax and permits inference. Our **local convention**
+instead requires explicit `Final[T]` for public `UPPER` module constants and
+**no annotation** on private `_UPPER` implementation constants. This is a
+style choice, not a stdlib restriction. The existing `private-constant` rule
+checks both visibilities. Ordinary lowercase variables, enum members, PEP 695
+type aliases, explicit `TypeAlias` declarations and typing factories such as
+`TypeVar` are not module constants. Prefer explicit type-alias syntax to an
+ambiguous uppercase assignment.
+
+`Final` does not prevent container mutation or enforce anything at runtime;
+choose a tuple, `frozenset` or `types.MappingProxyType` when needed. Keep constants
+beside their semantic owner; extract a shared constant only for actual semantic
+reuse. Do not create a central globals/constants dump. When two or more modules
+encode the same knowledge, such as a file suffix and its directory, move it to
+the one module that owns that concept; a closed set that callers iterate or
+dispatch on becomes an enum whose properties carry the per-member values.
 
 ### Immutable collections
 
@@ -133,8 +207,8 @@ annotation only restates the inferred type and is rejected by `private-constant`
 # Bad: any importer can append to the shared default.
 ALLOWED_CURRENCIES = ["EUR", "USD"]
 # Good
-ALLOWED_CURRENCIES: Final = frozenset({"EUR", "USD"})
-SORT_FIELDS: Final = MappingProxyType({"created": "created_at"})
+ALLOWED_CURRENCIES: Final[frozenset[str]] = frozenset({"EUR", "USD"})
+SORT_FIELDS: Final[Mapping[str, str]] = MappingProxyType({"created": "created_at"})
 ```
 
 Use `tuple` for ordered fixed data and `frozenset` for membership tests; frozen
@@ -147,7 +221,7 @@ dataclass fields hold tuples, not lists.
 | Annotate | Skip |
 | --- | --- |
 | Every parameter and return of public and private functions and methods (`ANN` rules) | Local variables whose type is obvious from the right-hand side |
-| Public module constants (`Final`) and class attributes | `self` and `cls` |
+| Public module constants (`Final[T]`) and class attributes | `self`, `cls`, and private `_UPPER` module constants |
 | Empty collections whose element type cannot be inferred (`seen: set[str] = set()`) | Loop variables and comprehension targets |
 | `-> None` on initializers and procedures | Lambdas (use a named function when a type matters) |
 
@@ -161,7 +235,7 @@ evaluation (PEP 649 and PEP 749) once the baseline moves.
 ### `typing.override` (PEP 698)
 
 ```python
-class JsonExporter(Exporter):
+class JSONExporter(Exporter):
     @override
     def export(self, report: Report) -> bytes: ...
 ```
@@ -181,6 +255,9 @@ Use `TypeGuard[T]` for a partial validator that only guarantees `T` on success,
 or an invariant transformation such as `list[object]` to `list[str]`.
 Neither construct performs validation itself. Do not infer the predicate kind
 from its name or mechanically replace every `TypeGuard`.
+`None` checks for genuine optional states and `isinstance` checks at untrusted
+parsing boundaries are legitimate. Do not remove boundary validation merely
+because annotations describe the validated interior.
 
 Sources: [Python 3.13 typing](https://docs.python.org/3.13/library/typing.html#typing.TypeIs),
 [canonical narrowing guide](https://typing.python.org/en/latest/guides/type_narrowing.html),
@@ -254,7 +331,10 @@ def rates(self) -> RateTable:  # Bad: hides a network call behind attribute acce
 ```
 
 A property must be fast, deterministic, and free of I/O and mutation; anything
-that can fail, block, or take arguments is a method named with a verb.
+that can fail, block, or take arguments is a method named with a verb. Document
+a property like an attribute in one line (`"""Order total in its currency."""`),
+never with a `Returns:` section (Google style guide §3.8.3; enforced by
+`check_python.py --docstrings` rule `docstring-property`).
 
 ### Underscore conventions
 
@@ -315,13 +395,13 @@ behavior. A one-off wrapper or a plain function is simpler otherwise.
 - Give each package one base exception and specific subclasses ending in
   `Error` (Ruff `N818`); carry structured attributes, chain with `from`. See
   [error handling](error-handling.md).
-- Document every exception a function raises directly, or deliberately lets
-  propagate as part of its contract, in a `Raises:` section; do not list
-  incidental failures of dependencies. Ruff's pydoclint rule `DOC501` (preview
-  at review date) reports raised exceptions missing from the section. `DOC502`
-  counts only direct `raise` statements, so it flags documented propagated
-  exceptions; leave it off rather than suppressing it.
-  See [docstrings](docstrings.md) and PEP 257.
+- Document failures the callable raises itself (direct, translated with
+  `from`, or re-raised) in prose or `Raises:`; never enumerate callee or
+  incidental dependency failures. `DOC501`/`DOC502` stay off because they match
+  names only and mistake exception factories for classes; the conventions
+  checker owns `docstring-raises` and `docstring-raises-extra`. Supplied
+  sections still receive structural checks. See [docstrings](docstrings.md)
+  and PEP 257.
 - Use a module logger, `logger = logging.getLogger(__name__)`, and lazy `%`
   arguments: `logger.info("order %s confirmed", order_id)`. Never pass
   f-strings, `str.format`, or concatenation to a log call (Ruff `G001`-`G004`)

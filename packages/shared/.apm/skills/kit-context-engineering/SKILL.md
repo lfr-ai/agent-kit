@@ -1,6 +1,6 @@
 ---
 name: kit-context-engineering
-description: Use when trimming always-on agent context or choosing between an instruction, skill, prompt, or agent.
+description: Use when trimming context or choosing instructions, skills, prompts or agents.
 license: MIT
 ---
 

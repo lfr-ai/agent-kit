@@ -25,7 +25,7 @@ consumer-specific controls belong in consumer tests. Adoption steps live in
 
 | Step | Owner | Deliverable | Evidence |
 | --- | --- | --- | --- |
-| 1. Baseline | Maintainer | Catalog/resource census, full-hook result | `task verify`, `scripts.check_resources`, hooks |
+| 1. Baseline | Maintainer | Catalog/resource census, full-hook result | `task verify`, `scripts.checks.resources`, hooks |
 | 2. Map topics | Maintainer | Coverage and exclusions below | Canonical resource paths |
 | 3. Dedicated owners | Package maintainers | Skills, scoped instructions, prompts | Per-package resource tests, coverage remaps |
 | 4. Roles | Package maintainers | AI implementer, evaluation and infrastructure reviewers | Native projection contracts; no pinned models |
@@ -74,7 +74,7 @@ original capability's replacement or exclusion. Compare an original checkout
 with the recorded baseline (identities only, not secrets):
 
 ```powershell
-uv run --locked python -m scripts.check_coverage --source-root <original-checkout>
+uv run --locked python -m scripts.checks.coverage --source-root <original-checkout>
 ```
 
 | Original surface | New owner | Difference |

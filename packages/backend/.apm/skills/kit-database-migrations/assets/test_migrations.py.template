@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Final
 
 import pytest
 import sqlalchemy as sa
@@ -18,8 +19,8 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import Script, ScriptDirectory
 
-ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
-FORWARD_ONLY_MARKER = "Forward-only"
+ALEMBIC_INI: Final[Path] = Path(__file__).resolve().parents[2] / "alembic.ini"
+FORWARD_ONLY_MARKER: Final[str] = "Forward-only"
 
 pytestmark = pytest.mark.integration
 

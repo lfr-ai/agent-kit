@@ -23,11 +23,7 @@ class AnswerProgram(Protocol):
     """Program accepting only the case input, never its reference answer."""
 
     def __call__(self, *, question: str) -> AnswerPrediction:
-        """Predict an answer for the public question.
-
-        Args:
-            question: Approved input text, without evaluation labels.
-        """
+        """Predict an answer for an approved question without evaluation labels."""
         ...
 
 
@@ -44,20 +40,17 @@ class InvalidPredictionError(ValueError):
 class DspyTask:
     """Evaluate a question/answer program without exposing scoring labels.
 
-    Args:
+    Attributes:
         program: Already initialized, approved candidate program.
     """
 
     program: AnswerProgram
 
     def __call__(self, case: EvalCase) -> str:
-        """Return a validated answer while preserving candidate failures.
+        """Return a validated answer; raise ``InvalidPredictionError`` without text.
 
-        Args:
-            case: Harness-owned input, labels and provenance.
-
-        Raises:
-            InvalidPredictionError: The prediction has no text answer.
+        Candidate failures propagate unchanged; ``case`` carries harness-owned
+        input, labels and provenance.
         """
         prediction = self.program(question=case.input)
         try:

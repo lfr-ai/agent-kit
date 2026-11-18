@@ -1,6 +1,6 @@
 ---
 name: kit-test-first
-description: Use when a requested behavior can be captured as a failing regression before implementation.
+description: Use when pinning requested behavior with a failing regression before coding.
 license: MIT
 ---
 

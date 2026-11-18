@@ -4,9 +4,9 @@ from pathlib import Path
 import sys
 
 import pytest
-from scripts import render_native
 
 from agent_kit.core.errors import InputTypeError
+from scripts import render_native
 
 
 def test_main_reports_input_type_error_as_a_nonzero_diagnostic(

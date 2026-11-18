@@ -1,6 +1,6 @@
 ---
 name: kit-api-testing
-description: Use when adding black-box API tests with Postman or Newman, Bruno, .http files, Schemathesis, or contracts.
+description: Use when testing APIs with Postman/Newman, Bruno, .http, Schemathesis or contracts.
 license: MIT
 ---
 

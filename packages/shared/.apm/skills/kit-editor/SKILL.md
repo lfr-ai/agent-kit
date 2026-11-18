@@ -1,6 +1,6 @@
 ---
 name: kit-editor
-description: Use when configuring repository editors, ty/Ruff or optional native MCP integrations.
+description: Use when configuring editors, ty/Ruff or native MCP integrations.
 license: MIT
 ---
 

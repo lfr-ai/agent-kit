@@ -1,6 +1,6 @@
 ---
 name: kit-llm-gateway
-description: Use when configuring or reviewing a model gateway such as a LiteLLM proxy or local Ollama models.
+description: Use when configuring model gateways, LiteLLM proxies or local Ollama models.
 license: MIT
 ---
 

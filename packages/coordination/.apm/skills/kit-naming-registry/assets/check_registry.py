@@ -42,14 +42,15 @@ import keyword
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
-EXIT_CLEAN = 0
-EXIT_FINDINGS = 1
-EXIT_USAGE = 2
+EXIT_CLEAN: Final[int] = 0
+EXIT_FINDINGS: Final[int] = 1
+EXIT_USAGE: Final[int] = 2
 _SEGMENT = r"[a-z][a-z0-9_]*"
 _SNAKE = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 _PATH_PART = r"(?:[a-z0-9]+(?:-[a-z0-9]+)*|\{[a-z][a-z0-9_]*\})"
-KIND_PATTERNS: dict[str, re.Pattern[str]] = {
+KIND_PATTERNS: Final[dict[str, re.Pattern[str]]] = {
     "route": re.compile(rf"/(?:{_PATH_PART}(?:/{_PATH_PART})*)?"),
     "query_key": re.compile(rf"{_SEGMENT}(?:\.{_SEGMENT})*"),
     "event": re.compile(rf"{_SEGMENT}(?:\.{_SEGMENT})+"),
@@ -58,8 +59,12 @@ KIND_PATTERNS: dict[str, re.Pattern[str]] = {
     "field": re.compile(_SNAKE),
 }
 # Kinds whose values share one namespace across all groups.
-GLOBAL_KINDS = frozenset({"route", "query_key", "event", "error_code"})
-RESERVED_GROUP_NAMES = frozenset({"StrEnum", "Final", "True", "False", "None"})
+GLOBAL_KINDS: Final[frozenset[str]] = frozenset(
+    {"route", "query_key", "event", "error_code"}
+)
+RESERVED_GROUP_NAMES: Final[frozenset[str]] = frozenset(
+    {"StrEnum", "Final", "True", "False", "None"}
+)
 _SUPPORTED_KEYWORDS = frozenset(
     {
         "$schema",
@@ -134,16 +139,15 @@ class Snapshot:
 def load_json(path: Path, duplicates: list[str]) -> object:
     """Parse JSON, recording keys that appear twice in one object.
 
+    An unreadable file propagates ``OSError``; invalid JSON propagates
+    ``ValueError``.
+
     Args:
         path (Path): JSON file.
         duplicates (list[str]): Receives each duplicated key name.
 
     Returns:
         The parsed value; for duplicated keys the last value wins.
-
-    Raises:
-        OSError: If the file cannot be read.
-        ValueError: If the text is not valid JSON.
     """
 
     def collect(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -167,11 +171,7 @@ def canonical_digest(document: object) -> str:
 
 
 def _as_schema(value: object) -> Schema:
-    """Return a schema object or raise ``RegistryInputError``.
-
-    Raises:
-        RegistryInputError: The value is not an object.
-    """
+    """Return ``value`` as a schema object; raise ``RegistryInputError`` otherwise."""
     if not isinstance(value, dict):
         message = f"schema node must be an object, got {type(value).__name__}"
         raise RegistryInputError(message)
@@ -249,8 +249,8 @@ def _object_findings(
     return findings
 
 
-def _scalar_problem(value: object, node: Schema) -> str:
-    """Return a ``type`` or ``enum`` mismatch message, or an empty string."""
+def _scalar_problem(value: object, node: Schema) -> str | None:
+    """Return a ``type`` or ``enum`` mismatch message, or ``None`` when it matches."""
     expected = node.get("type")
     if isinstance(expected, str) and not isinstance(
         value, _JSON_TYPES.get(expected, ())
@@ -259,7 +259,7 @@ def _scalar_problem(value: object, node: Schema) -> str:
     allowed = node.get("enum")
     if isinstance(allowed, list) and value not in allowed:
         return f"must be one of {allowed}"
-    return ""
+    return None
 
 
 def validate(
@@ -285,7 +285,7 @@ def validate(
         message = f"unsupported schema keywords {unsupported}"
         raise RegistryInputError(message)
     problem = _scalar_problem(value, node)
-    if problem:
+    if problem is not None:
         return [Finding(location=where, rule="schema", message=problem)]
     if isinstance(value, str):
         return _string_findings(value, node, where)
@@ -304,11 +304,7 @@ def _text(item: dict[str, object], key: str) -> str:
 
 
 def _objects(value: object) -> list[dict[str, object]]:
-    """Return the JSON objects in a list, ignoring anything else.
-
-    Returns:
-        The dictionary items of ``value`` in order; empty when it is not a list.
-    """
+    """Return the JSON objects of ``value`` in order; empty when it is not a list."""
     if not isinstance(value, list):
         return []
     return [
@@ -432,12 +428,7 @@ def semantic_findings(document: object) -> list[Finding]:
 
 
 def _index(document: object) -> dict[tuple[str, str], Snapshot]:
-    """Map ``(group, entry)`` names to their compatibility snapshot.
-
-    Returns:
-        Snapshots keyed by ``(group name, entry name)``; empty for a document without
-        groups.
-    """
+    """Map ``(group, entry)`` names to snapshots; empty for a document sans groups."""
     root = document if isinstance(document, dict) else {}
     index: dict[tuple[str, str], Snapshot] = {}
     for group in _objects(root.get("groups")):
@@ -532,15 +523,14 @@ def drift_text_findings(
 def drift_findings(generated: Path, *, registry_digest: str) -> list[Finding]:
     """Check that a generated module exists, matches the registry, and was not edited.
 
+    An existing file that cannot be read propagates ``OSError``.
+
     Args:
         generated (Path): Python or TypeScript module written by the generator.
         registry_digest (str): Canonical digest of the current registry.
 
     Returns:
         Findings for a missing, stale, or hand-edited module.
-
-    Raises:
-        OSError: If an existing file cannot be read.
     """
     where = generated.as_posix()
     if not generated.is_file():
@@ -577,6 +567,9 @@ def check(
 ) -> list[Finding]:
     """Run every check and return findings.
 
+    An unreadable input file propagates ``OSError``; invalid JSON or an
+    unsupported schema propagates ``ValueError``.
+
     Args:
         registry (Path): Registry JSON file.
         schema (Path | None): Schema file; defaults to the registry's relative
@@ -586,10 +579,6 @@ def check(
 
     Returns:
         Findings in a stable order.
-
-    Raises:
-        OSError: If an input file cannot be read.
-        ValueError: If JSON is invalid or the schema is unsupported.
     """
     duplicates: list[str] = []
     document = load_json(registry, duplicates)
@@ -614,10 +603,6 @@ def check(
     for output in outputs:
         findings.extend(drift_findings(output, registry_digest=digest))
     return findings
-
-
-class SelfTestError(AssertionError):
-    """A documented check did not behave as expected on synthetic input."""
 
 
 _SELF_TEST_SCHEMA = {
@@ -646,30 +631,13 @@ _SELF_TEST_REGISTRY = {
 }
 
 
-def _expect(message: str, *, ok: bool) -> None:
-    """Raise ``SelfTestError`` with ``message`` unless ``ok`` is true.
-
-    Raises:
-        SelfTestError: ``ok`` is false.
-    """
-    if not ok:
-        raise SelfTestError(message)
-
-
-def self_test() -> None:
-    """Exercise schema, semantic, and drift checks on synthetic input.
-
-    Raises:
-        SelfTestError: If a check misses a planted problem or flags clean input.
-    """
+def self_test() -> list[str]:
+    """Return schema, semantic and drift checks that misjudged synthetic input."""
     root: Schema = dict(_SELF_TEST_SCHEMA)
     clean_schema = validate({"version": "1.0.0"}, root, where="r", root=root)
-    _expect(f"clean schema input flagged {clean_schema}", ok=not clean_schema)
     invalid = validate({"version": "one", "extra": 1}, root, where="r", root=root)
     expected = [r"does not match ^\d+\.\d+\.\d+$", "unexpected property 'extra'"]
-    _expect(f"schema findings {invalid}", ok=[f.message for f in invalid] == expected)
     rules = sorted(item.rule for item in semantic_findings(_SELF_TEST_REGISTRY))
-    _expect(f"semantic {rules}", ok=rules == ["duplicate-value", "value-pattern"])
     body = "x = 1\n"
     digest = canonical_digest(_SELF_TEST_REGISTRY)
     header = (
@@ -679,9 +647,15 @@ def self_test() -> None:
         f"# content-sha256: {hashlib.sha256(body.encode()).hexdigest()}\n"
     )
     clean = drift_text_findings(header + body, where="m", registry_digest=digest)
-    _expect(f"drift on clean module {clean}", ok=not clean)
     edited = drift_text_findings(header + "x = 2\n", where="m", registry_digest=digest)
-    _expect(f"hand edit not detected {edited}", ok=len(edited) == 1)
+    checks = (
+        (not clean_schema, f"clean schema input flagged {clean_schema}"),
+        ([f.message for f in invalid] == expected, f"schema findings {invalid}"),
+        (rules == ["duplicate-value", "value-pattern"], f"semantic {rules}"),
+        (not clean, f"drift on clean module {clean}"),
+        (len(edited) == 1, f"hand edit not detected {edited}"),
+    )
+    return [message for ok, message in checks if not ok]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -699,9 +673,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true", help="check the checker")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Registry checker self-test passed.\n")
-        return EXIT_CLEAN
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Registry checker self-test {verdict}.\n")
+        return EXIT_FINDINGS if failures else EXIT_CLEAN
     if args.registry is None:
         parser.error("give the registry JSON file")
     outputs = tuple(path for path in (args.python, args.typescript) if path is not None)

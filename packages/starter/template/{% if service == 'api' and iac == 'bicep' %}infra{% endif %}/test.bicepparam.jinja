@@ -1,0 +1,35 @@
+// Caller-owned region defaults to the target resource group; image comes from CI.
+using none
+
+param stage = 'test'
+param namePrefix = '{{ project_name[:20].rstrip('-') }}-test'
+{%- if registry == 'acr' %}
+// Globally unique: change it if taken. Explicit cost toggle.
+param registryName = '{{ (project_name | replace('-', ''))[:40] }}testacr'
+param registrySku = 'Basic'
+{%- endif %}
+{%- if data == 'postgresql' or ai_service == 'text' %}
+param networkAddressPrefix = 'REPLACE_WITH_NONOVERLAPPING_CIDR'
+{%- endif %}
+{%- if data == 'postgresql' %}
+param postgresAdministrator = {
+  objectId: 'REPLACE_WITH_ENTRA_ADMIN_OBJECT_ID'
+  name: 'REPLACE_WITH_ENTRA_ADMIN_DISPLAY_NAME'
+  type: 'Group'
+}
+param postgresDatabase = 'app'
+{%- endif %}
+{%- if ai_service == 'text' %}
+param aiDeployment = {
+  name: 'text'
+  model: 'REPLACE_WITH_REGIONAL_MODEL'
+  version: 'REPLACE_WITH_PINNED_MODEL_VERSION'
+  sku: 'REPLACE_WITH_DEPLOYMENT_SKU'
+  capacity: 1
+}
+{%- endif %}
+param environmentVariables = {}
+param secretReferences = []
+param alertsUnmonitored = true
+param alertEmailReceivers = []
+param alertActionGroupResourceId = ''

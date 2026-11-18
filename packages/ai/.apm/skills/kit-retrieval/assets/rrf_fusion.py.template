@@ -7,10 +7,11 @@ input ranking contributes ``weight / (k + rank)`` for every chunk it contains.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from retrieval.contracts import ScoredChunk
 
-DEFAULT_RRF_K = 60
+DEFAULT_RRF_K: Final[int] = 60
 
 
 @dataclass(kw_only=True, slots=True)

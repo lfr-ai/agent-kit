@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "type": "command",
+        "command": "uv run --locked --no-sync python -m scripts.edit_feedback copilot",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

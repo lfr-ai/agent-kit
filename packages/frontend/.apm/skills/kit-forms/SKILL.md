@@ -1,6 +1,6 @@
 ---
 name: kit-forms
-description: Use when building or changing user input forms with validation, submission, and recovery behavior.
+description: Use when building forms with input validation, submission and recovery.
 license: MIT
 ---
 

@@ -4,18 +4,24 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.check_governance import check, publication_blockers
+from scripts.checks.governance import check, publication_blockers
 import yaml
 
 _FILES = (
     ".github/CODEOWNERS",
     ".github/maintainers.json",
-    ".github/workflows/ci.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/codeql.yml",
-    ".github/workflows/dependency-audit.yml",
-    ".github/workflows/dependency-review.yml",
-    ".github/workflows/scorecard.yml",
+    ".github/workflows/toolkit-ci.yml",
+    ".github/workflows/toolkit-release.yml",
+    ".github/workflows/security-codeql.yml",
+    ".github/workflows/security-dependency-audit.yml",
+    ".github/workflows/security-dependency-review.yml",
+    ".github/workflows/security-scorecard.yml",
+    ".github/workflows/delivery-python-ci.yml",
+    ".github/workflows/delivery-bun-ci.yml",
+    ".github/workflows/delivery-bicep-check.yml",
+    ".github/workflows/delivery-terraform-check.yml",
+    ".github/workflows/delivery-azure-deploy.yml",
+    "packages/delivery/actions/python-check/action.yml",
     ".github/rulesets/main.json",
     ".github/rulesets/release-tags.json",
     ".github/ISSUE_TEMPLATE/bug.yml",
@@ -69,6 +75,199 @@ def test_approved_governance_contract_passes(governed_root: Path) -> None:
     assert publication_blockers(governed_root) == []
 
 
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        (
+            "uses: $/packages/delivery/actions/python-check",
+            "uses: ./packages/delivery/actions/python-check",
+        ),
+        (
+            "uses: $/packages/delivery/actions/python-check",
+            "uses: $/packages/delivery/actions/python-check@main",
+        ),
+        (
+            "uses: $/packages/delivery/actions/python-check",
+            "uses: $/packages/delivery/actions/unreviewed",
+        ),
+        (
+            "uses: $/packages/delivery/actions/python-check",
+            "if: false\n        uses: $/packages/delivery/actions/python-check",
+        ),
+        (
+            "uses: $/packages/delivery/actions/python-check",
+            "continue-on-error: true\n        uses: $/packages/delivery/actions/python-check",
+        ),
+        ('uv-version: "0.13.3"', 'uv-version: "0.13.3"\n          task: help'),
+    ],
+)
+def test_toolkit_delivery_check_cannot_be_retargeted_or_skipped(
+    governed_root: Path, before: str, after: str
+) -> None:
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
+    text = path.read_text(encoding="utf-8")
+    assert before in text
+    path.write_text(text.replace(before, after, 1), encoding="utf-8")
+    assert check(governed_root)
+
+
+def test_source_bound_action_is_itself_inspected(governed_root: Path) -> None:
+    path = governed_root / "packages/delivery/actions/python-check/action.yml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace("1c37ad07a6a961277cf70c0d37d6f313000f5884", "main"),
+        encoding="utf-8",
+    )
+    assert any("immutable full commit SHA" in item for item in check(governed_root))
+
+
+def test_missing_source_bound_action_fails(governed_root: Path) -> None:
+    (governed_root / "packages/delivery/actions/python-check/action.yml").unlink()
+    assert any("Python check action: missing" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "delivery-python-ci.yml",
+        "delivery-bun-ci.yml",
+        "delivery-bicep-check.yml",
+        "delivery-terraform-check.yml",
+        "delivery-azure-deploy.yml",
+    ],
+)
+@pytest.mark.parametrize(
+    ("before", "after", "message"),
+    [
+        ("on:\n", "on:\n  push:\n", "workflow_call"),
+        ("contents: read", "contents: write", "root permissions"),
+        (
+            "  workflow_call:\n",
+            "  workflow_call:\n    secrets:\n      token:\n        required: false\n",
+            "must not declare secrets",
+        ),
+    ],
+)
+def test_delivery_checks_remain_reusable_and_unprivileged(
+    governed_root: Path, name: str, before: str, after: str, message: str
+) -> None:
+    path = governed_root / ".github/workflows" / name
+    content = path.read_text(encoding="utf-8")
+    assert before in content
+    path.write_text(content.replace(before, after, 1), encoding="utf-8")
+    assert any(message in item for item in check(governed_root))
+
+
+_DEPLOY_LOGIN = "          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}\n"
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "message"),
+    [
+        pytest.param(
+            "      actions: read\n",
+            "      actions: read\n      id-token: write\n",
+            "job preflight has unapproved permissions",
+            id="preflight-oidc",
+        ),
+        pytest.param(
+            "      contents: read\n      id-token: write\n",
+            "      contents: write\n      id-token: write\n",
+            "job plan has unapproved permissions",
+            id="plan-write",
+        ),
+        pytest.param(
+            "  group: delivery-azure-deploy-${{ inputs.environment }}\n",
+            "  group: delivery-azure-deploy\n",
+            "queue per environment",
+            id="global-concurrency",
+        ),
+        pytest.param(
+            "  group: delivery-azure-deploy-${{ inputs.environment }}\n",
+            "  group: delivery-azure-deploy-${{ inputs.environment }}\n"
+            "  cancel-in-progress: true\n",
+            "without cancelling",
+            id="cancel-in-progress",
+        ),
+        pytest.param(
+            _DEPLOY_LOGIN,
+            _DEPLOY_LOGIN + "          creds: ${{ secrets.AZURE_CREDENTIALS }}\n",
+            "OIDC",
+            id="login-credentials",
+        ),
+        pytest.param(
+            '      ARM_USE_OIDC: "true"\n',
+            "      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}\n",
+            "OIDC",
+            id="terraform-client-secret",
+        ),
+        pytest.param(
+            "      - name: Require a reviewed environment\n",
+            "      - name: Require a reviewed environment\n        if: false\n",
+            "verify reviewers",
+            id="skipped-reviewer-check",
+        ),
+        pytest.param(
+            "    timeout-minutes: 5\n",
+            "    timeout-minutes: 5\n    environment: ${{ inputs.environment }}\n",
+            "verify reviewers",
+            id="preflight-environment",
+        ),
+        pytest.param(
+            "      deployment: false\n",
+            "",
+            "without a deployment record",
+            id="preview-deployment",
+        ),
+        pytest.param(
+            "    needs: [preflight, plan]\n",
+            "    needs: preflight\n",
+            "apply must follow the preview",
+            id="apply-without-preview",
+        ),
+        pytest.param(
+            "    environment: ${{ inputs.environment }}\n    permissions:",
+            "    permissions:",
+            "apply must follow the preview",
+            id="apply-without-environment",
+        ),
+        pytest.param(
+            "          retention-days: 1\n",
+            "          retention-days: 90\n",
+            "retention-days: 1",
+            id="artifact-retention",
+        ),
+        pytest.param(
+            "          if-no-files-found: error\n",
+            "          if-no-files-found: warn\n",
+            "reviewed name and path",
+            id="artifact-missing-files",
+        ),
+        pytest.param(
+            "    needs: [preflight, plan]\n",
+            "    needs: [preflight, plan]\n    continue-on-error: true\n",
+            "no failure is ignored",
+            id="ignored-failure",
+        ),
+        pytest.param(
+            "on:\n  workflow_call:\n",
+            "on:\n  pull_request_target:\n  workflow_call:\n",
+            "pull_request_target",
+            id="privileged-trigger",
+        ),
+    ],
+)
+def test_deploy_workflow_stays_oidc_only_and_preview_gated(
+    governed_root: Path, before: str, after: str, message: str
+) -> None:
+    """Each deploy safety property is enforced by the reviewed contract."""
+    path = governed_root / ".github/workflows/delivery-azure-deploy.yml"
+    content = path.read_text(encoding="utf-8")
+    assert before in content
+    path.write_text(content.replace(before, after, 1), encoding="utf-8")
+    assert any(message in item for item in check(governed_root))
+
+
 def test_unassigned_owner_blocks_publication(governed_root: Path) -> None:
     """An empty CODEOWNERS file cannot be described as a publication-ready setup."""
     (governed_root / ".github/CODEOWNERS").write_text(
@@ -107,7 +306,7 @@ def test_local_prepublication_setup_is_explicit_not_a_fake_owner(
 )
 def test_unreviewed_ci_surface_is_rejected(governed_root: Path, change: str) -> None:
     """Mutable action pins and direct expression interpolation cannot silently enter CI."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     insertion = f"      - {change}\n"
     marker = "      - name: Same check-only gate as task verify"
@@ -119,7 +318,7 @@ def test_unreviewed_ci_surface_is_rejected(governed_root: Path, change: str) -> 
 
 def test_untrusted_trigger_is_rejected(governed_root: Path) -> None:
     """Privileged PR execution is not an accepted verification trigger."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     path.write_text(
         path.read_text().replace("  pull_request:", "  pull_request_target:"),
         encoding="utf-8",
@@ -130,7 +329,7 @@ def test_untrusted_trigger_is_rejected(governed_root: Path) -> None:
 
 def test_release_needs_manual_environment_gate(governed_root: Path) -> None:
     """A tag alone cannot silently become an unprotected release write."""
-    path = governed_root / ".github/workflows/release.yml"
+    path = governed_root / ".github/workflows/toolkit-release.yml"
     path.write_text(
         path.read_text().replace("    environment: release\n", ""),
         encoding="utf-8",
@@ -141,7 +340,7 @@ def test_release_needs_manual_environment_gate(governed_root: Path) -> None:
 
 def test_expanded_release_permission_is_rejected(governed_root: Path) -> None:
     """A publishing job cannot acquire arbitrary additional token permissions."""
-    path = governed_root / ".github/workflows/release.yml"
+    path = governed_root / ".github/workflows/toolkit-release.yml"
     path.write_text(
         path.read_text().replace(
             "      contents: write", "      issues: write\n      contents: write"
@@ -154,7 +353,7 @@ def test_expanded_release_permission_is_rejected(governed_root: Path) -> None:
 
 def test_release_cannot_omit_the_tag_validation(governed_root: Path) -> None:
     """Reusing verification without passing the tag would skip version readiness."""
-    path = governed_root / ".github/workflows/release.yml"
+    path = governed_root / ".github/workflows/toolkit-release.yml"
     path.write_text(
         path.read_text().replace("      release-tag: ${{ github.ref_name }}\n", ""),
         encoding="utf-8",
@@ -167,13 +366,74 @@ def test_release_cannot_automatically_publish_stable_artifacts(
     governed_root: Path,
 ) -> None:
     """The early-adoption release contract requires an operator-reviewed draft."""
-    path = governed_root / ".github/workflows/release.yml"
+    path = governed_root / ".github/workflows/toolkit-release.yml"
     path.write_text(
         path.read_text().replace("--draft ", ""),
         encoding="utf-8",
     )
 
     assert any("draft" in item for item in check(governed_root))
+
+
+def test_release_attestation_must_cover_checksums_and_stay_pinned(
+    governed_root: Path,
+) -> None:
+    """Provenance cannot silently drop SHA256SUMS or float to a mutable ref."""
+    path = governed_root / ".github/workflows/toolkit-release.yml"
+    original = path.read_text()
+    assert not any("attest" in item for item in check(governed_root))
+    assert "            artifacts/SHA256SUMS\n" in original
+
+    path.write_text(
+        original.replace("            artifacts/SHA256SUMS\n", ""), encoding="utf-8"
+    )
+    assert any("attest-build-provenance" in item for item in check(governed_root))
+
+    step = original.split("actions/attest-build-provenance@")[1].split(" ")[0]
+    path.write_text(original.replace(step, "v4"), encoding="utf-8")
+    assert any("attest-build-provenance" in item for item in check(governed_root))
+
+    path.write_text(
+        original.replace("actions/attest-build-provenance@", "actions/other@"),
+        encoding="utf-8",
+    )
+    assert any("attest-build-provenance" in item for item in check(governed_root))
+
+
+@pytest.mark.parametrize(
+    "bypass",
+    ["        if: false\n", "        continue-on-error: true\n"],
+    ids=["skipped", "allowed-to-fail"],
+)
+def test_release_attestation_cannot_be_skipped_or_allowed_to_fail(
+    governed_root: Path, bypass: str
+) -> None:
+    """A present but non-enforcing attest step would publish unattested assets."""
+    path = governed_root / ".github/workflows/toolkit-release.yml"
+    anchor = "      - name: Attest the verified workflow artifacts\n"
+    original = path.read_text()
+    assert anchor in original
+
+    path.write_text(original.replace(anchor, anchor + bypass), encoding="utf-8")
+
+    assert any("attest-build-provenance" in item for item in check(governed_root))
+
+
+def test_release_cannot_upload_an_unattested_asset(governed_root: Path) -> None:
+    """Every file handed to the draft release must also be an attested subject."""
+    path = governed_root / ".github/workflows/toolkit-release.yml"
+    anchor = "artifacts/SHA256SUMS --verify-tag"
+    original = path.read_text()
+    assert anchor in original
+
+    path.write_text(
+        original.replace(
+            anchor, "artifacts/SHA256SUMS artifacts/extra.json --verify-tag"
+        ),
+        encoding="utf-8",
+    )
+
+    assert any("attest-build-provenance" in item for item in check(governed_root))
 
 
 def test_unknown_maintainer_field_is_not_ignored(governed_root: Path) -> None:
@@ -188,7 +448,7 @@ def test_unknown_maintainer_field_is_not_ignored(governed_root: Path) -> None:
 
 def test_duplicate_workflow_keys_fail(governed_root: Path) -> None:
     """A later duplicate cannot override an earlier workflow permission declaration."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     path.write_text(path.read_text() + "\npermissions: write-all\n", encoding="utf-8")
 
     assert any("duplicate" in item for item in check(governed_root))
@@ -196,7 +456,7 @@ def test_duplicate_workflow_keys_fail(governed_root: Path) -> None:
 
 def test_release_upload_uses_the_verified_flat_stage(governed_root: Path) -> None:
     """Switching back to multiple source paths would break checksum verification."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     path.write_text(
         path.read_text().replace(
             "path: build/release/*", "path: build/distributions/*"
@@ -250,7 +510,7 @@ def test_unreviewed_workflow_file_is_rejected(governed_root: Path) -> None:
 
 def test_scorecard_cannot_gain_write_permissions(governed_root: Path) -> None:
     """The supply-chain posture job keeps only its reviewed token permissions."""
-    path = governed_root / ".github/workflows/scorecard.yml"
+    path = governed_root / ".github/workflows/security-scorecard.yml"
     text = path.read_text()
     path.write_text(
         text.replace("      actions: read", "      actions: write"), encoding="utf-8"
@@ -263,7 +523,7 @@ def test_dependency_review_runs_only_on_pull_requests(
     governed_root: Path,
 ) -> None:
     """Dependency Review API checks require PR base/head commits."""
-    path = governed_root / ".github/workflows/dependency-review.yml"
+    path = governed_root / ".github/workflows/security-dependency-review.yml"
     text = path.read_text()
     path.write_text(
         text.replace("  pull_request:\n", "  merge_group:\n  pull_request:\n")
@@ -288,7 +548,7 @@ def test_dependency_review_cannot_be_weakened(
     governed_root: Path, old: str, new: str
 ) -> None:
     """New PR dependencies are checked for vulnerabilities and licenses in every scope."""
-    path = governed_root / ".github/workflows/dependency-review.yml"
+    path = governed_root / ".github/workflows/security-dependency-review.yml"
     text = path.read_text()
     assert old in text
     path.write_text(text.replace(old, new), encoding="utf-8")
@@ -298,7 +558,7 @@ def test_dependency_review_cannot_be_weakened(
 
 def test_dependency_audit_precedes_installing_the_lock(governed_root: Path) -> None:
     """Swapping the audit after sync would install unaudited packages first."""
-    path = governed_root / ".github/workflows/dependency-audit.yml"
+    path = governed_root / ".github/workflows/security-dependency-audit.yml"
     text = path.read_text()
     audit = "uv run --no-project python scripts/audit_dependencies.py"
     sync = "uv sync --locked\n"
@@ -324,7 +584,7 @@ def test_ci_consumers_require_a_successful_audit(
     governed_root: Path, job: str, dependency: str
 ) -> None:
     """Every full install must wait for success, not just completion, of the audit."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     header = f"  {job}:\n"
     text = text.replace(header + "    needs: audit\n", header, 1)
@@ -335,7 +595,7 @@ def test_ci_consumers_require_a_successful_audit(
 
 def test_ci_audit_dependencies_accept_list_syntax(governed_root: Path) -> None:
     """GitHub's string and list forms express the same reviewed dependency."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     path.write_text(
         path.read_text().replace("    needs: audit\n", "    needs: [audit]\n"),
         encoding="utf-8",
@@ -470,19 +730,19 @@ def test_capability_change_form_requires_declared_labels(
     ("relative", "old", "new", "expected"),
     [
         (
-            ".github/workflows/ci.yml",
-            "uses: $/.github/workflows/dependency-audit.yml",
-            "uses: ./.github/workflows/dependency-audit.yml",
+            ".github/workflows/toolkit-ci.yml",
+            "uses: $/.github/workflows/security-dependency-audit.yml",
+            "uses: ./.github/workflows/security-dependency-audit.yml",
             "reusable",
         ),
         (
-            ".github/workflows/release.yml",
-            "uses: $/.github/workflows/ci.yml",
-            "uses: ./.github/workflows/ci.yml",
+            ".github/workflows/toolkit-release.yml",
+            "uses: $/.github/workflows/toolkit-ci.yml",
+            "uses: ./.github/workflows/toolkit-ci.yml",
             "reusable",
         ),
         (
-            ".github/workflows/dependency-audit.yml",
+            ".github/workflows/security-dependency-audit.yml",
             "  workflow_call:\n",
             "",
             "reusable triggers",
@@ -626,7 +886,7 @@ def test_codecov_upload_stays_pinned_validated_and_tokenless(
     governed_root: Path, old: str, new: str, expected: str
 ) -> None:
     """The coverage upload cannot download a floating CLI or store a token."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     assert old in text
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -636,7 +896,7 @@ def test_codecov_upload_stays_pinned_validated_and_tokenless(
 
 def test_oidc_permission_is_limited_to_the_upload_job(governed_root: Path) -> None:
     """Project code in the verification matrix never receives an OIDC token."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     marker = "    runs-on: ${{ matrix.os }}\n    timeout-minutes: 45\n"
     assert marker in text
@@ -667,7 +927,7 @@ def test_required_summary_must_aggregate_every_ci_job(
     governed_root: Path, old: str, new: str
 ) -> None:
     """A job left out of the required summary could fail without blocking merges."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     assert old in text
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -677,7 +937,7 @@ def test_required_summary_must_aggregate_every_ci_job(
 
 def test_every_step_job_declares_a_timeout(governed_root: Path) -> None:
     """A hung job must not consume the six-hour default runner budget."""
-    path = governed_root / ".github/workflows/ci.yml"
+    path = governed_root / ".github/workflows/toolkit-ci.yml"
     text = path.read_text()
     marker = "    timeout-minutes: 30\n"
     assert marker in text

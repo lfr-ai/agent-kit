@@ -31,7 +31,7 @@ _MAX_PAGE_SIZE = 200
 _UNIQUE_VIOLATION = "unique constraint"
 
 
-class SqlAlchemyOrderRepository:
+class SQLAlchemyOrderRepository:
     """Order collection backed by one ``AsyncSession`` owned by a unit of work."""
 
     def __init__(self, *, session: AsyncSession) -> None:
@@ -44,30 +44,15 @@ class SqlAlchemyOrderRepository:
         self._session = session
 
     async def get(self, order_id: uuid.UUID) -> Order:
-        """Return a stored order with its lines.
-
-        Args:
-            order_id (uuid.UUID): Identifier of the order.
-
-        Returns:
-            The stored order as a validated domain object.
-
-        Raises:
-            OrderNotFoundError: If no order has ``order_id``.
-        """
+        """Return the stored order with its lines or raise ``OrderNotFoundError``."""
         return _to_domain(await self._load(order_id))
 
     async def add(self, order: Order) -> None:
         """Stage a new order and flush so a key violation surfaces here.
 
         The database assigns the first version; reload the order before saving
-        changes to it.
-
-        Args:
-            order (Order): New order; its identifier must not exist yet.
-
-        Raises:
-            DuplicateOrderError: If an order with the same identifier exists.
+        changes to it. An existing identifier raises ``DuplicateOrderError``; an
+        unrecognized flush error re-raises ``IntegrityError``.
         """
         self._session.add(_new_row(order))
         try:
@@ -80,12 +65,8 @@ class SqlAlchemyOrderRepository:
     async def save(self, order: Order) -> None:
         """Stage changes to a stored order, guarded by its version.
 
-        Args:
-            order (Order): Changed order carrying the version it was loaded with.
-
-        Raises:
-            OrderNotFoundError: If the order no longer exists.
-            ConcurrentUpdateError: If the order changed since it was loaded.
+        ``order`` carries the version it was loaded with; a changed order raises
+        ``ConcurrentUpdateError`` and a missing one ``OrderNotFoundError``.
         """
         row = await self._load(order.id)
         if row.version != order.version:

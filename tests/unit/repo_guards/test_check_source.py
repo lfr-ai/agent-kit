@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-import scripts.check_source as source_checker
+import scripts.checks.source as source_checker
 
 from agent_kit.core.models import CheckReport, Finding, ProfileSummary
 
@@ -47,7 +47,7 @@ def test_main_reports_findings_for_empty_root(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["check_source", "--root", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["source", "--root", str(tmp_path)])
 
     assert source_checker.main() == 1
     assert "[catalog.read]" in capsys.readouterr().err
@@ -58,7 +58,7 @@ def test_main_keeps_json_report_and_failure_status_for_invalid_source(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["check_source", "--root", str(tmp_path), "--json"])
+    monkeypatch.setattr("sys.argv", ["source", "--root", str(tmp_path), "--json"])
 
     assert source_checker.main() == 1
     captured = capsys.readouterr()
@@ -76,11 +76,11 @@ def test_main_reports_catalog_load_errors_actionably(
 ) -> None:
     load_error = OSError("cannot read source root")
 
-    def fail_load(self: object, root: Path) -> object:
+    def fail_validate_source(root: Path) -> CheckReport:
         raise load_error
 
-    monkeypatch.setattr(source_checker.FileCatalogAdapter, "load", fail_load)
-    monkeypatch.setattr("sys.argv", ["check_source", "--root", str(tmp_path)])
+    monkeypatch.setattr(source_checker, "validate_source", fail_validate_source)
+    monkeypatch.setattr("sys.argv", ["source", "--root", str(tmp_path)])
 
     assert source_checker.main() == 1
     diagnostic = capsys.readouterr().err

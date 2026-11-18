@@ -8,7 +8,6 @@ applyTo: "**/tests/**,**/test/**,**/__tests__/**"
 - Write only enough production code to pass the failing test; add the next case as a new test.
 - Refactor only while the suite is green, and rerun it after each refactoring step.
 - Reproduce a reported defect as a regression test that fails on the unfixed code, and keep it after the fix.
-- Never edit an existing assertion to match new behavior without confirming that the contract changed.
 - Prefer thin vertical slices through real boundaries over layer-by-layer test scaffolding.
 - Keep the fast unit tier runnable in seconds so the loop stays short; move slow cases behind integration markers.
 - Delete tests only when the behavior they pin is removed, and say so in the change.

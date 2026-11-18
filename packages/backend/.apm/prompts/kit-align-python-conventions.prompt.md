@@ -27,15 +27,20 @@ changing its observable behavior.
    booleans, explicit units, one return shape. No production `Any`, casts, or
    quoted forward references.
 5. Fix records and value sets: immutable dataclasses with `frozen=True`,
-   `kw_only=True`, `slots=True`; string enums with explicit persisted values.
-6. Fix errors: specific documented exception types chained with `from`,
-   transport mapping only at the presentation edge, nothing swallowed.
+   `kw_only=True`, `slots=True`; `StrEnum` members use `auto()`, with explicit
+   values only where an external wire or storage format fixes them.
+6. Fix errors: specific exception types chained with `from`, transport mapping
+   only at the presentation edge, nothing swallowed.
 7. Fix logging: one stdlib logger per module, structured context, no secrets or
    personal data in messages or `repr`, no duplicate logging at several layers.
 8. Fix import direction: inner layers import no framework, ORM, or SDK; only the
    composition root constructs adapters.
-9. Add or correct docstrings for public members, including `Args:`,
-   `Returns:`, and `Raises:`.
+9. Align docstrings with the
+   [docstring patterns](../skills/kit-python-service/references/docstrings.md):
+   one line by default and always for non-initializer callables with at most
+   one input; sections only where they add information; `Raises:`
+   only for errors the body raises, translates or re-raises; `Attributes:` on
+   records, never `Args:` or `Raises:` on a class.
 10. Review filenames, module/subfolder cohesion and central ownership. Choose
     functions, partials and decorators with the
     [callable decision guide](../skills/kit-python-service/references/callables-and-decorators.md);

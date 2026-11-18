@@ -8,23 +8,24 @@ in [manual review](manual-review.md) and grading in
 ## Command sequence
 
 Run from the repository root with pinned tools. Write every output into one
-`audit/` directory that is excluded from the scan itself. Use `--exit-zero` or
+`$AUDIT_DIR`: an explicit absolute temporary/session directory outside the
+checkout, never a repository-relative path. Use `--exit-zero` or
 equivalent so one tool's findings do not stop the sequence; the summarizer
 decides the exit status at the end.
 
 | Step | Command (adapt paths) | Output |
 | --- | --- | --- |
-| Lint, complexity, security smells | `ruff check --config audit-ruff.toml --output-format json --exit-zero . > audit/ruff.json` | Ruff JSON |
-| Types (ty) | `ty check --output-format gitlab --exit-zero > audit/ty.json` | GitLab Code Quality |
+| Lint, complexity, security smells | `ruff check --config $AUDIT_DIR/audit-ruff.toml --output-format json --exit-zero . > $AUDIT_DIR/ruff.json` | Ruff JSON |
+| Types (ty) | `ty check --output-format gitlab --exit-zero > $AUDIT_DIR/ty.json` | GitLab Code Quality |
 | Types (mypy or pyright) | `mypy --strict src` or `pyright --outputjson` | text or JSON, summarized by hand |
 | Import contracts | `lint-imports` | contract pass/fail text |
 | Dead code | `vulture` (reads `[tool.vulture]`) | `path:line: message (N% confidence)` |
-| Dependency hygiene | `deptry . --json-output audit/deptry.json` | JSON with `DEP001`-`DEP005` codes |
+| Dependency hygiene | `deptry . --json-output $AUDIT_DIR/deptry.json` | JSON with `DEP001`-`DEP005` codes |
 | Complexity detail (optional) | `radon cc -s -n C src` and `radon mi -s src` | text |
 | Duplication | follow `kit-duplication-review` (jscpd JSON report and its summarizer) | clone list |
-| Vulnerabilities | uv projects: `uv audit --locked --preview-features audit-command,json-output --output-format json > audit/uv-audit.json`; otherwise `pip-audit --format json > audit/pip-audit.json` or `osv-scanner scan source --format sarif -r . > audit/osv.sarif` | uv JSON (count `summary.vulnerabilities` and `summary.adverse_statuses` by hand), pip-audit JSON or SARIF |
+| Vulnerabilities | uv projects: `uv audit --locked --preview-features audit-command,json-output --output-format json > $AUDIT_DIR/uv-audit.json`; otherwise `pip-audit --format json > $AUDIT_DIR/pip-audit.json` or `osv-scanner scan source --format sarif -r . > $AUDIT_DIR/osv.sarif` | uv JSON (count `summary.vulnerabilities` and `summary.adverse_statuses` by hand), pip-audit JSON or SARIF |
 | Spelling | `cspell --no-progress "**/*.{md,py}"` | text |
-| Merge | `python assets/summarize_findings.py audit/ruff.json audit/ty.json audit/osv.sarif --root "$PWD" --output audit/tool-findings.md` | ranked Markdown |
+| Merge | `python assets/summarize_findings.py $AUDIT_DIR/ruff.json $AUDIT_DIR/ty.json $AUDIT_DIR/osv.sarif --root "$PWD" --output $AUDIT_DIR/tool-findings.md` | ranked Markdown |
 
 Tools without SARIF, Ruff JSON or GitLab Code Quality output (import-linter,
 vulture, deptry, radon, jscpd, cspell) are summarized as counts per rule with
@@ -43,7 +44,7 @@ format, not both, or the summarizer counts each finding twice.
 | Grading | Severity and confidence follow the rubric; high severity has high or medium confidence |
 | Routing | Every finding names an owner skill and a remediation batch |
 | Completeness | Unchecked areas and blind spots are listed, not silently skipped |
-| Read-only | `git status` shows only the new `audit/` directory |
+| Read-only | `git status` shows no change; raw output stays in `$AUDIT_DIR` |
 
 ## Failure modes
 

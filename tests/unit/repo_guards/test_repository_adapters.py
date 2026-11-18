@@ -5,15 +5,17 @@ from pathlib import Path
 import re
 
 import pytest
-import scripts.check_native as native_checker
-from scripts.check_native import check
+import scripts.checks.native as native_checker
+from scripts.checks.native import check
 
 _ROOT = Path(__file__).resolve().parents[3]
 _FILES = (
     ".github/hooks/session-context.json",
+    ".github/hooks/edit-feedback.json",
     ".claude/settings.json",
     ".vscode/settings.json",
     "scripts/session_context.py",
+    "scripts/edit_feedback.py",
 )
 
 
@@ -64,6 +66,27 @@ def test_session_hooks_require_no_sync(native_root: Path, relative: str) -> None
     path.write_text(text.replace(" --no-sync", ""), encoding="utf-8")
 
     assert any("hook" in finding.lower() for finding in check(native_root))
+
+
+@pytest.mark.parametrize(
+    "relative", [".github/hooks/edit-feedback.json", ".claude/settings.json"]
+)
+def test_edit_feedback_hooks_require_no_sync(native_root: Path, relative: str) -> None:
+    """Post-edit feedback never synchronizes dependencies either."""
+    path = native_root / relative
+    text = path.read_text()
+    assert "uv run --locked --no-sync python -m scripts.edit_feedback" in text
+    path.write_text(text.replace(" --no-sync", ""), encoding="utf-8")
+
+    assert any("hook" in finding.lower() for finding in check(native_root))
+
+
+def test_unreviewed_copilot_hook_files_are_rejected(native_root: Path) -> None:
+    """A new hook file cannot run without extending the reviewed contract."""
+    extra = native_root / ".github/hooks/extra.json"
+    extra.write_text('{"version": 1, "hooks": {}}', encoding="utf-8")
+
+    assert any("reviewed set" in finding for finding in check(native_root))
 
 
 def test_missing_local_session_entrypoint_reports_audited_bootstrap(

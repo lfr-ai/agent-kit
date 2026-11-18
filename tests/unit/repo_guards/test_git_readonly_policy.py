@@ -212,6 +212,37 @@ def test_kit_checkout_never_publishes_or_skips_hooks(
     assert _decide(command, cwd=str(tmp_path), kit=str(tmp_path)) == "deny"
 
 
+@pytest.mark.parametrize("payload_cwd", [None, 7, ""])
+def test_payload_without_working_directory_is_outside_the_kit(
+    payload_cwd: object, tmp_path: Path
+) -> None:
+    """A missing, non-text or empty ``cwd`` never satisfies a directory scope."""
+    policy = _GUARD["load_policy"](_POLICY)
+    payload: dict[str, object] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "git add ."},
+    }
+    if payload_cwd is not None:
+        payload["cwd"] = payload_cwd
+    call = _GUARD["extract_call"](payload)
+
+    assert _GUARD["evaluate"](policy, call, {_KIT: str(tmp_path)}).decision == "deny"
+
+
+def test_explain_without_working_directory_is_outside_the_kit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``explain`` without ``--cwd`` evaluates the call outside every scope."""
+    monkeypatch.setenv(_KIT, str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    arguments = ["explain", "--policy", str(_POLICY), "--tool", "Bash"]
+
+    assert _GUARD["main"]([*arguments, "--command", "git add ."]) == 1
+    assert capsys.readouterr().out.startswith("deny: ")
+    assert _GUARD["main"]([*arguments, "--command", "git status"]) == 0
+    assert capsys.readouterr().out == "allow\n"
+
+
 def test_hook_bypass_is_denied_everywhere(tmp_path: Path) -> None:
     """The bypass rule has no scope, so it applies outside the kit too."""
     assert _decide("git commit --no-verify", cwd=str(tmp_path), kit=None) == "deny"

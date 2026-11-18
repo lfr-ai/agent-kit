@@ -31,14 +31,26 @@ def _feature_version(name: str) -> str:
 
 
 def _ci_step_inputs(action: str, key: str) -> set[str]:
+    input_name = {
+        "astral-sh/setup-uv": "uv-version",
+        "oven-sh/setup-bun": "bun-version",
+    }[action]
     values: set[str] = set()
     for path in (_ROOT / ".github/workflows").glob("*.yml"):
-        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         for job in workflow["jobs"].values():
             for step in job.get("steps", []):
                 uses = step.get("uses", "")
                 if uses.startswith(f"{action}@"):
-                    values.add(str(step["with"][key]))
+                    value = str(step["with"][key])
+                    if value == "${{ inputs." + input_name + " }}":
+                        assert set(workflow["on"]) == {"workflow_call"}
+                        option = workflow["on"]["workflow_call"]["inputs"][input_name]
+                        assert option["type"] == "string"
+                        assert option["required"] == "true"
+                        assert "default" not in option
+                    else:
+                        values.add(value)
     return values
 
 

@@ -18,7 +18,7 @@ import argparse
 import ast
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, unique
 from pathlib import Path
 import re
 import sys
@@ -26,6 +26,9 @@ import sys
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = ("module", "class")
+_AFTER = "after"
+_BEFORE = "before"
+_ORDERS = (_AFTER, _BEFORE)
 _EXIT_USAGE = 2
 
 type _Matcher = Callable[[ast.AST, str], bool]
@@ -42,6 +45,7 @@ class _Unit:
     immediate: frozenset[str]
 
 
+@unique
 class OrderingOptionIssue(StrEnum):
     """Supported ordering option validation failures and their stable messages."""
 
@@ -80,18 +84,17 @@ def check_source(
     """Return ordering findings for one module's source text.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text; unparsable text raises ``SyntaxError``.
         path (str): Display path used as the finding prefix.
-        order (str): ``after`` requires helpers below their caller; ``before`` above it.
-        scopes (frozenset[str]): Which scopes to check: ``module``, ``class``, or both.
+        order (str): ``after`` requires helpers below their caller; ``before`` above
+            it; any other value raises ``OrderingOptionError``.
+        scopes (frozenset[str]): Which scopes to check: ``module``, ``class``, or
+            both; an unknown scope raises ``OrderingOptionError``.
         ignore (tuple[re.Pattern[str], ...]): Helper-name patterns that are never
             reported.
 
     Returns:
-        Findings formatted as ``path:line: message``, sorted by line.
-
-    Raises:
-        ValueError: If ``order`` or a scope name is unknown.
+        list[str]: Findings formatted as ``path:line: message``, sorted by line.
     """
     _validate_options(order, scopes)
     tree = ast.parse(text, filename=path)
@@ -104,7 +107,7 @@ def check_source(
 
 
 def _validate_options(order: str, scopes: frozenset[str]) -> None:
-    if order not in {"after", "before"}:
+    if order not in _ORDERS:
         raise OrderingOptionError(OrderingOptionIssue.UNKNOWN_ORDER, order=order)
     unknown = scopes - set(_SCOPES)
     if unknown:
@@ -140,11 +143,11 @@ def _scope_findings(
         helper_index = positions[name].index
         misplaced = (
             helper_index < caller.index
-            if order == "after"
+            if order == _AFTER
             else helper_index > caller.index
         )
         if misplaced:
-            relation = "before" if order == "after" else "after"
+            relation = _BEFORE if order == _AFTER else _AFTER
             yield (
                 node.lineno,
                 (
@@ -249,11 +252,12 @@ def _is_private(name: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     """Check helper placement in the given files and directories.
 
-    Returns zero when every helper is placed correctly, otherwise one.
+    The exit status is 0 when clean, 1 for findings and 2 for invalid ignore
+    patterns; ``argv=None`` reads the process arguments.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
-    parser.add_argument("--order", choices=("after", "before"), default="after")
+    parser.add_argument("--order", choices=_ORDERS, default=_AFTER)
     parser.add_argument("--scope", choices=("module", "class", "all"), default="all")
     parser.add_argument(
         "--ignore",

@@ -1,17 +1,7 @@
-language: "en-US"
-early_access: false
-enable_free_tier: true
-
 reviews:
   profile: "assertive"
   request_changes_workflow: false
   allow_author_approval: false
-  high_level_summary: true
-  poem: false
-  review_status: true
-  auto_review:
-    enabled: true
-    drafts: false
   path_filters:
     # Tool-owned locks and generated projections are checked by repository gates;
     # review the canonical source instead of duplicating generated findings.
@@ -36,43 +26,18 @@ reviews:
         Treat machine-specific paths, automatic installs, unsafe approvals,
         and MCP autostart as blocking. Require alignment with Taskfile.yml,
         root tool configuration, and docs/editor.md.
-    - path: "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,package.json,.devcontainer/**,.mcp.json}"
+    - path: "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,tox.ini,package.json,.devcontainer/**,.mcp.json}"
       instructions: |
         Treat floating versions as blocking: actions must use full commit SHAs,
         hooks frozen commits, images digests, and tools exact versions. Flag new
         permissions, secrets, package runners (npx, uvx, bunx), or unlocked installs.
   tools:
-    ruff:
-      enabled: true
-    github-checks:
-      enabled: true
+    # Every other hosted tool is enabled by default and complements local gates.
     flake8:
       enabled: false # Ruff owns these Python diagnostics in ruff.toml.
     pylint:
       enabled: false # Ruff and the AST convention gate own these diagnostics.
-    markdownlint:
-      enabled: true
-    yamllint:
-      enabled: true
-    shellcheck:
-      enabled: true
-    actionlint:
-      enabled: true
-    zizmor:
-      enabled: true
-    hadolint:
-      enabled: true
-    gitleaks:
-      enabled: true
-    osvScanner:
-      enabled: true
-    languagetool:
-      enabled: true
-
-chat:
-  auto_reply: true
 
 knowledge_base:
-  opt_out: false
   learnings:
     scope: "local"

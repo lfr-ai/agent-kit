@@ -1,9 +1,9 @@
 # Docstring patterns
 
 Docstrings explain behavior that the signature cannot: intent, constraints, side
-effects, and failures. Prefer the simplest form: a one-line docstring that
-states the whole contract, including what a return value means. Comments are
-single lines that say why, never what the next line does.
+effects, and failures. Length follows the contract, not visibility: one line when
+the name and signature already tell the story, sections only for what they add.
+Comments are single lines that say why, never what the next line does.
 
 ## Toolkit defaults
 
@@ -14,21 +14,30 @@ paired double-backtick literals (reStructuredText); Markdown files keep CommonMa
 single backticks.
 
 PEP 257 reserves one-line docstrings for "really obvious cases"; Google §3.8.3
-lets sections be omitted when the name and signature are informative enough for
-a one-line docstring. Choose by caller-relevant complexity, not parameter count:
+lets sections be omitted when the name and signature are informative enough, and
+limits `Raises:` to exceptions relevant to the interface. A callable with at most
+one input is that case: the input's meaning is its name and annotation, so
+sections only repeat the signature. Google also allows annotated types to be
+omitted from sections. Here, sections are optional for two or more inputs;
+supplied sections explain meaning, and type repetition is optional. If a section
+does repeat a type, the checker verifies it against the annotation.
 
 | One line when | Multi-line when |
 | --- | --- |
-| The name, signature, and summary explain the contract; sections would only restate them. This includes public wrappers, delegates with several self-evident parameters, and structured returns whose shape fits in the summary. | A structured return needs more than one line to describe (then `Returns:` is required, see `docstring-returns`), or constraints, effects, failures, yields, or examples need more explanation. Prose is sufficient when sections add no clarity. |
-| A short summary can state the notable input and failure behavior without losing meaning, including an explicit exception-message constructor. | Initializer parameters with units, ranges, or interactions that need explanation; document these in prose or `Args:` on `__init__`. |
+| The callable takes at most one input (excluding `self`/`cls`), whatever its body size. Fold the result and any raised error into the summary; a short prose paragraph may follow for genuinely complex behavior, never sections. | Two or more inputs interact, carry units or ranges, or the result has structure (keys, positions, ordering, empty cases). Sections stay optional; do not discard meaningful details just to shorten docs. |
+| An initializer's prose explains its arguments, even for an exception-message constructor. | `Args:` clarifies initializer (`__init__`, `__post_init__`) units, ranges or interactions at any arity. Supplied sections must be complete; optional types must match. |
 
 ```python
-def _context(actions: CliActions) -> int:
+def _context(actions: CLIActions) -> int:
     """Read bounded stdin JSON and emit advisory context; ``1`` on check failure."""
 
 
+def mapping(value: object) -> dict[str, object]:
+    """Return ``value`` as a string-keyed mapping; raise ``ValueError`` otherwise."""
+
+
 def emit(report: CheckReport, stream: TextIO) -> None:
-    """Write ``report`` findings to ``stream``, one per line."""
+    """Write each finding of ``report`` to ``stream`` on its own line."""
 
 
 def _report_dict(report: CheckReport) -> dict[str, object]:
@@ -39,16 +48,36 @@ def scale(value: float, factor: float) -> float:
     """Multiply a measurement by a unit-conversion factor.
 
     Args:
-        value (float): Measurement in source units.
-        factor (float): Target units per source unit; must be positive.
+        value: Measurement in source units.
+        factor: Target units per source unit; must be positive.
+
+    Returns:
+        Measurement in target units.
     """
 ```
 
-When an `Args:` section exists, it lists every parameter in signature order as
-`name (type): meaning`, with `type` equal to the annotation. Types are
-machine-checked, so the repetition cannot drift. Keep real input, error, and
-constraint contracts even when shortening a docstring. Do not remove meaningful
-sections merely because the callable takes one parameter.
+When supplied, `Args:` lists every parameter except `self`/`cls`, in signature
+order as `name: meaning`. An optional `(type)` may be included and is checked
+against the annotation. Keep real input, error, and constraint contracts even
+when shortening a docstring.
+
+## Raises scope
+
+`Raises:` documents what the callable itself raises, matching pydoclint
+`DOC501`/`DOC502` semantics:
+
+- a direct `raise SomeError(...)` in the body;
+- a translation `raise BoundaryError(...) from exc`, which documents the new
+  type, not the original;
+- a re-raise of a caught type (`except SomeError: ...; raise`).
+
+Never list failures that only propagate from callees (`OSError` from `open`,
+`SyntaxError` from `ast.parse`, a domain error raised inside a helper). When a
+propagated failure is essential to callers, say so in the summary or in the
+parameter meaning instead, or raise it in the public method itself. Interface
+contracts are exempt: `Protocol` members, `@abstractmethod`s and stubs whose body
+is only `...`, `pass` or `raise NotImplementedError` document what implementations
+raise, in prose when the member takes at most one input.
 
 ## Enforced rules
 
@@ -57,23 +86,46 @@ the rules are opt-in in the checker and default-on in this repository's gate.
 
 | Finding code | Fires when |
 | --- | --- |
-| `docstring-args` | Initializer prose does not name every parameter in double backticks and lacks `Args:`, or any `Args:` section does not list every parameter in signature order (excluding `self`/`cls`). |
-| `docstring-args-type` | An `Args:` entry omits `(type)` or its type differs from the unparsed annotation (whitespace and quotes are normalised; `X \| None` is compared literally). |
-| `docstring-returns` | A multi-line docstring's return annotation is a tuple of two or more elements, a `dict`/`Mapping`, a nested generic, a `Callable`, or a union of two or more non-`None` types, and `Returns:` is missing or empty. A one-line summary that states the shape passes. Generators and `TypeGuard`/`TypeIs` predicates are exempt. |
-| `docstring-returns-none` | `Returns:` appears on a function annotated `-> None`. |
+| `docstring-missing` | A public callable has no docstring. |
+| `docstring-args` | Initializer parameters are unexplained in prose and lack `Args:`, or a supplied section is empty, malformed, missing a meaning, or differs from signature order (excluding `self`/`cls`). |
+| `docstring-args-type` | An optional `(type)` in `Args:` differs from the annotation (whitespace and quotes are normalised; `X \| None` is compared literally). |
+| `docstring-returns` | A supplied `Returns:` section is empty, undescribed, or contains an incorrect optional type. Omitted sections pass for all result shapes, including `TypeGuard`/`TypeIs`. |
+| `docstring-returns-none` | `Returns:` appears on a procedure, generator or `Never`/`NoReturn` callable. |
+| `docstring-property` | A `@property` or `@cached_property` getter has a `Returns:` section; document it like an attribute (`"""Whether the catalog has no findings."""`). |
+| `docstring-yields` | Supplied `Yields:` is empty, undescribed, contains an incorrect optional type, or belongs to a non-generator. Its type is the yielded element, not the iterator wrapper. |
+| `docstring-raises` | A supplied section is empty/undescribed or omits a statically known escaping error not mentioned in explanatory prose. Omitting the section is allowed; failure semantics remain review-owned. |
+| `docstring-raises-extra` | `Raises:` names a type the body never raises directly, translates or re-raises (a documented base of a raised type is accepted). Skipped for interface contracts and for bodies that raise dynamic types such as factories or variables. |
+| `docstring-one-line` | A callable with at most one input (excluding `self`/`cls`; counting positional, `*args`, keyword-only and `**kwargs`) carries `Args:`, `Returns:`, `Yields:` or `Raises:`, whatever its body size. Initializers, properties, `@overload` stubs and test functions are exempt; overrides and other dunders are not. |
+| `docstring-class-sections` | A class docstring has `Args:`, `Returns:`, `Yields:` or `Raises:`; use `Attributes:` for fields and document arguments and failures on `__init__`/`__post_init__`. |
 
-Exempt: test modules, dunder methods other than `__init__`, `@overload` stubs,
-properties, and `@override` methods. Missing docstrings outside parameterized
-initializers are left to the project's documentation linter. The checker validates
-section structure and annotated types, not whether prose is meaningful. Concision
-and completeness require review; there is no signature-based one-line rule.
+Exempt: test modules/functions, standard dunders other than `__init__`,
+`@overload` stubs and explicit `@override` methods retaining a documented
+interface; `docstring-one-line` still applies to those dunders and overrides.
+Private/nested helpers may omit docstrings; all callables may omit sections.
+Supplied sections are validated.
+Initializers document parameters even on private classes. Public properties
+need docstrings written like attributes (Google style): a one-line noun phrase
+or "Whether ..." clause, never a `Returns:` section. No empty sections and no
+`Returns: None` boilerplate. References/example mentions alone do not explain
+initializer arguments.
 
-Ruff selects the pydoclint preview rules by exact code: `DOC102` (documented
-parameter not in the signature), `DOC202` (`Returns:` without a return),
-`DOC402`/`DOC403` (missing or extraneous `Yields:`), and `DOC501` (raised
-exception missing from `Raises:`). `DOC201` is off because one-line docstrings
-state the return in the summary; `DOC502` is off because `Raises:` also lists
-failures propagated from callees.
+The AST check does not execute source. It sees direct explicit raises,
+translations and typed handler re-raises, excludes locally caught errors and
+nested callable bodies, and parses directly imported local class definitions to
+recognize catches of their base exceptions. Built-in exception ancestry is known.
+Unavailable source, transitive imports and ambiguous names still require review;
+this is not a full type checker or interprocedural analysis. The one-line rule
+counts inputs only; reviewers still shorten boilerplate on multi-input callables.
+
+Ruff selects `DOC102` (unknown documented parameter), `DOC202` (`Returns:`
+without a return) and `DOC403` (extraneous `Yields:`); `D417` checks supplied
+`Args:` for completeness. `DOC201` and `DOC402` are deliberately not selected:
+they require sections where this policy accepts summaries. `DOC501` and `DOC502`
+are preview rules that match names only; they cannot distinguish exception
+factories from classes, resolve local subclasses or exempt interface contracts,
+so `docstring-raises` and `docstring-raises-extra` own both directions. Do not
+fabricate `Raises: _invalid` for a factory. These are policy-level choices, not
+per-file suppressions.
 
 ## Module docstrings
 
@@ -89,15 +141,20 @@ injected through the ports in ``invoicing.ports``.
 
 ## Function docstrings
 
-One-line, self-evident parameters and an obvious return:
+Simple complete contracts need no signature repetition:
 
 ```python
 def normalise_name(name: str) -> str:
     """Return ``name`` trimmed and lower-cased."""
     return name.strip().lower()
+
+
+def is_int(value: object) -> TypeGuard[int]:
+    """Return whether ``value`` is an integer."""
+    return isinstance(value, int)
 ```
 
-Several parameters, a structured return, and handled failures:
+Several parameters, a structured return, and failures the body raises:
 
 ```python
 def allocate(
@@ -113,13 +170,19 @@ def allocate(
         limit (int | None): Maximum units reserved per line; ``None`` means no cap.
 
     Returns:
-        Reserved units keyed by order-line identifier, in line order; empty for
+        dict[str, int]: Reserved units keyed by order-line identifier, in line order; empty for
         an order without lines.
 
     Raises:
         OrderNotConfirmedError: If ``order`` is still a draft.
         OutOfStockError: If any line cannot be fully reserved.
     """
+    if order.is_draft:
+        raise OrderNotConfirmedError(order.order_id)
+    reserved = warehouse.try_reserve(order.lines, limit=limit)
+    if reserved is None:
+        raise OutOfStockError(order.order_id)
+    return reserved
 ```
 
 Variadic parameters are documented with their stars and the element annotation:
@@ -135,7 +198,7 @@ def log_all(prefix: str, *args: object, **kwargs: str) -> None:
     """
 ```
 
-Generators use `Yields:` instead of `Returns:`:
+When a generator benefits from a section, use `Yields:` instead of `Returns:`:
 
 ```python
 def chunks(items: list[int], size: int) -> Iterator[list[int]]:
@@ -146,30 +209,36 @@ def chunks(items: list[int], size: int) -> Iterator[list[int]]:
         size (int): Maximum batch length; must be positive.
 
     Yields:
-        Consecutive slices of ``items`` in order; the last may be shorter.
+        list[int]: Consecutive slices of ``items`` in order; the last may be shorter.
+
+    Raises:
+        ValueError: The size is not positive.
     """
+    if size <= 0:
+        message = "size must be positive"
+        raise ValueError(message)
     for start in range(0, len(items), size):
         yield items[start : start + size]
 ```
 
 Guidance:
 
-- `Args:` documents meaning, units, and accepted ranges; the type is checked.
+- `Args:` documents meaning, units, and accepted ranges; an optional type is checked.
 - `Returns:` describes the value's structure and meaning. For structured values,
   name keys, tuple positions, units, ordering, and empty cases. Prefer a
   `TypedDict` or named record to a dictionary with an unrelated union of values.
-- `Raises:` lists exceptions that callers are expected to handle. Do not list
-  every exception a dependency might raise.
+- `Raises:` lists exceptions the body raises, translates or re-raises (see
+  [Raises scope](#raises-scope)); never every exception a dependency might raise.
 - Generators use `Yields:` for each yielded value, including order and the
   no-results case when relevant.
 
 ## Class docstrings
 
 Describe responsibility and invariants. Document public attributes of records in
-`Attributes:`. Document initializer arguments on `__init__`, even when there is
-only one: concise prose names each parameter in double backticks and states its
-meaning, or an `Args:` section adds units, constraints, and interactions. A fixed
-exception-message constructor need not add a section merely to repeat its type:
+`Attributes:` when helpful. Class docstrings never carry `Args:`, `Returns:`,
+`Yields:` or `Raises:`: explain initializer arguments on `__init__`, even when
+there is only one, and validation failures on the `__init__` or `__post_init__`
+that raises them. Concise prose can fully explain a fixed error constructor:
 
 ```python
 class ContractError(ValueError):
@@ -195,22 +264,23 @@ class DateRange:
 
 ## Properties
 
-Document a property like an attribute, with a noun phrase, not a verb. Properties
-are exempt from `Args:` and `Returns:`.
+Google documents properties like attributes: a one-line noun phrase or
+"Whether ..." clause, never a `Returns:` section.
 
 ```python
 @property
 def total(self) -> Decimal:
-    """Total including tax."""
+    """Net amount plus tax in the invoice currency."""
     return self.net + self.tax
 ```
 
 ## Overridden methods
 
-An override that keeps the parent's contract (`@override`) is exempt. Use a
-one-line docstring that names the difference, or none if the project allows
-inheriting docs. Do not copy the parent's docstring. An override that changes the
-contract documents it like any other callable.
+An override that keeps the parent's contract (`@override`) is exempt from
+contract checks, not from `docstring-one-line`. Use a one-line docstring that
+names the difference, or none if the project allows inheriting docs. Do not copy
+the parent's docstring. An override that changes the contract documents it like
+any other callable.
 
 ## Tests
 
@@ -223,10 +293,13 @@ name and the docstring together form the specification.
 | Anti-pattern | Fix |
 | --- | --- |
 | `"""Get order."""` on `get_order` | Say what is notable or remove the noise. |
-| `Args:` missing a type, or a type that differs from the annotation | Write `name (type): meaning` with the annotation verbatim; change both together. |
-| `Args:`/`Returns:` that only repeat a self-evident signature | Use concise prose that keeps notable inputs, constraints, effects, and failures. |
+| `Args:` missing a meaning, or a repeated type that differs from the annotation | Write `name: meaning`; if a type adds value, write the matching annotation as `name (type): meaning`. |
+| `Args:`/`Returns:` that only repeat a self-evident signature | Prefer concise prose when complete; preserve actual meanings, constraints, units and failures. |
 | `Returns:` that only repeats the type | Describe shape, keys, units, ordering, and empty cases. |
-| `Raises: Exception` | Name the specific, handled exceptions. |
+| `Raises: Exception` | Name the specific exceptions the body raises. |
+| `Raises:` listing callee failures (`OSError`, `SyntaxError`, a helper's domain error) | Remove the entry; mention an essential propagated failure in prose, or raise it in the public method. |
+| Sections on a callable with at most one input | Fold the result and raised errors into the summary; add prose only for genuinely complex behavior. |
+| `Args:`/`Raises:` on a class docstring | Use `Attributes:`; move arguments and failures to `__init__`/`__post_init__`. |
 | Implementation narration | Describe the contract; comment tricky lines instead. |
 | Single-backtick or single-quoted code | Use paired double-backtick literals. |
 | Docstring that disagrees with code | Pin behavior first; report defects separately from a behavior-preserving cleanup. |
@@ -246,6 +319,9 @@ docstrings while keeping Markdown file syntax unchanged.
 - [Ruff pydocstyle rules](https://docs.astral.sh/ruff/rules/#pydocstyle-d)
 - [Ruff pydoclint rules (DOC)](https://docs.astral.sh/ruff/rules/#pydoclint-doc)
 - [pydoclint](https://jsh9.github.io/pydoclint/)
+- [pydoclint violation codes (DOC501-DOC503)](https://jsh9.github.io/pydoclint/violation_codes.html)
+- [Ruff DOC502: docstring-extraneous-exception](https://docs.astral.sh/ruff/rules/docstring-extraneous-exception/)
+- [numpydoc: Raises section](https://numpydoc.readthedocs.io/en/latest/format.html#raises)
 - [Sphinx Napoleon: Google style example](https://www.sphinx-doc.org/en/master/usage/extensions/example_google.html)
 - [Sphinx reStructuredText Primer: inline markup](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html#inline-markup)
 - [Docutils Quick reStructuredText reference](https://docutils.sourceforge.io/docs/user/rst/quickref.html#inline-markup)

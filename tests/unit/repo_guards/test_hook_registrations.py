@@ -13,7 +13,7 @@ _SCRIPTS = _HOOKS / "scripts"
 _REGISTRATIONS = sorted(_HOOKS.glob("*.json"))
 _COPILOT_DEFAULT_TIMEOUT_SECONDS = 30
 _PRE_TOOL_BUDGET_SECONDS = 10
-_BLOCK_EXIT = 2
+_EXIT_BLOCK = 2
 
 
 def _entries(registration: Path) -> list[dict[str, object]]:
@@ -86,7 +86,7 @@ def test_policy_enforces_and_fails_closed() -> None:
 
 
 def _run_launcher(directory: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed interpreter and copied repository script
+    return subprocess.run(  # noqa: S603 - fixed interpreter and copied script
         [sys.executable, str(directory / "git_guard.py")],
         input="{}",
         capture_output=True,
@@ -102,7 +102,7 @@ def test_launcher_blocks_when_the_engine_is_missing(tmp_path: Path) -> None:
 
     result = _run_launcher(tmp_path)
 
-    assert result.returncode == _BLOCK_EXIT
+    assert result.returncode == _EXIT_BLOCK
     assert "blocked" in result.stderr
     assert result.stdout == ""
 
@@ -113,5 +113,5 @@ def test_launcher_blocks_when_the_engine_is_broken(tmp_path: Path) -> None:
 
     result = _run_launcher(tmp_path)
 
-    assert result.returncode == _BLOCK_EXIT
+    assert result.returncode == _EXIT_BLOCK
     assert "blocked" in result.stderr

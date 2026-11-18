@@ -2,7 +2,7 @@
 
 import argparse
 from contextlib import suppress
-from enum import Enum
+from enum import Enum, unique
 import json
 import os
 from pathlib import Path
@@ -12,17 +12,25 @@ import sys
 from tempfile import TemporaryDirectory
 import time
 
+# Task invokes this file directly; sibling maintainer modules use package imports.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from agent_kit.composition.root import (
     compose_workspace,
     validate_source,
     verify_provenance,
 )
-from agent_kit.infrastructure import apm_adapter
+from agent_kit.core.primitives import SKILL_FILE, NativeRuntime
+from agent_kit.infrastructure import apm as apm_module
+from scripts.apm_native_smoke import smoke_native_profiles
+from scripts.checks.source import write_findings
+from scripts.render_native import AGENT_PREFIXES
 
 _ROOT = Path(__file__).resolve().parents[1]
 _TIMEOUT_SECONDS = 120
 _CLEANUP_TIMEOUT_SECONDS = 30
-_RUNTIMES = "copilot,claude"
+_GIT_GUARD = "git_guard.py"
+_RUNTIMES = ",".join(NativeRuntime)
 # Each selection must fit the profile description budget; together they cover
 # every portable bundle.
 _SMOKE_SELECTIONS = (
@@ -33,6 +41,7 @@ _SMOKE_SELECTIONS = (
 )
 
 
+@unique
 class _SmokeIssue(Enum):
     """Stable diagnostics for selected-source smoke contracts."""
 
@@ -81,7 +90,7 @@ def resource_failures(expected: dict[str, bytes], *, destination: Path) -> list[
     actual = {
         path.relative_to(destination).as_posix()
         for path in destination.rglob("*")
-        if path.is_file() and path.name != "SKILL.md"
+        if path.is_file() and path.name != SKILL_FILE
     }
     return sorted(changed | (actual - set(expected)))
 
@@ -134,7 +143,7 @@ def delivery_failures(
     failures: list[str] = []
     for location in (".apm/skills", ".agents/skills", ".claude/skills"):
         actual_skills = {
-            path.parent.name for path in (package / location).rglob("SKILL.md")
+            path.parent.name for path in (package / location).rglob(SKILL_FILE)
         }
         if actual_skills != skills:
             failures.append(f"{location}: selected skill roster changed")
@@ -144,8 +153,8 @@ def delivery_failures(
         )
     actual_roles = {
         path.relative_to(package).as_posix()
-        for location in (".github/agents", ".claude/agents")
-        for path in (package / location).rglob("*.md")
+        for runtime in NativeRuntime
+        for path in (package / runtime.agent_directory).rglob("*.md")
     }
     if actual_roles != roles:
         failures.append("native role roster changed")
@@ -166,9 +175,9 @@ def executable_failures(package: Path, *, servers: set[str]) -> list[str]:
     name = json.loads((package / "apm.yml").read_text(encoding="utf-8"))["name"]
     failures: list[str] = []
     registration = package / f".github/hooks/{name}-git-guard.json"
-    if "git_guard.py" not in _read(registration):
+    if _GIT_GUARD not in _read(registration):
         failures.append("Copilot Git-guard hook registration is missing")
-    if "git_guard.py" not in _read(package / ".claude/settings.json"):
+    if _GIT_GUARD not in _read(package / ".claude/settings.json"):
         failures.append("Claude Git-guard hook registration is missing")
     for root in (
         package / f".github/hooks/scripts/{name}/scripts",
@@ -251,17 +260,17 @@ def run(
     Raises:
         _SmokeCommandTimeout: The command exceeds the timeout.
         SystemExit: The command exits with a non-zero status.
-        apm_adapter.InvalidApmTimeoutError: The deadline is not positive.
+        apm_module.InvalidAPMTimeoutError: The deadline is not positive.
         KeyboardInterrupt: Execution is interrupted, after process-tree cleanup.
     """
     if timeout_seconds <= 0:
-        raise apm_adapter.InvalidApmTimeoutError
+        raise apm_module.InvalidAPMTimeoutError
     label = " ".join(command[1:])
     sys.stdout.write(f"Running (limit {timeout_seconds}s): {label}\n")
     sys.stdout.flush()
     started = time.monotonic()
     try:
-        process = subprocess.Popen(  # noqa: S603 - fixed executables and validated paths
+        process = subprocess.Popen(  # noqa: S603 - fixed command, validated path
             command,
             cwd=cwd,
             env=env,
@@ -304,7 +313,7 @@ def _selected_source(
         _SmokeContractError: Skills or native roles differ from the contract.
     """
     expected_skills = {
-        path.parent.name for path in (package / ".apm/skills").rglob("SKILL.md")
+        path.parent.name for path in (package / ".apm/skills").rglob(SKILL_FILE)
     }
     if session_skills and expected_skills != set(session_skills):
         raise _SmokeContractError(_SmokeIssue.UNSELECTED_SESSION_SKILLS)
@@ -314,13 +323,9 @@ def _selected_source(
     resources = {
         name.removeprefix(".apm/skills/"): (package / name).read_bytes()
         for name in authored
-        if name.startswith(".apm/skills/") and not name.endswith("/SKILL.md")
+        if name.startswith(".apm/skills/") and not name.endswith(f"/{SKILL_FILE}")
     }
-    expected_roles = {
-        name
-        for name in authored
-        if name.startswith((".github/agents/", ".claude/agents/"))
-    }
+    expected_roles = {name for name in authored if name.startswith(AGENT_PREFIXES)}
     if session_skills and expected_roles:
         raise _SmokeContractError(_SmokeIssue.UNEXPECTED_NATIVE_ROLES)
     return expected_skills, expected_roles, resources
@@ -362,8 +367,7 @@ def _report_provenance(package: Path, *, stage: str) -> bool:
         sys.stdout.write(f"Passed: {stage}\n")
         sys.stdout.flush()
         return True
-    for finding in report.findings:
-        sys.stderr.write(f"{finding.path}: {finding.message} [{finding.code}]\n")
+    write_findings(report.findings)
     return False
 
 
@@ -428,7 +432,7 @@ def _install_and_audit(
         package, skills=expected_skills, roles=expected_roles, resources=resources
     ):
         return False
-    for _, command in apm_adapter.check_commands(apm):
+    for _, command in apm_module.check_commands(apm):
         run(
             command,
             cwd=package,
@@ -541,12 +545,12 @@ def smoke_profile(
 def _smoke_apm_executable() -> str | None:
     """Resolve Microsoft's pinned APM launcher with smoke-runner diagnostics."""
     try:
-        return apm_adapter.pinned_apm_executable()
-    except apm_adapter.ApmAvailabilityError as error:
-        if error.issue is apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE:
+        return apm_module.pinned_apm_executable()
+    except apm_module.APMAvailabilityError as error:
+        if error.issue is apm_module.APMAvailabilityIssue.MISSING_EXECUTABLE:
             sys.stderr.write("Use the locked APM environment.\n")
         else:
-            sys.stderr.write(f"APM {apm_adapter.APM_VERSION} is required.\n")
+            sys.stderr.write(f"APM {apm_module.APM_VERSION} is required.\n")
         return None
 
 
@@ -571,12 +575,35 @@ def _source_is_valid() -> bool:
         sys.stderr.write(f"Source validation failed: {error}\n")
         return False
     if not report.valid:
-        for finding in report.findings:
-            sys.stderr.write(f"{finding.path}: {finding.message} [{finding.code}]\n")
+        write_findings(report.findings)
         return False
     sys.stdout.write("Passed: source catalog validation\n")
     sys.stdout.flush()
     return True
+
+
+def _smoke_sources(
+    *,
+    apm: str,
+    env: dict[str, str],
+    session_skills: tuple[str, ...],
+    timeout_seconds: int,
+) -> int:
+    """Run the existing composed-source selections independently of native delivery."""
+    selections = (("backend", ()),) if session_skills else _SMOKE_SELECTIONS
+    for profile, features in selections:
+        result = smoke_profile(
+            profile,
+            features,
+            apm=apm,
+            env=env,
+            session_skills=session_skills,
+            timeout_seconds=timeout_seconds,
+        )
+        if result:
+            return result
+    sys.stdout.write("Released APM smoke passed; no live agent session is certified.\n")
+    return 0
 
 
 def main() -> int:
@@ -588,10 +615,16 @@ def main() -> int:
         default=_TIMEOUT_SECONDS,
         help="positive deadline for each APM command (default: %(default)s)",
     )
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--session",
         action="store_true",
         help="test an explicit backend skill allowlist without native agents",
+    )
+    modes.add_argument(
+        "--native",
+        action="store_true",
+        help="only test generated profiles through relocated APM consumers",
     )
     parser.add_argument(
         "--session-skill",
@@ -615,26 +648,28 @@ def main() -> int:
     }
     env.update(
         {
-            "APM_NO_SCRIPTS": "1",
-            "APM_NON_INTERACTIVE": "1",
+            **apm_module.APM_ENVIRONMENT_FLAGS,
             # Suppress the vendor's update probe, not its audit or trust checks.
             "APM_E2E_TESTS": "1",
         }
     )
-    selections = (("backend", ()),) if arguments.session else _SMOKE_SELECTIONS
-    for profile, features in selections:
-        result = smoke_profile(
-            profile,
-            features,
+    if not arguments.session:
+        result = smoke_native_profiles(
+            _ROOT,
             apm=apm,
             env=env,
-            session_skills=session_skills,
             timeout_seconds=arguments.timeout_seconds,
+            run_command=run,
+            isolate_environment=fixture_environment,
         )
-        if result:
+        if result or arguments.native:
             return result
-    sys.stdout.write("Released APM smoke passed; no live agent session is certified.\n")
-    return 0
+    return _smoke_sources(
+        apm=apm,
+        env=env,
+        session_skills=session_skills,
+        timeout_seconds=arguments.timeout_seconds,
+    )
 
 
 if __name__ == "__main__":

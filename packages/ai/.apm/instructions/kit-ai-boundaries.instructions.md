@@ -1,14 +1,13 @@
 ---
 description: Apply to model orchestration, retrieval, queues, and AI-adjacent infrastructure.
-applyTo: "**/*prompt*,**/prompts/**,**/*agent*,**/agents/**,**/*llm*,**/*queue*,**/queues/**"
+applyTo: "**/*prompt*.py,**/prompts/**/*.py,**/*agent*.py,**/agents/**/*.py,**/*llm*.py,**/*queue*.py,**/queues/**/*.py"
 ---
 
 - Keep model/provider calls behind explicit adapters; core policy must not depend on SDKs.
 - Bound tokens, concurrency, retries, queue depth, stream duration, and total resource use; set an explicit timeout on every provider call.
-- Validate model output and tool arguments against a schema at every trust boundary; treat a parse failure as an error, not a reason for unlimited retries.
-- Give agents only the tools their task needs, and require approval for tools with external side effects.
+- Validate model output against a schema at every trust boundary; treat a parse failure as an error, not a reason for unlimited retries.
 - Keep agent and graph state typed and serializable; checkpoint only data you are allowed to retain.
-- Make every agent or graph loop terminate: cap steps and recursion and define an explicit failure exit.
+- Make every graph loop terminate: cap steps and recursion and define an explicit failure exit.
 - Make queued tasks idempotent, pass identifiers instead of large or sensitive payloads, and set retry limits with backoff and a dead-letter path.
 - Preserve retrieval provenance and enforce access rules before content reaches a model.
 - Treat prompts, model responses, checkpoints, and queue payloads as potentially sensitive data.

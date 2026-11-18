@@ -11,7 +11,7 @@ explicitly as well as reserved names. Evidence:
 ## Keep the recorded coverage inventory explicit
 
 New capabilities require an intentional update to `coverage.json`, the baseline
-counts and digest in `scripts/check_coverage.py`, and the related regression
+counts and digest in `scripts/checks/coverage/`, and the related regression
 tests. Do not infer inventory changes from another checkout.
 
 ## Overlapping scoped instructions cost context on every edit
@@ -24,7 +24,7 @@ instruction and two sharing a scope. Gotcha: a `:` inside a frontmatter
 
 ## Editing packaged text makes the built source archive stale
 
-`uv run --locked python -m scripts.check_release` compares the archive with a fresh composition, so any change
+`uv run --locked python -m scripts.checks.release` compares the archive with a fresh composition, so any change
 under `packages/` (even one instruction line) fails it until the owned
 `build/capabilities/*.zip` and its `build/release/` copy are removed and rebuilt
 with `task capabilities:build`. Evidence: `source archive: invalid content or license`
@@ -102,12 +102,15 @@ detect-secrets. Validation now reads only declared root documents; keep download
 in a session or temporary directory instead of extending `.gitignore` per filename.
 Evidence: `test_unrelated_root_markdown_is_not_treated_as_project_context`.
 
-## Secret-shaped fixtures need explicit allowlist comments
+## Secret-shaped fixtures belong in the reviewed baseline
 
 detect-secrets flags placeholder passwords, example SHAs and revision IDs in
-templates and tests. Mark each deliberate fixture inline with
-`pragma: allowlist secret` instead of excluding test or template directories, so
-real credentials added later are still caught. Evidence: the all-files hook run.
+templates and tests. Do not exclude test or template directories, so real
+credentials added later are still caught. Prefer recording audited false
+positives in `.secrets.baseline` (`scan --baseline`, then `is_secret: false`):
+entries match by hash, so they survive reformatting and need no per-line reason
+for the suppressions gate. Inline pragmas need a reason and the formatter rules
+below. Evidence: 37 audited findings across 23 files, 2026-11-12 hook run.
 
 ## detect-secrets filters normalized YAML lines
 
@@ -206,3 +209,73 @@ restored and checked byte-identical before resuming. Use an explicit disposable
 scratch directory and exact owned cleanup paths; a read-only assignment is not
 filesystem isolation. Evidence: the 2026-10-28
 [review execution record](../docs/agentic-development-review.md#12-verification-and-execution-notes).
+It recurred on 2026-11-11: a research worker saved downloads to the repository
+root and seventeen root `*.md`/`*.json` files were deleted. Every worker prompt,
+including read-only research, must name an absolute scratch directory outside
+the checkout.
+
+## Hash-locked generated outputs must be excluded from text fixers
+
+`profiles/native/**` is rendered without a final newline and hash-locked in
+`profile-lock.json`. Until it was in the pre-commit `owned_outputs` anchor,
+`end-of-file-fixer` appended a newline under `--all-files` and
+`task verify -- profiles` failed. Add every new generated tree to
+`owned_outputs`. Restore drifted files with the renderer, not by hand.
+Evidence: the `profiles/native` case in `test_devtool_workflow.py`.
+
+## detect-secrets pragmas must survive formatters
+
+When a pragma is unavoidable, it needs a reason (`scripts/checks/suppressions.py`).
+Inline `pragma: allowlist secret` works in Python, YAML, Bicep and HCL.
+`pragma: allowlist nextline secret` on its own line works for Python and Bicep
+but not YAML. Use the nextline form where ruff would wrap the line or the
+Bicep formatter would move a trailing comment. Evidence: a 2026-11-12 control
+probe with the pinned detect-secrets 1.5.0 hook.
+
+## APM 0.35.0 staged activation can fail transiently on Windows
+
+`task apm:smoke` failed three times with `WinError 5 Access is denied`: twice
+in APM's staged-activation rename and once in the native fixture relocation.
+This is upstream microsoft/apm#3386, fixed in APM 0.35.1. Retry the smoke, and
+upgrade only through the reviewed dependency workflow once the cooldown allows.
+Evidence: [compatibility notes](../docs/compatibility.md#smoke-process-boundaries).
+
+## A failing Terraform variable validation hides dependent checks
+
+If a validation on variable A reads variable B, and B fails its own validation,
+Terraform treats A as unknown and skips every check that reads A. A test that
+expects a production guard to fail then reports `Missing expected failure`.
+Put a cross-variable check on a variable that no other guard reads, or have it
+read only variables that have no validation, so a failing input can never make
+a guarded value unknown. Evidence: the container-apps
+`reject_production_defaults`, `reject_internal_without_subnet` and
+`reject_internal_with_private_endpoint` runs in
+`packages/delivery/infra/container-apps/terraform/tests/foundation.tftest.hcl`.
+
+## Splitting a vendored Bicep module must extend the vendor closure
+
+The starter's `vendor_bicep.py` copies an explicit file set, so a module split
+into local files compiles in the toolkit but breaks every generated Bicep
+project. The `_fixture_vendor` helper in `tests/integration/starter/test_iac.py`
+now requires each vendored module to match its source `bicep/` directory for
+every test render that vendors (the `acr` service matrix; no test vendors a
+`ghcr` render).
+
+## Compose environment overrides env_file, so pin in-network ports
+
+A generated project's `.env` serves both the host-run app and Compose. Compose
+`environment:` wins over `env_file`, so the app service pins
+`APP_POSTGRES_PORT: "5432"` while the published host port follows
+`${APP_POSTGRES_PORT:-5432}`. Manual E2E found the hard-coded host port 5432
+colliding with a native PostgreSQL service. Evidence:
+`test_compose_postgres_host_port_follows_settings` in
+`tests/integration/starter/test_services.py`.
+
+## One writer per working tree
+
+Two agent sessions edited this checkout at the same time twice: once files
+disappeared mid-task, and once a half-applied rename left tests importing a
+module that did not exist yet. Before a commit or a full `task verify`, check
+for a concurrent writer: `git status --porcelain` stable for several minutes and
+no newer file times. Give each parallel session its own `git worktree add`
+checkout and branch instead of sharing one tree.

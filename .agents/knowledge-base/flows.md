@@ -8,7 +8,7 @@ environment (`uv sync --locked`).
 ## Source validation
 
 Maintainers run `task verify -- source` (implemented by
-[`scripts/check_source.py`](../../scripts/check_source.py)); add `--json` to
+[`scripts/checks/source.py`](../../scripts/checks/source.py)); add `--json` to
 that script for per-profile counts.
 
 1. The script loads the catalog, policy, root
@@ -25,7 +25,7 @@ that script for per-profile counts.
 
 ```mermaid
 sequenceDiagram
-    participant Script as scripts/check_source.py
+    participant Script as scripts/checks/source.py
     participant Adapter as FileCatalogAdapter
     participant Service as CatalogService
     Script->>Adapter: load(root)
@@ -155,12 +155,25 @@ flowchart TD
 4. It prints `hookSpecificOutput.additionalContext`; malformed input exits 1.
    Nothing is authorized or denied.
 
+## Edit feedback hook
+
+1. After an `Edit`, `MultiEdit` or `Write` tool call, the host invokes
+   `uv run --locked --no-sync python -m scripts.edit_feedback <claude|copilot>`
+   with a 30-second timeout.
+2. The adapter reads the edited path from the hook payload and ignores files
+   outside the repository or other than `.py` and `.py.template`.
+3. Python files get `ruff check` and `ruff format --check`; files inside the
+   conventions gate scope also get the conventions checker.
+4. Findings return as `additionalContext` (truncated at 4,000 characters) so the
+   agent fixes them in the same turn. A clean file prints nothing.
+   The hook never blocks the edit; `task verify` remains the gate.
+
 ## APM smoke
 
 `task apm:smoke` (four bounded selections covering every portable bundle) or
 `task apm:smoke -- --session`.
 
-1. Require `apm-cli` 0.33.0 and its pinned `apm` launcher.
+1. Require `apm-cli` 0.35.0 and its pinned `apm` launcher.
 2. Validate the toolkit source and create a disposable package for each
    selection (`fullstack`; `ai` with `terraform`, `bicep` and `remote-access`;
    `workflows`; `backend` with `temporal` and `identity`). Session mode tests

@@ -1,6 +1,6 @@
 ---
 name: kit-mcp-integration
-description: Use when adopting, configuring, authoring or testing an MCP server and its tool permissions.
+description: Use when adopting, configuring, authoring or testing MCP servers and permissions.
 license: MIT
 ---
 

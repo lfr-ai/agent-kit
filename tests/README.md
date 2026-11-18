@@ -4,13 +4,24 @@ Every test lives in one tier; `tests/conftest.py` marks it from its directory.
 
 | Tier | Path | Marker | Scope |
 | --- | --- | --- | --- |
-| Unit | `tests/unit/<layer>/` | `unit` | One module or layer, in process, synthetic inputs |
+| Unit | `tests/unit/<layer>/` | `unit` | One `src/agent_kit/` layer (`core`, `application`, `infrastructure`, `composition`), in process, synthetic inputs |
+| Unit, runtime | `tests/unit/runtime/` | `unit` | The `platform_kit_runtime` package under `packages/runtime/`, in process |
+| Unit, delivery | `tests/unit/delivery/` | `unit` | `packages/delivery` documents, catalog, template contracts and identity guide |
 | Repository guards | `tests/unit/repo_guards/` | `unit` | Contracts over this repository's real files and `scripts/` checks |
 | Property | `tests/property/` | `property` | Hypothesis invariants (paths, hashing, selection) |
 | Integration | `tests/integration/` | `integration` | Repository script process boundaries and composition/provenance behavior over synthetic or repository sources |
+| Integration, runtime | `tests/integration/runtime/` | `integration` | Runtime facades, offline SDK/HTTP flows and the installed wheel |
+| Integration, delivery | `tests/integration/delivery/` | `integration` | Imported shell gates, package relocation and the Azure bootstrap CLI |
+| Integration, delivery IaC | `tests/integration/delivery/infra/` | `integration` | One `test_<module>.py` per `packages/delivery/infra/<module>`, sharing the `iac.py` harness; tool-backed cases skip when Terraform or Bicep is not installed |
+| Integration, starter | `tests/integration/starter/` | `integration` | Copier generation, rendered IaC, environments, deploy pipelines and the generated service |
 
-Unit folders follow the current `src/agent_kit/` layers. The `source_root`
-fixture builds a complete synthetic source tree in `tmp_path`.
+Unit layer folders follow the current `src/agent_kit/` layers; a layer without
+unit tests has no folder. A subfolder replaces a shared file-name prefix only
+when it mirrors one source area (`starter/`, `delivery/infra/`); feature tests
+over a layered package, such as `runtime/`, and the cross-cutting
+`repo_guards/` stay flat. `pytest.ini` puts `packages/delivery` on the import
+path for `delivery_tools`. The `source_root` fixture builds a complete synthetic
+source tree in `tmp_path`.
 
 The released APM CLI boundary is exercised separately by `task apm:smoke`
 ([`scripts/apm_smoke.py`](../scripts/apm_smoke.py)), not by pytest. It tests
@@ -31,11 +42,27 @@ agent behavior; they are not pytest cases or pre-filled passing model results.
 ```powershell
 task test                         # every tier in parallel, matching CI
 task test -- tests/unit           # one tier or file, using pytest selectors
+task test -- tests/unit/core -n 0 # small scope without worker startup
+task test -- --lf                 # rerun failures during the current iteration
 task test -- tests/integration    # process and end-to-end tier
 task test -- -m "not integration and not slow"  # fast tier
+task check                        # fixes, types, imports, fast unit and property
 task verify -- tests              # every tier with enforced branch coverage
 uv run --locked tox -e 3.14       # isolated environment for one interpreter
 ```
+
+`slow` marks guards that copy or install whole profiles (capability coverage,
+consumer roles, profile budgets, the CLI-template run). They stay in
+`task test`, `task verify` and CI; only `task check` skips them. Mark a test
+`slow` only when it costs seconds per case and an always-run gate still
+executes it.
+
+Start with the nearest proving test, not the full matrix. Parameterize only
+meaningfully different contracts; reuse a module-scoped rendered fixture for
+read-only assertions instead of copying the complete catalog for each case.
+Keep filesystem isolation for mutation tests. Use `--durations=10` on a scoped
+run before changing scheduling or declaring a test slow. A speed improvement
+must preserve the same required final outcomes, not remove negative cases.
 
 `pytest.ini` owns discovery, markers, and strictness (`strict = true` for config,
 markers, unique parametrization ids, and xfail; warnings as errors). Coverage settings live

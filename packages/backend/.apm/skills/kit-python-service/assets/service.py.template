@@ -70,7 +70,7 @@ class OrderReader(Protocol):
     """Port: look up orders by identifier."""
 
     def get(self, order_id: str, /) -> OrderSnapshot | None:
-        """Return the order or ``None`` when it does not exist."""
+        """Return the snapshot for ``order_id``, or ``None`` when absent."""
         ...
 
 
@@ -78,15 +78,15 @@ class InvoiceRepository(Protocol):
     """Port: persist invoices and allocate invoice numbers."""
 
     def next_number(self) -> str:
-        """Reserve the next unused invoice number."""
+        """Reserve and return the next unused invoice number."""
         ...
 
     def find_by_order(self, order_id: str, /) -> Invoice | None:
-        """Return the invoice already issued for an order, if any."""
+        """Return the invoice for ``order_id``, or ``None`` when not yet issued."""
         ...
 
     def add(self, invoice: Invoice, /) -> None:
-        """Store a newly issued invoice."""
+        """Persist the newly issued, validated ``invoice``."""
         ...
 
 
@@ -124,25 +124,22 @@ class InvoiceService:
         self._clock = clock
 
     def issue(self, order_id: str, /) -> Invoice:
-        """Issue the invoice for a confirmed order.
+        """Return the invoice for a confirmed order, issuing it on the first call.
 
-        Repeating the call for the same order returns the existing invoice, so
-        retries after a timeout are safe.
-
-        Args:
-            order_id (str): Identifier of the order to invoice.
-
-        Returns:
-            The newly issued or previously issued invoice.
-
-        Raises:
-            OrderNotFoundError: If the order does not exist.
-            OrderNotReadyError: If the order is not confirmed or has no total.
+        Repeating the call returns the existing invoice, so retries after a
+        timeout are safe. Raise ``OrderNotFoundError`` for an unknown order and
+        ``OrderNotReadyError`` when it is unconfirmed or has no total.
         """
         existing = self._invoices.find_by_order(order_id)
         if existing is not None:
             return existing
-        order = self._require_ready(order_id)
+        order = self._orders.get(order_id)
+        if order is None:
+            raise OrderNotFoundError(order_id=order_id)
+        if not order.confirmed:
+            raise OrderNotReadyError(order_id=order_id, reason="not confirmed")
+        if order.total_minor <= 0:
+            raise OrderNotReadyError(order_id=order_id, reason="empty total")
         invoice = Invoice(
             number=self._invoices.next_number(),
             order_id=order.order_id,
@@ -156,13 +153,3 @@ class InvoiceService:
             extra={"invoice_number": invoice.number, "order_id": order.order_id},
         )
         return invoice
-
-    def _require_ready(self, order_id: str) -> OrderSnapshot:
-        order = self._orders.get(order_id)
-        if order is None:
-            raise OrderNotFoundError(order_id=order_id)
-        if not order.confirmed:
-            raise OrderNotReadyError(order_id=order_id, reason="not confirmed")
-        if order.total_minor <= 0:
-            raise OrderNotReadyError(order_id=order_id, reason="empty total")
-        return order

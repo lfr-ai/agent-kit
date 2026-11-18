@@ -1,5 +1,5 @@
 ---
-description: Apply in likely Pydantic transport DTO, request, response, and settings modules.
+description: Apply to likely Pydantic transport DTO, request, response, and settings modules.
 applyTo: "**/*dto*.py,**/*schema*.py,**/*request*.py,**/*response*.py,**/*settings.py"
 ---
 

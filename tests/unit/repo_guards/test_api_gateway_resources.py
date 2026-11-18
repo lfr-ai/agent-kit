@@ -28,6 +28,14 @@ _BICEPPARAM_VALUE = re.compile(r"^param (\w+) = ", re.MULTILINE)
 _NAMED_VALUE_RESOURCE = re.compile(
     r"namedValues@[\d-]+' = (?:if \(.*?\) )?\{\s*parent: service\s*name: '([^']+)'"
 )
+_TF_APIM = _ASSETS / "terraform/apim.tf.template"
+_HCL_BLOCK = re.compile(
+    r'^(resource|data|variable|provider|output) "(\w+)"(?: "(\w+)")? \{\n(.*?)^\}',
+    re.MULTILINE | re.DOTALL,
+)
+_HCL_COMMENT_LINE = re.compile(r"^[ \t]*#[^\n]*\n", re.MULTILINE)
+_HCL_REFERENCE = re.compile(r"(?<![\w.])(data\.)?(azurerm_\w+)\.(\w+)")
+_HCL_LOCALS = re.compile(r"^locals \{\n(.*?)^\}", re.MULTILINE | re.DOTALL)
 
 _CLEAN = """<policies>
   <inbound>
@@ -148,6 +156,19 @@ def test_disable_and_fragments_relax_only_named_rules(tmp_path: Path) -> None:
     )
 
 
+def test_include_fragment_without_an_id_relaxes_nothing(tmp_path: Path) -> None:
+    text = _CLEAN.replace(
+        '<rate-limit-by-key calls="10" renewal-period="60"\n'
+        '      counter-key="@(context.Subscription.Id)" />\n'
+        '    <quota-by-key calls="1000" renewal-period="86400"\n'
+        '      counter-key="@(context.Subscription.Id)" />',
+        "<include-fragment />",
+    )
+    path = _write(tmp_path, "orders-api.xml", text)
+    arguments = ["--require-quota", "--limit-fragment", "consumer-limits", str(path)]
+    assert _main()(arguments) == 1
+
+
 def test_scope_comes_from_file_name_or_flag(tmp_path: Path) -> None:
     minimal = "<policies><inbound /><outbound /></policies>"
     global_path = _write(tmp_path, "global.xml", minimal)
@@ -186,6 +207,15 @@ def test_policy_templates_pass_the_strict_gate(
     assert "No findings in 3 file(s)." in capsys.readouterr().out
 
 
+def _policy_named_values() -> set[str]:
+    """Return named values that the global and API policy templates reference."""
+    used: set[str] = set()
+    for name in ("global.xml.template", "api.xml.template"):
+        text = (_ASSETS / "policies" / name).read_text(encoding="utf-8")
+        used |= set(_NAMED_VALUE.findall(re.sub(r"(?s)<!--.*?-->", "", text)))
+    return used
+
+
 def test_named_values_in_policies_are_created_by_bicep() -> None:
     bicep = (_ASSETS / "bicep/apim.bicep.template").read_text(encoding="utf-8")
     bicep += (_ASSETS / "bicep/api.bicep.template").read_text(encoding="utf-8")
@@ -193,10 +223,7 @@ def test_named_values_in_policies_are_created_by_bicep() -> None:
         name.replace("${apiName}", "orders")
         for name in _NAMED_VALUE_RESOURCE.findall(bicep)
     }
-    used: set[str] = set()
-    for name in ("global.xml.template", "api.xml.template"):
-        text = (_ASSETS / "policies" / name).read_text(encoding="utf-8")
-        used |= set(_NAMED_VALUE.findall(re.sub(r"(?s)<!--.*?-->", "", text)))
+    used = _policy_named_values()
     assert used
     assert used <= created
 
@@ -388,3 +415,169 @@ def test_gcp_template_builds_gateway_from_openapi() -> None:
     )
     assert "filebase64(var.openapi_path)" in text
     assert "create_before_destroy = true" in text
+
+
+def _squash(text: str) -> str:
+    """Collapse runs of spaces so checks ignore ``terraform fmt`` alignment."""
+    return re.sub(r"[ \t]+", " ", text)
+
+
+def _group(pattern: str, text: str) -> str:
+    match = re.search(pattern, text, re.MULTILINE)
+    assert match, pattern
+    return match[1]
+
+
+def _terraform_apim() -> tuple[str, dict[str, str]]:
+    """Return the Azure template without comment lines and its blocks by address."""
+    code = _HCL_COMMENT_LINE.sub("", _TF_APIM.read_text(encoding="utf-8"))
+    blocks: dict[str, str] = {}
+    for kind, first, second, body in _HCL_BLOCK.findall(code):
+        parts = (first, second) if kind == "resource" else (kind, first, second)
+        blocks[".".join(part for part in parts if part)] = _squash(body)
+    return code, blocks
+
+
+def _terraform_locals(code: str) -> str:
+    match = _HCL_LOCALS.search(code)
+    assert match
+    return match[1]
+
+
+def test_terraform_apim_references_are_declared() -> None:
+    code, blocks = _terraform_apim()
+    variables = {
+        address.removeprefix("variable.")
+        for address in blocks
+        if address.startswith("variable.")
+    }
+    assert set(re.findall(r"\bvar\.(\w+)", code)) == variables
+    references = {
+        f"{data}{kind}.{name}" for data, kind, name in _HCL_REFERENCE.findall(code)
+    }
+    assert references
+    assert references <= set(blocks)
+    local_body = _terraform_locals(code)
+    local_names = set(re.findall(r"^  (\w+) += ", local_body, re.MULTILINE))
+    assert set(re.findall(r"\blocal\.(\w+)", code)) <= local_names
+
+
+def test_named_values_in_policies_are_created_by_terraform() -> None:
+    code, blocks = _terraform_apim()
+    plain = _group(r"(?s)^  named_values = \{\n(.*?)\n  \}", _terraform_locals(code))
+    entries = dict(re.findall(r'^ +"([\w-]+)" += (.+)$', plain, re.MULTILINE))
+    assert all(
+        value.startswith(("var.", "tostring(var.")) for value in entries.values()
+    )
+    named_values = {
+        address: body
+        for address, body in blocks.items()
+        if address.startswith("azurerm_api_management_named_value.")
+    }
+    assert (
+        "for_each = local.named_values"
+        in named_values["azurerm_api_management_named_value.plain"]
+    )
+    created = set(entries)
+    for body in named_values.values():
+        created |= set(re.findall(r'^ name = "([\w-]+)"$', body, re.MULTILINE))
+    used = _policy_named_values()
+    assert used
+    assert used <= created
+    assert "orders-backend-key" in created
+
+
+def test_terraform_apim_loads_files_from_documented_layout() -> None:
+    code, blocks = _terraform_apim()
+    module = "${path.module}"
+    assert (
+        f'xml_content = file("{module}/policies/global.xml")'
+        in blocks["azurerm_api_management_policy.global"]
+    )
+    assert (
+        f'xml_content = file("{module}/policies/orders-api.xml")'
+        in blocks["azurerm_api_management_api_policy.orders_v1"]
+    )
+    api = blocks["azurerm_api_management_api.orders_v1"]
+    assert 'content_format = "openapi+json"' in api
+    assert f'content_value = file("{module}/openapi/orders.v1.json")' in api
+    assert 'protocols = ["https"]' in api
+    assert "templatefile(" not in code
+    policy = (_ASSETS / "policies/api.xml.template").read_text(encoding="utf-8")
+    backends = {
+        _group(r'^ name = "([\w-]+)"$', body)
+        for address, body in blocks.items()
+        if address.startswith("azurerm_api_management_backend.")
+    }
+    assert set(re.findall(r'backend-id="([\w-]+)"', policy)) <= backends
+
+
+def test_terraform_apim_hardens_service_and_telemetry() -> None:
+    code, blocks = _terraform_apim()
+    service = blocks["azurerm_api_management.shop"]
+    assert 'type = "SystemAssigned"' in service
+    assert re.search(r'^ min_api_version = "\d{4}-\d{2}-\d{2}"$', service, re.MULTILINE)
+    for side in ("frontend", "backend"):
+        for version in ("tls10", "tls11"):
+            assert f"{side}_{version}_enabled = false" in service
+    assert not re.search(
+        r"(?:ssl30|tls1[01]|triple_des_ciphers)_enabled\s*=\s*true", code
+    )
+    logger = blocks["azurerm_api_management_logger.app_insights"]
+    assert 'identity_client_id = "SystemAssigned"' in logger
+    assert "depends_on = [azurerm_role_assignment.metrics_publisher]" in logger
+    diagnostic = blocks["azurerm_api_management_diagnostic.app_insights"]
+    assert "sampling_percentage = var.sampling_percentage" in diagnostic
+    assert "always_log_errors = true" in diagnostic
+    for logged in ("frontend_", "backend_", "body_bytes", "headers_to_log"):
+        assert logged not in diagnostic
+    assert not re.search(r"log_client_ip\s*=\s*true", code)
+    assert (
+        0
+        < int(_group(r"^ default = (\d+)$", blocks["variable.sampling_percentage"]))
+        < 100
+    )
+    monitor = blocks["azurerm_monitor_diagnostic_setting.apim"]
+    assert 'log_analytics_destination_type = "Dedicated"' in monitor
+    assert 'category_group = "allLogs"' in monitor
+    assert 'category = "AllMetrics"' in monitor
+    roles = {
+        _group(r'role_definition_name = "([^"]+)"', body): body
+        for address, body in blocks.items()
+        if address.startswith("azurerm_role_assignment.")
+    }
+    assert set(roles) == {"Monitoring Metrics Publisher", "Key Vault Secrets User"}
+    assert (
+        "data.azurerm_application_insights.shop.id"
+        in roles["Monitoring Metrics Publisher"]
+    )
+    assert "data.azurerm_key_vault.shop.id" in roles["Key Vault Secrets User"]
+    identity = "principal_id = azurerm_api_management.shop.identity[0].principal_id"
+    assert all(identity in body for body in roles.values())
+
+
+def test_terraform_apim_pins_azurerm_and_keeps_secrets_out() -> None:
+    code, blocks = _terraform_apim()
+    squashed = _squash(code)
+    assert 'source = "hashicorp/azurerm"' in squashed
+    assert 'version = "~> 5.13"' in squashed
+    assert re.search(r'required_version = ">= 1\.\d+\.\d+, < 2\.0\.0"', squashed)
+    assert "azapi" not in code
+    assert blocks["provider.azurerm"].strip() == "features {}"
+    assert 'default = "StandardV2_1"' in blocks["variable.sku_name"]
+    assert not re.search(
+        r"(?i)instrumentation_key|client_secret|password|access_key|sas_token", code
+    )
+    key = blocks["azurerm_api_management_named_value.orders_backend_key"]
+    assert "secret = true" in key
+    assert "value_from_key_vault {" in key
+    assert "secret_id = var.orders_backend_key_secret_id" in key
+    assert "depends_on = [azurerm_role_assignment.key_vault_secrets_user]" in key
+    assert 'default = ""' in blocks["variable.orders_backend_key_secret_id"]
+
+
+def test_terraform_apim_template_is_linked() -> None:
+    skill = (_SKILL / "SKILL.md").read_text(encoding="utf-8")
+    apiops = (_SKILL / "references/apiops.md").read_text(encoding="utf-8")
+    assert "](assets/terraform/apim.tf.template)" in skill
+    assert "](../assets/terraform/apim.tf.template)" in apiops

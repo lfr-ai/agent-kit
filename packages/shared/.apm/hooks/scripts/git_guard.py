@@ -17,7 +17,7 @@ import runpy
 import sys
 
 _HERE = Path(__file__).resolve().parent
-_BLOCK_EXIT = 2
+_EXIT_BLOCK = 2
 
 
 def main() -> int:
@@ -31,7 +31,7 @@ def main() -> int:
         sys.stderr.write(
             f"git-guard: blocked because the guard could not run: {error}\n"
         )
-        return _BLOCK_EXIT
+        return _EXIT_BLOCK
     return status
 
 

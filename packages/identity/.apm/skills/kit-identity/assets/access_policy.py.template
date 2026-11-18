@@ -1,7 +1,5 @@
 """Application policy AFTER library verification; not a JWT/OIDC implementation."""
 
-# ruff: noqa: DOC502 -- documented verifier-port errors propagate through require
-
 from dataclasses import dataclass
 import hmac
 from typing import Protocol
@@ -27,7 +25,7 @@ class InvalidCallbackError(Exception):
 class VerifiedAccess:
     """Normalized claims from a trusted verifier, never from a decode-only parser.
 
-    Args:
+    Attributes:
         issuer: Verified tenant-specific issuer.
         audience: Verified API audience.
         scopes: Space-separated delegated scp claim normalized to a set.
@@ -46,15 +44,10 @@ class TokenVerifier(Protocol):
     def verify(self, *, access_token: str) -> VerifiedAccess:
         """Verify signature, allowed algorithm, issuer, audience, tenant and time.
 
-        Args:
-            access_token (str): Bearer credential; never log or persist it here.
-
-        Returns:
-            Normalized access-token claims, not ID-token claims.
-
-        Raises:
-            UnauthenticatedError: Token validation failed.
-            IdentityUnavailableError: Trusted metadata/JWKS cannot be obtained.
+        ``access_token`` is a bearer credential; never log or persist it here. The
+        result holds normalized access-token claims, not ID-token claims. Failed
+        validation raises ``UnauthenticatedError``; unobtainable trusted
+        metadata or JWKS raises ``IdentityUnavailableError``.
         """
         ...
 
@@ -79,6 +72,10 @@ class AccessGate:
     ) -> VerifiedAccess:
         """Require all requested scopes AND at least one requested role.
 
+        Verifier failures propagate unchanged: ``UnauthenticatedError`` for an
+        invalid token and ``IdentityUnavailableError`` when verification
+        infrastructure is unavailable.
+
         Args:
             access_token (str): Credential passed unchanged to the verifier.
             scopes (frozenset[str]): Required delegated scopes; empty means no scope
@@ -90,9 +87,8 @@ class AccessGate:
             Verified claims; resource/tenant ownership must still be authorized.
 
         Raises:
-            UnauthenticatedError: Verification fails or token targets another API/issuer.
+            UnauthenticatedError: The verified token targets another API or issuer.
             ForbiddenError: A nonempty scope or role constraint is unsatisfied.
-            IdentityUnavailableError: The verifier is unavailable.
         """
         claims = self._verifier.verify(access_token=access_token)
         if claims.issuer != self._issuer or claims.audience != self._audience:
@@ -106,7 +102,7 @@ class AccessGate:
 class LoginBinding:
     """Synthetic callback binding; use the OIDC library's real transaction store.
 
-    Args:
+    Attributes:
         state: Unpredictable session-bound state.
         nonce: Unpredictable nonce sent in the authentication request.
         redirect_uri: Exact registered callback URI, not a return-to URL.

@@ -70,17 +70,29 @@ Use `enum.StrEnum` (Python 3.11+) for closed sets of string values that cross a
 boundary (JSON, database, CLI):
 
 ```python
+from enum import StrEnum, auto, unique
+
+
+@unique
 class OrderStatus(StrEnum):
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    SHIPPED = "shipped"
+    DRAFT = auto()
+    CONFIRMED = auto()
+    SHIPPED = auto()
 ```
 
 Guidelines:
 
-- Write explicit values; do not use `auto()` for values that are persisted or
-  sent over the wire, because renaming a member would then change stored data.
-- Decorate with `@enum.unique` to reject accidental aliases.
+- Use `auto()` when a `StrEnum` member's required value is its lowercase name.
+  Keep nonmatching values such as `"in-progress"` or `"stepList"` explicit.
+  Preserve numeric protocol values too; ordinary `Enum` auto values can shift
+  when members are inserted or reordered.
+- Assert serialized values in tests. Renaming a `StrEnum` member using `auto()`
+  changes its wire value and needs the same review as any other contract change.
+- Ordinary closed enums declare `@enum.unique` or the equivalent
+  `@enum.verify(enum.UNIQUE)` to reject accidental aliases. Imported and qualified
+  spellings are valid. This is not a blanket ban on intentional aliases, flags
+  or small `Literal` contracts; choose those when their semantics fit rather
+  than treating them as ordinary unique closed sets.
 - Parse untrusted input with `OrderStatus(value)` and translate the resulting
   `ValueError` into the boundary's error format.
 - Put behavior that depends on the member on the enum (`def is_terminal(self)`)
@@ -88,6 +100,17 @@ Guidelines:
 - Treat adding a member as a contract change for consumers that switch over it.
 - Use `IntEnum` only for interoperability with numeric protocols, and `Flag` for
   combinable bit sets.
+- Do not add `@typing.final` to every leaf class; it is unrelated to enum
+  uniqueness or module-level `Final` and needs an actual extension contract.
+
+Standard class syntax still requires `= auto()` for each generated member.
+There is no standard decorator that removes these assignments. The functional
+API can construct an enum from member names, but explicit classes are preferable
+for static contracts, member documentation and editor navigation. Do not add a
+custom metaclass or dependency just to omit `auto()`.
+
+The bundled `enum-auto` check covers direct `StrEnum` declarations with default
+generation. It does not infer custom or mixed-base generation behavior.
 
 ## Templates
 

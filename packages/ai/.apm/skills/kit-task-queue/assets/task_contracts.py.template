@@ -10,11 +10,13 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Protocol
+from enum import StrEnum, auto, unique
+from typing import Final, Protocol
 
-MAX_ENVELOPE_BYTES = 64 * 1024
-SENSITIVE_KEYS = frozenset({"password", "secret", "token", "api_key", "authorization"})
+MAX_ENVELOPE_BYTES: Final[int] = 64 * 1024
+SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
+    {"password", "secret", "token", "api_key", "authorization"}
+)
 
 
 class TaskError(Exception):
@@ -48,7 +50,7 @@ class TaskEnvelope:
         idempotency_key: Business key; duplicates with the same key run once.
         payload: Small JSON object; references, not documents or secrets.
         created_at: Timezone-aware enqueue time.
-        correlation_id: Request or trace id that caused the task.
+        correlation_id: Request or trace id that caused the task; ``None`` when absent.
     """
 
     task_id: str
@@ -57,7 +59,7 @@ class TaskEnvelope:
     idempotency_key: str
     payload: Mapping[str, object]
     created_at: datetime
-    correlation_id: str = ""
+    correlation_id: str | None = None
 
     def __post_init__(self) -> None:
         """Reject envelopes a worker could not process safely."""
@@ -74,34 +76,29 @@ class TaskEnvelope:
             raise ValueError(f"envelope exceeds {MAX_ENVELOPE_BYTES} bytes")
 
     def to_json(self) -> bytes:
-        """Serialize deterministically to UTF-8 JSON bytes for the broker."""
-        return json.dumps(
-            {
-                "task_id": self.task_id,
-                "task_type": self.task_type,
-                "version": self.version,
-                "idempotency_key": self.idempotency_key,
-                "payload": dict(self.payload),
-                "created_at": self.created_at.isoformat(),
-                "correlation_id": self.correlation_id,
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode()
+        """Serialize to deterministic UTF-8 JSON; omit an absent correlation id."""
+        fields: dict[str, object] = {
+            "task_id": self.task_id,
+            "task_type": self.task_type,
+            "version": self.version,
+            "idempotency_key": self.idempotency_key,
+            "payload": dict(self.payload),
+            "created_at": self.created_at.isoformat(),
+        }
+        if self.correlation_id is not None:
+            fields["correlation_id"] = self.correlation_id
+        return json.dumps(fields, separators=(",", ":"), sort_keys=True).encode()
+
+
+def _correlation_id(value: object) -> str | None:
+    """Decode a correlation id; missing, null, or legacy ``""`` becomes ``None``."""
+    return None if value is None or value == "" else str(value)
 
 
 def parse_envelope(raw: bytes) -> TaskEnvelope:
-    """Decode and validate a broker message body.
+    """Decode a broker message body; raise ``PermanentTaskError`` if malformed.
 
-    Args:
-        raw (bytes): Message bytes.
-
-    Returns:
-        The validated envelope.
-
-    Raises:
-        PermanentTaskError: If the body is malformed; such messages go
-            straight to the dead-letter queue.
+    Malformed messages go straight to the dead-letter queue.
     """
     if len(raw) > MAX_ENVELOPE_BYTES:
         raise PermanentTaskError("message too large")
@@ -121,7 +118,7 @@ def parse_envelope(raw: bytes) -> TaskEnvelope:
             idempotency_key=str(data["idempotency_key"]),
             payload=data["payload"],
             created_at=datetime.fromisoformat(str(data["created_at"])),
-            correlation_id=str(data.get("correlation_id", "")),
+            correlation_id=_correlation_id(data.get("correlation_id")),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise PermanentTaskError(
@@ -140,7 +137,7 @@ def new_envelope(
     version: int,
     idempotency_key: str,
     payload: Mapping[str, object],
-    correlation_id: str = "",
+    correlation_id: str | None = None,
 ) -> TaskEnvelope:
     """Create an envelope with a fresh task id and the current time.
 
@@ -153,7 +150,7 @@ def new_envelope(
         version (int): Payload schema version.
         idempotency_key (str): Business key.
         payload (Mapping[str, object]): Small JSON object of references.
-        correlation_id (str): Upstream trace id.
+        correlation_id (str | None): Upstream trace id, or ``None`` when absent.
 
     Returns:
         The validated envelope.
@@ -184,12 +181,13 @@ class Delivery:
     receive_count: int
 
 
+@unique
 class ClaimState(StrEnum):
     """Outcome of claiming an idempotency key."""
 
-    ACQUIRED = "acquired"
-    IN_PROGRESS = "in_progress"
-    DONE = "done"
+    ACQUIRED = auto()
+    IN_PROGRESS = auto()
+    DONE = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -200,14 +198,14 @@ class TaskContext:
         task_id: Message id.
         idempotency_key: Business key, for downstream idempotent calls.
         attempt: One-based delivery attempt.
-        correlation_id: Upstream trace id.
+        correlation_id: Upstream trace id; ``None`` when absent.
         deadline_s: Seconds the handler has before it is timed out.
     """
 
     task_id: str
     idempotency_key: str
     attempt: int
-    correlation_id: str
+    correlation_id: str | None
     deadline_s: float
 
 

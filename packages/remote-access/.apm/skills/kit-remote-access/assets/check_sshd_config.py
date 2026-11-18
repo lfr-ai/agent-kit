@@ -183,16 +183,10 @@ def _unquote(text: str) -> str:
 
 
 def parse(text: str) -> list[Setting]:
-    """Read every ``Keyword value`` line and note its ``Match`` scope.
+    """Parse settings in file order; raise ``SshdConfigError`` for a valueless line.
 
-    Args:
-        text (str): Complete ``sshd_config`` text.
-
-    Returns:
-        Settings in file order; comments and blank lines are skipped.
-
-    Raises:
-        SshdConfigError: If a non-comment line has no value.
+    Each ``Keyword value`` line records its ``Match`` scope; comments and blank
+    lines are skipped.
     """
     settings: list[Setting] = []
     match_line = 0
@@ -264,9 +258,7 @@ def _algorithm_finding(path: Path, setting: Setting) -> Finding | None:
 def _first_global(settings: Iterable[Setting]) -> dict[str, Setting]:
     """Return the first global setting per keyword, as sshd applies them.
 
-    Returns:
-        The first global setting keyed by keyword; settings inside ``Match`` blocks are
-        ignored.
+    Settings inside ``Match`` blocks are ignored.
     """
     first: dict[str, Setting] = {}
     for setting in settings:
@@ -331,6 +323,8 @@ def _baseline_findings(path: Path, settings: Sequence[Setting]) -> list[Finding]
 def scan_text(path: Path, text: str, *, require_baseline: bool) -> list[Finding]:
     """Check one ``sshd_config`` file and return its findings in line order.
 
+    A line that cannot be parsed propagates ``SshdConfigError``.
+
     Args:
         path (Path): Path reported in findings.
         text (str): File content.
@@ -338,9 +332,6 @@ def scan_text(path: Path, text: str, *, require_baseline: bool) -> list[Finding]
 
     Returns:
         Findings sorted by line number and message.
-
-    Raises:
-        SshdConfigError: If a line cannot be parsed.
     """
     settings = parse(text)
     candidates = [
@@ -368,17 +359,10 @@ class MissingPathError(ValueError):
 
 
 def collect_files(paths: Iterable[Path]) -> list[Path]:
-    """Expand directories into sorted ``*.conf`` files; keep explicit files.
+    """Expand paths into sorted ``*.conf`` files; raise ``MissingPathError`` if absent.
 
-    Args:
-        paths (Iterable[Path]): Files or directories, such as
-            ``/etc/ssh/sshd_config.d``.
-
-    Returns:
-        Sorted, de-duplicated file list.
-
-    Raises:
-        MissingPathError: If a path does not exist.
+    Explicit files are kept and the result is de-duplicated; a directory is, for
+    example, ``/etc/ssh/sshd_config.d``.
     """
     files: set[Path] = set()
     for path in paths:

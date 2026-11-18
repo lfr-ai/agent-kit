@@ -4,7 +4,7 @@ import json
 import sys
 
 from agent_kit.core.errors import InputTypeError
-from agent_kit.infrastructure.session_context import session_context
+from agent_kit.infrastructure.session_context import ENTRY_FILES, session_context
 
 _MAX_CONTEXT_CHARS = 1_000_000
 _HOOK_EVENT = "SessionStart"
@@ -24,7 +24,7 @@ def main() -> int:
         return 1
     text = (
         f"Active workspace: {context.workspace}\n"
-        "Agent entry points: AGENTS.md, PROJECT.md, llms.txt."
+        f"Agent entry points: {', '.join(ENTRY_FILES)}."
     )
     if context.missing:
         text += f"\nMissing agent context files: {', '.join(context.missing)}."

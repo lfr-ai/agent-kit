@@ -1,7 +1,7 @@
 """Build a selected, licensed APM source archive without plugin conversion."""
 
 import argparse
-from enum import Enum
+from enum import Enum, unique
 import json
 from pathlib import Path
 import stat
@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import zipfile
 
 from agent_kit.composition.root import compose_workspace, verify_provenance
+from agent_kit.core.primitives import PACKAGE_REQUIRED_FILES, SKILL_FILE
 
 _ROOT = Path(__file__).resolve().parents[1]
 _OUTPUT = _ROOT / "build" / "capabilities"
@@ -20,6 +21,7 @@ _ZIP_FILE_MODE = stat.S_IFREG | 0o644
 _ZIP_MODE_SHIFT = 16
 
 
+@unique
 class _ArchiveIssue(Enum):
     """Stable failures for the final licensed-archive contract."""
 
@@ -81,14 +83,13 @@ def _write_entries(
 def _verify_archive(output: Path) -> None:
     """Reject an archive that lacks required entries or any capability.
 
-    Raises:
-        _ArchiveContractError: Required entries or capabilities are missing.
+    Either gap raises ``_ArchiveContractError``.
     """
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
-    if not {"LICENSE", "apm.yml", "apm-policy.yml", "provenance.json"}.issubset(names):
+    if not (PACKAGE_REQUIRED_FILES | {"provenance.json"}).issubset(names):
         raise _ArchiveContractError(_ArchiveIssue.MISSING_REQUIRED_ENTRIES)
-    if not any(name.endswith("/SKILL.md") for name in names):
+    if not any(name.endswith(f"/{SKILL_FILE}") for name in names):
         raise _ArchiveContractError(_ArchiveIssue.NO_CAPABILITIES)
 
 

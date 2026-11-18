@@ -14,7 +14,11 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 ## Working method
 
 - Inspect relevant code and prior patterns before editing.
-- Plan proportionately; use focused checks while iterating.
+- Keep research downloads and temporary reports in explicit absolute
+  temporary/session paths, never repository-relative output files. Retain source
+  links and durable decisions in the relevant documentation; inspect root
+  artifacts before handoff.
+- Plan proportionately; iterate with `task check` or one focused test.
 - Keep Task targets for recurring workflows; invoke individual gates through
   `task verify -- <gate>` and one-off tools directly. Rely on tool discovery and
   defaults; add an override only for an intentional, documented policy difference.
@@ -22,7 +26,9 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - Explicitly report errors, unsupported runtime behavior, and unavailable checks.
 - Do not weaken assertions, provenance, policy, or permission gates to pass.
 - Change dependencies only through `pyproject.toml` and `uv.lock`: run
-  `uv add --no-sync`, then `task verify -- dependencies` before syncing. Never run
+  `uv add --no-sync` (Claude denies it and VS Code requires approval, so ask a
+  human to run it), then
+  `task verify -- dependencies` before syncing. Never run
   ad-hoc installers or package runners such as `pip install`, `npx`, or `uvx`.
 - In this repository only: read-only git is always allowed. Create a branch and
   commit only for a change the user requested in this session. Push a
@@ -41,19 +47,18 @@ Read [PROJECT.md](PROJECT.md) for commands and [llms.txt](llms.txt) for context.
 - Core is stdlib-only. Dependencies flow inward.
 - Application owns selection and validation; Infrastructure owns files and
   processes; Presentation owns CLI input/output; Composition wires collaborators.
-- No production `Any`, casts, or quoted forward-reference annotations.
-- No magic numbers outside tests: name literals other than 0 and +/-1 as constants.
-- Immutable dataclasses use `frozen=True`, `kw_only=True`, and `slots=True`.
-- Use stdlib `import logging`; do not duplicate logging at multiple boundaries.
+- Language rules live in path-scoped instructions (Python: `kit-python`).
 - Keep types concrete, errors explicit, paths contained, and changes local.
 - Prefer the simplest behavior-complete design for maintainability, readability
   and low cognitive load; retrieve task-relevant context on demand.
 - Package code must work when installed away from its source checkout.
-- Parameterized initializers document their arguments.
 
 ## Verification and handoff
 
-- Run `task verify` before handoff; run `task apm:smoke` after APM-facing changes.
+- Run `task verify` once before handoff, not after each edit; run
+  `task apm:smoke` after APM-facing changes.
+- Then have the read-only `kit-code-reviewer` role review the diff as a second
+  pass; fix each finding or record why it stands.
 - Audit existing owned outputs before any regeneration.
 - Do not claim a native IDE, cloud, or model session was tested by a file test.
 - Record only durable, evidenced lessons in `memories/`.

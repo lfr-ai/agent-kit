@@ -10,6 +10,7 @@ version. The schema script is applied before the tests run.
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final, LiteralString
 
 import pytest
 import pytest_asyncio
@@ -22,13 +23,13 @@ from shop.infrastructure.graph.queries import CUSTOMER_PRODUCTS, NodeKind
 
 pytestmark = pytest.mark.asyncio
 
-NEO4J_IMAGE = "neo4j:5.26-community@sha256:PIN_IMAGE_DIGEST"
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "graph" / "schema.cypher"
-DATABASE = "neo4j"
-CLEAR_GRAPH = "MATCH (n) DETACH DELETE n"
-CREATE_CUSTOMER = "CREATE (:Customer {customerId: $customer_id})"
-EXPLAIN_CUSTOMER_PRODUCTS = "EXPLAIN " + CUSTOMER_PRODUCTS
-BOUGHT_AT = datetime(2026, 1, 1, tzinfo=UTC)
+NEO4J_IMAGE: Final[str] = "neo4j:5.26-community@sha256:PIN_IMAGE_DIGEST"
+SCHEMA_PATH: Final[Path] = Path(__file__).resolve().parents[3] / "graph" / "schema.cypher"
+DATABASE: Final[str] = "neo4j"
+CLEAR_GRAPH: Final[LiteralString] = "MATCH (n) DETACH DELETE n"
+CREATE_CUSTOMER: Final[LiteralString] = "CREATE (:Customer {customerId: $customer_id})"
+EXPLAIN_CUSTOMER_PRODUCTS: Final[LiteralString] = "EXPLAIN " + CUSTOMER_PRODUCTS
+BOUGHT_AT: Final[datetime] = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")

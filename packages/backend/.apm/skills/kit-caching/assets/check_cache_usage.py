@@ -39,11 +39,17 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 import sys
+from typing import Final
 
 _EXIT_FINDINGS = 1
 _EXIT_INPUT_ERROR = 2
 _EXCLUDED = frozenset({".venv", "venv", "node_modules", "build", "dist", "__pycache__"})
-RULES = ("method-cache", "async-cache", "unbounded-cache", "pickle-redis")
+RULES: Final[tuple[str, ...]] = (
+    "method-cache",
+    "async-cache",
+    "unbounded-cache",
+    "pickle-redis",
+)
 _MEMO_DECORATORS = frozenset({"lru_cache", "cache"})
 _ASYNC_UNSAFE = _MEMO_DECORATORS | {"cached_property"}
 _INSTANCE_FREE = frozenset({"staticmethod", "classmethod"})
@@ -314,16 +320,13 @@ def check_source(
 
     Args:
         path (str): Display path; also matched against ``allow_unbounded``.
-        source (str): Python source text.
+        source (str): Python source text; unparsable text raises ``SyntaxError``.
         rules (frozenset[str]): Rules to report.
         allow_unbounded (Sequence[str]): Globs of files where unbounded caches are
             accepted.
 
     Returns:
         Findings sorted by line and rule, minus reviewed suppressions.
-
-    Raises:
-        SyntaxError: The source does not parse.
     """
     tree = ast.parse(source, filename=path)
     bindings = _bindings(tree)
@@ -378,10 +381,6 @@ def _is_excluded(candidate: Path, root: Path, excluded: Sequence[str]) -> bool:
     if set(relative.parts) & set(excluded):
         return True
     return _allowed(candidate.as_posix(), excluded)
-
-
-class SelfTestError(AssertionError):
-    """A built-in regression failed."""
 
 
 _VIOLATIONS = (
@@ -443,30 +442,29 @@ _CLEAN = (
 )
 
 
-def self_test() -> None:
-    """Exercise each rule with violating and clean sources.
-
-    Raises:
-        SelfTestError: A rule missed a violation or reported a clean source.
-    """
+def self_test() -> list[str]:
+    """Return rules that missed a violation or reported a clean source."""
+    failures: list[str] = []
     for source, rule in _VIOLATIONS:
         found = check_source("case.py", source)
         if not any(finding.rule == rule for finding in found):
-            msg = f"self-test missed {rule}: {[str(item) for item in found]}"
-            raise SelfTestError(msg)
+            failures.append(f"self-test missed {rule}: {[str(item) for item in found]}")
     for source in _CLEAN:
         found = check_source("clean.py", source)
         if found:
-            msg = f"self-test reported a clean source: {[str(item) for item in found]}"
-            raise SelfTestError(msg)
+            failures.append(
+                f"self-test reported a clean source: {[str(item) for item in found]}"
+            )
     allowed = check_source(
         "src/shop/settings.py",
         "from functools import cache\n@cache\ndef load(name):\n    return name\n",
         allow_unbounded=("*/settings.py",),
     )
     if allowed:
-        msg = f"self-test ignored --allow-unbounded: {[str(item) for item in allowed]}"
-        raise SelfTestError(msg)
+        failures.append(
+            f"self-test ignored --allow-unbounded: {[str(item) for item in allowed]}"
+        )
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -491,9 +489,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_cache_usage self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_cache_usage self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     try:

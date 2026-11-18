@@ -1,0 +1,66 @@
+name: Delivery Bicep check
+
+# No Azure authentication or deployment. CLI installation and module restoration can use network.
+# Lint severity comes from the caller's bicepconfig.json.
+on:
+  workflow_call:
+    inputs:
+      bicep-version:
+        description: Exact Bicep CLI version without the leading v, for example 0.48.1.
+        type: string
+        required: true
+      path:
+        description: Directory searched for .bicep and .bicepparam files.
+        type: string
+        default: .
+      runs-on:
+        description: Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        description: Job timeout.
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: bicep ${{ inputs.bicep-version }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Bicep CLI
+        env:
+          BICEP_VERSION: ${{ inputs.bicep-version }}
+        run: az bicep install --version "v${BICEP_VERSION}"
+      - name: Format, lint and build
+        env:
+          IAC_PATH: ${{ inputs.path }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' templates < <(find "$IAC_PATH" -type f -name '*.bicep' -print0)
+          mapfile -d '' params < <(find "$IAC_PATH" -type f -name '*.bicepparam' -print0)
+          if [[ ${#templates[@]} -eq 0 ]]; then
+            echo "::error::No .bicep files found under ${IAC_PATH}"
+            exit 1
+          fi
+          for file in "${templates[@]}"; do
+            echo "::group::${file}"
+            az bicep format --file "$file" --stdout | diff --unified "$file" -
+            az bicep lint --file "$file"
+            az bicep build --file "$file" --stdout > /dev/null
+            echo "::endgroup::"
+          done
+          for file in "${params[@]}"; do
+            echo "::group::${file}"
+            az bicep build-params --file "$file" --stdout > /dev/null
+            echo "::endgroup::"
+          done

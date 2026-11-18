@@ -57,6 +57,32 @@ Unannotated values remain scanned. Review every new finding; do not bulk-update
 the baseline to make a hook pass. The hook deliberately rejects an unstaged
 baseline, and protected-branch checks remain enabled for commits.
 
+## Copier development tool
+
+Copier is a development-only generator, not a runtime dependency in generated
+applications. Its unconditional `jinja2-ansible-filters==1.3.2` dependency is
+genuinely GPL-3.0-or-later and declares `GPL3`.
+
+**Decision (owner, 2026-11-16):** accepted as development-only tooling through a
+dated exception in the [license policy](../license-allowlist.json), mirrored by
+a purl in GitHub dependency review. The scope is the `dev` dependency group:
+the package renders and tests the starter; wheels, images and generated
+projects must not ship or import it. The GNU [tools and generated output
+guidance](https://www.gnu.org/licenses/gpl-faq.html#CanIUseGPLToolsForNF)
+distinguishes using a tool from copying its code into output. This decision does
+not waive GPL obligations when distributing the tool or its code; review those
+cases separately.
+
+`test_gpl_generator_dependency_stays_development_only` fails if any shipped
+package (`agent-kit` or any `platform-kit-runtime` extra) reaches Copier or the
+filters, or if another package directly depends on the filters. It checks the
+locked Python dependency graph, not the contents of a built image. The exception
+expires on 2027-04-30 so the decision is rechecked. Copier is still scanned, the
+GPL metadata is not relabelled, and GPL licenses stay denied for everything
+else. Remove the exception when upstream replacement work in
+[copier-org/copier#2039](https://github.com/copier-org/copier/pull/2039)
+ships; it was still an open, unmerged draft when checked on 2026-11-16.
+
 ## Controls
 
 | Risk | Control | Where it runs |
@@ -92,12 +118,41 @@ vulnerability-only Trivy runner for actual built images, including OS packages.
 Infrastructure consumers choose one configuration scanner, such as Trivy or
 Checkov, rather than enabling both by default.
 
-Release SBOM generation is deferred until a consumer, compliance rule, or
-release-inventory system needs it. Lockfiles remain the installation and
-dependency-audit inputs; an SBOM is a standardized release inventory, not another
-scanner or a replacement for those checks. Existing build-provenance attestations
-remain independent. If adopted, bind the SBOM to the released digest and distinguish
-a library's tested dependency set from the versions its consumers install.
+Release SBOM status:
+
+- **Container images** (starter image pipeline): BuildKit generates SBOM and
+  max-mode provenance attached to the image index; the GitHub variant also
+  attests the digest. The Azure DevOps variant keeps the BuildKit attestations
+  unsigned.
+- **Toolkit Python release**: the SBOM is deferred until a consumer, compliance
+  rule, or release-inventory system needs it. The toolkit ships no image and its
+  dependency set is pinned in `uv.lock`, which remains the installation and
+  audit input. Existing build-provenance attestations remain independent.
+- **Opt-in recipe**: copy the kit-supply-chain `sbom.yml.template`: run
+  `uv export --locked --no-default-groups --format cyclonedx1.5
+  --preview-features sbom-export --output-file sbom/runtime.cdx.json`, then
+  attest the distributions with `sbom-path: sbom/runtime.cdx.json`. Bind it to the
+  released digest and distinguish a library's tested dependency set from the
+  versions its consumers install.
+
+Built-image vulnerability scanning is not wired into the starter or delivery
+workflows. The supported path is Microsoft Defender for Containers / ACR
+vulnerability assessment in Defender for Cloud, which an operator enables on the
+subscription. The kit-containers `trivy_image_scan.py.template` remains an opt-in
+template that a consumer pins and adopts by its own policy.
+
+This is not an active image-scan or deployment-attestation gate: Defender must be
+enabled and its findings acted on, and deployments currently enforce image
+digests rather than verifying attestation policy. SBOM inventory, vulnerability
+results and signed build provenance are different evidence. BuildKit's attached
+SBOM is not a separately signed SBOM predicate; GitHub attests the image digest.
+Do not claim Azure DevOps's unsigned BuildKit metadata proves builder identity.
+No extra signing system or scanner is added to the local edit/test loop.
+
+Sources checked on 2026-11-16:
+[BuildKit SBOM metadata](https://docs.docker.com/build/metadata/attestations/sbom/),
+[uv lockfile/SBOM export](https://docs.astral.sh/uv/concepts/projects/export/),
+and the [pinned release attestation inputs](https://github.com/actions/attest-build-provenance/blob/4d101475d8b20a2381f78447822ac1eab6504dd8/action.yml).
 
 ## Version pinning
 

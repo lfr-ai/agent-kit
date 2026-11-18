@@ -29,7 +29,7 @@ module globals; override by injection:
 - Container: pass a fake container factory to `create_app`.
 - Single dependency: `app.dependency_overrides[get_container] = fake`; clear
   the mapping after the test when the app is shared.
-- Settings: build `HttpSettings.model_validate({...})`; never mutate the
+- Settings: build `HTTPSettings.model_validate({...})`; never mutate the
   process environment in tests.
 
 ## Cases every service needs

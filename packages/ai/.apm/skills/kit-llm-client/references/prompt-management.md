@@ -25,11 +25,11 @@ ordering or compatibility scheme.
    [the adapter contract](../assets/langfuse_prompts.py.template), and
    [the offline tests](../assets/test_managed_prompts.py.template) to their
    documented targets beside [the existing port](../assets/llm_port.py.template).
-2. Supply a consumer-owned `PromptSdk` facade around the consumer's pinned
+2. Supply a consumer-owned `PromptSDK` facade around the consumer's pinned
    Langfuse SDK. Its `get_prompt` forwards the name and explicit `version` or
    `label`, `type="chat"`, and `cache_ttl_seconds`. Pass the required cache TTL
    from consumer settings when constructing `LangfusePromptSource`; it must be a
-   nonnegative actual integer, not a boolean. Return `SdkChatPrompt` by projecting
+   nonnegative actual integer, not a boolean. Return `SDKChatPrompt` by projecting
    the result's `name`, `version`, and raw `prompt` fields. The adapter requires a
    positive actual integer version before accepting it; strings, floats and
    booleans are rejected rather than coerced. Do not pass an SDK fallback.

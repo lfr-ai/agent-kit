@@ -7,6 +7,69 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Executable starter options:** opt-in PostgreSQL, Redis rate limiting,
+  Entra bearer validation and internal text generation with typed application
+  settings, selected dependency lifecycles and local service profiles.
+  Structured request logging replaces raw Uvicorn access URLs. Application
+  setup and startup no longer require APM installation. PostgreSQL supports
+  explicit user-assigned managed identity without ambient CLI credentials.
+- **Starter delivery:** API projects require an explicit reviewed toolkit
+  commit for runtime and reusable workflow references. Optional development
+  IaC uses immutable Terraform module references or offline Bicep vendoring
+  with provenance, plus a manual image-digest deployment workflow. Choosing
+  no IaC emits no cloud deployment scaffold. Caller-owned nonsecret settings
+  and Key Vault references configure selected services; existing action groups
+  support operator-configured Teams receivers without exposing webhook URLs.
+  Azure-deployed API starters export traces to Application
+  Insights through a trace-only Azure Monitor exporter as the runtime
+  managed identity; log export stays off so only sanitized console logs reach
+  Log Analytics, and local runs import no Azure SDK.
+- **Azure bootstrap:** `task bootstrap:azure` produces an offline plan from
+  explicit tenant, subscription and reviewed OIDC claims. Operator-only apply
+  verifies the target before creating an owned resource group, managed identity,
+  federated credential and RG-scoped Reader assignment. Opt-in
+  `--access deploy` instead grants Contributor and a Role Based Access Control
+  Administrator assignment whose condition allows only the templates'
+  data-plane roles for service principals.
+- **Private networking and least privilege:** an opt-in network composition
+  provides a spoke virtual network, delegated apps subnet, private-endpoint
+  subnet, NSGs and optional private DNS zones. Container Apps environments
+  accept a private endpoint, and staging and production require it or an
+  internal environment; public exposure needs an operator-owned edge WAF or
+  gateway. Storage grants the runtime
+  identity Blob Data Contributor. The identity and network guide documents
+  every identity, role ID, private endpoint and stage gate, and a test keeps it
+  in sync with the templates.
+- **Blob storage:** the Storage account composition is complete and registered
+  in the delivery catalog, with Entra-only access and production private
+  networking, retention, diagnostics and deletion protection.
+- **Entra sign-in and custom domains:** Container Apps can enable Entra built-in
+  authentication (secretless API or browser sign-in, callback URL output) and
+  bind a public custom domain natively with a managed certificate and DNS
+  record outputs, in Bicep and Terraform. Front Door is not part of the
+  default path.
+- **Post-deploy health check:** the GitHub and Azure Pipelines deploy paths take
+  an optional HTTPS health URL and fail the deployment unless it answers `2xx`.
+- **Document database:** an opt-in Cosmos DB for NoSQL composition in Bicep and
+  Terraform with Entra-only access, an optional database, containers and
+  Built-in Data Contributor assignment; serverless in dev/test, while
+  production adds autoscale, zone redundancy, continuous backup, a private
+  endpoint, diagnostics and a deletion lock.
+- **PostgreSQL extensions:** an optional `extensions` input allow-lists server
+  extensions such as `vector` and `age` in both Bicep and Terraform.
+- **Starter debugging:** API projects include one VS Code `API` launch that
+  runs the same Uvicorn command as `task start` under debugpy.
+- **Azure-native selection guide:** infrastructure review and retrieval skills
+  prefer managed, Entra-only Azure services (AI Search hybrid ranking with RRF,
+  Storage without shared keys, Managed Redis) before self-hosted software.
+- **Faster development loop:** `task check` fixes formatting and lint, type
+  checks, checks imports and runs unit and property tests except `slow`
+  whole-catalog guards (215 s instead of 664 s on a 4-core laptop). Repository-wide,
+  network and Docker hooks moved from pre-commit to pre-push; local hooks reuse
+  the locked environment without syncing; CI runs both stages and `task verify`
+  and verifies branches once through pull requests. Generated API projects gain
+  `task check`; the exported pre-commit template runs unit tests and pin checks
+  at pre-push.
 - **Capability selection:** internal Python library workflows resolve catalog
   profiles and optional skill allowlists for maintainer tooling. Consumers
   install a generated APM profile meta-package; no Agent Kit executable is
@@ -21,6 +84,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from optional packages without requiring them in every installation.
 - **Kit improvements:** `/kit-improve` helps correct reusable guidance at its
   source instead of maintaining local copies.
+- **Convention and context guards:** the Python checker's default `acronym-case`
+  rule requires uppercase acronyms in class and type alias names (`LLMClient`,
+  `SQLAlchemyUnitOfWork`); template classes are renamed without aliases. Repository
+  tests require unique "Use when" skill descriptions, and CI checks pull request
+  commit messages with `cz check`. Coordinators and `kit-debug` hand the final
+  diff to `kit-code-reviewer` for a second pass.
 - **Skill evaluations:** synthetic cases and a result checker distinguish
   complete observations from missing evidence. Model runs remain explicit;
   evaluations never publish changes automatically.
@@ -43,6 +112,9 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Verification:** template parsing, resource completeness, context budgets,
   Python conventions, architecture and native-delivery checks.
   `task test:matrix` runs the isolated tox environments.
+- **Edit feedback hook:** an advisory `PostToolUse` hook for Copilot and Claude
+  returns ruff and convention findings for each edited Python file, so agents
+  fix them in the same turn. It never blocks; `task verify` remains the gate.
 - **Hosted integrations:** Codecov OIDC uploads, CodeRabbit configuration,
   CodeQL, OpenSSF Scorecard and reviewed draft releases with checksums and
   attestations. Apps, rulesets and environment protections need separate
@@ -52,8 +124,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Runtime names:** public `platform_kit_runtime.ai` names and internal adapters
+  use uppercase acronyms (`AIError`, `AIMessage`, `EntraJWTValidator`) before the
+  first release; enum values and wire formats are unchanged.
 - **Smaller agent picker:** the main roster is `kit-orchestrator` and
-  `kit-debug`, plus `kit-devops` only with `iac`. `kit-tdd`, `kit-fullstack`,
+  `kit-debug`. `kit-tdd`, `kit-fullstack`,
   `kit-frontend` and `kit-ai-engineer` were folded into `kit-orchestrator` and
   its workers; `kit-refactor` is now a worker. The `readonly` tier is removed, so
   every role can inspect history, diffs and offline checks.
@@ -79,9 +154,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does not synchronize its build constraint in the lockfile.
 - **Experiment configuration:** typed templates use one schema for versioned
   LLM evaluation sweeps, including model, prompt, dataset, temperature and seed.
+- **Maintainer module layout:** module names no longer repeat their layer's
+  role. Adapters live in `infrastructure/apm.py`, `catalog.py` and `output.py`;
+  `application/services/` is flattened into `application/`; the unused catalog
+  port is removed; and the runtime LiteLLM adapter is `infrastructure/litellm.py`.
+  `core/primitives.py` now owns source primitive file names and each native
+  runtime's agent and prompt locations.
 
 ### Fixed
 
+- **Storage teardown:** the production Terraform deletion lock is removed
+  before its managed child resources, with an offline dependency-graph regression.
+- **Runtime input validation:** identity origins reject port 0 and host
+  characters outside hostnames or bracketed IPv6; AI `api_base` rejects an empty
+  query or fragment marker.
 - **Standalone scripts:** complete PEP 723 metadata declares empty dependency
   lists. Script process-boundary tests use subprocess timeouts that clean up
   child processes.

@@ -32,12 +32,13 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
-EXIT_CLEAN: int = 0
-EXIT_FINDINGS: int = 1
-EXIT_INVALID: int = 2
-ENV_REFERENCE: str = "os.environ/"
-SENSITIVE_KEYS: frozenset[str] = frozenset(
+EXIT_CLEAN: Final[int] = 0
+EXIT_FINDINGS: Final[int] = 1
+EXIT_INVALID: Final[int] = 2
+ENV_REFERENCE: Final[str] = "os.environ/"
+SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "api_key",
         "master_key",
@@ -54,11 +55,16 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
         "langfuse_secret_key",
     }
 )
-SENSITIVE_SUFFIXES: tuple[str, ...] = ("_api_key", "_secret", "_password", "_token")
-FLOATING_TAGS: frozenset[str] = frozenset(
+SENSITIVE_SUFFIXES: Final[tuple[str, ...]] = (
+    "_api_key",
+    "_secret",
+    "_password",
+    "_token",
+)
+FLOATING_TAGS: Final[frozenset[str]] = frozenset(
     {"latest", "main-latest", "main-stable", "stable", "main", "nightly", "dev", "edge"}
 )
-LOCAL_PREFIXES: tuple[str, ...] = ("ollama/", "ollama_chat/")
+LOCAL_PREFIXES: Final[tuple[str, ...]] = ("ollama/", "ollama_chat/")
 _KEY_LIKE = re.compile(r"^(sk-|sk_|pk-lf-|sk-lf-)[A-Za-z0-9_-]{8,}")
 _DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 _SHA256_HEX_CHARS = 64

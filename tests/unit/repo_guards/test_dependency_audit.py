@@ -418,6 +418,72 @@ def test_repository_license_policy_is_closed_and_time_boxed() -> None:
     assert {"agpl-3.0-only", "gpl-3.0-only", "sspl-1.0"} <= allowlist.denied
 
 
+def test_gpl_generator_dependency_stays_development_only() -> None:
+    package_entries = tomllib.loads((_ROOT / "uv.lock").read_text(encoding="utf-8"))[
+        "package"
+    ]
+    packages = {item["name"]: item for item in package_entries}
+    # ponytail: reject duplicate names; traverse all variants if a multi-version lock is needed.
+    assert len(packages) == len(package_entries)
+
+    def names(entries: list[dict[str, object]]) -> set[str]:
+        return {str(entry["name"]) for entry in entries}
+
+    shipped: set[str] = set()
+    pending = ["agent-kit", "platform-kit-runtime"]
+    while pending:
+        item = packages[pending.pop()]
+        if item["name"] in shipped:
+            continue
+        shipped.add(item["name"])
+        reached = names(item.get("dependencies", []))
+        for extra in item.get("optional-dependencies", {}).values():
+            reached |= names(extra)
+        pending.extend(reached - shipped)
+    dependents = {
+        name
+        for name, item in packages.items()
+        if "jinja2-ansible-filters" in names(item.get("dependencies", []))
+    }
+
+    assert dependents == {"copier"}
+    assert "copier" in names(packages["agent-kit"]["dev-dependencies"]["dev"])
+    assert not {"copier", "jinja2-ansible-filters"} & shipped
+
+
+def test_gpl_scope_rejects_duplicate_package_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_lock(
+        tmp_path,
+        """
+[[package]]
+name = "agent-kit"
+dev-dependencies = { dev = [{ name = "copier" }] }
+[[package]]
+name = "platform-kit-runtime"
+dependencies = [{ name = "variant" }]
+[[package]]
+name = "variant"
+dependencies = [{ name = "copier" }]
+[[package]]
+name = "variant"
+[[package]]
+name = "copier"
+dependencies = [{ name = "jinja2-ansible-filters" }]
+[[package]]
+name = "jinja2-ansible-filters"
+""",
+    )
+    monkeypatch.setitem(
+        test_gpl_generator_dependency_stays_development_only.__globals__,
+        "_ROOT",
+        tmp_path,
+    )
+    with pytest.raises(AssertionError):
+        test_gpl_generator_dependency_stays_development_only()
+
+
 def test_dependency_and_license_audits_are_verification_gates() -> None:
     assert "dependencies" not in verify_module._CHECKS
     assert verify_module._NETWORK_CHECKS["dependencies"][-1] == (

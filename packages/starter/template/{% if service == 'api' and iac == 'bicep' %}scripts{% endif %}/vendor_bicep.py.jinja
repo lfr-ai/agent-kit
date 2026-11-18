@@ -1,0 +1,192 @@
+"""Vendor reviewed Git objects offline; never read modules from a working tree."""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+_COMMIT = "{{ kit_commit }}"
+_REPOSITORY = "https://github.com/lfr-ai/agent-kit"
+_MODULES = (
+    "container-apps",
+{%- if telemetry | default('none') == 'application-insights' %}
+    "application-insights",
+{%- endif %}
+    "container-apps-alerts",
+    "network",
+{%- if data == 'postgresql' %}
+    "postgresql",
+{%- endif %}
+{%- if ai_service == 'text' %}
+    "ai-foundry",
+{%- endif %}
+{%- if registry == 'acr' %}
+    "container-registry",
+{%- endif %}
+)
+_GIT_TIMEOUT_SECONDS = 30
+_JSON_INDENT = 2
+# Local files that container-apps/main.bicep imports or uses as modules.
+_CONTAINER_APPS_PARTS = (
+    "app.bicep",
+    "auth.bicep",
+    "common.bicep",
+    "environment.bicep",
+    "internal-dns.bicep",
+)
+_FILES = {
+    "LICENSE": "packages/delivery/LICENSE",
+    "PROVENANCE.md": "packages/delivery/PROVENANCE.md",
+    **{
+        f"container-apps/{name}": (
+            f"packages/delivery/infra/container-apps/bicep/{name}"
+        )
+        for name in _CONTAINER_APPS_PARTS
+    },
+    **{
+        f"{module}/{name}": f"packages/delivery/infra/{module}/bicep/{name}"
+        for module in _MODULES
+        for name in ("main.bicep", "bicepconfig.json")
+    },
+}
+
+
+def _git(checkout: Path, *args: str) -> bytes:
+    executable = shutil.which("git")
+    if executable is None:
+        message = "Git must already be installed; no download is attempted."
+        raise ValueError(message)
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith("GIT_")
+    }
+    result = subprocess.run(  # noqa: S603 - resolved Git, fixed read-only commands and pinned object paths
+        [executable, "--no-pager", "--no-replace-objects", "-C", str(checkout), *args],
+        env={**environment, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"},
+        capture_output=True,
+        check=False,
+        timeout=_GIT_TIMEOUT_SECONDS,
+    )
+    if result.returncode:
+        message = "Required committed Git object unavailable; no fetch attempted."
+        raise ValueError(message)
+    return result.stdout
+
+
+def read_sources(checkout: Path) -> dict[str, bytes]:
+    """Read pinned blobs or raise ``ValueError`` for a mismatching checkout."""
+    if not re.fullmatch(r"[0-9a-f]{40}", _COMMIT) or set(_COMMIT) == {"0"}:
+        message = "kit_commit must be a reviewed nonzero full lowercase SHA."
+        raise ValueError(message)
+    if _git(checkout, "rev-parse", "--verify", "HEAD").decode().strip() != _COMMIT:
+        message = "Supplied checkout HEAD must match kit_commit."
+        raise ValueError(message)
+    # cat-file reads the immutable object database even if the working tree is dirty.
+    contents = {
+        destination: _git(checkout, "cat-file", "blob", f"{_COMMIT}:{source}")
+        for destination, source in _FILES.items()
+    }
+    if not contents["LICENSE"].startswith(b"MIT License"):
+        message = "Pinned delivery sources must retain their MIT license."
+        raise ValueError(message)
+    return contents
+
+
+def write_vendor(destination: Path, contents: dict[str, bytes]) -> None:
+    """Write a new vendor tree without overwriting existing files.
+
+    Args:
+        destination: New consumer-owned vendor directory.
+        contents: Complete pinned blob closure.
+
+    Raises:
+        ValueError: Output already exists, is redirected or the closure is incomplete.
+    """
+    if destination.exists() or destination.is_symlink():
+        message = "Vendor directory already exists; review changes before replacing it."
+        raise ValueError(message)
+    if destination.parent.is_symlink():
+        message = "Vendor integrity failure: symlinked infra directory."
+        raise ValueError(message)
+    if set(contents) != set(_FILES):
+        message = "Incomplete pinned source closure."
+        raise ValueError(message)
+    destination.mkdir(parents=True)
+    for relative, content in contents.items():
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    manifest = {
+        "repository": _REPOSITORY,
+        "commit": _COMMIT,
+        "license": "MIT",
+        "sources": _FILES,
+        "sha256": {
+            relative: hashlib.sha256(content).hexdigest()
+            for relative, content in contents.items()
+        },
+    }
+    (destination / "manifest.json").write_text(
+        json.dumps(manifest, indent=_JSON_INDENT, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def check_vendor(destination: Path) -> None:
+    """Check the reviewed manifest and exact file closure or raise ``ValueError``."""
+    paths = list(destination.rglob("*"))
+    redirected = destination.is_symlink() or destination.parent.is_symlink()
+    if redirected or any(path.is_symlink() for path in paths):
+        message = "Vendor integrity failure: symlinks are not supported."
+        raise ValueError(message)
+    files = {
+        path.relative_to(destination).as_posix() for path in paths if path.is_file()
+    }
+    if files != {*_FILES, "manifest.json"}:
+        message = "Vendor integrity failure: missing or unexpected files."
+        raise ValueError(message)
+    manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+    expected = {
+        "repository": _REPOSITORY,
+        "commit": _COMMIT,
+        "license": "MIT",
+        "sources": _FILES,
+        "sha256": {
+            relative: hashlib.sha256((destination / relative).read_bytes()).hexdigest()
+            for relative in _FILES
+        },
+    }
+    if manifest != expected:
+        message = "Vendor integrity failure: manifest or source bytes differ."
+        raise ValueError(message)
+
+
+def main() -> int:
+    """Run offline vendoring or integrity checking; report credential-free errors."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--kit-checkout", type=Path)
+    mode.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    destination = Path(__file__).resolve().parents[1] / "infra/vendor"
+    try:
+        if args.check:
+            check_vendor(destination)
+        else:
+            write_vendor(
+                destination, read_sources(args.kit_checkout.resolve(strict=True))
+            )
+    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

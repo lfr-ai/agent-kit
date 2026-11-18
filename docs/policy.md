@@ -25,7 +25,7 @@ Run APM policy commands from the repository being inspected. Consumers use
 `apm audit --ci --policy ./apm-policy.yml` after installation; no Agent Kit
 wrapper is required.
 
-**APM 0.33.0 does not automatically select every project-local policy file during
+**APM does not automatically select every project-local policy file during
 installation.** A checked-in filename is not an install-time enforcement boundary.
 The profile source checks validate Agent Kit's canonical packages, but they do
 not wrap or authorize a consumer's direct APM invocation. Consumers must require
@@ -34,15 +34,14 @@ enforcement boundary where available.
 
 `version` is a policy revision, not a minimum CLI version. The exact CLI version
 is pinned in the Python manifest and lock, then checked at the executable boundary.
-APM 0.35.0 was the latest release on 2026-11-04; this repository still pins
-0.33.0 until the documented 14-day cooldown ends on 2026-11-05
-([upgrade evidence](sources.md#pins)). Between these versions, frozen
+APM 0.35.0 is pinned after the documented 14-day cooldown ended on 2026-11-05
+([upgrade evidence](sources.md#pins)). Compared with 0.33.0, frozen
 installation no longer rewrites an incomplete lock and instead fails with the
 unrecorded paths. Version 0.35.0 also verifies local snapshots against locked
 hashes in frozen mode and fails closed when an explicitly supplied policy cannot
-be loaded. Reassess after the cooldown; before changing the pin, test the
-current lock against frozen install and rerun the APM smoke. Change the pin only
-through the reviewed dependency workflow.
+be loaded. Before changing the pin again, test the current lock against frozen
+install and rerun the APM smoke. Change the pin only through the reviewed
+dependency workflow.
 Every policy key this repository uses is valid in APM policy; APM also
 supports `unmanaged_files`, `executables` and `compilation` sections that this
 baseline does not set.
@@ -94,9 +93,13 @@ a consumer-facing Agent Kit command.
 Hooks and MCP are delivered by APM, not copied by hand:
 
 - **Hook.** `shared` ships one `preToolUse` hook, [git-guard.json](../packages/shared/.apm/hooks/git-guard.json),
-  which runs the [guard](../packages/shared/.apm/hooks/scripts/tool_guard.py) with
+  whose [launcher](../packages/shared/.apm/hooks/scripts/git_guard.py) runs the
+  [guard](../packages/shared/.apm/hooks/scripts/tool_guard.py) with
   [git-guard.policy](../packages/shared/.apm/hooks/scripts/git-guard.policy).
   APM merges it into `.github/hooks/` and `.claude/settings.json`. Every profile includes `shared`.
+  This maintainer repository declares no packages (`dependencies: {}`); the guard
+  reaches it through the user-scope install, and inside `AGENT_KIT_DIR`
+  (`task checkout:register`) requested commits reach native approval.
 - **MCP.** Each profile manifest declares the selected `dependencies.mcp`;
   APM writes `.mcp.json` and `.github/mcp.json`.
 - **Closed schemas.** `task verify -- source` rejects any hook or server outside the

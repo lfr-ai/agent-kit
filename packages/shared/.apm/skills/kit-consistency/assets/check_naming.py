@@ -166,7 +166,7 @@ def check_tree(files: Iterable[PurePosixPath], *, options: Options) -> list[Find
         options (Options): Naming policy.
 
     Returns:
-        Findings sorted by path and message.
+        list[Finding]: Findings sorted by path and message.
     """
     paths = sorted(set(files))
     modules = [path for path in paths if path.suffix == ".py"]
@@ -205,7 +205,7 @@ def collect(root: Path, *, excludes: Sequence[str]) -> list[PurePosixPath]:
         excludes (Sequence[str]): fnmatch patterns matched against each path component.
 
     Returns:
-        Sorted relative file paths.
+        list[PurePosixPath]: Sorted relative file paths.
     """
 
     def excluded(name: str) -> bool:

@@ -1,0 +1,17 @@
+<policies>
+  <inbound>
+    <base />
+    <!-- validate-token -->
+    <rate-limit-by-key calls="{requests-per-minute}" renewal-period="60" counter-key='@(context.Variables.ContainsKey("caller") ? ((Jwt)context.Variables["caller"]).Subject : context.Request.IpAddress)' />
+    <!-- llm-tokens -->
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

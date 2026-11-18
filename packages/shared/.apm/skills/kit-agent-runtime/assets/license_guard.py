@@ -22,7 +22,7 @@ import argparse
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from enum import StrEnum
+from enum import StrEnum, unique
 from importlib import metadata
 import json
 from pathlib import Path
@@ -32,9 +32,15 @@ from typing import TextIO
 
 _SCHEMA_VERSION = 1
 _CONFIG_EXIT = 2
-_MAX_CONFIG_BYTES = 1024 * 1024
+_KIB = 1024
+_MIB = 1024 * _KIB
+_MAX_CONFIG_BYTES = _MIB  # allowlists are small hand-written JSON; reject larger
 _MAX_LICENSE_FIELD = 120
 _JSON_INDENT = 2
+_ALLOWED = "allowed"
+_DENIED = "denied"
+_UNKNOWN = "unknown"
+_EXCEPTED = "excepted"
 _SELF_TEST_TODAY = date(2026, 1, 1)
 _SELF_TEST_EXTRA_CASES = 2  # exception and classifier checks
 _CONFIG_FIELDS = frozenset(
@@ -134,6 +140,7 @@ def _key(identifier: str) -> str:
     return identifier.casefold()
 
 
+@unique
 class LicenseInputIssue(StrEnum):
     """Supported license input validation failures and their stable messages."""
 
@@ -172,11 +179,11 @@ class LicenseInputError(ValueError):
 
         Args:
             issue (LicenseInputIssue): The violated input invariant.
-            label (str | None): Diagnostic label for the invalid input.
-            name (str | None): Diagnostic name for the invalid input.
-            field (str | None): Diagnostic field for the invalid input.
-            identifier (str | None): Diagnostic identifier for the invalid input.
-            token (str | None): Diagnostic token for the invalid input.
+            label (str | None): Allowlist field holding the identifier list.
+            name (str | None): Distribution name of the offending exception entry.
+            field (str | None): Unknown top-level allowlist field.
+            identifier (str | None): License identifier both allowed and denied.
+            token (str | None): Unexpected token in the SPDX license expression.
         """
         super().__init__(
             issue.value.format(
@@ -199,8 +206,8 @@ class LicenseInputTypeError(TypeError):
 
         Args:
             issue (LicenseInputIssue): The violated input invariant.
-            label (str | None): Diagnostic label for the invalid input.
-            name (str | None): Diagnostic name for the invalid input.
+            label (str | None): Allowlist field holding the identifier list.
+            name (str | None): Distribution name of the offending exception entry.
         """
         super().__init__(issue.value.format(label=label, name=name))
 
@@ -268,9 +275,8 @@ def _exception(name: str, value: object) -> Waiver:
 def _check_schema_version(data: dict[object, object]) -> None:
     """Require the supported integer ``schema_version``.
 
-    Raises:
-        LicenseInputError: The version is missing or unsupported.
-        LicenseInputTypeError: The version is not an integer.
+    A missing or unsupported version raises ``LicenseInputError``; a non-integer
+    version raises ``LicenseInputTypeError``.
     """
     if "schema_version" not in data:
         raise LicenseInputError(LicenseInputIssue.SCHEMA_VERSION)
@@ -282,13 +288,9 @@ def _check_schema_version(data: dict[object, object]) -> None:
 
 
 def _exceptions(raw: object) -> dict[str, Waiver]:
-    """Validate exception entries keyed by canonical distribution name.
+    """Return waivers keyed by canonical distribution name, empty when none are listed.
 
-    Returns:
-        Waivers keyed by canonical distribution name; empty when none are listed.
-
-    Raises:
-        LicenseInputTypeError: The exceptions value is not an object.
+    A value that is not an object raises ``LicenseInputTypeError``.
     """
     if not isinstance(raw, dict):
         raise LicenseInputTypeError(LicenseInputIssue.EXCEPTIONS_OBJECT)
@@ -298,12 +300,11 @@ def _exceptions(raw: object) -> dict[str, Waiver]:
 
 
 def parse_allowlist(text: str) -> Allowlist:
-    """Validate allowlist JSON against its closed schema.
+    """Return the allowlist parsed from JSON text checked against its closed schema.
 
-    Raises:
-        ValueError: A required field is missing or an allowlist value is invalid.
-        LicenseInputTypeError: The document or a present field has the wrong type.
-        LicenseInputError: A field is unknown, missing, or conflicting.
+    A non-object document or a wrongly typed field raises ``LicenseInputTypeError``;
+    an unknown, missing or conflicting field raises ``LicenseInputError``. Invalid
+    JSON or an invalid expiry date propagates ``ValueError``.
     """
     data = json.loads(text)
     if not isinstance(data, dict):
@@ -329,10 +330,9 @@ def parse_allowlist(text: str) -> Allowlist:
 
 
 def load_allowlist(path: Path) -> Allowlist:
-    """Read a bounded allowlist file and validate it.
+    """Return the validated allowlist read from a bounded file.
 
-    Raises:
-        LicenseInputError: The file exceeds the size limit.
+    A file over the size limit raises ``LicenseInputError``.
     """
     with path.open("rb") as handle:
         data = handle.read(_MAX_CONFIG_BYTES + 1)
@@ -367,9 +367,9 @@ class _ExpressionParser:
         while self._peek() == "or":
             self.position += 1
             statuses.append(self._conjunction())
-        if "allowed" in statuses:
-            return "allowed"
-        return "unknown" if "unknown" in statuses else "denied"
+        if _ALLOWED in statuses:
+            return _ALLOWED
+        return _UNKNOWN if _UNKNOWN in statuses else _DENIED
 
     def _conjunction(self) -> str:
         """Parse ``factor (AND factor)*``; AND passes only if every side passes."""
@@ -377,15 +377,14 @@ class _ExpressionParser:
         while self._peek() == "and":
             self.position += 1
             statuses.append(self._factor())
-        if "denied" in statuses:
-            return "denied"
-        return "unknown" if "unknown" in statuses else "allowed"
+        if _DENIED in statuses:
+            return _DENIED
+        return _UNKNOWN if _UNKNOWN in statuses else _ALLOWED
 
     def _factor(self) -> str:
         """Parse a parenthesized expression or one license with optional WITH.
 
-        Raises:
-            LicenseInputError: The expression ends early or has a stray term.
+        An early end or a stray term raises ``LicenseInputError``.
         """
         current = self._peek()
         if current is None:
@@ -397,11 +396,7 @@ class _ExpressionParser:
         return self._license()
 
     def _parenthesized(self) -> str:
-        """Parse ``( expression )`` starting at the opening parenthesis.
-
-        Raises:
-            LicenseInputError: The parenthesis is not closed.
-        """
+        """Parse ``( expression )``; raise ``LicenseInputError`` if it is unclosed."""
         self.position += 1
         status = self.expression()
         if self._peek() != ")":
@@ -412,8 +407,7 @@ class _ExpressionParser:
     def _license(self) -> str:
         """Parse one license identifier with an optional ``WITH`` addition.
 
-        Raises:
-            LicenseInputError: ``WITH`` has no addition.
+        ``WITH`` without an addition raises ``LicenseInputError``.
         """
         base = self._tokens[self.position]
         self.position += 1
@@ -426,10 +420,10 @@ class _ExpressionParser:
             leaf = f"{base} WITH {self._tokens[self.position]}"
             self.position += 1
         if _key(leaf) in self._allowlist.allowed:
-            return "allowed"
+            return _ALLOWED
         if _key(leaf) in self._allowlist.denied or _key(base) in self._allowlist.denied:
-            return "denied"
-        return "unknown"
+            return _DENIED
+        return _UNKNOWN
 
 
 def classify(expression: str, allowlist: Allowlist) -> str:
@@ -467,11 +461,9 @@ def _mapped_classifiers(classifiers: Iterable[str]) -> list[str]:
 
 
 def _classifier_evidence(mapped: list[str]) -> tuple[str | None, str]:
-    """Combine mapped classifiers with AND, or report unmapped classifiers.
+    """Return mapped classifiers joined with AND and ``Classifier`` as the source.
 
-    Returns:
-        The combined expression and ``Classifier``, or None and a description naming the
-        unmapped classifiers.
+    Any unmapped classifier yields ``None`` and a description naming them all.
     """
     unique = list(dict.fromkeys(mapped))
     if any(item.startswith("LicenseRef-Unmapped") for item in unique):
@@ -491,8 +483,9 @@ def license_evidence(
         license_field (str | None): Free-text ``License`` metadata, if present.
 
     Returns:
-        The license statement, or None when nothing usable exists, and its source:
-        ``License-Expression``, ``Classifier``, ``License`` or ``none``.
+        tuple[str | None, str]: The license statement, or None when nothing usable
+        exists, and its source: ``License-Expression``, ``Classifier``,
+        ``License`` or ``none``.
     """
     if expression and expression.strip():
         return expression.strip(), "License-Expression"
@@ -524,17 +517,17 @@ def evaluate(record: Record, allowlist: Allowlist, today: date) -> Result:
                 detail=f"exception expired on {exception.expires.isoformat()}",
             )
         if _key(exception.license) == _key(observed):
-            return Result(record=record, status="excepted", detail=exception.reason)
+            return Result(record=record, status=_EXCEPTED, detail=exception.reason)
     if record.expression is None:
         return Result(
             record=record,
-            status="unknown",
+            status=_UNKNOWN,
             detail=f"no usable license ({record.source})",
         )
     try:
         status = classify(record.expression, allowlist)
     except ValueError as error:
-        return Result(record=record, status="unknown", detail=str(error))
+        return Result(record=record, status=_UNKNOWN, detail=str(error))
     return Result(record=record, status=status, detail=record.expression)
 
 
@@ -578,7 +571,7 @@ def report(results: list[Result], stream: TextIO, output_format: str) -> int:
         stream (TextIO): Destination of the report.
         output_format (str): ``json`` writes JSON; any other value writes text.
     """
-    failing = [item for item in results if item.status not in {"allowed", "excepted"}]
+    failing = [item for item in results if item.status not in {_ALLOWED, _EXCEPTED}]
     if output_format == "json":
         payload = [
             {
@@ -643,7 +636,7 @@ def _self_test() -> int:
         source="License",
         location="x",
     )
-    if evaluate(record, allowlist, _SELF_TEST_TODAY).status != "excepted":
+    if evaluate(record, allowlist, _SELF_TEST_TODAY).status != _EXCEPTED:
         failures.append("exception not applied")
     evidence = license_evidence(None, ["License :: OSI Approved :: MIT License"], None)
     if evidence != ("MIT", "Classifier"):

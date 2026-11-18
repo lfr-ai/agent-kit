@@ -1,6 +1,6 @@
 ---
 name: kit-task-queue
-description: Use when designing background task submission and workers with bounded retries and explicit delivery semantics.
+description: Use when designing background task queues, workers, bounded retries or delivery semantics.
 license: MIT
 ---
 

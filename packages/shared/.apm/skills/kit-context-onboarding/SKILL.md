@@ -1,6 +1,6 @@
 ---
 name: kit-context-onboarding
-description: Use when entering an unfamiliar repository or bounded subsystem before proposing changes.
+description: Use when onboarding to unfamiliar repositories or subsystems.
 license: MIT
 ---
 

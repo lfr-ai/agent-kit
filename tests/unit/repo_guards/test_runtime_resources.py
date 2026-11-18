@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from agent_kit.application.services.native_delivery import validate_native_assets
+from agent_kit.application.native_delivery import validate_native_assets
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SKILL = _ROOT / "packages/shared/.apm/skills/kit-agent-runtime"

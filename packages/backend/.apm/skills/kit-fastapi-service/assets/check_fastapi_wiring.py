@@ -34,11 +34,12 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from typing import Final
 
 _EXIT_FINDINGS = 1
 _EXIT_INPUT_ERROR = 2
 _EXCLUDED = frozenset({".venv", "venv", "node_modules", "build", "dist", "__pycache__"})
-RULES = (
+RULES: Final[tuple[str, ...]] = (
     "router-not-included",
     "blocking-call",
     "cors-credentials-wildcard",
@@ -117,14 +118,11 @@ def analyze_source(text: str, path: str) -> ModuleFacts:
     """Extract findings and router facts from one module.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text; unparsable text raises ``SyntaxError``.
         path (str): Display path used in findings.
 
     Returns:
         Local findings plus router definitions and inclusions.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     stem = _module_key(path)
@@ -154,14 +152,12 @@ def check_sources(
     """Check several modules together so router inclusion spans files.
 
     Args:
-        sources (Iterable[tuple[str, str]]): ``(display path, source text)`` pairs.
+        sources (Iterable[tuple[str, str]]): ``(display path, source text)`` pairs;
+            unparsable text raises ``SyntaxError``.
         rules (frozenset[str]): Enabled rule identifiers.
 
     Returns:
         Rendered findings sorted by path and line.
-
-    Raises:
-        SyntaxError: A source cannot be parsed.
     """
     facts = [analyze_source(text, path) for path, text in sources]
     included = {key for fact in facts for key in fact.included}
@@ -187,14 +183,7 @@ def check_sources(
 
 
 def _import_aliases(tree: ast.Module) -> dict[str, str]:
-    """Map local names to the dotted names they import.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Local name to fully qualified name, for example ``sleep`` to ``time.sleep``.
-    """
+    """Map local names to their dotted imports, e.g. ``sleep`` to ``time.sleep``."""
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -209,14 +198,9 @@ def _import_aliases(tree: ast.Module) -> dict[str, str]:
 def _from_import_aliases(node: ast.ImportFrom) -> dict[str, str]:
     """Map names bound by one ``from`` import, including relative imports.
 
-    Relative imports keep only the module path written after the dots, which
-    is enough because inclusion keys use the last module segment.
-
-    Args:
-        node (ast.ImportFrom): ``from ... import`` statement.
-
-    Returns:
-        Local name to dotted name; ``from . import items`` maps to ``items``.
+    Relative imports keep only the module path written after the dots, so
+    ``from . import items`` maps to ``items``; inclusion keys use the last
+    module segment.
     """
     return {
         alias.asname or alias.name: (
@@ -427,16 +411,8 @@ def collect(paths: Sequence[Path], *, excluded: frozenset[str]) -> list[Path]:
     return sorted(files)
 
 
-class SelfTestError(AssertionError):
-    """A built-in regression failed."""
-
-
-def self_test() -> None:
-    """Exercise each rule with one violating and one clean source.
-
-    Raises:
-        SelfTestError: A rule missed a violation or reported a clean source.
-    """
+def self_test() -> list[str]:
+    """Return rules that missed a violation or reported clean sources."""
     cases = (
         (
             "app.py",
@@ -467,11 +443,11 @@ def self_test() -> None:
             "on-event",
         ),
     )
+    failures: list[str] = []
     for path, source, rule in cases:
         found = check_sources([(path, source)])
         if not any(f"[{rule}]" in item for item in found):
-            msg = f"self-test missed {rule}: {found}"
-            raise SelfTestError(msg)
+            failures.append(f"self-test missed {rule}: {found}")
     clean = [
         ("items.py", "from fastapi import APIRouter\nrouter = APIRouter()\n"),
         (
@@ -499,8 +475,8 @@ def self_test() -> None:
     ]
     found = check_sources(clean)
     if found:
-        msg = f"self-test reported clean sources: {found}"
-        raise SelfTestError(msg)
+        failures.append(f"self-test reported clean sources: {found}")
+    return failures
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -517,9 +493,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_fastapi_wiring self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_fastapi_wiring self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     try:

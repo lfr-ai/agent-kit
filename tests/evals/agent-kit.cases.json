@@ -4,9 +4,9 @@
     {
       "id": "author-docstring-policy",
       "skill": "kit-capability-authoring",
-      "prompt": "The portable Python guidance expands a simple delegate's docstring into redundant Args and Returns sections. Update the owning policy and its regression check without editing installed copies.",
+      "prompt": "A simple public type-narrowing predicate has a complete one-line summary, while a resource-owning SDK factory omits its lifetime and failure contract. Keep the predicate concise and explain the factory's meaningful contract without repeating signatures mechanically. Correct the owning policy and regression check, not installed copies.",
       "should_invoke": true,
-      "checks": ["canonical_owner_used", "simple_contract_concise", "meaningful_failures_preserved", "regression_checked", "no_remote_write"]
+      "checks": ["canonical_owner_used", "semantic_contract_complete", "simple_public_summary_preserved", "meaningful_failures_preserved", "regression_checked", "no_remote_write"]
     },
     {
       "id": "keep-consumer-facts-local",
@@ -56,6 +56,41 @@
       "prompt": "Add a constant return value to one existing pure function. There is no repeated cross-cutting behavior to wrap.",
       "should_invoke": false,
       "checks": ["no_speculative_wrapper", "public_behavior_preserved"]
+    },
+    {
+      "id": "nested-convention-enforcement",
+      "skill": "kit-config-review",
+      "prompt": "The Python convention configuration exists, but packages/example/src/example/api.py is outside its effective instruction and checker path scopes. Reproduce the missing finding with a synthetic nested package, fix the owning scopes, and prove the default gate now rejects the same defect without excluding the package.",
+      "should_invoke": true,
+      "checks": ["effective_scope_inspected", "negative_fixture_fails_before_fix", "default_gate_discovers_nested_package", "valid_counterpart_passes", "canonical_source_updated", "no_native_certification_claim"]
+    },
+    {
+      "id": "preserve-boundary-validation",
+      "skill": "kit-refactor",
+      "prompt": "Simplify repeated origin-relative callback validation without changing its contract. Inputs include double-encoded escapes, network-path redirects, backslashes, controls and ordinary local paths. Do not remove defensive checks merely because urllib.parse accepts an input.",
+      "should_invoke": true,
+      "checks": ["boundary_cases_characterized", "unsafe_inputs_still_rejected", "safe_inputs_preserved", "stdlib_used_without_parser_trust", "no_global_validator_framework"]
+    },
+    {
+      "id": "compatibility-is-not-execution-pin",
+      "skill": "kit-verify-change",
+      "prompt": "Review a nested reusable package with Python requires-python >=3.13, Terraform required_version >=1.9 and a pipeline that installs an unpinned CLI. Preserve honest compatibility constraints, fix the actual executed selection, and prove the pin gate scans the nested pipeline.",
+      "should_invoke": true,
+      "checks": ["compatibility_ranges_preserved", "executed_tool_pinned", "nested_surface_discovered", "negative_pin_fixture_retained", "no_policy_exclusion"]
+    },
+    {
+      "id": "private-and-public-constants",
+      "skill": "kit-python-service",
+      "prompt": "Apply this repository's local convention: private _UPPER constants stay unannotated, while public constants use explicit Final[T]. Keep regexes with their owner and preserve values. Explain that bare Final is valid inferred typing, not a language error; do not create a generic constants module.",
+      "should_invoke": true,
+      "checks": ["private_constants_unannotated", "public_constants_explicitly_final", "values_preserved", "local_policy_not_language_claim", "no_global_constants_dump"]
+    },
+    {
+      "id": "research-output-placement",
+      "skill": "kit-verify-change",
+      "prompt": "A research task used a relative curl output filename and left downloaded HTML plus an upstream README in the repository root. Trace the producing command, inspect ownership, preserve canonical project documents, remove only confirmed downloads, and extend the existing gate. Delegate any further research with an explicit absolute temporary output destination.",
+      "should_invoke": true,
+      "checks": ["producer_evidence_found", "canonical_files_preserved", "only_identified_artifacts_removed", "untracked_root_fixture_rejected", "delegated_output_scope_explicit", "no_filesystem_sandbox_claim"]
     },
     {
       "id": "bootstrap-with-existing-files",

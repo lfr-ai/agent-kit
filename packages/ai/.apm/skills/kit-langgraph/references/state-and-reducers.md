@@ -21,6 +21,8 @@ deployment that changes the code reading it.
   as explicit keys rather than in free-form history strings.
 - Add a `schema_version` key and refuse or migrate threads written by another
   version before resuming them (`IncompatibleCheckpointError` in the template).
+  The template's version 2 stores `None` for absent provenance, receipt and
+  error keys and still resumes version 1 threads, which stored `""`.
 
 ## Reducers
 

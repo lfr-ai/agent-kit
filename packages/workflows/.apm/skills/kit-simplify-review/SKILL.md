@@ -1,6 +1,6 @@
 ---
 name: kit-simplify-review
-description: Use when proposing a simplification that reduces maintenance cost while preserving required behavior and observability.
+description: Use when simplifying code while preserving required behavior and observability.
 license: MIT
 ---
 

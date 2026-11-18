@@ -81,7 +81,7 @@ order-tools = "order_tools.cli:main"
 order-tools-gui = "order_tools.gui:run"
 
 [project.entry-points."order_tools.exporters"]
-csv = "order_tools.exporters.csv:CsvExporter"
+csv = "order_tools.exporters.csv:CSVExporter"
 ```
 
 - Console scripts are generated wrappers that import `module` and call

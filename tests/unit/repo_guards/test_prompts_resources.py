@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import Final
 
 import pytest
 import yaml
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
-ROOT = Path(__file__).parents[3]
-PACKAGES = ROOT / "packages"
-EXPECTED: dict[str, frozenset[str]] = {
+ROOT: Final[Path] = Path(__file__).parents[3]
+PACKAGES: Final[Path] = ROOT / "packages"
+EXPECTED: Final[dict[str, frozenset[str]]] = {
     "shared": frozenset(
         {
             "kit-plan-change",
@@ -88,7 +89,7 @@ EXPECTED: dict[str, frozenset[str]] = {
     ),
     "coordination": frozenset({"kit-deliver-fullstack-feature"}),
 }
-PROMPTS = sorted(
+PROMPTS: Final[list[tuple[str, str]]] = sorted(
     (package, name) for package, names in EXPECTED.items() for name in names
 )
 _LINK = re.compile(r"\]\(([^)#\s]+)")

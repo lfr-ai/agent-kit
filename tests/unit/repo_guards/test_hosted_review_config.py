@@ -34,12 +34,13 @@ def test_coderabbit_uses_strict_review_defaults_and_project_guidance() -> None:
     assert reviews["profile"] == "assertive"
     assert reviews["request_changes_workflow"] is False
     assert reviews["allow_author_approval"] is False
-    assert reviews["auto_review"] == {"enabled": True, "drafts": False}
+    # Auto review of non-draft pull requests is the CodeRabbit default.
+    assert "auto_review" not in reviews
     instructions = reviews["path_instructions"]
     assert isinstance(instructions, list)
     by_path = {item["path"]: item["instructions"] for item in instructions}
     supply_chain = (
-        "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,"
+        "{.github/**,.pre-commit-config.yaml,Taskfile.yml,pyproject.toml,tox.ini,"
         "package.json,.devcontainer/**,.mcp.json}"
     )
     assert set(by_path) == {"**/*.py", ".vscode/**", supply_chain}
@@ -52,17 +53,7 @@ def test_hosted_tools_complement_required_local_checks() -> None:
     assert isinstance(reviews, dict)
     tools = reviews["tools"]
     assert isinstance(tools, dict)
-    for name in (
-        "ruff",
-        "github-checks",
-        "languagetool",
-        "gitleaks",
-        "osvScanner",
-        "actionlint",
-        "zizmor",
-    ):
-        assert tools[name] == {"enabled": True}
-    for name in ("flake8", "pylint"):
-        assert tools[name] == {"enabled": False}
+    # Hosted tools are enabled by default; only explicit opt-outs are configured.
+    assert tools == {"flake8": {"enabled": False}, "pylint": {"enabled": False}}
     # CodeRabbit has no native ty integration; CI owns type correctness.
     assert "ty" not in tools

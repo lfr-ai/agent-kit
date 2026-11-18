@@ -31,7 +31,7 @@ class UnreadableDocumentError(ValueError):
         super().__init__(f"{name} {reason}")
 
 
-class DuplicateJsonFieldError(ValueError):
+class DuplicateJSONFieldError(ValueError):
     """A JSON object repeats a field instead of defining it unambiguously."""
 
     def __init__(self, field: str) -> None:

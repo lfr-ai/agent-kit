@@ -46,27 +46,32 @@ import json
 from pathlib import Path
 import statistics
 import sys
+from typing import Final
 
-SECONDS_PER_HOUR = 3600.0
-HOURS_PER_DAY = 24.0
-PERCENT = 100
-JSON_INDENT = 2
-DAYS_PER_WEEK = 7.0
-PERCENTILE_POINTS = 10
-P90_INDEX = 8
-MIN_SAMPLES_FOR_P90 = 2
-EXIT_INVALID = 2
-SUCCESS_STATES = frozenset({"success", "inactive"})
-FAILED_STATES = frozenset({"failure", "error"})
+SECONDS_PER_HOUR: Final[float] = 3600.0
+HOURS_PER_DAY: Final[float] = 24.0
+PERCENT: Final[int] = 100
+JSON_INDENT: Final[int] = 2
+DAYS_PER_WEEK: Final[float] = 7.0
+PERCENTILE_POINTS: Final[int] = 10
+P90_INDEX: Final[int] = 8
+MIN_SAMPLES_FOR_P90: Final[int] = 2
+EXIT_INVALID: Final[int] = 2
+SUCCESS_STATES: Final[frozenset[str]] = frozenset({"success", "inactive"})
+FAILED_STATES: Final[frozenset[str]] = frozenset({"failure", "error"})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Deployment:
-    """One deployment record after validation."""
+    """One deployment record after validation.
 
-    environment: str
+    A record without ``environment`` or ``status`` keeps ``None``, which matches no
+    measured environment and no success or failure state.
+    """
+
+    environment: str | None
     created_at: datetime
-    status: str
+    status: str | None
     status_at: datetime
     commit_times: tuple[datetime, ...]
     caused_incident: bool | None
@@ -128,19 +133,17 @@ def _optional_time(value: object, field: str) -> datetime | None:
 
 
 def to_deployment(record: object) -> Deployment:
-    """Validate one raw record.
-
-    Raises:
-        RecordError: The record is not an object or a field is invalid.
-    """
+    """Validate one raw record; raise ``RecordError`` for a non-object or bad field."""
     if not isinstance(record, dict):
         message = "each deployment must be a JSON object"
         raise RecordError(message)
     incident = record.get("caused_incident")
+    environment = str(record["environment"]) if "environment" in record else None
+    status = str(record["status"]).lower() if "status" in record else None
     return Deployment(
-        environment=str(record.get("environment", "")),
+        environment=environment,
         created_at=parse_time(record.get("created_at"), "created_at"),
-        status=str(record.get("status", "")).lower(),
+        status=status,
         status_at=parse_time(record.get("status_at"), "status_at"),
         commit_times=tuple(
             parse_time(item, "commit_times") for item in record.get("commit_times", [])
@@ -154,8 +157,8 @@ def to_deployment(record: object) -> Deployment:
 def load(path: Path) -> list[Deployment]:
     """Read and validate every record in an export file.
 
-    Raises:
-        RecordError: The file does not hold a list of deployment objects.
+    A file that does not hold a list of deployment objects raises
+    ``RecordError``.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
     records = data.get("deployments") if isinstance(data, dict) else data
@@ -185,11 +188,10 @@ def _p90(values: list[float]) -> float | None:
 def _change_failures(selected: list[Deployment]) -> tuple[list[Deployment], str]:
     """Pick change failures and name the basis that was used.
 
-    Returns:
-        tuple[list[Deployment], str]: Failure records in input order followed
-        by the basis label. Any explicit incident flag selects incident-marked
-        records and ``caused_incident``; otherwise failed/error statuses are
-        selected with a label noting the lack of incident data.
+    The result holds failure records in input order and the basis label. Any
+    explicit incident flag selects incident-marked records and
+    ``caused_incident``; otherwise failed/error statuses are selected with a
+    label noting the lack of incident data.
     """
     if any(item.caused_incident is not None for item in selected):
         return [item for item in selected if item.caused_incident], "caused_incident"

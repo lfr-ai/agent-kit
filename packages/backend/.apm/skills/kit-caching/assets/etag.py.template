@@ -30,14 +30,15 @@ from email.utils import format_datetime, parsedate_to_datetime
 import hashlib
 from http import HTTPStatus
 import re
+from typing import Final
 
 from starlette.requests import Request
 from starlette.responses import Response
 
-NO_STORE = "no-store"
-PRIVATE_REVALIDATE = "private, no-cache"
+NO_STORE: Final[str] = "no-store"
+PRIVATE_REVALIDATE: Final[str] = "private, no-cache"
 _ONE_YEAR_SECONDS = 31_536_000
-IMMUTABLE_ASSET = f"public, max-age={_ONE_YEAR_SECONDS}, immutable"
+IMMUTABLE_ASSET: Final[str] = f"public, max-age={_ONE_YEAR_SECONDS}, immutable"
 _ETAG_HEX_CHARS = 32
 _SAFE_METHODS = frozenset({"GET", "HEAD"})
 _SHARED_DIRECTIVES = frozenset({"public", "s-maxage", "must-revalidate"})
@@ -161,14 +162,12 @@ def conditional_response(
         etag (str | None): Precomputed strong tag; defaults to a hash of ``body``.
         last_modified (datetime | None): Timezone-aware modification time, if known.
         vary (Iterable[str]): Request headers that select the representation.
-        public (bool): Assert that the representation is identical for every user.
+        public (bool): Assert that the representation is identical for every user;
+            without it, a shared-cache policy on a credentialed request raises
+            ``ValueError``.
 
     Returns:
         A 200 response with the body, or a 304 response without it.
-
-    Raises:
-        ValueError: A shared-cache policy was requested for a credentialed
-            request without ``public=True``.
     """
     _reject_shared_policy_for_credentials(request, cache_control, public=public)
     tag = etag or strong_etag(body)

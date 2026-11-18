@@ -13,6 +13,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Final
 
 import pytest
 from redis.asyncio import Redis
@@ -24,7 +25,7 @@ from shop.api.rate_limit import (
 )
 from shop.api.redis_rate_limit import RedisRateLimitStore
 
-REDIS_URL = os.environ.get("SHOP_TEST_REDIS_URL")
+REDIS_URL: Final[str | None] = os.environ.get("SHOP_TEST_REDIS_URL")
 requires_redis = pytest.mark.skipif(
     REDIS_URL is None, reason="SHOP_TEST_REDIS_URL is not set"
 )

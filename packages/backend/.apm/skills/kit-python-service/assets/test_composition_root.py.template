@@ -1,8 +1,8 @@
 """Wiring tests for the composition root template.
 
-Replace the 'shop' imports with the project's modules. These tests prove that
+Replace the ``shop`` imports with the project's modules. These tests prove that
 the graph can be built without real infrastructure and that every override is
-honored, so other unit tests can rely on 'build_container' with fakes.
+honored, so other unit tests can rely on ``build_container`` with fakes.
 """
 
 from datetime import UTC, datetime

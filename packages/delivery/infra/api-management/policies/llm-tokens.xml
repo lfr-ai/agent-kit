@@ -1,0 +1,4 @@
+<llm-token-limit tokens-per-minute="{tokens-per-minute}" estimate-prompt-tokens="false" counter-key='@(context.Variables.ContainsKey("caller") ? ((Jwt)context.Variables["caller"]).Subject : context.Request.IpAddress)' />
+    <llm-emit-token-metric>
+      <dimension name="API ID" />
+    </llm-emit-token-metric>

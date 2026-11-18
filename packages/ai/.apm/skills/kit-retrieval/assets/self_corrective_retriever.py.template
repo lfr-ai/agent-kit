@@ -144,16 +144,10 @@ class SelfCorrectiveRetriever:
     async def run(self, query: Query) -> RetrievalResult:
         """Retrieve until the grader is satisfied or a bound is reached.
 
-        Args:
-            query (Query): The caller's original query.
-
-        Returns:
-            A sufficient result, the best partial result when the policy keeps
-            partial evidence, or an explicit no-evidence result.
-
-        Raises:
-            RetrievalUnavailableError: If the time budget is exhausted or a
-                collaborator reports the backend unavailable.
+        The result is sufficient, the best partial result when the policy keeps
+        partial evidence, or an explicit no-evidence result. An exhausted time
+        budget raises ``RetrievalUnavailableError``, as does a collaborator that
+        reports the backend unavailable.
         """
         try:
             async with asyncio.timeout(self._policy.total_timeout_s):

@@ -30,7 +30,7 @@ RFC 9068, and the PyJWT documentation. Implemented by
 | Never mix `HS*` with `RS*`/`ES*` for one key source | HMAC verification with a public key as the secret lets anyone forge tokens |
 | Pin the algorithm per key when the JWKS states `alg` | Stops cross-algorithm use of one key |
 
-`JwtPolicy` rejects unsafe allow-lists at construction, so a configuration
+`JWTPolicy` rejects unsafe allow-lists at construction, so a configuration
 error fails startup instead of weakening validation.
 
 ## Keys, caching, and rotation

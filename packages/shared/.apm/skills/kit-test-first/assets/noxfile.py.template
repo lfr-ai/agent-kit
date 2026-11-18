@@ -7,14 +7,16 @@ sessions. Coverage thresholds live in the coverage configuration
 (``fail_under``), not in session arguments, so every entry point agrees.
 """
 
+from typing import Final
+
 import nox
 
 nox.options.default_venv_backend = "uv"
 nox.options.sessions = ["layout", "unit", "property", "integration", "coverage"]
 nox.options.error_on_missing_interpreters = True
 
-PYTHON_VERSIONS: list[str] = ["3.13"]
-TIER_DIRECTORIES: dict[str, str] = {
+PYTHON_VERSIONS: Final[list[str]] = ["3.13"]
+TIER_DIRECTORIES: Final[dict[str, str]] = {
     "unit": "tests/unit",
     "property": "tests/property",
     "integration": "tests/integration",

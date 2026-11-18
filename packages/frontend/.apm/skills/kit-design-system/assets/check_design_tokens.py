@@ -37,14 +37,15 @@ import fnmatch
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
-EXIT_CLEAN = 0
-EXIT_FINDINGS = 1
-EXIT_USAGE = 2
-DEFAULT_SUFFIXES: tuple[str, ...] = (".css", ".tsx")
-DEFAULT_TOKEN_FILES: tuple[str, ...] = ("theme.css", "tokens.css")
-DEFAULT_ALLOWED_PX: tuple[float, ...] = (0.0, 1.0)
-SUPPRESSION = "design-tokens: allow"
+EXIT_CLEAN: Final[int] = 0
+EXIT_FINDINGS: Final[int] = 1
+EXIT_USAGE: Final[int] = 2
+DEFAULT_SUFFIXES: Final[tuple[str, ...]] = (".css", ".tsx")
+DEFAULT_TOKEN_FILES: Final[tuple[str, ...]] = ("theme.css", "tokens.css")
+DEFAULT_ALLOWED_PX: Final[tuple[float, ...]] = (0.0, 1.0)
+SUPPRESSION: Final[str] = "design-tokens: allow"
 _SKIPPED_DIRECTORIES = frozenset(
     {".git", "node_modules", "dist", "build", "coverage", "storybook-static"}
 )
@@ -222,6 +223,9 @@ def scan_paths(
 ) -> list[Finding]:
     """Scan files and directories and return sorted findings.
 
+    A missing path propagates ``FileNotFoundError`` and a non-UTF-8 file
+    propagates ``UnicodeDecodeError``.
+
     Args:
         paths (Sequence[Path]): Files or directories to scan.
         suffixes (Sequence[str]): File suffixes to include.
@@ -230,10 +234,6 @@ def scan_paths(
 
     Returns:
         Findings sorted by path, line, and column.
-
-    Raises:
-        FileNotFoundError: If a given path does not exist.
-        UnicodeDecodeError: If a file is not UTF-8 text.
     """
     allowed = frozenset(abs(value) for value in allowed_px)
     findings: list[Finding] = []
@@ -275,10 +275,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-class SelfTestError(AssertionError):
-    """A documented rule did not behave as expected on synthetic input."""
-
-
 _SELF_TEST_CASES = (
     (
         ".tsx",
@@ -302,21 +298,18 @@ _SELF_TEST_CASES = (
 )
 
 
-def self_test() -> None:
-    """Check each rule, comment stripping, and suppression on synthetic sources.
-
-    Raises:
-        SelfTestError: If a case produces unexpected rules.
-    """
+def self_test() -> list[str]:
+    """Return rule, comment-stripping and suppression cases with unexpected rules."""
     allowed = frozenset(DEFAULT_ALLOWED_PX)
+    failures: list[str] = []
     for suffix, text, expected in _SELF_TEST_CASES:
         found = [
             item.rule
             for item in scan_text(text, path="case", suffix=suffix, allowed_px=allowed)
         ]
         if found != expected:
-            message = f"{suffix} case: expected {expected}, found {found}"
-            raise SelfTestError(message)
+            failures.append(f"{suffix} case: expected {expected}, found {found}")
+    return failures
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -328,9 +321,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Design token checker self-test passed.\n")
-        return EXIT_CLEAN
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Design token checker self-test {verdict}.\n")
+        return EXIT_FINDINGS if failures else EXIT_CLEAN
     if not args.paths:
         parser.error("give at least one file or directory")
     try:

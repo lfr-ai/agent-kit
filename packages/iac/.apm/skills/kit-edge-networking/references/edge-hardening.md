@@ -115,6 +115,51 @@ host (one cap for the whole site), so set `ipStrategy` for a per-client cap.
   overwrites the header; otherwise clients choose their own bucket.
 - Start in log or detection mode, review the logs, then block.
 
+## Azure Front Door
+
+Added and verified 2026-11-06. Front Door is not
+needed to expose a Container App or bind a custom domain: Container Apps
+ingress terminates TLS and binds custom domains with managed certificates.
+Add Front Door only for a stated need: an edge WAF on a public endpoint,
+global multi-region routing or failover, or CDN caching. Then define a
+profile, endpoint, readiness-probed origin group, an HTTPS-only route that
+redirects HTTP, a WAF policy bound by a security policy, and access and WAF
+logs in Log Analytics, and lock the origin down as below.
+
+- Tier: Premium is the default because managed rule sets (Default Rule Set
+  2.2, Bot Manager 1.1), bot protection, and Private Link origins are
+  Premium only. Standard has a far lower base fee and keeps custom rules,
+  including the rate limit; the WAF policy SKU must match the profile.
+- Mode: `Prevention` in production; `Detection` only outside production
+  while tuning, then switch.
+- Rate limit key: without `groupBy` the rule counts per client socket IP
+  (`SocketAddr`), the address that opened the connection to Front Door; a
+  proxy or CDN in front makes its clients share one counter. `RemoteAddr`
+  comes from `X-Forwarded-For`; never key on it. Other groupings (country,
+  ASN, JA4, none) are Premium-only previews.
+- Rate limit counting: fixed 1- or 5-minute windows; a client over the
+  threshold is blocked for the rest of the window. Each Front Door server
+  counts separately and syncs late, so a client spread across servers or
+  points of presence can exceed low thresholds. Prefer 5 minutes and size
+  the threshold from at least a week of `FrontDoorAccessLog`.
+- Blocked requests, rate-limited ones included, get the policy's block
+  response: 403 unless `customBlockResponseStatusCode` changes it for every
+  rule, managed ones too.
+
+### Origin lockdown
+
+Front Door's backend IP ranges are shared with other Azure customers, so
+allowing them alone does not lock the origin to your profile.
+
+| Option | Tier | Origin side |
+| --- | --- | --- |
+| Private Link origin | Premium | Approve the private endpoint connection and block traffic that bypasses it |
+| Service tag and header | Standard or Premium | Allow only the `AzureFrontDoor.Backend` service tag (plus `168.63.129.16` and `169.254.169.254`) and reject requests whose `X-Azure-FDID` differs from your profile's Front Door ID |
+
+Check the header where the origin can: an API Management `check-header`
+policy (`kit-api-gateway`), App Service access restrictions, or application
+middleware. Container Apps support Private Link origins from Premium.
+
 ## Security headers
 
 Set baseline headers at the edge only when the application does not; one
@@ -164,3 +209,15 @@ repeat the full set or use an include file. Use `always` so errors carry them.
 - <https://www.rfc-editor.org/rfc/rfc6585#section-4>
 - <https://caddyserver.com/docs/api>
 - <https://learn.microsoft.com/azure/web-application-firewall/afds/afds-overview>
+- <https://learn.microsoft.com/azure/web-application-firewall/afds/waf-front-door-rate-limit-configure>
+- <https://learn.microsoft.com/azure/web-application-firewall/afds/waf-front-door-drs>
+- <https://learn.microsoft.com/azure/web-application-firewall/afds/waf-front-door-configure-custom-response-code>
+- <https://learn.microsoft.com/azure/frontdoor/origin-security>
+- <https://learn.microsoft.com/azure/frontdoor/private-link>
+- <https://learn.microsoft.com/azure/frontdoor/standard-premium/tier-comparison>
+- <https://learn.microsoft.com/azure/frontdoor/health-probes>
+- <https://learn.microsoft.com/azure/container-apps/how-to-integrate-with-azure-front-door>
+- <https://learn.microsoft.com/azure/templates/microsoft.cdn/profiles>
+- <https://learn.microsoft.com/azure/templates/microsoft.network/frontdoorwebapplicationfirewallpolicies>
+- <https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/cdn_frontdoor_firewall_policy>
+- <https://azure.microsoft.com/pricing/details/frontdoor/>

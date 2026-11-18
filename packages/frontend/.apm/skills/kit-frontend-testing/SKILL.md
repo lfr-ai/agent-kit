@@ -1,6 +1,6 @@
 ---
 name: kit-frontend-testing
-description: Use when designing frontend tests across unit, component, integration, and browser layers.
+description: Use when planning frontend unit, component, integration or browser tests.
 license: MIT
 ---
 

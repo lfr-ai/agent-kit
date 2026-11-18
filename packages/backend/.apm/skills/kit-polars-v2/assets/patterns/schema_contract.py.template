@@ -7,10 +7,11 @@ Copy into the consumer's data-processing adapter (for example
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 import polars as pl
 
-ORDER_EVENTS = pl.Schema(
+ORDER_EVENTS: Final[pl.Schema] = pl.Schema(
     {
         "order_id": pl.Int64,
         "customer_id": pl.Int64,

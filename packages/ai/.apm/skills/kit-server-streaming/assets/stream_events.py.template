@@ -18,32 +18,35 @@ import json
 from collections import deque
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, auto, unique
+from typing import Final
 
 
+@unique
 class EventName(StrEnum):
     """Allowed event names; clients ignore names they do not know."""
 
-    START = "start"
-    DELTA = "delta"
-    PROGRESS = "progress"
-    END = "end"
+    START = auto()
+    DELTA = auto()
+    PROGRESS = auto()
+    END = auto()
 
 
+@unique
 class EndStatus(StrEnum):
     """Terminal outcomes carried by the ``end`` event."""
 
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
+    COMPLETED = auto()
+    FAILED = auto()
+    CANCELLED = auto()
+    TIMEOUT = auto()
 
 
 class ReplayGapError(Exception):
     """Events after the requested id were evicted; the client must restart."""
 
 
-MAX_EVENT_BYTES = 64 * 1024
+MAX_EVENT_BYTES: Final[int] = 64 * 1024
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -84,17 +87,11 @@ class StreamEvent:
 
 
 def encode_sse(event: StreamEvent) -> bytes:
-    """Encode one event as an SSE frame.
+    """Encode one event as UTF-8 SSE bytes ending with the dispatching blank line.
 
     The payload is single-line JSON, so no ``data`` line can smuggle a blank line
     or extra field into the stream. Event names come from an enum and ids are
     integers, so neither can contain a newline.
-
-    Args:
-        event (StreamEvent): Event to encode.
-
-    Returns:
-        UTF-8 bytes ending with the blank line that dispatches the event.
     """
     return f"id: {event.seq}\nevent: {event.event}\ndata: {event.json()}\n\n".encode()
 
@@ -115,16 +112,10 @@ def encode_retry(milliseconds: int) -> bytes:
 
 
 def parse_last_event_id(raw: str | None) -> int:
-    """Parse a ``Last-Event-ID`` header value.
+    """Parse ``Last-Event-ID``: ``0`` when absent; raise ``ValueError`` if invalid.
 
-    Args:
-        raw (str | None): Header value, or None when absent.
-
-    Returns:
-        The last sequence the client saw; 0 when absent.
-
-    Raises:
-        ValueError: If the value is not a non-negative integer.
+    The result is the last sequence the client saw; valid values are
+    non-negative integers.
     """
     if raw is None or not raw.strip():
         return 0
@@ -153,29 +144,15 @@ class ReplayBuffer:
         return self._events[-1].seq if self._events else 0
 
     def append(self, event: StreamEvent) -> None:
-        """Retain an event; sequence numbers must increase by one.
-
-        Args:
-            event (StreamEvent): Next event of the stream.
-
-        Raises:
-            ValueError: If the sequence is not contiguous.
-        """
+        """Retain an event; raise ``ValueError`` unless its sequence is the next one."""
         if event.seq != self.last_seq + 1:
             raise ValueError(f"expected seq {self.last_seq + 1}, got {event.seq}")
         self._events.append(event)
 
     def after(self, seq: int) -> list[StreamEvent]:
-        """Return retained events newer than ``seq``.
+        """Return retained events newer than ``seq``, oldest first.
 
-        Args:
-            seq (int): Last sequence the client saw.
-
-        Returns:
-            Events with a larger sequence, oldest first.
-
-        Raises:
-            ReplayGapError: If some newer events were already evicted.
+        If some newer events were already evicted, ``ReplayGapError`` is raised.
         """
         if not self._events:
             return []
@@ -204,13 +181,8 @@ def parse_sse(text: str) -> Iterator[ParsedEvent]:
     """Parse an SSE body the way the HTML specification's client algorithm does.
 
     Comments and ``retry`` fields are consumed; an event is dispatched at each
-    blank line when it has data. Use it in contract tests and Python clients.
-
-    Args:
-        text (str): Complete or partial response body.
-
-    Yields:
-        Dispatched events in order.
+    blank line when it has data, in order. ``text`` may be a complete or
+    partial response body. Use it in contract tests and Python clients.
     """
     event = ""
     data: list[str] = []

@@ -1,6 +1,6 @@
 ---
 name: kit-runtime-config
-description: Use when adding frontend runtime settings while separating public values from server secrets.
+description: Use when separating public frontend runtime settings from server secrets.
 license: MIT
 ---
 

@@ -3,37 +3,57 @@
 from __future__ import annotations
 
 import argparse
-from enum import Enum
+from enum import Enum, unique
 import hashlib
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 import re
 import sys
-from tempfile import NamedTemporaryFile
+from typing import Final
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.application.services.selection import parse_selection
+from agent_kit.application.selection import parse_selection
+from agent_kit.composition.root import plan_composition
 from agent_kit.core.errors import InputTypeError
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.core.primitives import KIT_NAME_PATTERN, NativeRuntime
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from agent_kit.infrastructure.owned_output import (
+    LEDGER_SCHEMA_VERSION,
+    OwnedPathError,
+    OwnedPathIssue,
+    ledger_entries,
+    ledger_hashes,
+    owned_path,
+    publish_owned,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _LOCK_PATH = ".agents/agentic-setup/native-lock.json"
-_JSON_INDENT = 2
-_ROLE_PATHS = (
-    re.compile(r"\.github/agents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"),
-    re.compile(r"\.claude/agents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
+_ROLE_PATHS = tuple(
+    re.compile(
+        re.escape(f"{runtime.agent_directory}/")
+        + KIT_NAME_PATTERN
+        + re.escape(runtime.agent_suffix)
+    )
+    for runtime in NativeRuntime
 )
 # Earlier ledgers attested workers under subagents/; those paths may only be removed.
-_LEGACY_ROLE_PATHS = (
-    re.compile(r"\.github/agents/subagents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.agent\.md"),
-    re.compile(r"\.claude/agents/subagents/kit-[a-z0-9]+(?:-[a-z0-9]+)*\.md"),
+_LEGACY_ROLE_PATHS = tuple(
+    re.compile(
+        re.escape(f"{runtime.agent_directory}/subagents/")
+        + KIT_NAME_PATTERN
+        + re.escape(runtime.agent_suffix)
+    )
+    for runtime in NativeRuntime
 )
 _DISCOVERY_ROOTS = {
-    ".github/agents": ".agent.md",
-    ".claude/agents": ".md",
+    runtime.agent_directory: runtime.agent_suffix for runtime in NativeRuntime
 }
+AGENT_PREFIXES: Final[tuple[str, ...]] = tuple(
+    f"{directory}/" for directory in _DISCOVERY_ROOTS
+)
 
 
+@unique
 class _NativeRoleIssue(Enum):
     """Stable diagnostics for native projection ownership and source contracts."""
 
@@ -60,84 +80,42 @@ class _NativeRoleError(ValueError):
         super().__init__(message)
 
 
+_PATH_ISSUES = {
+    OwnedPathIssue.UNSAFE: _NativeRoleIssue.PATH_NOT_CONTAINED,
+    OwnedPathIssue.LINKED: _NativeRoleIssue.PATH_CONTAINS_LINK,
+    OwnedPathIssue.ESCAPING: _NativeRoleIssue.PATH_ESCAPES_ROOT,
+}
+
+
 def _owned_path(root: Path, relative: str) -> Path:
-    """Reject linked parents and path escapes for reads, writes, deletions, and rollback.
-
-    Args:
-        root (Path): Ownership root that must not be a link or junction.
-        relative (str): POSIX-style path beneath the root, without parent traversal.
-
-    Raises:
-        _NativeRoleError: The path escapes the root or crosses a link.
-    """
-    parts = PurePosixPath(relative)
-    if (
-        root.is_symlink()
-        or root.is_junction()
-        or parts.is_absolute()
-        or PureWindowsPath(relative).drive
-        or "\\" in relative
-        or ".." in parts.parts
-    ):
-        raise _NativeRoleError(_NativeRoleIssue.PATH_NOT_CONTAINED)
-    current = root
-    for part in parts.parts:
-        current = current / part
-        if current.is_symlink() or current.is_junction():
-            raise _NativeRoleError(_NativeRoleIssue.PATH_CONTAINS_LINK)
-    if not current.resolve(strict=False).is_relative_to(root.resolve()):
-        raise _NativeRoleError(_NativeRoleIssue.PATH_ESCAPES_ROOT)
-    return current
-
-
-def _replace(path: Path, content: bytes) -> None:
-    """Replace one attested projection atomically without leaving a partial file.
-
-    Args:
-        path (Path): Destination whose parent directories are created if absent.
-        content (bytes): Complete replacement projection.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
+    """Resolve a role path beneath ``root``; violations raise ``_NativeRoleError``."""
     try:
-        with NamedTemporaryFile(
-            dir=path.parent, prefix=".role-", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(content)
-        temporary.replace(path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        return owned_path(root, relative)
+    except OwnedPathError as error:
+        raise _NativeRoleError(_PATH_ISSUES[error.issue]) from error
 
 
 def expected(root: Path) -> dict[str, bytes]:
     """Resolve the repository's own selection through the canonical catalog.
 
-    Returns:
-        dict[str, bytes]: Generated role content keyed by repository-relative
-        Copilot or Claude agent path.
-
-    Raises:
-        _NativeRoleError: The repository self-selection is malformed.
+    Generated role content is keyed by repository-relative Copilot or Claude agent
+    path; a malformed self-selection raises ``_NativeRoleError``.
     """
-    adapter = FileCatalogAdapter()
     try:
         selection = parse_selection(
-            adapter.load_selection(root / ".agents/agentic-setup/self.json")
+            FileCatalogAdapter().load_selection(
+                root / ".agents/agentic-setup/self.json"
+            )
         )
     except (InputTypeError, ValueError) as error:
         raise _NativeRoleError(_NativeRoleIssue.INVALID_SELECTION) from error
-    plan = CatalogService().compose(
-        adapter.load(root),
-        selection.profile,
-        selection.features,
-        selection.runtimes,
+    plan = plan_composition(
+        root, selection.profile, selection.features, selection.runtimes
     )
     return {
         item.relative_path: item.content
         for item in plan.files
-        if item.relative_path.startswith((".github/agents/", ".claude/agents/"))
+        if item.relative_path.startswith(AGENT_PREFIXES)
     }
 
 
@@ -145,9 +123,9 @@ def check(root: Path) -> list[str]:
     """Require generated role hashes and exact current source projection."""
     output = expected(root)
     ledger = json.loads(_owned_path(root, _LOCK_PATH).read_text(encoding="utf-8"))
-    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in output.items()}
+    hashes = ledger_hashes(output)
     failures: list[str] = []
-    if ledger != {"schema_version": 1, "files": hashes}:
+    if ledger != {"schema_version": LEDGER_SCHEMA_VERSION, "files": hashes}:
         failures.append("repository native role source/ownership ledger drifted")
     for name, data in output.items():
         path = _owned_path(root, name)
@@ -201,21 +179,13 @@ def _previous_roles(root: Path) -> dict[str, str]:
     lock = _owned_path(root, _LOCK_PATH)
     if not lock.exists():
         return {}
-    ledger = json.loads(lock.read_text(encoding="utf-8"))
-    if (
-        not isinstance(ledger, dict)
-        or set(ledger) != {"schema_version", "files"}
-        or ledger.get("schema_version") != 1
-        or not isinstance(ledger.get("files"), dict)
-    ):
+    files = ledger_entries(json.loads(lock.read_text(encoding="utf-8")))
+    if files is None:
         raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
-    files = ledger["files"]
-    if not all(
-        isinstance(name, str) and isinstance(digest, str)
-        for name, digest in files.items()
-    ):
+    hashes = {name: digest for name, digest in files.items() if isinstance(digest, str)}
+    if len(hashes) != len(files):
         raise _NativeRoleError(_NativeRoleIssue.INVALID_LEDGER)
-    return files
+    return hashes
 
 
 def _check_previous_roles(root: Path, previous: dict[str, str]) -> None:
@@ -242,57 +212,18 @@ def _check_planned_roles(
             raise _NativeRoleError(_NativeRoleIssue.LINKED_OUTPUT)
 
 
-def _restore_roles(root: Path, before: dict[str, bytes | None]) -> None:
-    for name, data in before.items():
-        if data is None:
-            _owned_path(root, name).unlink(missing_ok=True)
-        else:
-            _replace(_owned_path(root, name), data)
-
-
-def _apply_roles(
-    root: Path,
-    planned: dict[str, bytes],
-    removed: set[str],
-    before: dict[str, bytes | None],
-) -> None:
-    completed = False
-    try:
-        for name, data in planned.items():
-            _replace(_owned_path(root, name), data)
-        for name in removed:
-            _owned_path(root, name).unlink(missing_ok=True)
-        completed = True
-    finally:
-        if not completed:
-            _restore_roles(root, before)
-
-
 def write(root: Path) -> None:
     """Refresh changed attested files; preserve independently edited output."""
     output = expected(root)
     previous = _previous_roles(root)
     _check_previous_roles(root, previous)
     _check_planned_roles(root, output, previous)
-    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in output.items()}
-    planned = {
-        **output,
-        _LOCK_PATH: (
-            json.dumps({"schema_version": 1, "files": hashes}, indent=_JSON_INDENT)
-            + "\n"
-        ).encode("utf-8"),
-    }
-    touched = set(planned) | previous.keys()
-    before = {
-        name: _owned_path(root, name).read_bytes()
-        if _owned_path(root, name).is_file()
-        else None
-        for name in touched
-    }
-    changed = {name: data for name, data in planned.items() if before[name] != data}
-    removed = previous.keys() - output.keys()
-    affected = changed.keys() | removed
-    _apply_roles(root, changed, removed, {name: before[name] for name in affected})
+    publish_owned(
+        output,
+        previous,
+        ledger=_LOCK_PATH,
+        resolve=lambda name: _owned_path(root, name),
+    )
 
 
 def main() -> int:

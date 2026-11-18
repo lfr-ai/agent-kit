@@ -1,0 +1,398 @@
+"""Typed ``APP_*`` settings for the {{ project_name }} service, read at start-up.
+
+This module is the only reader of the environment. The process environment
+overrides ``.env``, which overrides the runtime's own defaults.
+"""
+
+import re
+from collections.abc import Callable
+from dataclasses import {% if telemetry == 'application-insights' %}dataclass, field, {% endif %}fields
+from enum import StrEnum, auto, unique
+{%- if cache == 'redis' %}
+from urllib.parse import urlsplit
+{%- endif %}
+{%- if data == 'postgresql' or ai_service == 'text' or telemetry == 'application-insights' %}
+from uuid import UUID
+{%- endif %}
+
+from platform_kit_runtime import RuntimeConfig
+{% if ai_service == 'text' -%}
+from platform_kit_runtime.ai import AIConfigurationError, TextGenerationConfig
+{% endif -%}
+{% if data == 'postgresql' -%}
+from platform_kit_runtime.database import DatabaseConfigurationError, DatabaseSettings
+{% endif -%}
+{% if auth == 'entra-bearer' -%}
+from platform_kit_runtime.identity import IdentityConfig
+{% endif -%}
+from platform_kit_runtime.middleware import RateLimitPolicy
+from pydantic import {% if telemetry == 'application-insights' %}Field, {% endif %}{% if data != 'none' or cache != 'none' or ai_service != 'none' or telemetry == 'application-insights' %}SecretStr, {% endif %}ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_RUNTIME_DEFAULTS = RuntimeConfig()
+_RUNTIME_FIELDS = tuple(field.name for field in fields(RuntimeConfig))
+{%- if data == 'postgresql' %}
+_POSTGRES_PORT = 5432
+{%- endif %}
+
+
+@unique
+class Environment(StrEnum):
+    """Explicit deployment stages; unknown or missing stages are invalid."""
+
+    LOCAL = auto()
+    DEV = auto()
+    TEST = auto()
+    STAGING = auto()
+    PROD = auto()
+{%- if telemetry == 'application-insights' %}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AzureMonitorExport:
+    """Application Insights export through the runtime's managed identity.
+
+    Attributes:
+        connection_string (str): Application Insights connection string.
+        client_id (str): Client ID of the user-assigned runtime identity.
+    """
+
+    connection_string: str = field(repr=False)
+    client_id: str
+{%- endif %}
+
+
+class Settings(BaseSettings):
+    """Environment-backed fields that map one-to-one to ``RuntimeConfig``.
+
+    Unset fields keep the runtime's defaults. ``RuntimeConfig`` validates the
+    ranges and names the offending field without echoing its value.
+
+    Attributes:
+        environment (Environment): Required ``APP_ENVIRONMENT`` deployment stage.
+        readiness_timeout_seconds (float): ``APP_READINESS_TIMEOUT_SECONDS``.
+        rate_limit (RateLimitPolicy | None): ``APP_RATE_LIMIT`` as JSON, such as
+            ``{"limit": 100, "window_seconds": 60}``; unset disables limiting.
+        trusted_proxy_hops (int): ``APP_TRUSTED_PROXY_HOPS``; the number of
+            proxies in front of the app, such as the Container Apps ingress hop.
+            Set it before enabling ``APP_RATE_LIMIT`` behind a proxy.
+        tracing (bool): ``APP_TRACING``; span export needs the telemetry extra.
+{%- if telemetry == 'application-insights' %}
+        applicationinsights_connection_string (SecretStr | None): Set by the
+            Azure deployment; it enables tracing and Azure Monitor export.
+        azure_client_id (UUID | None): Runtime identity client ID, set by the
+            Azure deployment and required with the connection string.
+{%- endif %}
+    """
+
+    # Docker Compose shares .env, so keys this class does not own are ignored.
+    model_config = SettingsConfigDict(
+        env_prefix="APP_",
+        env_file=".env",
+        extra="ignore",
+        frozen=True,
+        hide_input_in_errors=True,
+    )
+
+    environment: Environment
+    readiness_timeout_seconds: float = _RUNTIME_DEFAULTS.readiness_timeout_seconds
+    rate_limit: RateLimitPolicy | None = _RUNTIME_DEFAULTS.rate_limit
+    trusted_proxy_hops: int = _RUNTIME_DEFAULTS.trusted_proxy_hops
+    tracing: bool = _RUNTIME_DEFAULTS.tracing
+{%- if telemetry == 'application-insights' %}
+    applicationinsights_connection_string: SecretStr | None = Field(
+        default=None,
+        min_length=1,
+        validation_alias="APPLICATIONINSIGHTS_CONNECTION_STRING",
+    )
+    azure_client_id: UUID | None = Field(
+        default=None, validation_alias="AZURE_CLIENT_ID"
+    )
+    otlp_endpoint: SecretStr | None = Field(
+        default=None, validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    otlp_traces_endpoint: SecretStr | None = Field(
+        default=None, validation_alias="OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    )
+{%- endif %}
+{%- if data == 'postgresql' %}
+    postgres_host: str
+    postgres_database: str
+    postgres_user: str
+    postgres_password: SecretStr | None = None
+    postgres_port: int = _POSTGRES_PORT
+    postgres_require_tls: bool = True
+    postgres_entra_authentication: bool = False
+    postgres_managed_identity_client_id: UUID | None = None
+{%- endif %}
+{%- if cache == 'redis' %}
+    redis_url: SecretStr
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+    auth_tenant_id: str
+    auth_client_id: str
+    auth_audience: str
+    auth_origin: str
+    auth_scopes: frozenset[str] = frozenset()
+    auth_roles: frozenset[str] = frozenset()
+{%- endif %}
+{%- if ai_service == 'text' %}
+    ai_model: str
+    ai_api_key: SecretStr | None = None
+    ai_api_base: str | None = None
+    ai_api_version: str | None = None
+    ai_entra_authentication: bool = False
+    ai_managed_identity_client_id: UUID | None = None
+{%- endif %}
+
+    def runtime_config(self) -> RuntimeConfig:
+        """Return the validated runtime configuration, or raise ``ValueError``."""
+{%- if cache == 'redis' %}
+        if self.rate_limit is None:
+            message = "APP_RATE_LIMIT is required for Redis rate limiting."
+            raise ValueError(message)
+{%- endif %}
+{%- if telemetry == 'application-insights' %}
+        monitored = self.applicationinsights_connection_string is not None
+{%- endif %}
+        return RuntimeConfig(
+            readiness_timeout_seconds=self.readiness_timeout_seconds,
+            rate_limit=self.rate_limit,
+            trusted_proxy_hops=self.trusted_proxy_hops,
+            tracing=self.tracing{% if telemetry == 'application-insights' %} or monitored{% endif %},
+        )
+{%- if telemetry == 'application-insights' %}
+
+    def azure_monitor(self) -> AzureMonitorExport | None:
+        """Return export settings or ``None``; raise ``ValueError`` on conflicts."""
+        if self.applicationinsights_connection_string is None:
+            return None
+        if self.azure_client_id is None:
+            message = "azure_client_id is required with applicationinsights_connection_string."
+            raise ValueError(message)
+        if self.otlp_endpoint is not None or self.otlp_traces_endpoint is not None:
+            message = (
+                "otlp_endpoint and otlp_traces_endpoint conflict with Azure export."
+            )
+            raise ValueError(message)
+        return AzureMonitorExport(
+            connection_string=self.applicationinsights_connection_string.get_secret_value(),
+            client_id=str(self.azure_client_id),
+        )
+{%- endif %}
+{%- if data == 'postgresql' %}
+
+    def database_config(self) -> DatabaseSettings:
+        """Return database settings or raise ``ValueError`` for implicit identity."""
+        has_identity = self.postgres_managed_identity_client_id is not None
+        if self.postgres_entra_authentication != has_identity:
+            message = (
+                "APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID is required only with "
+                "APP_POSTGRES_ENTRA_AUTHENTICATION."
+            )
+            raise ValueError(message)
+        return DatabaseSettings(
+            host=self.postgres_host,
+            database=self.postgres_database,
+            user=self.postgres_user,
+            password=(
+                self.postgres_password.get_secret_value()
+                if self.postgres_password is not None
+                else None
+            ),
+            port=self.postgres_port,
+            require_tls=self.postgres_require_tls,
+            entra_authentication=self.postgres_entra_authentication,
+        )
+{%- endif %}
+{%- if cache == 'redis' %}
+
+    def cache_url(self) -> str:
+        """Return the Redis URL or raise ``ValueError`` for unsafe transport."""
+        value = self.redis_url.get_secret_value()
+        parsed = urlsplit(value)
+        local = parsed.scheme == "redis" and parsed.hostname in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "redis",
+        }
+        secure = parsed.scheme == "rediss" and bool(parsed.hostname)
+        has_resource_suffix = bool(parsed.query or parsed.fragment)
+        if not (local or secure) or has_resource_suffix:
+            message = "APP_REDIS_URL requires TLS or a local development host."
+            raise ValueError(message)
+        _ = parsed.port
+        return value
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+
+    def identity_config(self) -> IdentityConfig:
+        """Return bearer trust settings or raise ``ValueError`` without permissions."""
+        permissions = self.auth_scopes | self.auth_roles
+        if not permissions or any(not item.strip() for item in permissions):
+            message = "APP_AUTH_SCOPES or APP_AUTH_ROLES must specify permissions."
+            raise ValueError(message)
+        return IdentityConfig(
+            tenant_id=self.auth_tenant_id,
+            client_id=self.auth_client_id,
+            api_audience=self.auth_audience,
+            origin=self.auth_origin,
+        )
+{%- endif %}
+{%- if ai_service == 'text' %}
+
+    def text_config(self) -> TextGenerationConfig:
+        """Return AI settings or raise ``ValueError`` for implicit identity."""
+        has_identity = self.ai_managed_identity_client_id is not None
+        if self.ai_entra_authentication != has_identity:
+            message = (
+                "APP_AI_MANAGED_IDENTITY_CLIENT_ID is required only with "
+                "APP_AI_ENTRA_AUTHENTICATION."
+            )
+            raise ValueError(message)
+        return TextGenerationConfig(
+            model=self.ai_model,
+            api_key=(
+                self.ai_api_key.get_secret_value()
+                if self.ai_api_key is not None
+                else None
+            ),
+            api_base=self.ai_api_base,
+            api_version=self.ai_api_version,
+            entra_authentication=self.ai_entra_authentication,
+        )
+{%- endif %}
+
+
+{% if telemetry == 'application-insights' -%}
+def _environment_name(name: str) -> str:
+    """Return the variable that sets field ``name``: its alias or ``APP_<NAME>``."""
+    alias = Settings.model_fields[name].validation_alias
+    return alias if isinstance(alias, str) else f"APP_{name.upper()}"
+
+
+{% endif -%}
+class ConfigurationError(RuntimeError):
+    """Credential-free startup failure, detached from parser exception context.
+
+    Attributes:
+        fields (tuple[str, ...]): Declared environment names to check.
+        cause_type (str): Configuration exception class, never its message.
+    """
+
+    def __init__(self, *, names: tuple[str, ...], cause_type: str) -> None:
+        """Keep only configuration field identifiers and the cause's class name.
+
+        Args:
+            names (tuple[str, ...]): Validated, code-owned settings field names.
+            cause_type (str): Exception class name from a configuration check.
+        """
+        self.fields = tuple({% if telemetry == 'application-insights' %}_environment_name(name){% else %}f"APP_{name.upper()}"{% endif %} for name in names)
+        self.cause_type = cause_type
+        message = (
+            f"Invalid APP_* configuration ({cause_type}); "
+            f"check fields: {', '.join(self.fields)}. See .env.example."
+        )
+        super().__init__(message)
+
+
+def _failure_names(*, error: Exception, names: tuple[str, ...]) -> tuple[str, ...]:
+    """Identify declared fields without forwarding diagnostic values.
+
+    Args:
+        error (Exception): Configuration failure, never retained.
+        names (tuple[str, ...]): Code-owned names relevant to this check.
+
+    Returns:
+        tuple[str, ...]: Identified names, or the relevant group for opaque errors.
+    """
+    if isinstance(error, ValidationError):
+        locations = (
+            item["loc"]
+            for item in error.errors(
+                include_input=False, include_context=False, include_url=False
+            )
+        )
+        mentioned = {str(location[0]).casefold() for location in locations if location}
+    else:
+        # Project diagnostics onto declared identifiers; never forward error text.
+        mentioned = set(re.findall(r"[a-z][a-z0-9_]*", str(error).casefold()))
+{%- if data == 'postgresql' %}
+        if isinstance(error, DatabaseConfigurationError):
+            mentioned.add(f"postgres_{error.setting}")
+{%- endif %}
+    selected = tuple(
+        name for name in names if name in mentioned or f"app_{name}" in mentioned
+    )
+    # Opaque factory errors identify the relevant settings group, not secret values.
+    return selected or names
+
+
+def _validated[ResultT](
+    *, factory: Callable[[], ResultT], names: tuple[str, ...]
+) -> ResultT:
+    """Run one configuration check with credential-free diagnostics.
+
+    Args:
+        factory (Callable[[], ResultT]): Settings constructor or pure validation.
+        names (tuple[str, ...]): Declared fields relevant to this check.
+
+    Returns:
+        ResultT: Validated settings or runtime configuration.
+
+    Raises:
+        ConfigurationError: Configuration is invalid, without exception context.
+    """
+    try:
+        result = factory()
+    except {% if ai_service == 'text' %}(ValueError, AIConfigurationError){% else %}ValueError{% endif %} as error:
+        failure = ConfigurationError(
+            names=_failure_names(error=error, names=names),
+            cause_type=type(error).__name__,
+        )
+    else:
+        return result
+    # Raise outside the handler: parser exception context can contain secrets.
+    raise failure
+
+
+def load_settings() -> Settings:
+    """Return validated settings or raise field-only ``ConfigurationError``."""
+    settings = _validated(factory=Settings, names=tuple(Settings.model_fields))
+    _validated(factory=settings.runtime_config, names=_RUNTIME_FIELDS)
+{%- if telemetry == 'application-insights' %}
+    _validated(
+        factory=settings.azure_monitor,
+        names=(
+            "applicationinsights_connection_string",
+            "azure_client_id",
+            "otlp_endpoint",
+            "otlp_traces_endpoint",
+        ),
+    )
+{%- endif %}
+{%- if data == 'postgresql' %}
+    _validated(
+        factory=settings.database_config,
+        names=tuple(
+            name for name in Settings.model_fields if name.startswith("postgres_")
+        ),
+    )
+{%- endif %}
+{%- if cache == 'redis' %}
+    _validated(factory=settings.cache_url, names=("redis_url",))
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+    _validated(
+        factory=settings.identity_config,
+        names=tuple(name for name in Settings.model_fields if name.startswith("auth_")),
+    )
+{%- endif %}
+{%- if ai_service == 'text' %}
+    _validated(
+        factory=settings.text_config,
+        names=tuple(name for name in Settings.model_fields if name.startswith("ai_")),
+    )
+{%- endif %}
+    return settings

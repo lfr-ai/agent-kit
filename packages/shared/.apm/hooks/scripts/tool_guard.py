@@ -34,7 +34,7 @@ import argparse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
+from enum import StrEnum, unique
 import hashlib
 import io
 import json
@@ -47,12 +47,15 @@ from typing import BinaryIO, TextIO
 import unicodedata
 
 _SCHEMA_VERSION = 1
-_DEFAULT_MAX_INPUT_BYTES = 2 * 1024 * 1024
-_MAX_INPUT_CEILING = 64 * 1024 * 1024
-_MAX_POLICY_BYTES = 1024 * 1024
+_KIB = 1024
+_MIB = 1024 * _KIB
+_DEFAULT_MAX_INPUT_BYTES = 2 * _MIB  # hook stdin cap; stops runaway payloads
+_MAX_INPUT_CEILING = 64 * _MIB  # policy max_input_bytes ceiling; typos stay bounded
+_MAX_POLICY_BYTES = _MIB  # policies are small hand-written JSON; reject larger
 _MAX_DEPTH = 32
-_BLOCK_EXIT = 2
-_CONFIG_EXIT = 2
+_EXIT_BLOCK = 2
+_EXIT_USAGE = 2
+_ALLOW = "allow"
 _DECISIONS = ("deny", "ask")
 _TARGETS = ("tool", "command", "segment", "path")
 _RUNTIMES = ("auto", "claude", "vscode", "copilot-cli")
@@ -135,7 +138,7 @@ class ToolCall:
     tool_name: str
     commands: tuple[str, ...]
     paths: tuple[str, ...]
-    cwd: str = ""
+    cwd: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -161,6 +164,7 @@ class PolicyError(ValueError):
         super().__init__("; ".join(f"line {line}: {text}" for line, text in findings))
 
 
+@unique
 class HookInputIssue(StrEnum):
     """Supported hook input validation failures and their stable messages."""
 
@@ -191,11 +195,11 @@ class HookInputError(ValueError):
 
         Args:
             issue (HookInputIssue): The violated input invariant.
-            key (str | None): Diagnostic key for the invalid input.
-            snake (str | None): Diagnostic snake for the invalid input.
-            camel (str | None): Diagnostic camel for the invalid input.
-            path (Path | None): Diagnostic path for the invalid input.
-            limit (int | None): Diagnostic limit for the invalid input.
+            key (str | None): JSON key repeated in the payload or policy text.
+            snake (str | None): snake_case spelling of a field given both ways.
+            camel (str | None): camelCase spelling of that same field.
+            path (Path | None): File larger than ``limit``.
+            limit (int | None): Byte limit the file or payload exceeded.
         """
         super().__init__(
             issue.value.format(
@@ -208,22 +212,14 @@ class HookInputTypeError(TypeError):
     """An input has the wrong Python type for the hook input contract."""
 
     def __init__(self, issue: HookInputIssue) -> None:
-        """Describe a wrong input type.
-
-        Args:
-            issue (HookInputIssue): The violated input invariant.
-        """
+        """Describe a wrong input type with the stable message of ``issue``."""
         super().__init__(issue.value)
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Reject repeated keys, which different parsers resolve differently.
+    """Return ``pairs`` as a dict in input order; raise ``HookInputError`` on a repeat.
 
-    Returns:
-        The pairs as a dictionary in input order.
-
-    Raises:
-        HookInputError: A key is repeated.
+    Different JSON parsers resolve repeated keys differently, so none is accepted.
     """
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -288,9 +284,7 @@ def command_views(
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Return whole-command views, separator-split segments, and path tokens.
 
-    Returns:
-        Whole commands, separator-split segments, and path-like tokens, each in input
-        order.
+    Each of the three tuples keeps input order.
     """
     wholes: dict[str, None] = {}
     segments: dict[str, None] = {}
@@ -308,13 +302,10 @@ def command_views(
 def _children(
     value: dict[object, object] | list[object], key: str | None
 ) -> list[tuple[str | None, object]]:
-    """Pair each child of a container with the key it is collected under.
+    """Return ``(collection key, child)`` pairs in container order.
 
     Dictionary children use their casefolded string key, or None for other keys;
     list items inherit the key of the list itself.
-
-    Returns:
-        ``(collection key, child)`` pairs in container order.
     """
     if isinstance(value, dict):
         return [
@@ -369,9 +360,8 @@ def _field(payload: dict[str, object], snake: str, camel: str) -> object:
 def _tool_name(payload: dict[str, object]) -> str:
     """Return the non-empty tool name in either spelling.
 
-    Raises:
-        HookInputError: The name fields conflict, or the name is missing or empty.
-        HookInputTypeError: A present tool name is not text.
+    A missing or blank name raises ``HookInputError`` and a non-text name raises
+    ``HookInputTypeError``; conflicting spellings propagate ``HookInputError``.
     """
     name = _field(payload, "tool_name", "toolName")
     if "tool_name" not in payload and "toolName" not in payload:
@@ -387,9 +377,6 @@ def _argument_strings(arguments: object) -> tuple[list[str], list[str]]:
     """Return command and path strings from tool input, decoding JSON text first.
 
     Text that is not valid JSON, or that decodes to a JSON string, is a command.
-
-    Returns:
-        Command strings and path strings, in that order and in input order.
     """
     commands: list[str] = []
     paths: list[str] = []
@@ -407,15 +394,11 @@ def _argument_strings(arguments: object) -> tuple[list[str], list[str]]:
 
 
 def extract_call(payload: dict[str, object]) -> ToolCall | None:
-    """Read the tool call from Claude, VS Code, or Copilot CLI payload shapes.
+    """Return the tool call from Claude, VS Code, or Copilot CLI payload shapes.
 
-    Returns:
-        ToolCall | None: Normalized tool name, command strings, named paths and
-        host working directory; ``None`` for an unrelated lifecycle event.
-
-    Raises:
-        ValueError: Tool fields conflict or the tool name is missing or empty.
-        TypeError: A present tool name has the wrong Python type.
+    ``None`` means an unrelated lifecycle event. Conflicting tool fields or a
+    missing or empty tool name propagate ``ValueError``; a present tool name of the
+    wrong Python type propagates ``TypeError``.
     """
     event = _field(payload, "hook_event_name", "hookEventName")
     if event is not None and event not in _PRE_TOOL_EVENTS:
@@ -427,7 +410,7 @@ def extract_call(payload: dict[str, object]) -> ToolCall | None:
         tool_name=name,
         commands=tuple(commands),
         paths=tuple(paths),
-        cwd=cwd if isinstance(cwd, str) else "",
+        cwd=cwd if isinstance(cwd, str) else None,
     )
 
 
@@ -450,8 +433,10 @@ def _rule_matches(
     return any(rule.pattern.search(candidate) for candidate in candidates)
 
 
-def _inside(cwd: str, root: str) -> bool:
+def _inside(cwd: str | None, root: str) -> bool:
     """Match existing absolute directories, resolving symlinks before scoping."""
+    if cwd is None:
+        return False
     base = Path(root)
     here = Path(cwd)
     if not base.is_absolute() or not here.is_absolute():
@@ -466,7 +451,7 @@ def _inside(cwd: str, root: str) -> bool:
         return False
 
 
-def _in_scope(rule: Rule, cwd: str, environ: Mapping[str, str]) -> bool:
+def _in_scope(rule: Rule, cwd: str | None, environ: Mapping[str, str]) -> bool:
     """Apply a rule's ``only_in`` or ``except_in`` directory scope to ``cwd``.
 
     The scope names an environment variable that holds a directory. A variable
@@ -492,8 +477,8 @@ def evaluate(
             defaults to the current process environment.
 
     Returns:
-        Most restrictive matched outcome, ordered rule IDs and a safe reason. ``allow``
-        means no match, not authorization.
+        Decision: Most restrictive matched outcome, ordered rule IDs and a safe
+        reason. ``allow`` means no match, not authorization.
     """
     scope = os.environ if environ is None else environ
     tool = _fold(call.tool_name).strip()
@@ -516,7 +501,7 @@ def evaluate(
                     f"{rule.identifier}: {rule.reason}" for rule in chosen
                 ),
             )
-    return Decision(decision="allow", rule_ids=(), reason="")
+    return Decision(decision=_ALLOW, rule_ids=(), reason="")
 
 
 def render(decision: Decision, runtime: str) -> str | None:
@@ -526,7 +511,7 @@ def render(decision: Decision, runtime: str) -> str | None:
         decision (Decision): Evaluated decision to serialize.
         runtime (str): Runtime whose hook output shape is written.
     """
-    if decision.decision == "allow":
+    if decision.decision == _ALLOW:
         return None
     reason = f"tool-guard {decision.decision}: {decision.reason}"
     if runtime == "copilot-cli":
@@ -571,11 +556,7 @@ def _line_of(text: str, needle: str) -> int:
 
 
 def _compile(value: object, label: str) -> tuple[re.Pattern[str] | None, str | None]:
-    """Compile a case-insensitive pattern or describe why it is invalid.
-
-    Returns:
-        The compiled pattern and None, or None and a reason the value is invalid.
-    """
+    """Return the case-insensitive pattern, or ``None`` and why it is invalid."""
     if not isinstance(value, str) or not value:
         return None, f"{label} must be a non-empty regular expression"
     try:
@@ -587,10 +568,9 @@ def _compile(value: object, label: str) -> tuple[re.Pattern[str] | None, str | N
 def _rule_schema_findings(
     raw: dict[object, object], label: str, line: int
 ) -> list[tuple[int, str]]:
-    """Report unknown, missing, and invalid scalar fields of one rule object.
+    """Return ``(line, message)`` findings for unknown, missing or invalid rule fields.
 
-    Returns:
-        ``(line, message)`` findings in field order; empty for a valid rule.
+    Findings follow field order; a valid rule yields none.
     """
     findings = [
         (line, f"{label} has unknown field '{key}'")
@@ -618,11 +598,7 @@ def _rule_schema_findings(
 def _scope_findings(
     raw: dict[object, object], label: str, line: int
 ) -> list[tuple[int, str]]:
-    """Report invalid ``only_in`` and ``except_in`` environment variable scopes.
-
-    Returns:
-        ``(line, message)`` findings; empty when both scopes are valid.
-    """
+    """Return ``(line, message)`` findings for invalid ``only_in``/``except_in``."""
     findings: list[tuple[int, str]] = []
     if "only_in" in raw and "except_in" in raw:
         findings.append((line, f"{label} cannot set both only_in and except_in"))
@@ -642,8 +618,8 @@ def _parse_rule(
 ) -> tuple[Rule | None, list[tuple[int, str]]]:
     """Validate one rule object against the closed rule schema.
 
-    Returns:
-        The rule, or None when invalid, and its ``(line, message)`` findings.
+    Returns the rule and no findings, or ``None`` and its ``(line, message)``
+    findings.
     """
     label = f"rules[{index}]"
     if not isinstance(raw, dict):
@@ -686,11 +662,7 @@ def _optional_text(value: object) -> str | None:
 
 
 def _settings(data: dict[str, object], text: str) -> list[tuple[int, str]]:
-    """Validate the top-level policy fields other than rules.
-
-    Returns:
-        ``(line, message)`` findings for invalid settings; empty when valid.
-    """
+    """Return ``(line, message)`` findings for invalid top-level non-rule fields."""
     findings = [
         (_line_of(text, f'"{key}"'), f"unknown policy field '{key}'")
         for key in sorted(data.keys() - _POLICY_FIELDS)
@@ -755,11 +727,9 @@ def _parse_rules(
 
 
 def parse_policy(text: str) -> tuple[Policy | None, list[tuple[int, str]]]:
-    """Validate policy text and return the policy or every finding.
+    """Return the validated policy and no findings, or ``None`` and every finding.
 
-    Returns:
-        The policy, or None when any finding exists, and every ``(line, message)``
-        finding in source order.
+    Findings are ``(line, message)`` pairs in source order.
     """
     try:
         data = json.loads(text, object_pairs_hook=_unique_pairs)
@@ -799,11 +769,7 @@ def _read_text(path: Path, limit: int) -> str:
 
 
 def load_policy(path: Path) -> Policy:
-    """Load and validate a policy file, raising PolicyError on any finding.
-
-    Raises:
-        PolicyError: The policy has findings.
-    """
+    """Return the validated policy file; raise ``PolicyError`` on any finding."""
     policy, findings = parse_policy(_read_text(path, _MAX_POLICY_BYTES))
     if policy is None:
         raise PolicyError(findings)
@@ -827,14 +793,10 @@ def read_bounded(stream: BinaryIO, limit: int) -> bytes:
 
 
 def parse_payload(raw: bytes) -> dict[str, object]:
-    """Decode one hook payload object with strict, duplicate-free JSON.
+    """Return one hook payload object decoded with strict, duplicate-free JSON.
 
-    Returns:
-        The decoded payload object with string keys.
-
-    Raises:
-        ValueError: JSON is malformed or contains duplicate keys.
-        HookInputTypeError: The decoded payload is not an object.
+    Malformed JSON or duplicate keys propagate ``ValueError``; a decoded value that
+    is not an object raises ``HookInputTypeError``.
     """
     value = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_pairs)
     if not isinstance(value, dict):
@@ -848,7 +810,7 @@ def _fail(mode: str, message: str, stderr: TextIO) -> int:
         stderr.write(f"tool-guard: failing open, call not evaluated: {message}\n")
         return 0
     stderr.write(f"tool-guard: blocked because the call was not evaluated: {message}\n")
-    return _BLOCK_EXIT
+    return _EXIT_BLOCK
 
 
 def _append_audit(
@@ -888,7 +850,7 @@ def _emit(
 ) -> None:
     """Report a decision: stderr only in audit mode, runtime JSON when enforcing."""
     if mode == "audit":
-        if decision.decision != "allow":
+        if decision.decision != _ALLOW:
             stderr.write(
                 f"tool-guard audit: would {decision.decision}: {decision.reason}\n"
             )
@@ -991,9 +953,9 @@ def run_explain(
         policy = load_policy(policy_path)
     except (OSError, UnicodeError, ValueError, HookInputTypeError) as error:
         stderr.write(f"{policy_path}: {error}\n")
-        return _CONFIG_EXIT
+        return _EXIT_USAGE
     decision = evaluate(policy, call)
-    if decision.decision == "allow":
+    if decision.decision == _ALLOW:
         stdout.write("allow\n")
         return 0
     stdout.write(f"{decision.decision}: {decision.reason}\n")
@@ -1079,7 +1041,7 @@ def _self_test() -> int:
     if not bad:
         failures.append("incomplete rule accepted")
     errors = io.StringIO()
-    if _fail("closed", "probe", errors) != _BLOCK_EXIT or _fail(
+    if _fail("closed", "probe", errors) != _EXIT_BLOCK or _fail(
         "open", "probe", errors
     ):
         failures.append("failure semantics")
@@ -1115,7 +1077,7 @@ def _parser() -> argparse.ArgumentParser:
     explain.add_argument("--tool", required=True)
     explain.add_argument("--command", action="append", default=[], dest="commands")
     explain.add_argument("--path", action="append", default=[], dest="paths")
-    explain.add_argument("--cwd", default="", help="working directory of the call")
+    explain.add_argument("--cwd", help="working directory of the call")
     return parser
 
 
@@ -1148,7 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
             policy_path=args.policy, call=call, stdout=sys.stdout, stderr=sys.stderr
         )
     parser.error("choose a subcommand or --self-test")
-    return _CONFIG_EXIT
+    return _EXIT_USAGE
 
 
 if __name__ == "__main__":

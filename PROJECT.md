@@ -6,9 +6,9 @@
   and do not need an Agent Kit Python package or executable.
 - Toolkit version: 0.1.0, pre-release adoption baseline.
 - Package manager: uv; commit `uv.lock`. Task owns local and CI gates.
-- Python: 3.13 baseline. Maintainer APM CLI: `apm-cli==0.33.0` in the dev group.
+- Python: 3.13 baseline. Maintainer APM CLI: `apm-cli==0.35.0` in the dev group.
 - Agent Kit's own CLI is retired. The internal
-  [APM adapter](src/agent_kit/infrastructure/apm_adapter.py) invokes Microsoft's
+  [APM adapter](src/agent_kit/infrastructure/apm.py) invokes Microsoft's
   external `apm` executable for maintainer policy and audit checks; it is not
   an Agent Kit command-line entry point.
 - Profile source: [catalog.json](catalog.json); generated APM meta-package
@@ -23,12 +23,33 @@
 
 ```powershell
 task bootstrap
+task check
 task verify
 task profiles:build
 task apm:smoke
 ```
 
-- `task verify`: check-only lock consistency, formatting, lint, types, architecture, source contracts,
+Development loop, cheapest first:
+
+| When | Runs | Command |
+| --- | --- | --- |
+| Each agent edit | Ruff and convention checks on the edited file (bounded, advisory) | Claude/Copilot edit hook |
+| While iterating | One test file or node | `task test -- <path>` |
+| Before committing | Format and lint fixes, ty, import contracts, unit and property tests not marked `slow` | `task check` |
+| `git commit` | File-scoped hygiene, secrets, Ruff, commit message | pre-commit hooks |
+| `git push` | Every static gate in parallel (ty, imports, contracts, pins, drift, docs), duplication, links | pre-push hooks (`task verify -- static`) |
+| Before handoff and in CI | Every offline gate, every test tier including `slow`, coverage | `task verify` |
+
+- `task check`: the fast inner loop; it may rewrite formatting and skips
+  integration tests and the `slow` repository guards that copy the whole
+  catalog. It syncs the locked environment once; Git hooks reuse it
+  (`uv run --locked --no-sync`) and never install, so run `task check` or
+  `task bootstrap` after pulling a `uv.lock` change.
+- `task verify`: checks lock consistency first, runs the read-only static gates
+  in parallel with a pass/fail and timing summary, then runs tests only after
+  every static gate passes; `task verify -- static` runs only the parallel
+  static gates (the pre-push hook). It covers formatting, lint, types,
+  architecture, source contracts,
   dependency licenses, every test tier with branch coverage, and docs; does not
   update outputs, synchronize dependencies or require network access. Provision
   the reviewed environment with `task bootstrap` first.
@@ -36,7 +57,7 @@ task apm:smoke
   installation. `task verify -- pins` rejects floating versions, mutable hook
   revisions, undigested images and package runners. See
   [dependency security](docs/dependency-security.md).
-- `task verify -- source` runs [`scripts/check_source.py`](scripts/check_source.py)
+- `task verify -- source` runs the [source checker](scripts/checks/source.py)
   to validate the canonical catalog and package sources. This is maintainer
   tooling; consumers install a profile through APM.
 - `task profiles:build`: regenerate compact APM profile manifests from
@@ -49,9 +70,20 @@ task apm:smoke
   bootstrap also registers it in the user environment for future processes;
   `task checkout:register` repeats that step after moving the clone.
   Fully restart VS Code and terminals to inherit the persisted value.
+- `task bootstrap:azure -- <explicit arguments>` is separate and offline by
+  default. It neither installs tools nor discovers the current Azure account.
+  Only an operator's `--apply` permits bounded cloud changes after verifying the
+  supplied tenant/subscription. See [Azure bootstrap](packages/delivery/docs/bootstrap.md).
+  It grants Reader, not workload deployment or state-backend permissions.
 - `task test` runs every tier; pass pytest selectors after `--`.
   `task verify -- tests` adds branch coverage. Test tiers are described in
   [tests/README.md](tests/README.md).
+- For one small test file, `task test -- <path> -n 0` avoids parallel-worker
+  startup; `--lf` reruns previous failures. Use the default parallel run for
+  broader coverage. Do not run full verification, the interpreter matrix and
+  all-file hooks after every edit or concurrently in one checkout.
+- Generated applications have a separate cloud-free local workflow; see
+  [the starter](packages/starter/README.md#fast-local-path).
 - `task test:matrix` runs the locked tox Python 3.13/3.14 and coverage
   environments sequentially; use `-- -e unit` for one environment. Do not run
   it concurrently with `task verify`, which writes the same coverage reports.
@@ -63,9 +95,9 @@ task apm:smoke
   [package.json](package.json) with [bun.lock](bun.lock) and
   [bunfig.toml](bunfig.toml) (locked JavaScript tooling), and
   [.secrets.baseline](.secrets.baseline) (detect-secrets).
-- `task precommit`: pre-commit-stage hooks on all files (requires a git repository,
-  Node.js for upstream Node hooks, Bun for duplication checks, and Docker for links).
-  Link and duplication checks run at pre-commit, not a separate manual stage.
+- `task precommit`: pre-commit-stage hooks on all files (requires a git repository
+  and Node.js for upstream Node hooks). Duplication (Bun) and link (Docker,
+  network) checks run at pre-push and in CI.
 - `task commit`: Conventional Commits; `uv run --locked cz bump --dry-run --yes`
   previews the next version without changing files.
 - `task version:preview` also previews generated changelog notes.
@@ -78,8 +110,10 @@ task apm:smoke
   for uv, Bun, GitHub Actions, pre-commit hooks, the dev container image, and
   dev container features.
 - `task apm:smoke`: released APM CLI install/compile, audit and frozen-replay
-  checks for composed source packages in disposable projects. It does not
-  certify resolution of a published profile's dependency closure; see
+  checks for generated native profile packages, then composed source packages,
+  in disposable projects. `-- --native` selects only the native consumer proof.
+  Local source replacements do not certify resolution of an unpublished
+  profile from a remote release; see
   [compatibility](docs/compatibility.md).
 - Repository-owned [capability evaluation cases](tests/evals/README.md) define
   synthetic tasks and a result format; cases are not observed passes. The
@@ -93,12 +127,12 @@ task apm:smoke
   See the [consumer walkthrough](docs/setup-completeness.md).
 - `task format`: explicit authoring formatter; never part of the read-only audit.
 - `task verify -- governance`: community, ownership consistency, and workflow safety.
-- `uv run --locked python scripts/check_governance.py --publication`: enforce
+- `uv run --locked python -m scripts.checks.governance --publication`: enforce
   personal ownership/private-contact consistency.
-- `uv run --locked python -m scripts.check_release`: inspect built products,
+- `uv run --locked python -m scripts.checks.release`: inspect built products,
   version/license alignment, and checksums.
 - `task verify -- coverage`: original inventory, source replacements, template syntax.
-- `uv run --locked python -m scripts.check_resources --json`: linked per-skill reference/asset/script census;
+- `uv run --locked python -m scripts.checks.resources --json`: linked per-skill reference/asset/script census;
   structural resource depth, not semantic or live-runtime certification.
 - `uv run --locked python .agents/guard/verify_agent_config.py`: relocation-safe
   facade for configuration-only gates; `task verify` already includes these checks.
@@ -126,7 +160,7 @@ task apm:smoke
 - Portable source belongs to APM bundles, not runtime discovery directories.
 - Native reviewers and the advisory session-entry hook are repository-specific.
 - Consumer projects own their facts, knowledge, memory, secrets, and app checks.
-- [projects.md](projects.md) indexes this repository; it is not a fleet inventory.
+- [OWNERSHIP.md](OWNERSHIP.md) maps this repository's packages and responsibilities.
 - [Hexagonal Architecture](.agents/knowledge-base/architecture.md) describes dependency direction.
 - [Coverage](.agents/agentic-setup/coverage.json) tracks all original capabilities,
   including deliberate consolidation and consumer-owned exclusions.

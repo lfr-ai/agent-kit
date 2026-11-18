@@ -1,6 +1,7 @@
-# Revisions are frozen to commit SHAs (enforced by the version-pins hook); tool settings live in their own files.
+# Freeze revisions to commit SHAs; the toolkit-static hook (verify.py pins)
+# enforces this. Tool settings live in their own files.
 minimum_pre_commit_version: "4.4"
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_language_version:
   python: python3.13
 default_stages: [pre-commit]
@@ -18,6 +19,7 @@ repos:
             \.agents/skills/.*|
             \.claude/(skills|rules|agents)/.*|
             \.github/(agents|instructions)/.*|
+            profiles/native/.*|
             apm\.lock\.yaml|
             bun\.lock|
             uv\.lock
@@ -47,14 +49,17 @@ repos:
       - id: no-commit-to-branch
       - id: name-tests-test
         args: [--pytest-test-first]
-        files: ^tests/
-        exclude: ^tests/(conftest\.py|README\.md)$
+        files: ^tests/.+\.py$
+        # The shared delivery IaC harness is imported by test modules, not collected.
+        exclude: ^tests/integration/delivery/infra/iac\.py$
 
   # Configuration schemas: workflows, Dependabot, Taskfile and hosted-app files.
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0494aa7fa1314e98913a41227d8f0a515b2c1049 # frozen: 0.38.2
     hooks:
       - id: check-github-workflows
+      - id: check-github-actions
+        files: (^|/)action\.ya?ml$
       - id: check-dependabot
       - id: check-taskfile
       - id: check-jsonschema
@@ -75,7 +80,6 @@ repos:
     hooks:
       - id: detect-secrets
         args: [--baseline, .secrets.baseline]
-        exclude: ^\.agents/agentic-setup/native-lock\.json$
 
   - repo: https://github.com/adrienverge/yamllint
     rev: cba56bcde1fdd01c1deb3f945e69764c291a6530 # frozen: v1.38.0
@@ -105,12 +109,15 @@ repos:
         # Tag for readability; the digest makes the executed image immutable.
         entry: lycheeverse/lychee:0.24.2@sha256:e2d19e57cf6ab037026f20b8e449a1f30d9d7f81eef4194763aab2eab20bd28d
         types_or: [markdown]
+        # Network and Docker: before push, not on every commit.
+        stages: [pre-push]
 
   # GitHub Actions security and syntax; both ignore unrelated files.
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f # frozen: v1.31.1
     hooks:
       - id: zizmor
+        # These paths trigger discovery; zizmor chooses the files in the scan.
         pass_filenames: false
         args: [--no-progress, .]
         files: |
@@ -127,12 +134,17 @@ repos:
         language_version: 1.27.3
         pass_filenames: false
         files: ^(\.github/workflows/[^/]+\.ya?ml|\.pre-commit-config\.yaml)$
-        # Remove this narrow exception when actionlint supports "$/" workflow calls.
+        # GitHub supports these source-bound references; actionlint 1.7.12 does not.
+        # Governance checks exact owners and paths; remove exceptions when
+        # upstream supports these references.
         args:
           - -ignore
           - 'reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yml" at "uses" is not following the format'
+          - -ignore
+          - '^specifying action "\$/packages/delivery/actions/python-check" in invalid format because ref is missing\.'
 
-  # `dependency-audit` must precede every hook that syncs the environment.
+  # Hooks reuse the bootstrapped environment (`--no-sync`) and never install;
+  # only `dependency-licenses` syncs a changed lock, after `dependency-audit`.
   - repo: local
     hooks:
       # Supply chain
@@ -154,96 +166,32 @@ repos:
         language: unsupported
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock|license-allowlist\.json)$
-      - id: version-pins
-        name: Exact versions, frozen hooks, and digest-pinned images
-        entry: uv run --locked python packages/shared/.apm/skills/kit-verify-change/assets/check_pins.py --root .
-        language: unsupported
-        pass_filenames: false
-        always_run: true
       # Python quality and commit messages
       - id: ruff-check
         name: Ruff check (read-only; `task format` fixes)
-        entry: uv run --locked ruff check
+        entry: uv run --locked --no-sync ruff check
         language: unsupported
         types_or: [python, pyi]
       - id: ruff-format-check
         name: Ruff format check (read-only; `task format` fixes)
-        entry: uv run --locked ruff format --check
+        entry: uv run --locked --no-sync ruff format --check
         language: unsupported
         types_or: [python, pyi]
-      - id: ty
-        name: ty type check
-        entry: uv run --locked ty check
-        language: unsupported
-        types: [file]
-        files: (\.pyi?$|^(ty\.toml|pyproject\.toml|uv\.lock)$)
-        pass_filenames: false
       - id: commitizen
         name: Conventional Commit message
-        entry: uv run --locked cz check --allow-abort --commit-msg-file
+        entry: uv run --locked --no-sync cz check --allow-abort --commit-msg-file
         language: unsupported
         stages: [commit-msg]
-      # Toolkit contracts: the same gates as `task verify`
-      - id: toolkit-architecture
-        name: Inward dependencies
-        entry: uv run --locked lint-imports
-        language: unsupported
-        pass_filenames: false
-        types: [python]
-      - id: toolkit-python-conventions
-        name: Python conventions and double-backtick docstrings
-        entry: uv run --locked python scripts/check_conventions.py
+      # Repository-wide gates (pins, types, import contracts, toolkit contracts,
+      # drift, docs) run once per push through the same parallel registry as
+      # `task verify` and CI, keeping each commit to file-scoped checks.
+      - id: toolkit-static
+        name: Repository-wide static gates (scripts/verify.py static)
+        entry: uv run --locked --no-sync python scripts/verify.py static
         language: unsupported
         pass_filenames: false
         always_run: true
-      - id: toolkit-suppressions
-        name: Suppression reasons in owned sources
-        entry: uv run --locked python scripts/check_suppressions.py
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-contract
-        name: Canonical capability and policy contract
-        entry: uv run --locked python scripts/check_source.py --root .
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-docs
-        name: Local documentation links and context
-        entry: uv run --locked python scripts/check_docs.py
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-drift
-        name: Existing APM-owned output and explicit policy
-        entry: uv run --locked python scripts/verify.py drift
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-native
-        name: Explicit native reviewer and hook contracts
-        entry: uv run --locked python scripts/check_native.py
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-governance
-        name: Explicit ownership and secure workflow contracts
-        entry: uv run --locked python scripts/check_governance.py
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-capability-coverage
-        name: Original inventory and selected capability completeness
-        entry: uv run --locked python -m scripts.check_coverage
-        language: unsupported
-        pass_filenames: false
-        always_run: true
-      - id: toolkit-native-roles
-        name: Selected native roles and provenance
-        entry: uv run --locked python -m scripts.render_native
-        language: unsupported
-        pass_filenames: false
-        always_run: true
+        stages: [pre-push]
       # Duplication
       - id: jscpd
         name: jscpd copy-paste detection
@@ -251,6 +199,7 @@ repos:
         language: unsupported
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
 
   - repo: meta
     hooks:

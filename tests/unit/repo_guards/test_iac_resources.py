@@ -8,7 +8,7 @@ import re
 import runpy
 
 import pytest
-from scripts.check_resources import _reachable
+from scripts.checks.resources import _reachable
 import yaml
 
 _SKILLS = Path(__file__).resolve().parents[3] / "packages/iac/.apm/skills"

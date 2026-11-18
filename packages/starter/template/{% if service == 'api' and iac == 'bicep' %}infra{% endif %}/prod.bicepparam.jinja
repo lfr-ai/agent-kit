@@ -1,0 +1,34 @@
+// Production has zone redundancy, >=2 replicas, locks and an internal environment.
+// Caller-owned region defaults to the target resource group; image comes from CI.
+using none
+
+param stage = 'prod'
+param namePrefix = '{{ project_name[:20].rstrip('-') }}-prod'
+{%- if registry == 'acr' %}
+// Globally unique: change it if taken. Premium is required for the private endpoint.
+param registryName = '{{ (project_name | replace('-', ''))[:40] }}prodacr'
+param registrySku = 'Premium'
+{%- endif %}
+param networkAddressPrefix = 'REPLACE_WITH_NONOVERLAPPING_CIDR'
+{%- if data == 'postgresql' %}
+param postgresAdministrator = {
+  objectId: 'REPLACE_WITH_ENTRA_ADMIN_OBJECT_ID'
+  name: 'REPLACE_WITH_ENTRA_ADMIN_DISPLAY_NAME'
+  type: 'Group'
+}
+param postgresDatabase = 'app'
+{%- endif %}
+{%- if ai_service == 'text' %}
+param aiDeployment = {
+  name: 'text'
+  model: 'REPLACE_WITH_REGIONAL_MODEL'
+  version: 'REPLACE_WITH_PINNED_MODEL_VERSION'
+  sku: 'REPLACE_WITH_DEPLOYMENT_SKU'
+  capacity: 1
+}
+{%- endif %}
+param environmentVariables = {}
+param secretReferences = []
+param alertsUnmonitored = false
+param alertEmailReceivers = []
+param alertActionGroupResourceId = 'REPLACE_WITH_ACTION_GROUP_ARM_ID'

@@ -1,0 +1,7 @@
+# Send only the files the image build needs.
+*
+!pyproject.toml
+!uv.lock
+!src/
+**/__pycache__
+**/*.py[co]

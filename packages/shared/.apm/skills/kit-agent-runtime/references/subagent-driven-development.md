@@ -10,7 +10,7 @@ parallel without conflicts. A lookup or a small edit stays with the coordinator.
 | Role | Owns | Must not |
 | --- | --- | --- |
 | Coordinator | Plan, task boundaries, integration, final verification, handoff to the requester | Delegate trivial lookups, run overlapping workers, accept claims without evidence |
-| Read-only worker (researcher, planner, architect, reviewers) | One question or one review scope | Edit, run commands, or delegate |
+| Read-only worker (researcher, planner, architect, reviewers) | One question or one review scope; focused offline checks | Edit, run mutating or network commands, or delegate |
 | Implementer worker | One task inside its owned paths, plus the tests and evidence for it | Touch other paths, publish, change global settings, or delegate |
 
 Workers are stateless between invocations in several runtimes: the VS Code Local

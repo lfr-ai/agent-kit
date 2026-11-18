@@ -2,14 +2,18 @@
 
 ## Local and CI parity
 
-[scripts/verify.py](../scripts/verify.py) owns the check sequence.
+[`scripts/verify.py`](../scripts/verify.py) owns the check sequence.
 [Taskfile.yml](../Taskfile.yml) and CI invoke it without sync, formatting or output
 refresh. After [bootstrap](devtools.md#entry-points), run `task verify`, or
 `task verify -- docs` for local documentation links. A failed gate stops the run;
 fix its owning source and rerun. Pre-commit supplements, not replaces, CI.
 
-[CI](../.github/workflows/ci.yml) requires the
-[dependency audit](../.github/workflows/dependency-audit.yml) before installs.
+GitHub loads workflows only from the flat `.github/workflows` directory, so a
+purpose prefix groups them: `toolkit-*` (this repository's CI and release),
+`security-*` (scans) and `delivery-*` (the reusable consumer interface).
+
+[CI](../.github/workflows/toolkit-ci.yml) requires the
+[dependency audit](../.github/workflows/security-dependency-audit.yml) before installs.
 Then `verify` (gate plus packaging), `precommit` (all hooks on Ubuntu) and
 `smoke` run in parallel. Verify/smoke use Ubuntu/Windows and Python 3.13/3.14;
 the coverage-upload job follows verify. The audit also runs daily.
@@ -18,7 +22,7 @@ the coverage-upload job follows verify. The audit also runs daily.
 including audit and coverage upload. The committed ruleset requires only this
 status; that is not hosted-enforcement evidence, and admin PR bypass skips it.
 See [GitHub setup](github-setup.md#agent-access-for-the-improvement-loop).
-The [governance gate](../scripts/check_governance.py) enforces job dependencies
+The [governance gate](../scripts/checks/governance/__init__.py) enforces job dependencies
 and explicit timeouts. CI owns the uv pin; [pyproject.toml](../pyproject.toml)
 owns its minimum, and [tox.ini](../tox.ini) reuses the installed uv.
 
@@ -37,7 +41,7 @@ owns its minimum, and [tox.ini](../tox.ini) reuses the installed uv.
 | Release products | Exact artifact inventory, version/license alignment, independent source composition, checksums |
 | Unit/property tests | Synthetic profile, collision, path, provenance, and process boundaries |
 | Architecture | Declarative inward import contracts |
-| Documentation | Source entry files and local links, excluding consumer templates |
+| Documentation | Approved root artifacts, source entry files and local links, excluding consumer templates |
 | Actual APM | [Smoke selections](../scripts/apm_smoke.py) install selected source-package closures in disposable consumer projects, compile both targets, compare selected resources and replay the lock; it does not verify a published profile meta-package |
 | Session context | The repository-owned hook script emits bounded advisory JSON; its native registration and interpreter are checked |
 | Distribution | Build the Python wheel/sdist with the declared build backend |
@@ -49,7 +53,7 @@ observation checker verifies record completeness only: it does not run a model,
 authenticate observations or prove model quality. Offline `task verify` checks
 repository contracts, not live agent behavior.
 
-`uv run --locked python scripts/check_governance.py --publication` additionally
+`uv run --locked python -m scripts.checks.governance --publication` additionally
 requires approved ownership/private contacts. It does not certify hosted account
 permissions or branch rules.
 
@@ -64,11 +68,29 @@ permissions or branch rules.
 The deterministic gate needs the provisioned environment, not production
 credentials, global setup changes, consumer projects or external resources.
 
+## Research output hygiene
+
+Research commands previously downloaded pages to relative filenames, so their
+output landed in the checkout root. The documentation scanner compounded this
+by skipping unknown root documents rather than rejecting them.
+
+The existing `docs` gate now rejects unapproved root document/data/configuration
+artifacts, including untracked files. Its explicit project-owned names preserve
+canonical documentation, tool configuration and native MCP metadata. It runs in
+`task verify` and the pre-push static gate; it never deletes files. Nested authored
+documentation and sites remain supported.
+
+Use an explicit absolute destination in temporary/session storage for downloads,
+including failed HTTP responses. Retain verified source URLs and decisions in
+the relevant documentation, not copies of upstream pages. Inspect and remove
+only identified temporary output before handoff. This is repository validation
+and operating guidance, not a filesystem sandbox or live-host certification.
+
 For rebuilt wheels, use `uv run --no-cache --isolated --no-project --with <wheel>`
 and `python -I`; isolation alone can reuse same-version cached code.
 Compare installed module bytes with the archive before accepting CLI results.
 
-`uv run --locked python -m scripts.check_resources --json` emits the per-skill
+`uv run --locked python -m scripts.checks.resources --json` emits the per-skill
 census; coverage includes that structural gate. Regressions run trusted portable
 self-checks and compose the smoke matrix, comparing resource bytes and requiring
 every declared role in both adapters. They execute no consumer code or MCP servers.
@@ -98,6 +120,6 @@ updating ZIP hashes cannot legitimize edits. Packaged-text changes make old
 The builder refuses overwrite: move/delete only identified stale archives in
 `build/capabilities/*.zip` and `build/release/*.zip`, then run
 `task capabilities:build -- --profile fullstack --feature iac`, then
-`uv run --locked python -m scripts.check_release --tag <tag>`.
+`uv run --locked python -m scripts.checks.release --tag <tag>`.
 The live-verified coverage baseline fingerprints identity keys, rejecting
 equal-count name substitutions.

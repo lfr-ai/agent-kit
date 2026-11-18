@@ -1,6 +1,6 @@
 ---
 name: kit-routing
-description: Use when adding routes, nested navigation, URL state, or route-level access behavior.
+description: Use when adding routes, nested navigation, URL state or route-level access.
 license: MIT
 ---
 

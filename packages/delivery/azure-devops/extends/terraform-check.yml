@@ -1,0 +1,55 @@
+# Backend-less Terraform validation; installation and init can use network.
+# Optional terraform tests must be reviewed as plan/mock-only; see docs/consuming.md.
+parameters:
+  - name: terraformVersion
+    type: string
+  # SHA-256 of terraform_<version>_linux_amd64.zip from SHA256SUMS.
+  - name: terraformSha256
+    type: string
+  - name: workingDirectory
+    type: string
+    default: .
+  - name: tflintVersion
+    type: string
+    default: ""
+  - name: tflintSha256
+    type: string
+    default: ""
+  - name: runTests
+    type: boolean
+    default: false
+  - name: vmImage
+    type: string
+    default: ubuntu-24.04
+  - name: timeoutMinutes
+    type: number
+    default: 15
+  - name: extraSteps
+    type: stepList
+    default: []
+
+stages:
+  - stage: terraform
+    displayName: Terraform check
+    jobs:
+      - job: check
+        displayName: terraform ${{ parameters.terraformVersion }}
+        timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+        cancelTimeoutInMinutes: 1
+        pool:
+          vmImage: ${{ parameters.vmImage }}
+        steps:
+          - checkout: self
+            persistCredentials: false
+
+          - template: ../steps/terraform-check.yml
+            parameters:
+              terraformVersion: ${{ parameters.terraformVersion }}
+              terraformSha256: ${{ parameters.terraformSha256 }}
+              workingDirectory: ${{ parameters.workingDirectory }}
+              tflintVersion: ${{ parameters.tflintVersion }}
+              tflintSha256: ${{ parameters.tflintSha256 }}
+              runTests: ${{ parameters.runTests }}
+
+          - ${{ each step in parameters.extraSteps }}:
+              - ${{ step }}

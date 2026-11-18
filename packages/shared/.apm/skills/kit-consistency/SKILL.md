@@ -1,6 +1,6 @@
 ---
 name: kit-consistency
-description: Use when checking contracts, naming, defaults or behavior across related files.
+description: Use when checking consistency of contracts, names, defaults or behavior.
 license: MIT
 ---
 

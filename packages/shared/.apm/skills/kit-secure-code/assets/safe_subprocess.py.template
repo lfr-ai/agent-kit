@@ -13,12 +13,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from typing import Final
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS: float = 30.0
-MAX_OUTPUT_BYTES: int = 1_000_000
-INHERITED_VARIABLES: tuple[str, ...] = (
+DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
+MAX_OUTPUT_BYTES: Final[int] = 1_000_000
+INHERITED_VARIABLES: Final[tuple[str, ...]] = (
     "PATH",
     "HOME",
     "LANG",
@@ -49,16 +50,9 @@ class CommandResult:
 
 
 def resolve_executable(name: str) -> Path:
-    """Resolve a program name or path to an absolute executable path.
+    """Resolve ``name`` to an absolute executable; raise ``CommandError`` if missing.
 
-    Args:
-        name (str): Program name looked up on ``PATH``, or a path to an executable.
-
-    Returns:
-        The absolute, resolved executable path.
-
-    Raises:
-        CommandError: If the program cannot be found.
+    ``name`` is a program looked up on ``PATH`` or a path to an executable.
     """
     found = shutil.which(name)
     if found is None:
@@ -77,7 +71,7 @@ def minimal_environment(
         inherit (Sequence[str]): Names copied from the parent environment when present.
 
     Returns:
-        A new environment mapping.
+        dict[str, str]: A new environment mapping.
     """
     environment = {name: os.environ[name] for name in inherit if name in os.environ}
     environment.update(extra or {})
@@ -87,14 +81,8 @@ def minimal_environment(
 def reject_option_like(value: str) -> str:
     """Return a positional value, refusing one a program could read as an option.
 
-    Args:
-        value (str): Untrusted positional argument.
-
-    Returns:
-        The unchanged value.
-
-    Raises:
-        CommandError: If the value starts with ``-`` or contains a NUL byte.
+    An untrusted value that starts with ``-`` or contains a NUL byte raises
+    ``CommandError``; any other value is returned unchanged.
     """
     if value.startswith("-") or "\x00" in value:
         message = "argument looks like an option or contains a NUL byte"
@@ -123,7 +111,7 @@ def run_command(
         check (bool): Raise when the exit status is not zero.
 
     Returns:
-        The exit status and decoded output.
+        CommandResult: The exit status and decoded output.
 
     Raises:
         CommandError: If the program is missing, times out, or fails while

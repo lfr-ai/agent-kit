@@ -1,6 +1,6 @@
 ---
 name: kit-browser-tests
-description: Use when adding stable browser-level tests for user workflows and cross-component behavior.
+description: Use when testing browser user workflows and cross-component behavior.
 license: MIT
 ---
 

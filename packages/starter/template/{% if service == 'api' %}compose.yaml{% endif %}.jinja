@@ -1,0 +1,47 @@
+# Local development only. Optional services start with --profile redis or postgres.
+services:
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # Loopback only; LOCAL_APP_PORT in .env moves the host port if 8080 is taken.
+      - "127.0.0.1:${LOCAL_APP_PORT:-8080}:8080"
+{% if data == 'postgresql' or cache == 'redis' %}
+    environment:
+{% if data == 'postgresql' %}
+      APP_POSTGRES_HOST: postgres
+      APP_POSTGRES_PORT: "5432"
+{% endif %}
+{% if cache == 'redis' %}
+      APP_REDIS_URL: redis://redis:6379/0
+{% endif %}
+{% endif %}
+
+{% if cache == 'redis' %}
+  redis:
+    image: redis:8.2-alpine@sha256:fe9daae35cd4fd6ec22416aa4fe0cf6b3e36741e06ff45b9986253fe2a81c041
+    profiles: [redis]
+    ports:
+      - "127.0.0.1:${LOCAL_REDIS_PORT:-6379}:6379"
+{% endif %}
+
+{% if data == 'postgresql' %}
+  postgres:
+    image: postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac
+    profiles: [postgres]
+    environment:
+      # Set locally in the shell or an untracked .env file; never commit it.
+      POSTGRES_PASSWORD: ${APP_POSTGRES_PASSWORD:?Set APP_POSTGRES_PASSWORD in .env}
+      POSTGRES_USER: ${APP_POSTGRES_USER:?Set APP_POSTGRES_USER in .env}
+      POSTGRES_DB: ${APP_POSTGRES_DATABASE:?Set APP_POSTGRES_DATABASE in .env}
+    ports:
+      # The host port follows APP_POSTGRES_PORT so it can avoid a native server.
+      - "127.0.0.1:${APP_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
+{% endif %}

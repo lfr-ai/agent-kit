@@ -29,8 +29,9 @@ and do not add dependencies to the project.
 4. Run deterministic tools first, preferring those the project already locks:
    Ruff with complexity and selected families, the configured type checker,
    import contracts, dead-code and dependency-hygiene checks, duplication,
-   vulnerability scanning and spelling. Write all output into one `audit/`
-   directory and record each tool version. If a tool is unavailable, record it
+   vulnerability scanning and spelling. Write all output into one explicit
+   absolute temporary/session directory outside the checkout and record each
+   tool version. If a tool is unavailable, record it
    under "not checked" instead of installing it into the project.
 5. Merge mergeable outputs with the skill's findings summarizer and add
    count-only rows for the other tools.
@@ -48,7 +49,7 @@ and do not add dependencies to the project.
       and an owner skill.
 - [ ] Tool versions and commands are recorded so the run can be repeated.
 - [ ] Unchecked areas and blind spots are listed.
-- [ ] No tracked file changed except the new audit outputs.
+- [ ] No file in the checkout changed; audit outputs live outside it.
 
 ## Output
 

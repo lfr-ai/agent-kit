@@ -1,0 +1,158 @@
+# Job template for a caller-owned check-only Task gate. The caller locks go-task-bin.
+# preSteps run after tool setup but before dependency installation (e.g. private feed auth).
+# extraSteps run after the gate. The caller's pipeline or stage pool applies.
+parameters:
+  - name: name
+    type: string
+    default: python_task
+  - name: pythonVersion
+    type: string
+  - name: uvVersion
+    type: string
+  - name: task
+    type: string
+    default: verify
+  - name: baseUrl
+    type: string
+    default: ''
+  - name: workingDirectory
+    type: string
+    default: .
+  - name: uvRequirementsFile
+    type: string
+    default: ''
+  # Optional Bun tooling: an empty bunVersion skips Bun; set both pins together.
+  - name: bunVersion
+    type: string
+    default: ''
+  - name: bunSha256
+    type: string
+    default: ''
+  - name: bunWorkingDirectory
+    type: string
+    default: .
+  - name: preCommitCache
+    type: boolean
+    default: false
+  - name: fetchDepth
+    type: number
+    default: 1
+  - name: publishTestResults
+    type: boolean
+    default: false
+  - name: testResultsFile
+    type: string
+    default: junit.xml
+  - name: publishCoverage
+    type: boolean
+    default: false
+  - name: coverageFile
+    type: string
+    default: coverage.xml
+  - name: timeoutMinutes
+    type: number
+    default: 30
+  - name: preSteps
+    type: stepList
+    default: []
+  - name: extraSteps
+    type: stepList
+    default: []
+
+jobs:
+  - job: ${{ parameters.name }}
+    displayName: task ${{ parameters.task }}
+    timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+    cancelTimeoutInMinutes: 1
+    variables:
+      - ${{ if eq(parameters.workingDirectory, '.') }}:
+          - name: pythonTaskRoot
+            value: $(System.DefaultWorkingDirectory)
+      - ${{ else }}:
+          - name: pythonTaskRoot
+            value: $(System.DefaultWorkingDirectory)/${{ parameters.workingDirectory }}
+    steps:
+      - bash: |
+          set -euo pipefail
+          if [[ ! "${PYTHON_VERSION}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ||
+                ! "${UV_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+                ! "${TASK_NAME}" =~ ^[[:alnum:]_][[:alnum:]_.:-]*$ ]]; then
+            echo "##vso[task.logissue type=error]Expected a Python version, exact uv version, and one Task name."
+            exit 1
+          fi
+        displayName: Validate version and Task inputs
+        env:
+          PYTHON_VERSION: ${{ parameters.pythonVersion }}
+          UV_VERSION: ${{ parameters.uvVersion }}
+          TASK_NAME: ${{ parameters.task }}
+
+      - checkout: self
+        fetchDepth: ${{ parameters.fetchDepth }}
+        persistCredentials: false
+
+      - template: ../steps/setup-python-uv.yml
+        parameters:
+          pythonVersion: ${{ parameters.pythonVersion }}
+          uvVersion: ${{ parameters.uvVersion }}
+          uvRequirementsFile: ${{ parameters.uvRequirementsFile }}
+          workingDirectory: ${{ parameters.workingDirectory }}
+          sync: false
+
+      - ${{ if ne(parameters.bunVersion, '') }}:
+          - template: ../steps/setup-bun.yml
+            parameters:
+              bunVersion: ${{ parameters.bunVersion }}
+              bunSha256: ${{ parameters.bunSha256 }}
+              lockfile: ${{ parameters.bunWorkingDirectory }}/bun.lock
+
+      - ${{ each step in parameters.preSteps }}:
+          - ${{ step }}
+
+      - bash: uv sync --locked
+        displayName: Install locked dependencies
+        workingDirectory: ${{ parameters.workingDirectory }}
+
+      - ${{ if ne(parameters.bunVersion, '') }}:
+          - bash: bun install --frozen-lockfile
+            displayName: Install locked JavaScript tooling
+            workingDirectory: ${{ parameters.bunWorkingDirectory }}
+
+      - ${{ if parameters.preCommitCache }}:
+          - task: Cache@2
+            displayName: Cache pre-commit environments
+            inputs:
+              key: '"pre-commit" | "$(Agent.OS)" | .pre-commit-config.yaml'
+              restoreKeys: |
+                "pre-commit" | "$(Agent.OS)"
+              path: $(Pipeline.Workspace)/.cache/pre-commit
+
+      - bash: uv run --locked --no-sync task "${TASK_NAME}"
+        displayName: task ${{ parameters.task }}
+        workingDirectory: ${{ parameters.workingDirectory }}
+        env:
+          TASK_NAME: ${{ parameters.task }}
+          BASE_URL: ${{ parameters.baseUrl }}
+          ${{ if parameters.preCommitCache }}:
+            PRE_COMMIT_HOME: $(Pipeline.Workspace)/.cache/pre-commit
+
+      - ${{ if parameters.publishTestResults }}:
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              searchFolder: $(pythonTaskRoot)
+              testResultsFiles: ${{ parameters.testResultsFile }}
+              failTaskOnFailedTests: false
+
+      - ${{ if parameters.publishCoverage }}:
+          - task: PublishCodeCoverageResults@2
+            displayName: Publish code coverage
+            condition: succeededOrFailed()
+            inputs:
+              summaryFileLocation: $(pythonTaskRoot)/${{ parameters.coverageFile }}
+              pathToSources: $(pythonTaskRoot)
+              failIfCoverageEmpty: true
+
+      - ${{ each step in parameters.extraSteps }}:
+          - ${{ step }}

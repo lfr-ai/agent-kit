@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-import agent_kit.infrastructure.output_adapter as adapter
+import agent_kit.infrastructure.output as adapter
 
 
 class SharingDeniedError(PermissionError):

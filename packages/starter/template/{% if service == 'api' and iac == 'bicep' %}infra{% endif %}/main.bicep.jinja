@@ -1,0 +1,355 @@
+@description('Azure region; defaults to the target resource group region.')
+param location string = resourceGroup().location
+
+@allowed(['dev', 'test', 'staging', 'prod'])
+param stage string
+
+@description('Short, distinct per-environment resource prefix; keep the environment name under 32 characters.')
+@minLength(2)
+@maxLength(28)
+param namePrefix string
+
+{%- if registry == 'acr' %}
+@description('Digest-pinned image from the stack registry, supplied by the deploy pipeline. Empty only for the registry bootstrap, which creates the registry and shared infrastructure without the app.')
+param containerImage string = ''
+
+@description('Globally unique lowercase alphanumeric Azure Container Registry name.')
+@minLength(5)
+@maxLength(50)
+param registryName string
+
+@description('Basic or Standard in dev and test; Premium in staging and prod, where the registry is private.')
+param registrySku 'Basic' | 'Standard' | 'Premium'
+{%- else %}
+@description('Supplied by delivery-azure-deploy from the image build output, never a tag.')
+param containerImage string
+{%- endif %}
+
+@description('Caller-owned non-overlapping IPv4 CIDR /16 to /24; required when this stack needs a VNet.')
+param networkAddressPrefix string = ''
+
+{%- if data == 'postgresql' %}
+@sealed()
+type PostgresAdministrator = {
+  objectId: string
+  name: string
+  type: 'User' | 'Group' | 'ServicePrincipal'
+}
+
+@description('Existing Entra administrator, never the runtime app identity. Must create and grant the app database role separately.')
+param postgresAdministrator PostgresAdministrator
+param postgresDatabase string = 'app'
+{%- endif %}
+{%- if ai_service == 'text' %}
+@sealed()
+type AiDeployment = {
+  name: string
+  model: string
+  version: string
+  sku: string
+  capacity: int
+}
+
+@description('Explicit regional model/version/quota selection; no inferred model or region.')
+param aiDeployment AiDeployment
+{%- endif %}
+
+@description('Caller-provided nonsecret APP_* settings; credential values belong in Key Vault.')
+param environmentVariables { *: string } = {}
+
+@sealed()
+type SecretReference = {
+  name: string
+  environmentVariable: string
+  keyVaultUrl: string
+}
+
+@description('Key Vault URLs only; grant the runtimeIdentityPrincipalId output Key Vault Secrets User first.')
+param secretReferences SecretReference[] = []
+
+@description('Email destinations for a managed action group; mutually exclusive with an existing group or unmonitored.')
+param alertEmailReceivers string[] = []
+
+@description('Caller-owned action group, preferably with Teams and optionally email receivers configured outside this stack.')
+param alertActionGroupResourceId string = ''
+
+@description('Explicit dev/test-only opt-out; staging and prod require email or an existing action group.')
+param alertsUnmonitored bool = false
+
+@export()
+func requireAlerts(stage string, receivers string[], groupId string, unmonitored bool) bool =>
+  !empty(requireEmailReceivers(stage, receivers, requireActionGroup(groupId), unmonitored)) || !empty(groupId)
+
+// Evaluate the destination contract even when the app itself is not deployed.
+var tags = {
+  stage: requireAlerts(stage, alertEmailReceivers, alertActionGroupResourceId, alertsUnmonitored) || alertsUnmonitored
+    ? stage
+    : fail('Set an alert destination or explicitly select unmonitored dev/test.')
+}
+// Staging rehearses production: same network isolation, zones, replicas and locks.
+// Cost toggles (SKUs, capacity) stay explicit in each parameter file.
+var prodLike = contains(['staging', 'prod'], stage)
+var needsNetwork = {% if data == 'postgresql' %}true{% elif ai_service == 'text' %}stage != 'dev'{% else %}prodLike{% endif %}
+{%- if registry == 'acr' %}
+var deployApp = !empty(containerImage)
+// Mirrors the Terraform guard: the app pulls only from this stack's registry.
+var checkedImage = !deployApp || startsWith(containerImage, '${registryName}.azurecr.io/')
+  ? containerImage
+  : fail('containerImage must come from this stack\'s registryName.azurecr.io, or be empty for the registry bootstrap.')
+// The registry is private wherever the app environment is internal.
+var acrZones = prodLike ? ['containerRegistry'] : []
+// Premium denies public traffic without IP rules, and dev and test have no private endpoint.
+var checkedRegistrySku = prodLike == (registrySku == 'Premium')
+  ? registrySku
+  : fail('registrySku must be Premium in staging and prod, and Basic or Standard in dev and test.')
+{%- endif %}
+{%- if ai_service == 'text' %}
+// Foundry allows Entra-only public access in dev and uses a private endpoint elsewhere.
+var privateAi = stage != 'dev'
+{%- endif %}
+var ownedNames = [
+  'APP_ENVIRONMENT'
+  'APPLICATIONINSIGHTS_CONNECTION_STRING'
+  'AZURE_CLIENT_ID'
+  'OTEL_SERVICE_NAME'
+  'OTEL_RESOURCE_ATTRIBUTES'
+  'OTEL_EXPORTER_OTLP_ENDPOINT'
+  'OTEL_EXPORTER_OTLP_PROTOCOL'
+{%- if data == 'postgresql' %}
+  'APP_POSTGRES_HOST'
+  'APP_POSTGRES_DATABASE'
+  'APP_POSTGRES_USER'
+  'APP_POSTGRES_ENTRA_AUTHENTICATION'
+  'APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID'
+  'APP_POSTGRES_PASSWORD'
+{%- endif %}
+{%- if ai_service == 'text' %}
+  'APP_AI_API_BASE'
+  'APP_AI_MODEL'
+  'APP_AI_ENTRA_AUTHENTICATION'
+  'APP_AI_MANAGED_IDENTITY_CLIENT_ID'
+  'APP_AI_API_KEY'
+  'APP_AI_API_VERSION'
+{%- endif %}
+]
+
+@export()
+func requireUserEnvironment(values { *: string }, secrets string[], owned string[]) { *: string } =>
+  empty(intersection(
+      concat(map(items(values), entry => toUpper(entry.key)), map(secrets, name => toUpper(name))),
+      owned
+    ))
+    ? values
+    : fail('Caller environment/secret settings collide with provisioner-owned settings; remove the conflicting names.')
+
+var userEnvironment = requireUserEnvironment(
+  environmentVariables,
+  map(secretReferences, ref => ref.environmentVariable),
+  ownedNames
+)
+var appEnvironment = union(userEnvironment, {
+  APP_ENVIRONMENT: stage
+{%- if data == 'postgresql' %}
+  APP_POSTGRES_HOST: postgres.outputs.fqdn
+  APP_POSTGRES_DATABASE: postgresDatabase
+  APP_POSTGRES_USER: runtimeIdentity.name
+  APP_POSTGRES_ENTRA_AUTHENTICATION: 'true'
+  APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID: runtimeIdentity.properties.clientId
+{%- endif %}
+{%- if ai_service == 'text' %}
+  APP_AI_API_BASE: aiService.outputs.openAiEndpoint
+  APP_AI_MODEL: 'openai/${aiDeployment.name}'
+  APP_AI_ENTRA_AUTHENTICATION: 'true'
+  APP_AI_MANAGED_IDENTITY_CLIENT_ID: runtimeIdentity.properties.clientId
+{%- endif %}
+})
+
+module network './vendor/network/main.bicep' = if (needsNetwork) {
+  name: '${namePrefix}-network'
+  params: {
+    location: location
+    name: '${namePrefix}-network'
+    stage: stage
+    addressPrefix: networkAddressPrefix
+    privateDnsZones: concat([{% if data == 'postgresql' %}'postgresql'{% endif %}], {% if ai_service == 'text' %}privateAi ? ['cognitiveServices', 'openai', 'aiServices'] : []{% else %}[]{% endif %}{% if registry == 'acr' %}, acrZones{% endif %})
+  }
+}
+
+{%- if data == 'postgresql' %}
+// PostgreSQL stays private even in dev: no broad firewall exception is needed.
+module postgres './vendor/postgresql/main.bicep' = {
+  name: '${namePrefix}-postgresql'
+  params: {
+    location: location
+    name: '${namePrefix}-pg'
+    stage: stage
+    administrator: postgresAdministrator
+    databaseName: postgresDatabase
+    logAnalyticsWorkspaceId: telemetry.id
+    privateEndpoint: {
+      subnetId: network!.outputs.privateEndpointSubnetResourceId
+      privateDnsZoneId: network!.outputs.privateDnsZoneResourceIds.postgresql
+    }
+  }
+}
+{%- endif %}
+{%- if ai_service == 'text' %}
+module aiService './vendor/ai-foundry/main.bicep' = {
+  name: '${namePrefix}-ai-service'
+  params: {
+    location: location
+    name: '${namePrefix}-ai'
+    stage: stage
+    principalId: runtimeIdentity.properties.principalId
+    deployments: [aiDeployment]
+    logAnalyticsWorkspaceId: telemetry.id
+    privateEndpoint: privateAi
+      ? {
+          subnetId: network!.outputs.privateEndpointSubnetResourceId
+          privateDnsZoneIds: [
+            network!.outputs.privateDnsZoneResourceIds.cognitiveServices
+            network!.outputs.privateDnsZoneResourceIds.openai
+            network!.outputs.privateDnsZoneResourceIds.aiServices
+          ]
+        }
+      : null
+    allowPublicNetworkAccess: !privateAi
+    allowAllPublicClients: !privateAi
+  }
+}
+{%- endif %}
+
+// Runtime principal, distinct from the deployment identity. Owning it here lets the
+// Insights role assignment precede the app without a dependency cycle.
+resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2024-11-30' = {
+  name: '${namePrefix}-identity'
+  location: location
+  tags: tags
+}
+
+// One stack-owned workspace for console logs and selected application/service telemetry.
+// Preserve this resource name and identity when upgrading an existing stack.
+resource telemetry 'Microsoft.OperationalInsights/workspaces@2025-07-01' = {
+  name: '${namePrefix}-telemetry'
+  location: location
+  tags: tags
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 30
+    features: {
+      disableLocalAuth: true
+      enableLogAccessUsingOnlyResourcePermissions: true
+    }
+  }
+}
+
+// The Container Apps module locks only a workspace it creates, so the stack locks its own.
+resource telemetryLock 'Microsoft.Authorization/locks@2020-05-01' = if (prodLike) {
+  name: 'telemetry-protection'
+  scope: telemetry
+  properties: { level: 'CanNotDelete' }
+}
+
+{%- if telemetry | default('none') == 'application-insights' %}
+
+module insights './vendor/application-insights/main.bicep' = {
+  name: '${namePrefix}-insights'
+  params: {
+    location: location
+    name: '${namePrefix}-insights'
+    stage: stage
+    logAnalyticsWorkspaceId: telemetry.id
+    principalId: runtimeIdentity.properties.principalId
+  }
+}
+{%- endif %}
+
+{%- if registry == 'acr' %}
+
+// Private registry in the stack: the runtime identity pulls (AcrPull) and the CI
+// deployment identity, which also builds the image, pushes (AcrPush).
+module registry './vendor/container-registry/main.bicep' = {
+  name: '${namePrefix}-registry'
+  params: {
+    location: location
+    name: registryName
+    // Production-like staging takes every production registry guard, including the
+    // delete lock and retention policy the module reserves for prod.
+    stage: prodLike ? 'prod' : stage == 'test' ? 'test' : 'dev'
+    pullPrincipalId: runtimeIdentity.properties.principalId
+    pushPrincipalId: deployer().objectId
+    sku: checkedRegistrySku
+    // Basic and Standard cannot be private: dev and test keep the Entra-only public
+    // endpoint the hosted CI pushes to; production-like stages use the endpoint.
+    allowPublicNetworkAccess: !prodLike
+    privateEndpoint: prodLike
+      ? {
+          subnetId: network!.outputs.privateEndpointSubnetResourceId
+          privateDnsZoneId: network!.outputs.privateDnsZoneResourceIds.containerRegistry
+        }
+      : null
+    logAnalyticsWorkspaceId: telemetry.id
+  }
+}
+{%- endif %}
+
+module foundation './vendor/container-apps/main.bicep' = {% if registry == 'acr' %}if (deployApp) {% endif %}{
+  name: '${namePrefix}-foundation'
+  params: {
+    location: location
+    appName: namePrefix
+    environmentName: '${namePrefix}-env'
+    stage: stage
+    internalEnvironment: prodLike
+    publicNetworkAccess: prodLike ? 'Disabled' : 'Enabled'
+    availability: {
+      minReplicas: prodLike ? 2 : 0
+      maxReplicas: 3
+      zoneRedundant: prodLike
+      deletionProtection: prodLike
+      infrastructureSubnetId: needsNetwork ? network!.outputs.appsSubnetResourceId : ''
+    }
+    containerImage: {% if registry == 'acr' %}checkedImage{% else %}containerImage{% endif %}
+    targetPort: 8080
+    existingIdentityResourceId: runtimeIdentity.id
+    existingLogAnalyticsWorkspaceResourceId: telemetry.id
+{%- if registry == 'acr' %}
+    registryServer: registry.outputs.loginServer
+{%- endif %}
+    environmentVariables: appEnvironment
+    secretReferences: secretReferences
+{%- if telemetry | default('none') == 'application-insights' %}
+    applicationInsightsConnectionString: insights.outputs.connectionString
+{%- endif %}
+  }
+}
+
+module notifications './vendor/container-apps-alerts/main.bicep' = {% if registry == 'acr' %}if (deployApp) {% endif %}{
+  name: '${namePrefix}-alerts'
+  params: {
+    namePrefix: namePrefix
+    stage: stage
+    containerAppResourceId: foundation{% if registry == 'acr' %}!{% endif %}.outputs.appResourceId
+    emailReceivers: alertEmailReceivers
+    existingActionGroupResourceId: alertActionGroupResourceId
+    unmonitored: alertsUnmonitored
+  }
+}
+
+{%- if registry == 'acr' %}
+
+@description('Empty after the registry bootstrap, before the app exists.')
+output url string = deployApp ? foundation!.outputs.url : ''
+@description('Push images here; resolves privately in staging and prod.')
+output registryLoginServer string = registry.outputs.loginServer
+{%- else %}
+
+output url string = foundation.outputs.url
+{%- endif %}
+@description('Grant this principal Key Vault Secrets User before adding secretReferences.')
+output runtimeIdentityPrincipalId string = runtimeIdentity.properties.principalId
+{%- if telemetry | default('none') == 'application-insights' %}
+@description('Client ID of the runtime identity, set in the app as AZURE_CLIENT_ID.')
+output runtimeIdentityClientId string = runtimeIdentity.properties.clientId
+{%- endif %}
+import { requireActionGroup, requireEmailReceivers } from './vendor/container-apps-alerts/main.bicep'

@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum, auto, unique
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@unique
+class BundleKind(StrEnum):
+    """Whether a catalog bundle is repository-local or a portable APM package."""
+
+    PROJECT = auto()
+    PORTABLE = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -65,7 +74,7 @@ class BundleSource:
 
     apm_exists: bool
     files: tuple[SourceDocument, ...]
-    kind: str
+    kind: str | None  # None when the catalog declaration's kind is not a string
     manifest: object | None
     manifest_document: SourceDocument
     manifest_error: bool
@@ -97,7 +106,7 @@ class CatalogSnapshot:
 class Bundle:
     """Validated catalog bundle identity and contained source path."""
 
-    kind: str
+    kind: BundleKind
     name: str
     path: str
 

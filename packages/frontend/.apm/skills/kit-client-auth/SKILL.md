@@ -1,6 +1,6 @@
 ---
 name: kit-client-auth
-description: Use when adding OIDC sign-in, token renewal, logout, route guards or 401/403 handling to a browser application.
+description: Use when adding browser OIDC sign-in, token renewal, logout, route guards or 401/403.
 license: MIT
 ---
 

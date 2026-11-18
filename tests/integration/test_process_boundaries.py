@@ -8,10 +8,10 @@ import sys
 import time
 
 import pytest
-from scripts import apm_smoke
 
-import agent_kit.infrastructure.apm_adapter as apm_module
-from agent_kit.infrastructure.apm_adapter import ApmCliAdapter, ApmExitError
+import agent_kit.infrastructure.apm as apm_module
+from agent_kit.infrastructure.apm import APMCLIAdapter, APMExitError
+from scripts import apm_smoke
 
 _ROOT = Path(__file__).resolve().parents[2]
 # Cold Windows runners and synced folders need minutes, not seconds, for source checks.
@@ -136,8 +136,8 @@ def test_apm_output_is_independent_of_the_windows_console_encoding(
         lambda executable: (("audit", [executable, "-c", program]),),
     )
     if returncode:
-        with pytest.raises(ApmExitError, match="exit code 9"):
-            ApmCliAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
+        with pytest.raises(APMExitError, match="exit code 9"):
+            APMCLIAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
         with pytest.raises(SystemExit) as error:
             apm_smoke.run(
                 [sys.executable, "-c", program],
@@ -146,7 +146,7 @@ def test_apm_output_is_independent_of_the_windows_console_encoding(
             )
         assert error.value.code == returncode
     else:
-        ApmCliAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
+        APMCLIAdapter(timeout_seconds=_PROCESS_TIMEOUT_SECONDS).check(tmp_path)
         apm_smoke.run(
             [sys.executable, "-c", program], cwd=tmp_path, env=os.environ.copy()
         )
@@ -173,7 +173,7 @@ def test_source_check_script_runs_outside_checkout_and_reports_json(
 ) -> None:
     """Source validation remains usable as repository-local maintainer tooling."""
     result = _run_script(
-        "check_source.py",
+        "checks/source.py",
         "--root",
         str(_ROOT),
         "--json",
@@ -193,7 +193,7 @@ def test_session_hook_script_reads_stdin_and_emits_advisory_json(
 ) -> None:
     """The standalone hook adapter emits a valid native SessionStart response."""
     environment = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    result = subprocess.run(  # noqa: S603 - fixed interpreter and repository-owned script
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and repository script
         [sys.executable, str(_ROOT / "scripts" / "session_context.py")],
         input=json.dumps({"cwd": str(tmp_path)}),
         cwd=tmp_path,

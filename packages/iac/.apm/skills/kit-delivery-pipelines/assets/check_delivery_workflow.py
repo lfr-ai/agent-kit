@@ -41,7 +41,7 @@ import importlib
 from pathlib import Path
 import re
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -60,7 +60,7 @@ _TIMEOUT = "deploy-timeout"
 _OIDC = "oidc-permission"
 _IMAGE = "mutable-image"
 _REBUILD = "rebuild-in-deploy"
-RULES = (_NEEDS, _CANCEL, _TIMEOUT, _OIDC, _IMAGE, _REBUILD)
+RULES: Final[tuple[str, ...]] = (_NEEDS, _CANCEL, _TIMEOUT, _OIDC, _IMAGE, _REBUILD)
 _DEFAULT_LOGIN_ACTIONS = (
     "azure/login",
     "aws-actions/configure-aws-credentials",
@@ -124,7 +124,7 @@ class Node:
         kind: ``map``, ``seq``, or ``scalar``.
         line: One-based line where the node starts.
         text: Scalar value; empty for collections.
-        style: Scalar style indicator such as ``|`` or ``>``; empty when plain.
+        style: Scalar style indicator such as ``|`` or ``>``; ``None`` when plain.
         entries: Mapping entries as key, key line, and value.
         items: Sequence items.
     """
@@ -132,7 +132,7 @@ class Node:
     kind: str
     line: int
     text: str = ""
-    style: str = ""
+    style: str | None = None
     entries: tuple[tuple[str, int, Node], ...] = ()
     items: tuple[Node, ...] = ()
 
@@ -232,8 +232,10 @@ def _convert(raw: object) -> Node:
         return Node(kind=_MAP, line=line, entries=entries)
     if kind == "SequenceNode":
         return Node(kind=_SEQ, line=line, items=tuple(_convert(i) for i in value))
-    style = fields.get("style") or ""
-    return Node(kind=_SCALAR, line=line, text=str(value), style=str(style))
+    style = fields.get("style")
+    return Node(
+        kind=_SCALAR, line=line, text=str(value), style=str(style) if style else None
+    )
 
 
 def _entry(key: object, value: object) -> tuple[str, int, Node]:
@@ -565,7 +567,7 @@ def scan_workflow(path: Path, root: Node | None, options: Options) -> list[Findi
 def scan_text(
     path: Path, text: str, yaml_module: ModuleType, options: Options
 ) -> list[Finding]:
-    """Parse and check one workflow file.
+    """Parse and check one workflow file; invalid YAML propagates ``WorkflowError``.
 
     Args:
         path (Path): Path reported in findings.
@@ -575,25 +577,15 @@ def scan_text(
 
     Returns:
         Findings in line order.
-
-    Raises:
-        WorkflowError: If the text is not valid YAML.
     """
     return scan_workflow(path, parse(text, yaml_module), options)
 
 
 def collect_files(paths: Iterable[Path]) -> list[Path]:
-    """Expand directories into sorted workflow files.
+    """Expand paths into sorted workflow files; raise ``MissingPathError`` if absent.
 
-    Args:
-        paths (Iterable[Path]): Files or directories. Directories contribute files
-            ending in ``.yml``, ``.yaml``, ``.yml.template``, or ``.yaml.template``.
-
-    Returns:
-        Sorted, de-duplicated file list.
-
-    Raises:
-        MissingPathError: If a path does not exist.
+    Directories contribute files ending in ``.yml``, ``.yaml``,
+    ``.yml.template``, or ``.yaml.template``; the result is de-duplicated.
     """
     files: set[Path] = set()
     for path in paths:
@@ -733,12 +725,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _options(args: argparse.Namespace) -> Options:
-    """Build options from parsed arguments.
-
-    Raises:
-        re.error: A ``--build-pattern`` or ``--skip-environment`` value is not
-            a valid expression.
-    """
+    """Build options from parsed arguments; bad patterns propagate ``re.error``."""
     base = default_options()
     extra = tuple(re.compile(pattern) for pattern in args.build_pattern)
     skipped = tuple(re.compile(pattern) for pattern in args.skip_environment)

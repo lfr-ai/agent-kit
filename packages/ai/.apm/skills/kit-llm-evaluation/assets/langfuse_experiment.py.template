@@ -22,7 +22,7 @@ class ExportNotApprovedError(PermissionError):
 class ExperimentIdentity:
     """Public provenance attached to every experiment run.
 
-    Args:
+    Attributes:
         run_id (str): kit-config ``run_id`` of the planned job.
         dataset_version (str): Immutable dataset label.
         dataset_fingerprint (str): Content digest from the harness.
@@ -45,8 +45,7 @@ class ExperimentIdentity:
     def metadata(self) -> dict[str, str]:
         """Return allow-listed, string-valued run metadata.
 
-        Returns:
-            dict[str, str]: Metadata without inputs, outputs or secrets.
+        Inputs, outputs and secrets are never included.
         """
         return {
             "run_id": self.run_id,
@@ -65,7 +64,7 @@ class ExperimentIdentity:
 class ScoreRecord:
     """Score projection the facade converts into an SDK evaluation object.
 
-    Args:
+    Attributes:
         name (str): Metric name, identical to the harness scorer name.
         value (float): Score in ``[0, 1]``.
     """
@@ -79,7 +78,7 @@ class ScoreRecord:
 class ExperimentSummary:
     """Facade projection of the SDK experiment result.
 
-    Args:
+    Attributes:
         run_name (str): Run name recorded by the service.
         item_count (int): Items attempted.
         failed_items (int): Items whose task or evaluator raised.
@@ -94,7 +93,7 @@ type ItemTask = Callable[[Mapping[str, object]], str]
 type ItemEvaluator = Callable[[Mapping[str, object], str], ScoreRecord]
 
 
-class ExperimentSdk(Protocol):
+class ExperimentSDK(Protocol):
     """Narrow facade over the consumer's pinned Langfuse SDK experiment runner."""
 
     def run_experiment(
@@ -160,18 +159,10 @@ def _case_provenance(metadata: object) -> tuple[str, tuple[str, ...]]:
 def scorer_evaluator(scorer: Scorer) -> ItemEvaluator:
     """Adapt a harness scorer so online and offline scores share one definition.
 
-    Args:
-        scorer (Scorer): Deterministic harness scorer.
-
-    Returns:
-        ItemEvaluator: Evaluator returning a ``ScoreRecord`` per item.
-
-    Raises:
-        TypeError: The returned evaluator receives a malformed item or provenance.
-        EvalInputError: The scorer returns a boolean, nonnumeric, non-finite
-            value or a value outside ``[0, 1]``.
-
-    Scorer exceptions propagate unchanged from the returned evaluator.
+    The returned evaluator produces a ``ScoreRecord`` per item. It raises
+    ``TypeError`` for a malformed item or provenance and ``EvalInputError`` for
+    a boolean, nonnumeric, non-finite or out-of-range score; scorer exceptions
+    propagate unchanged.
     """
 
     def evaluate(item: Mapping[str, object], output: str) -> ScoreRecord:
@@ -188,11 +179,11 @@ def scorer_evaluator(scorer: Scorer) -> ItemEvaluator:
 class LangfuseExperimentRunner:
     """Submit an approved offline experiment through the injected facade."""
 
-    def __init__(self, *, sdk: ExperimentSdk, export_approved: bool) -> None:
+    def __init__(self, *, sdk: ExperimentSDK, export_approved: bool) -> None:
         """Configure the runner.
 
         Args:
-            sdk (ExperimentSdk): Consumer facade around the pinned SDK.
+            sdk (ExperimentSDK): Consumer facade around the pinned SDK.
             export_approved (bool): Explicit approval to send dataset items,
                 outputs and scores to the configured Langfuse project.
         """
@@ -210,6 +201,11 @@ class LangfuseExperimentRunner:
     ) -> ExperimentSummary:
         """Run one experiment linked to an exact prompt version.
 
+        Facade, task and scorer exceptions propagate unchanged without retry,
+        including ``EvalInputError`` when an evaluator receives an invalid scorer
+        result. The facade must surface item failures rather than silently report
+        success.
+
         Args:
             identity (ExperimentIdentity): Provenance of this run.
             cases (Sequence[EvalCase]): Approved, versioned cases.
@@ -223,10 +219,6 @@ class LangfuseExperimentRunner:
         Raises:
             ExportNotApprovedError: Export was not approved.
             ValueError: ``max_concurrency`` is not positive.
-            EvalInputError: An evaluator receives an invalid scorer result.
-
-        Facade, task and scorer exceptions propagate unchanged without retry.
-        The facade must surface item failures rather than silently report success.
         """
         if not self._export_approved:
             message = "hosted evaluation export requires explicit approval"

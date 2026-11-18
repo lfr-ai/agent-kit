@@ -1,6 +1,6 @@
 ---
 name: kit-auth
-description: Use when adding or reviewing API auth such as OAuth or OIDC flows, JWT and JWKS validation, roles, or 401/403.
+description: Use when reviewing API auth, OAuth/OIDC, JWT/JWKS validation, roles or 401/403.
 license: MIT
 ---
 

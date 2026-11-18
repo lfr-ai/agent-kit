@@ -13,14 +13,13 @@ evidence about the scanned patterns only, not proof that no secret exists.
 
 import argparse
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 import re
 import sys
 from tempfile import TemporaryDirectory
 
 _DEFAULT_SUFFIXES = (".js", ".mjs", ".cjs", ".css", ".html", ".json", ".map", ".txt")
-_MAX_BYTES = 5_000_000
+_MAX_BYTES = 5_000_000  # larger files are reported as too large instead of read
 _PREVIEW_CHARS = 6
 
 
@@ -102,7 +101,7 @@ class BundleInputError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            root (Path): Diagnostic root for the failing input.
+            root (Path): Build output path that is missing or not a directory.
         """
         super().__init__(f"not a directory: {root}")
 
@@ -117,6 +116,8 @@ def scan(
     max_bytes: int = _MAX_BYTES,
 ) -> list[str]:
     """Return sorted ``path:line: [rule] message`` findings for a build directory.
+
+    An invalid ``deny`` or ``allow`` pattern propagates ``re.error``.
 
     Args:
         root (Path): Build output directory to scan.
@@ -133,7 +134,6 @@ def scan(
 
     Raises:
         BundleInputError: If root is not a directory.
-        re.error: If a pattern is invalid.
     """
     if not root.is_dir():
         raise BundleInputError(root=root)
@@ -171,36 +171,9 @@ def _line_findings(
     ]
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    CLEAN_BUNDLE_REJECTED = "clean bundle must pass"
-    UNEXPECTED_FINDINGS = "unexpected findings: {findings}"
-    MATCHED_VALUE_ECHOED = "findings must redact matched values"
-    ALLOW_PATTERN_IGNORED = "allow patterns must suppress full matches"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self, issue: SelfTestIssue, *, findings: list[str] | None = None
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            findings (list[str] | None): Observed findings for the failing case.
-        """
-        super().__init__(issue.value.format(findings=findings))
-
-
-def self_test() -> None:
-    """Exercise clean, secret, denied, allowed and source-map cases in a temp dir.
-
-    Raises:
-        SelfTestError: If any synthetic expectation does not hold.
-    """
+def self_test() -> list[str]:
+    """Return regressions in clean, secret, denied, allowed and source-map cases."""
+    failures: list[str] = []
     with TemporaryDirectory(prefix="agent-kit-bundle-scan-") as directory:
         root = Path(directory)
         assets = root / "assets"
@@ -209,7 +182,7 @@ def self_test() -> None:
             'const api="https://api.example.test/";\n', encoding="utf-8"
         )
         if scan(root):
-            raise SelfTestError(SelfTestIssue.CLEAN_BUNDLE_REJECTED)
+            failures.append("clean bundle must pass")
         fake_key = "AKIA" + "ABCDEFGHIJKLMNOP"
         header = "-----BEGIN " + "PRIVATE KEY-----"
         (assets / "index.js").write_text(
@@ -229,11 +202,12 @@ def self_test() -> None:
             "denied-pattern",
         ]
         if names != expected:
-            raise SelfTestError(SelfTestIssue.UNEXPECTED_FINDINGS, findings=findings)
+            failures.append(f"unexpected findings: {findings}")
         if fake_key in "".join(findings):
-            raise SelfTestError(SelfTestIssue.MATCHED_VALUE_ECHOED)
+            failures.append("findings must redact matched values")
         if len(scan(root, allow=(re.escape(fake_key), r"-----BEGIN.*"))) != 0:
-            raise SelfTestError(SelfTestIssue.ALLOW_PATTERN_IGNORED)
+            failures.append("allow patterns must suppress full matches")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -250,9 +224,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Public bundle scanner self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Public bundle scanner self-test {verdict}.\n")
+        return int(bool(failures))
     try:
         findings = scan(
             args.root,

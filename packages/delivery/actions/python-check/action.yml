@@ -1,0 +1,55 @@
+name: Locked Python check
+description: Set up reviewed Python and uv versions, synchronize the lock, and run one Task gate.
+
+inputs:
+  python-version:
+    description: Python major.minor or exact patch version.
+    required: true
+  uv-version:
+    description: Exact uv version.
+    required: true
+  task:
+    description: One check-only Task name.
+    default: verify
+  working-directory:
+    description: Directory containing pyproject.toml, uv.lock and Taskfile.yml.
+    default: .
+  base-url:
+    description: Optional deployed environment URL exposed as BASE_URL to the Task.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate version and Task inputs
+      shell: bash
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        UV_VERSION: ${{ inputs.uv-version }}
+        TASK_NAME: ${{ inputs.task }}
+      run: |
+        if [[ ! "$PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ||
+              ! "$UV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+              ! "$TASK_NAME" =~ ^[[:alnum:]_][[:alnum:]_.:-]*$ ]]; then
+          echo "::error::Expected a Python version, exact uv version, and one Task name."
+          exit 1
+        fi
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+        working-directory: ${{ inputs.working-directory }}
+    - name: Install locked dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv sync --locked
+    - name: Run task
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TASK_NAME: ${{ inputs.task }}
+        BASE_URL: ${{ inputs.base-url }}
+      run: uv run --locked --no-sync task "$TASK_NAME"

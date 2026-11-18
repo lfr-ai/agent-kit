@@ -1,6 +1,6 @@
 ---
 name: kit-react-feature
-description: Use when building or reviewing an accessible typed React feature and its tests.
+description: Use when building or reviewing accessible typed React features and tests.
 license: MIT
 ---
 

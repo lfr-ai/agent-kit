@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.provenance_service import ProvenanceService
+from agent_kit.application.provenance import ProvenanceService
 from agent_kit.core.models import CheckReport, ComposedSnapshot, SourceDocument
 
 _REQUIRED = ("apm.yml", "apm-policy.yml", "LICENSE")
@@ -135,6 +135,11 @@ def test_files_must_be_an_object() -> None:
         ("./dot.md", _digest()),
         ("double//slash.md", _digest()),
         ("trailing/", _digest()),
+        (".", _digest()),
+        ("nested/file:stream", _digest()),
+        ("nested/NUL.md", _digest()),
+        ("nested/trailing.", _digest()),
+        ("nested/control\x00.md", _digest()),
         ("provenance.json", _digest()),
         ("short-hash.md", "abc"),
         ("upper-hash.md", _digest().upper()),
@@ -146,6 +151,12 @@ def test_invalid_ledger_entries_are_rejected(relative: str, digest: object) -> N
     files = {**{name: _digest() for name in _REQUIRED}, relative: digest}
 
     assert "provenance.path" in _codes(_verify(_provenance(files=files)))
+
+
+def test_bundle_source_may_explicitly_be_the_root() -> None:
+    source = {**_SOURCE, "bundles": [{"name": "toolkit", "path": "."}]}
+
+    assert _verify(_provenance(source=source)).valid
 
 
 @pytest.mark.parametrize("missing", _REQUIRED)
@@ -272,6 +283,63 @@ def test_post_installation_metadata_is_permitted() -> None:
     )
 
     assert _verify(extra=extras).valid
+
+
+_LOCAL_IDENTITY = b"0123456789abcdef0123456789abcdef\n"
+
+
+def test_apm_local_identity_is_incidental_metadata_after_installation() -> None:
+    extras = (
+        _lock(),
+        _document(".apm-local/.gitignore", b"*\n"),
+        _document(".apm-local/installation", _LOCAL_IDENTITY),
+    )
+
+    assert _verify(extra=extras).valid
+
+
+@pytest.mark.parametrize(
+    "extras",
+    [
+        (
+            _document(".apm-local/.gitignore", b"*\n"),
+            _document(".apm-local/installation", _LOCAL_IDENTITY),
+        ),
+        (_lock(), _document(".apm-local/installation", _LOCAL_IDENTITY)),
+        (_lock(), _document(".apm-local/.gitignore", b"*\n")),
+        (
+            _lock(),
+            _document(".apm-local/.gitignore", b"*\n"),
+            _document(".apm-local/installation", b"not-an-identity\n"),
+        ),
+        (
+            _lock(),
+            _document(".apm-local/.gitignore", b"other\n"),
+            _document(".apm-local/installation", _LOCAL_IDENTITY),
+        ),
+        (
+            _lock(),
+            _document(".apm-local/.gitignore", b"*\n"),
+            _document(".apm-local/installation", _LOCAL_IDENTITY),
+            _document(".apm-local/payload.py"),
+        ),
+    ],
+)
+def test_apm_local_state_never_permits_unvalidated_files(
+    extras: tuple[SourceDocument, ...],
+) -> None:
+    assert "provenance.extra" in _codes(_verify(extra=extras))
+
+
+def test_apm_local_identity_cannot_bypass_link_checks() -> None:
+    report = _verify(
+        extra=(
+            _lock(),
+            _document(".apm-local/.gitignore", b"*\n"),
+            _document(".apm-local/installation", _LOCAL_IDENTITY, is_symlink=True),
+        )
+    )
+    assert "provenance.symlink" in _codes(report)
 
 
 @pytest.mark.parametrize(

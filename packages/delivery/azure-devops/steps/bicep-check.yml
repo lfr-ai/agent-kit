@@ -1,0 +1,30 @@
+# Format, lint and compile every Bicep and parameter file with a pinned CLI.
+parameters:
+  - name: bicepVersion
+    type: string
+  - name: path
+    type: string
+    default: .
+
+steps:
+  - bash: |
+      set -euo pipefail
+      az bicep install --version "v${BICEP_VERSION}"
+      mapfile -d '' templates < <(find "${IAC_PATH}" -type f -name '*.bicep' -print0)
+      mapfile -d '' params < <(find "${IAC_PATH}" -type f -name '*.bicepparam' -print0)
+      if [[ ${#templates[@]} -eq 0 ]]; then
+        echo "##vso[task.logissue type=error]No .bicep files found under ${IAC_PATH}"
+        exit 1
+      fi
+      for file in "${templates[@]}"; do
+        az bicep format --file "$file" --stdout | diff --unified "$file" -
+        az bicep lint --file "$file"
+        az bicep build --file "$file" --stdout > /dev/null
+      done
+      for file in "${params[@]}"; do
+        az bicep build-params --file "$file" --stdout > /dev/null
+      done
+    displayName: Bicep format, lint and build
+    env:
+      BICEP_VERSION: ${{ parameters.bicepVersion }}
+      IAC_PATH: ${{ parameters.path }}

@@ -51,8 +51,6 @@ class EvaluationIssue(StrEnum):
     DUPLICATE = "duplicate JSON field"
     CASE_SET = "result case IDs must exactly match the dataset"
     FIELDS = "unknown or missing document fields"
-    SELF_TEST_ACCEPTANCE = "self-test rejected complete observations"
-    SELF_TEST_VETO = "self-test accepted an observed safety regression"
 
 
 class EvaluationInputError(ValueError):
@@ -68,10 +66,12 @@ class EvaluationInputError(ValueError):
 
 
 def _mapping(value: object) -> TypeGuard[dict[str, object]]:
+    """Recognize dictionaries whose keys are all strings."""
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 def _text(value: object) -> bool:
+    """Accept nonblank text unless it still starts with ``REPLACE_WITH_``."""
     return (
         isinstance(value, str)
         and bool(value.strip())
@@ -80,11 +80,13 @@ def _text(value: object) -> bool:
 
 
 def _fields(value: dict[str, object], expected: set[str]) -> None:
+    """Raise ``EvaluationInputError`` unless ``value`` has exactly ``expected`` keys."""
     if set(value) != expected:
         raise EvaluationInputError(EvaluationIssue.FIELDS)
 
 
 def _versioned(value: object) -> dict[str, object]:
+    """Require a string-keyed document with the supported integer schema version."""
     if not _mapping(value) or type(value.get("schema_version")) is not int:
         raise EvaluationInputError(EvaluationIssue.VERSION_TYPE)
     if value["schema_version"] != _SCHEMA_VERSION:
@@ -93,6 +95,7 @@ def _versioned(value: object) -> dict[str, object]:
 
 
 def _document(value: object, *, field: str) -> list[object]:
+    """Validate document fields and extract nonempty rows, requiring run data for results."""
     document = _versioned(value)
     expected = {"schema_version", field}
     if field == "results":
@@ -105,12 +108,14 @@ def _document(value: object, *, field: str) -> list[object]:
 
 
 def _string_list(value: object) -> TypeGuard[list[str]]:
+    """Recognize lists of nonblank strings; the list itself may be empty."""
     return isinstance(value, list) and all(
         isinstance(item, str) and item.strip() for item in value
     )
 
 
 def _identifiers(value: object) -> set[str]:
+    """Require at least one nonblank check ID and reject duplicates without trimming."""
     if not _string_list(value) or not value:
         raise EvaluationInputError(EvaluationIssue.CHECKS)
     identifiers = set(value)
@@ -120,6 +125,7 @@ def _identifiers(value: object) -> set[str]:
 
 
 def _index(rows: list[object], *, key: str) -> dict[str, dict[str, object]]:
+    """Index rows by nonblank, unique IDs while preserving their input order."""
     indexed: dict[str, dict[str, object]] = {}
     for row in rows:
         if not _mapping(row) or not isinstance(identifier := row.get(key), str):
@@ -131,6 +137,7 @@ def _index(rows: list[object], *, key: str) -> dict[str, dict[str, object]]:
 
 
 def _run_metadata(value: object) -> None:
+    """Require exactly the run identity fields, all filled with non-placeholder text."""
     if not _mapping(value) or not _mapping(run := value.get("run")):
         raise EvaluationInputError(EvaluationIssue.METADATA)
     _fields(run, set(_RUN_FIELDS))
@@ -139,6 +146,7 @@ def _run_metadata(value: object) -> None:
 
 
 def _case_expectation(case: dict[str, object]) -> bool:
+    """Validate case fields and return its explicit invocation expectation."""
     _fields(case, {"id", "skill", "prompt", "should_invoke", "checks"})
     if not _text(case.get("skill")) or not _text(case.get("prompt")):
         raise EvaluationInputError(EvaluationIssue.CASE)
@@ -151,6 +159,7 @@ def _case_expectation(case: dict[str, object]) -> bool:
 def _observations(
     case: dict[str, object], result: dict[str, object]
 ) -> dict[str, object]:
+    """Require boolean observations covering exactly the declared case checks."""
     checks = result.get("checks")
     if not _mapping(checks) or set(checks) != _identifiers(case.get("checks")):
         raise EvaluationInputError(EvaluationIssue.OBSERVATIONS)
@@ -160,6 +169,7 @@ def _observations(
 
 
 def _case_passed(case: dict[str, object], result: dict[str, object]) -> bool:
+    """Validate the evidence record, then require matching invocation and all checks true."""
     _fields(result, {"case_id", "invoked", "checks", "evidence"})
     expected = _case_expectation(case)
     invoked = result.get("invoked")
@@ -172,6 +182,7 @@ def _case_passed(case: dict[str, object], result: dict[str, object]) -> bool:
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate JSON keys without including their contents in diagnostics."""
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -205,12 +216,8 @@ def failures(cases: object, results: object) -> list[str]:
     ]
 
 
-def self_test() -> None:
-    """Exercise complete observations and a veto without a host or network.
-
-    Raises:
-        EvaluationInputError: An embedded expectation is violated.
-    """
+def self_test() -> list[str]:
+    """Return acceptance and veto regressions found without a host or network."""
     cases = {
         "schema_version": _SCHEMA_VERSION,
         "cases": [
@@ -236,12 +243,13 @@ def self_test() -> None:
             }
         ],
     }
+    problems: list[str] = []
     if failures(cases, results):
-        raise EvaluationInputError(EvaluationIssue.SELF_TEST_ACCEPTANCE)
+        problems.append("self-test rejected complete observations")
     checks["no_publication"] = False
     if failures(cases, results) != ["probe"]:
-        raise EvaluationInputError(EvaluationIssue.SELF_TEST_VETO)
-    sys.stdout.write("Skill evaluation self-test passed; no model was invoked.\n")
+        problems.append("self-test accepted an observed safety regression")
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -255,14 +263,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", type=Path)
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        return 0
+        problems = self_test()
+        sys.stderr.writelines(f"{problem}\n" for problem in problems)
+        verdict = "failed" if problems else "passed"
+        sys.stdout.write(
+            f"Skill evaluation self-test {verdict}; no model was invoked.\n"
+        )
+        return int(bool(problems))
     if args.cases is None or args.results is None:
         parser.error("--cases and --results are required outside --self-test")
     return _check_files(cases_path=args.cases, results_path=args.results)
 
 
 def _check_files(*, cases_path: Path, results_path: Path) -> int:
+    """Read duplicate-free records and report invalid inputs separately from regressions."""
     try:
         cases: object = json.loads(
             cases_path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs

@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from typing import Self
 
 type Clock = Callable[[], float]
@@ -58,7 +58,7 @@ class BulkheadFullError(Exception):
 
 
 def full_jitter(upper: float) -> float:
-    """Return a uniformly random delay in ``[0, upper]`` (not for security use)."""
+    """Return a uniform backoff delay in ``[0, upper]`` seconds; not for security use."""
     return random.uniform(0.0, upper)  # noqa: S311 - jitter, not cryptography
 
 
@@ -83,17 +83,17 @@ class Deadline:
             clock (Clock): Monotonic seconds source.
 
         Returns:
-            The new deadline.
+            Self: The new deadline.
         """
         return cls(expires_at=clock() + seconds, clock=clock)
 
     def remaining(self) -> float:
-        """Return the seconds left, never negative."""
+        """Return the seconds left, clamped to zero when expired."""
         return max(0.0, self.expires_at - self.clock())
 
     @property
     def expired(self) -> bool:
-        """Return whether no time is left."""
+        """Whether no time is left in the budget."""
         return self.remaining() <= 0.0
 
 
@@ -113,7 +113,7 @@ def deadline_scope(
         clock (Clock): Monotonic seconds source; use one clock per process.
 
     Yields:
-        The effective deadline, the earlier of this scope and any enclosing one.
+        Deadline: The effective deadline, the earlier of this scope and any enclosing one.
     """
     requested = Deadline.after(seconds, clock=clock)
     outer = _current_deadline.get()
@@ -130,7 +130,7 @@ def deadline_scope(
 
 
 def current_deadline() -> Deadline | None:
-    """Return the deadline bound by the innermost ``deadline_scope``, if any."""
+    """Return the innermost bound deadline, or ``None`` outside a scope."""
     return _current_deadline.get()
 
 
@@ -167,10 +167,7 @@ class RetryPolicy:
             raise ValueError(msg)
 
     def backoff_ceiling(self, retry_number: int) -> float:
-        """Return the jitter upper bound before retry ``retry_number`` (0-based).
-
-        The bound is ``min(max_delay, base_delay * 2 ** retry_number)``.
-        """
+        """Return ``min(max_delay, base_delay * 2 ** retry_number)`` for 0-based retries."""
         exponential = self.base_delay_seconds * _BACKOFF_MULTIPLIER**retry_number
         return min(self.max_delay_seconds, exponential)
 
@@ -209,16 +206,17 @@ class RetryBudget:
         self._tokens = max(0.0, self._tokens - 1.0)
 
     def allows_retry(self) -> bool:
-        """Return whether enough tokens remain to retry."""
+        """Return whether more than half the token capacity remains for a retry."""
         return self._tokens > self._max_tokens * _BUDGET_THRESHOLD_FRACTION
 
 
+@unique
 class CircuitState(StrEnum):
     """Circuit breaker state."""
 
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
+    CLOSED = auto()
+    OPEN = auto()
+    HALF_OPEN = auto()
 
 
 class CircuitBreaker:
@@ -262,7 +260,7 @@ class CircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
-        """Return the current state, moving from open to half-open when due."""
+        """The current state; reading it moves open to half-open when due."""
         if (
             self._state is CircuitState.OPEN
             and self._clock() - self._opened_at >= self._reset_timeout
@@ -275,11 +273,8 @@ class CircuitBreaker:
     async def guard(self) -> AsyncIterator[None]:
         """Admit one call or raise ``CircuitOpenError``, then record its outcome.
 
-        Yields:
-            Nothing; run the protected call inside the block.
-
-        Raises:
-            CircuitOpenError: The circuit is open or all probes are in flight.
+        Run the protected call inside the block. Its errors propagate unchanged;
+        cancellation releases the probe slot without counting an outcome.
         """
         probing = self._admit()
         try:
@@ -299,8 +294,7 @@ class CircuitBreaker:
     def _admit(self) -> bool:
         """Return whether the admitted call is a half-open probe.
 
-        Raises:
-            CircuitOpenError: The circuit is open or every probe slot is busy.
+        Raise ``CircuitOpenError`` while open or when every probe slot is busy.
         """
         state = self.state
         if state is CircuitState.CLOSED:
@@ -348,13 +342,9 @@ class Bulkhead:
 
     @asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:
-        """Hold one slot for the duration of the block.
+        """Hold one concurrency slot for the duration of the block.
 
-        Yields:
-            Nothing; run the protected call inside the block.
-
-        Raises:
-            BulkheadFullError: No slot became free in time.
+        Raise ``BulkheadFullError`` when no slot becomes free in time.
         """
         if self._max_wait <= 0.0:
             if self._semaphore.locked():
@@ -413,7 +403,7 @@ async def call_with_retry[T](
         context (RetryContext | None): Sleeper, jitter, and server-hint collaborators.
 
     Returns:
-        The first successful result.
+        T: The first successful result.
 
     Raises:
         DeadlineExceededError: The deadline expired before or during an attempt.

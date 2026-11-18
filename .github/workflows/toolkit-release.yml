@@ -1,0 +1,59 @@
+name: Toolkit release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: $/.github/workflows/toolkit-ci.yml
+    # The reusable verification includes the OIDC coverage upload job.
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      release-tag: ${{ github.ref_name }}
+
+  publish:
+    name: Draft artifacts after release approval
+    needs: verify
+    if: github.event.repository.visibility == 'public'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    # Consumes verified artifacts only; the tagged verify gate already checked
+    # release readiness and publication owners, so no repository code runs here.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-artifacts
+          path: artifacts
+      - name: Verify downloaded checksums
+        working-directory: artifacts
+        run: sha256sum --check SHA256SUMS
+      - name: Attest the verified workflow artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/*.whl
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/SHA256SUMS
+      - name: Create draft only; operator reviews and publishes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" artifacts/*.whl artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS --verify-tag --draft --prerelease --generate-notes

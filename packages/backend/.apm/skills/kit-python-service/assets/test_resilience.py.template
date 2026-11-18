@@ -2,12 +2,13 @@
 
 Copy into ``tests/unit/test_resilience.py``. The fake sleeper advances the fake
 clock instead of waiting, and the jitter stub returns the ceiling, so every
-delay is exact. Replace 'shop.infrastructure.resilience' with the module that
+delay is exact. Replace ``shop.infrastructure.resilience`` with the module that
 holds the copied template.
 """
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Final
 
 import pytest
 from shop.infrastructure.resilience import (
@@ -42,7 +43,7 @@ class FakeClock:
 
 
 class Flaky:
-    """Fails with the given errors in order, then returns 'ok'."""
+    """Fails with the given errors in order, then returns ``ok``."""
 
     def __init__(self, *errors: Exception) -> None:
         self._errors = list(errors)
@@ -70,7 +71,7 @@ def run[T](awaitable: Callable[[], Awaitable[T]]) -> T:
     return asyncio.run(main())
 
 
-POLICY = RetryPolicy(attempts=4, base_delay_seconds=0.1, max_delay_seconds=0.3)
+POLICY: Final[RetryPolicy] = RetryPolicy(attempts=4, base_delay_seconds=0.1, max_delay_seconds=0.3)
 
 
 def test_backoff_is_capped_exponential() -> None:

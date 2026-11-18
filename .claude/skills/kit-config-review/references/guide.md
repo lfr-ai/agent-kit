@@ -20,6 +20,10 @@ equal names are not semantic equivalence.
 - Description/body limits and selected source footprint remain in budget.
 - Existing output is audited before generation updates hashes.
 - Negative fixtures prove forbidden fields, escaping paths and drift are rejected.
+- Convention changes compare guidance, templates, checker behavior and actual
+  path discovery. Exercise a nested consumer package, not only the toolkit's
+  own source folder. Distinguish an intentional policy change from a violation
+  of the previous policy.
 - Native allowed/denied actions are certified separately from source metadata.
 
 ## Failure and recovery

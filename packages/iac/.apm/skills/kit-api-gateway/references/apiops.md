@@ -5,7 +5,9 @@ template is [apiops.yml](../assets/github/apiops.yml.template); the
 infrastructure templates are [main.bicep](../assets/bicep/main.bicep.template),
 [apim.bicep](../assets/bicep/apim.bicep.template),
 [api.bicep](../assets/bicep/api.bicep.template), and
-[main.bicepparam](../assets/bicep/main.bicepparam.template).
+[main.bicepparam](../assets/bicep/main.bicepparam.template); the Terraform
+equivalent is [apim.tf](../assets/terraform/apim.tf.template) (`azurerm`
+5.x, verified 2026-11-06).
 
 ## Principles
 
@@ -49,6 +51,11 @@ The OpenAPI document is produced and versioned by the service that owns the
 contract (`kit-api-contracts`). The gateway repository imports a released copy
 (by commit, package, or artifact digest); it never edits operations.
 
+With Terraform, `apim/main.tf` (from the template) replaces `main.bicep` and
+`modules/`, and `env/<env>.tfvars` files replace `parameters/`; `policies/`
+and `openapi/` stay the same. Commit `.terraform.lock.hcl` and keep state in
+the team's approved remote backend.
+
 ## Two tools, two jobs
 
 | Concern | Tool | Why |
@@ -67,7 +74,12 @@ contract (`kit-api-contracts`). The gateway repository imports a released copy
   two tools writing the same API cause flapping.
 - Terraform: the `azurerm` provider has `azurerm_api_management*` resources
   for the same objects; use `azapi` only for properties not yet in `azurerm`.
-  Keep the same file layout and gates (`kit-terraform-validation`).
+  The [apim.tf](../assets/terraform/apim.tf.template) template needs no
+  `azapi`: `azurerm` 5.x covers the v2 tiers, the managed-identity logger
+  (`identity_client_id = "SystemAssigned"`), and backend circuit breakers.
+  Load policies with `file()`, not `templatefile()`, so `{{named-value}}`
+  references reach the gateway unchanged. Keep the same file layout and gates
+  (`kit-terraform-validation`).
 
 ## Pull request gates
 
@@ -83,7 +95,9 @@ Run in order, without cloud credentials:
    `python3 tools/check_apim_policy.py --require-auth --require-quota apim/policies`.
    Each finding is fixed or disabled by rule with a written reason in the pull
    request.
-4. Bicep build, `bicep lint`, and `build-params` for every parameter file.
+4. Bicep build, `bicep lint`, and `build-params` for every parameter file; with
+   Terraform, `terraform fmt -check` and `terraform validate` after
+   `terraform init -backend=false`.
 5. Policy XML parsing is part of the policy gate; a policy that fails
    to parse fails the build before Azure rejects it.
 
@@ -118,7 +132,8 @@ With credentials (a read-only identity, `<env>-preview` environment):
 - The pipeline never sees secret values. Bicep passes Key Vault secret URIs
   (without version) to named values; the instance identity reads them.
 - Parameter files contain only non-secret values. A secret in a
-  `.bicepparam` file is a defect even if the repository is private.
+  `.bicepparam` or `.tfvars` file is a defect even if the repository is
+  private.
 - `azure/login` uses `client-id`, `tenant-id`, and `subscription-id` with
   `id-token: write`; federated credentials are bound to GitHub environments so
   only approved jobs can deploy.
@@ -154,6 +169,13 @@ specific to the API gateway.
   <https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-what-if>
 - Bicep resource reference, `Microsoft.ApiManagement/service/apis`:
   <https://learn.microsoft.com/en-us/azure/templates/microsoft.apimanagement/service/apis>
+- Terraform `azurerm` 5.13.0 (verified 2026-11-06), `azurerm_api_management`
+  and related resources:
+  <https://registry.terraform.io/providers/hashicorp/azurerm/5.13.0/docs/resources/api_management>
+- `azurerm_api_management_logger` (`identity_client_id`):
+  <https://registry.terraform.io/providers/hashicorp/azurerm/5.13.0/docs/resources/api_management_logger>
+- `azurerm` 5.0 upgrade guide:
+  <https://registry.terraform.io/providers/hashicorp/azurerm/5.13.0/docs/guides/5.0-upgrade-guide>
 - Authenticate to Azure from GitHub Actions with OpenID Connect:
   <https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect>
 - GitHub Actions environments:

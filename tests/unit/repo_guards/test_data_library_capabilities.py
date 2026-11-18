@@ -4,8 +4,8 @@ import ast
 import json
 from pathlib import Path
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 _ROOT = Path(__file__).resolve().parents[3]
 _BACKEND = _ROOT / "packages/backend/.apm"

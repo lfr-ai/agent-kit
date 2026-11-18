@@ -36,6 +36,7 @@ import hashlib
 import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Final
 
 from redis.asyncio import Redis
 from redis.commands.core import AsyncScript
@@ -52,7 +53,7 @@ _REPLY_LENGTH = 4
 # The emission interval is window / limit; the burst tolerance is window minus
 # one interval, so ``limit`` requests fit in an empty bucket.
 # Returns {allowed (0 or 1), remaining, retry_after_ms, reset_ms}.
-GCRA_SCRIPT = """
+GCRA_SCRIPT: Final[str] = """
 local key = KEYS[1]
 local window = tonumber(ARGV[1])
 local interval = window / tonumber(ARGV[2])
@@ -101,15 +102,10 @@ class RedisRateLimitStore:
     async def bind(self, client: Redis) -> AsyncIterator[None]:
         """Use a client for the duration of the lifespan.
 
-        The client is owned and closed by the caller. Until a client is bound,
-        and after the block exits, ``hit`` raises ``RateLimitStoreError`` so
-        the middleware applies its failure mode.
-
-        Args:
-            client (Redis): Connected or lazily connecting ``redis.asyncio`` client.
-
-        Yields:
-            Nothing; the store is usable inside the block.
+        The ``redis.asyncio`` client may be connected or lazily connecting; it is
+        owned and closed by the caller. Until a client is bound, and after the
+        block exits, ``hit`` raises ``RateLimitStoreError`` so the middleware
+        applies its failure mode.
         """
         self._script = client.register_script(GCRA_SCRIPT)
         try:
@@ -159,8 +155,7 @@ class RedisRateLimitStore:
 def _decision_from(reply: object) -> RateDecision:
     """Validate the script reply and convert milliseconds to whole seconds.
 
-    Raises:
-        RateLimitStoreError: The reply is not four integers.
+    A reply that is not four integers raises ``RateLimitStoreError``.
     """
     values = (
         tuple(item for item in reply if isinstance(item, int))

@@ -1,0 +1,278 @@
+# One preview or deploy pass for one Azure DevOps environment; see docs/deploy.md.
+# preview: validate, compile and what-if (Bicep) or save a plan (Terraform), publish the artifact.
+# deploy: validate, download that artifact and apply it unchanged. The job checks out self first.
+# Approvals are evaluated per stage, so callers put preview and deploy in separate stages.
+parameters:
+  - name: mode
+    type: string
+    values:
+      - preview
+      - deploy
+  - name: environment
+    type: string
+  # Workload identity federation Azure Resource Manager service connection for this environment.
+  - name: serviceConnection
+    type: string
+  - name: iac
+    type: string
+    default: bicep
+    values:
+      - bicep
+      - terraform
+  - name: workingDirectory
+    type: string
+    default: infra
+  # Relative to workingDirectory; empty selects <environment>.bicepparam or <environment>.tfvars.
+  - name: parametersFile
+    type: string
+    default: ""
+  # Existing target resource group; Bicep only.
+  - name: resourceGroup
+    type: string
+    default: ""
+  # Optional registry/repository@sha256 digest: containerImage (Bicep) or container_image (Terraform).
+  - name: image
+    type: string
+    default: ""
+  # Optional HTTPS URL that must answer 2xx after deployment, for example https://<public host>/health/ready.
+  - name: healthUrl
+    type: string
+    default: ""
+  # Terraform state storage account (Microsoft Entra authorization).
+  - name: tfstateStorageAccount
+    type: string
+    default: ""
+  - name: tfstateContainer
+    type: string
+    default: tfstate
+  - name: bicepVersion
+    type: string
+    default: 0.48.1
+  - name: terraformVersion
+    type: string
+    default: 1.16.7
+  # SHA-256 of terraform_<version>_linux_amd64.zip from SHA256SUMS.
+  - name: terraformSha256
+    type: string
+    default: 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b
+  # Full ref that preview and deploy require, for example refs/heads/main; empty skips the branch
+  # test. Pull-request builds never preview or deploy: a what-if or plan runs consumer code with the
+  # deploy identity. Environment and service connection checks remain the authoritative gate.
+  - name: deployBranch
+    type: string
+    default: ""
+
+steps:
+  - ${{ if eq(parameters.mode, 'deploy') }}:
+      - download: current
+        artifact: delivery-azure-deploy-${{ parameters.environment }}
+        displayName: Download reviewed preview
+
+  # Kept inline and mirrored in .github/workflows/delivery-azure-deploy.yml ("Validate inputs"):
+  # consumers reference this template repository without checking it out, so a shared script file
+  # would not be on disk. tests/unit/delivery/test_pipeline_input_parity.py keeps the patterns equal.
+  - bash: |
+      set -euo pipefail
+      fail() { echo "##vso[task.logissue type=error]$1"; exit 1; }
+      name_pattern='^[a-z0-9][a-z0-9_-]{0,31}$'
+      path_pattern='^[A-Za-z0-9_][A-Za-z0-9._/-]*$'
+      group_pattern='^[-_.()A-Za-z0-9]{0,89}[-_()A-Za-z0-9]$'
+      image_pattern='^[A-Za-z0-9._:/-]+/[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$'
+      container_pattern='^[a-z0-9]([a-z0-9]|-[a-z0-9]){2,62}$'
+      branch_pattern='^refs/(heads|tags)/[A-Za-z0-9._/-]+$'
+      relative() {
+        [[ "$1" =~ $path_pattern && "$1" != *..* && "$1" != */ && "$1" != *//* ]]
+      }
+      [[ "$ENVIRONMENT" =~ $name_pattern ]] ||
+        fail "environment must be 1-32 lowercase letters, digits, '-' or '_'"
+      if [[ "${SYSTEM_PULLREQUEST_ISFORK:-False}" == True ]]; then
+        fail "Runs started from a fork must not deploy"
+      fi
+      # Defence in depth behind the stage conditions and the Branch control checks; applies to both
+      # modes because preview also runs consumer code with the deploy identity.
+      if [[ "${BUILD_REASON:-}" == PullRequest || -n "${SYSTEM_PULLREQUEST_PULLREQUESTID:-}" ]]; then
+        fail "Pull-request builds must not preview or deploy"
+      fi
+      if [[ -n "${DEPLOY_BRANCH:-}" ]]; then
+        [[ "$DEPLOY_BRANCH" =~ $branch_pattern && "$DEPLOY_BRANCH" != *..* ]] ||
+          fail "deployBranch must be a full ref such as refs/heads/main"
+        [[ "${BUILD_SOURCEBRANCH:-}" == "$DEPLOY_BRANCH" ]] ||
+          fail "Only ${DEPLOY_BRANCH} may preview or deploy"
+      fi
+      case "$IAC" in
+        bicep) parameters="${PARAMETERS:-${ENVIRONMENT}.bicepparam}" ;;
+        terraform) parameters="${PARAMETERS:-${ENVIRONMENT}.tfvars}" ;;
+        *) fail "iac must be bicep or terraform" ;;
+      esac
+      if [[ "$WORKING_DIRECTORY" != . ]] && ! relative "$WORKING_DIRECTORY"; then
+        fail "workingDirectory must be repository-relative without '..' or a trailing '/'"
+      fi
+      relative "$parameters" ||
+        fail "parametersFile must be relative to workingDirectory without '..'"
+      case "${IAC}:${parameters}" in
+        bicep:*.bicepparam | bicep:*.json | terraform:*.tfvars | terraform:*.tfvars.json) ;;
+        *) fail "parametersFile must be .bicepparam/.json for Bicep or .tfvars/.tfvars.json for Terraform" ;;
+      esac
+      [[ -f "${WORKING_DIRECTORY}/${parameters}" ]] ||
+        fail "Parameters file not found: ${WORKING_DIRECTORY}/${parameters}"
+      if [[ "$IAC" == bicep ]]; then
+        [[ -f "${WORKING_DIRECTORY}/main.bicep" ]] ||
+          fail "Bicep template not found: ${WORKING_DIRECTORY}/main.bicep"
+        [[ "$RESOURCE_GROUP" =~ $group_pattern ]] ||
+          fail "resourceGroup is required for Bicep and must be a valid resource group name"
+        [[ "$BICEP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+          fail "bicepVersion must be an exact version such as 0.48.1"
+      else
+        [[ -z "$RESOURCE_GROUP" ]] ||
+          fail "resourceGroup is Bicep-only; declare Terraform targets in the parameters file"
+        [[ -f "${WORKING_DIRECTORY}/.terraform.lock.hcl" ]] ||
+          fail "Commit the provider lock file ${WORKING_DIRECTORY}/.terraform.lock.hcl"
+        [[ "$TFSTATE_STORAGE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]] ||
+          fail "tfstateStorageAccount is required for Terraform: 3-24 lowercase letters or digits"
+        [[ "$TFSTATE_CONTAINER" =~ $container_pattern && ${#TFSTATE_CONTAINER} -le 63 ]] ||
+          fail "tfstateContainer is not a valid storage container name"
+      fi
+      if [[ -n "$IMAGE" && ! "$IMAGE" =~ $image_pattern ]]; then
+        fail "image must be registry/repository@sha256: followed by 64 lowercase hex digits"
+      fi
+      if [[ -n "$HEALTH_URL" && ! "$HEALTH_URL" =~ ^https://[^[:space:]]+$ ]]; then
+        fail "healthUrl must be an HTTPS URL"
+      fi
+      if [[ "$WORKING_DIRECTORY" == . ]]; then
+        state_key="${ENVIRONMENT}.tfstate"
+      else
+        state_key="${WORKING_DIRECTORY}/${ENVIRONMENT}.tfstate"
+      fi
+      echo "##vso[task.setvariable variable=deployParameters;isreadonly=true]${parameters}"
+      echo "##vso[task.setvariable variable=deployStateKey;isreadonly=true]${state_key}"
+    displayName: Validate deployment inputs
+    env:
+      DEPLOY_BRANCH: ${{ parameters.deployBranch }}
+      ENVIRONMENT: ${{ parameters.environment }}
+      IAC: ${{ parameters.iac }}
+      WORKING_DIRECTORY: ${{ parameters.workingDirectory }}
+      PARAMETERS: ${{ parameters.parametersFile }}
+      RESOURCE_GROUP: ${{ parameters.resourceGroup }}
+      IMAGE: ${{ parameters.image }}
+      HEALTH_URL: ${{ parameters.healthUrl }}
+      BICEP_VERSION: ${{ parameters.bicepVersion }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ parameters.tfstateStorageAccount }}
+      TFSTATE_CONTAINER: ${{ parameters.tfstateContainer }}
+
+  - ${{ if eq(parameters.iac, 'bicep') }}:
+      - task: AzureCLI@2
+        displayName: Bicep ${{ parameters.mode }} ${{ parameters.environment }}
+        inputs:
+          azureSubscription: ${{ parameters.serviceConnection }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.workingDirectory }}
+          inlineScript: |
+            set -euo pipefail
+            overrides=()
+            if [[ -n "$IMAGE" ]]; then overrides=(--parameters "containerImage=${IMAGE}"); fi
+            if [[ "$MODE" == preview ]]; then
+              rm -rf "$ARTIFACT"
+              mkdir -p "$ARTIFACT"
+              az bicep install --version "v${BICEP_VERSION}"
+              az bicep build --file main.bicep --outfile "${ARTIFACT}/template.json"
+              if [[ "$PARAMETERS" == *.bicepparam ]]; then
+                az bicep build-params --file "$PARAMETERS" --outfile "${ARTIFACT}/params.json"
+              else
+                cp "$PARAMETERS" "${ARTIFACT}/params.json"
+              fi
+              az deployment group what-if --resource-group "$RESOURCE_GROUP" \
+                --template-file "${ARTIFACT}/template.json" --parameters "${ARTIFACT}/params.json" \
+                "${overrides[@]}"
+            else
+              az deployment group create --resource-group "$RESOURCE_GROUP" \
+                --name "delivery-${ENVIRONMENT}-${BUILD_BUILDID}-${SYSTEM_JOBATTEMPT}" \
+                --template-file "${ARTIFACT}/template.json" --parameters "${ARTIFACT}/params.json" \
+                "${overrides[@]}" --query properties.provisioningState --output tsv
+            fi
+        env:
+          MODE: ${{ parameters.mode }}
+          ENVIRONMENT: ${{ parameters.environment }}
+          ARTIFACT: $(Pipeline.Workspace)/delivery-azure-deploy-${{ parameters.environment }}
+          PARAMETERS: $(deployParameters)
+          RESOURCE_GROUP: ${{ parameters.resourceGroup }}
+          IMAGE: ${{ parameters.image }}
+          BICEP_VERSION: ${{ parameters.bicepVersion }}
+
+  - ${{ if eq(parameters.iac, 'terraform') }}:
+      - template: setup-terraform.yml
+        parameters:
+          terraformVersion: ${{ parameters.terraformVersion }}
+          terraformSha256: ${{ parameters.terraformSha256 }}
+      - task: AzureCLI@2
+        displayName: Terraform ${{ parameters.mode }} ${{ parameters.environment }}
+        inputs:
+          azureSubscription: ${{ parameters.serviceConnection }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.workingDirectory }}
+          inlineScript: |
+            set -euo pipefail
+            fail() { echo "##vso[task.logissue type=error]$1"; exit 1; }
+            [[ -n "${AZURESUBSCRIPTION_SERVICE_CONNECTION_ID:-}" ]] ||
+              fail "AzureCLI@2 did not expose the service connection ID; update the agent"
+            ARM_CLIENT_ID="$(az account show --query user.name --output tsv)"
+            ARM_TENANT_ID="$(az account show --query tenantId --output tsv)"
+            ARM_SUBSCRIPTION_ID="$(az account show --query id --output tsv)"
+            ARM_OIDC_AZURE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+            export ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID ARM_OIDC_AZURE_SERVICE_CONNECTION_ID
+            terraform init -input=false -lockfile=readonly \
+              -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+              -backend-config="container_name=${TFSTATE_CONTAINER}" \
+              -backend-config="key=${STATE_KEY}"
+            grep -qs '"type": "azurerm"' .terraform/terraform.tfstate ||
+              fail 'The Terraform root must declare an empty backend "azurerm" {} block'
+            if [[ "$MODE" == preview ]]; then
+              rm -rf "$ARTIFACT"
+              mkdir -p "$ARTIFACT"
+              args=(-input=false "-var-file=${PARAMETERS}" "-out=${ARTIFACT}/tfplan")
+              if [[ -n "$IMAGE" ]]; then args+=("-var=container_image=${IMAGE}"); fi
+              terraform plan "${args[@]}"
+            else
+              terraform apply -input=false "${ARTIFACT}/tfplan"
+            fi
+        env:
+          MODE: ${{ parameters.mode }}
+          ARTIFACT: $(Pipeline.Workspace)/delivery-azure-deploy-${{ parameters.environment }}
+          PARAMETERS: $(deployParameters)
+          STATE_KEY: $(deployStateKey)
+          IMAGE: ${{ parameters.image }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ parameters.tfstateStorageAccount }}
+          TFSTATE_CONTAINER: ${{ parameters.tfstateContainer }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+          TF_IN_AUTOMATION: "1"
+          # Requests the federated ID token for Terraform; never printed or published.
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - ${{ if and(eq(parameters.mode, 'deploy'), ne(parameters.healthUrl, '')) }}:
+      - bash: |
+          set -euo pipefail
+          # New revisions can take minutes to activate; retry before failing the deployment.
+          # --fail accepts redirects, so a sign-in redirect must not count as healthy.
+          status="$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --proto '=https' --retry 10 --retry-delay 15 --retry-all-errors --max-time 10 "$HEALTH_URL")"
+          [[ "$status" =~ ^2[0-9][0-9]$ ]] || {
+            echo "##vso[task.logissue type=error]healthUrl answered HTTP ${status}, not 2xx"
+            exit 1
+          }
+        displayName: Check health ${{ parameters.environment }}
+        env:
+          HEALTH_URL: ${{ parameters.healthUrl }}
+
+  # Preview artifact retention and secrets: pipeline artifacts follow the run's retention policy and cannot expire
+  # sooner, so set a short project retention and limit who can "View builds". The artifact must not
+  # carry secret values: compiled params.json keeps a .bicepparam az.getSecret() as a Key Vault
+  # reference, but literal secure values are written in clear text, and a saved Terraform plan holds
+  # every input and state value, including ones marked sensitive. Pass secrets as Key Vault
+  # references (Bicep getSecret, Container Apps keyVaultUrl secrets, managed identity) and never
+  # as -var values or parameter-file literals.
+  - ${{ if eq(parameters.mode, 'preview') }}:
+      - publish: $(Pipeline.Workspace)/delivery-azure-deploy-${{ parameters.environment }}
+        artifact: delivery-azure-deploy-${{ parameters.environment }}
+        displayName: Publish reviewed preview

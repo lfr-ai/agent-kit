@@ -13,7 +13,7 @@ mcp:
   transport:
     allow: [http, stdio]
 manifest:
-  required_fields: [name, version, includes, license]
+  required_fields: [name, version, license]
   require_explicit_includes: true
   scripts: deny
 security:

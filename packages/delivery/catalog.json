@@ -1,0 +1,1145 @@
+{
+  "azureDevOps": {
+    "extends": {
+      "azure-deploy": {
+        "parameters": {
+          "bicepVersion": {
+            "default": "0.48.1",
+            "required": false,
+            "type": "string"
+          },
+          "deployBranch": {
+            "default": "refs/heads/main",
+            "required": false,
+            "type": "string"
+          },
+          "environments": {
+            "required": true,
+            "type": "object"
+          },
+          "iac": {
+            "default": "bicep",
+            "required": false,
+            "type": "string",
+            "values": [
+              "bicep",
+              "terraform"
+            ]
+          },
+          "image": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "pool": {
+            "default": "hosted",
+            "required": false,
+            "type": "string"
+          },
+          "terraformSha256": {
+            "default": "5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b",
+            "required": false,
+            "type": "string"
+          },
+          "terraformVersion": {
+            "default": "1.16.7",
+            "required": false,
+            "type": "string"
+          },
+          "tfstateContainer": {
+            "default": "tfstate",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 60,
+            "required": false,
+            "type": "number"
+          },
+          "vmImage": {
+            "default": "ubuntu-24.04",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": "infra",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/extends/azure-deploy.yml"
+      },
+      "bicep-check": {
+        "parameters": {
+          "bicepVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "extraSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "path": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 15,
+            "required": false,
+            "type": "number"
+          },
+          "vmImage": {
+            "default": "ubuntu-24.04",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/extends/bicep-check.yml"
+      },
+      "bun-ci": {
+        "parameters": {
+          "bunSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "bunVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "extraSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "script": {
+            "default": "check",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 20,
+            "required": false,
+            "type": "number"
+          },
+          "vmImage": {
+            "default": "ubuntu-24.04",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/extends/bun-ci.yml"
+      },
+      "python-ci": {
+        "parameters": {
+          "baseUrl": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "extraSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "publishCoverage": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "publishTestResults": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "pythonVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "task": {
+            "default": "verify",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 30,
+            "required": false,
+            "type": "number"
+          },
+          "uvVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "vmImage": {
+            "default": "ubuntu-24.04",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/extends/python-ci.yml"
+      },
+      "terraform-check": {
+        "parameters": {
+          "extraSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "runTests": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "terraformSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "terraformVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "tflintSha256": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "tflintVersion": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 15,
+            "required": false,
+            "type": "number"
+          },
+          "vmImage": {
+            "default": "ubuntu-24.04",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/extends/terraform-check.yml"
+      }
+    },
+    "jobs": {
+      "python-task": {
+        "parameters": {
+          "baseUrl": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "bunSha256": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "bunVersion": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "bunWorkingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          },
+          "coverageFile": {
+            "default": "coverage.xml",
+            "required": false,
+            "type": "string"
+          },
+          "extraSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "fetchDepth": {
+            "default": 1,
+            "required": false,
+            "type": "number"
+          },
+          "name": {
+            "default": "python_task",
+            "required": false,
+            "type": "string"
+          },
+          "preCommitCache": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "preSteps": {
+            "default": [],
+            "required": false,
+            "type": "stepList"
+          },
+          "publishCoverage": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "publishTestResults": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "pythonVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "task": {
+            "default": "verify",
+            "required": false,
+            "type": "string"
+          },
+          "testResultsFile": {
+            "default": "junit.xml",
+            "required": false,
+            "type": "string"
+          },
+          "timeoutMinutes": {
+            "default": 30,
+            "required": false,
+            "type": "number"
+          },
+          "uvRequirementsFile": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "uvVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/jobs/python-task.yml"
+      }
+    },
+    "steps": {
+      "azure-deploy": {
+        "parameters": {
+          "bicepVersion": {
+            "default": "0.48.1",
+            "required": false,
+            "type": "string"
+          },
+          "deployBranch": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "environment": {
+            "required": true,
+            "type": "string"
+          },
+          "healthUrl": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "iac": {
+            "default": "bicep",
+            "required": false,
+            "type": "string",
+            "values": [
+              "bicep",
+              "terraform"
+            ]
+          },
+          "image": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "mode": {
+            "required": true,
+            "type": "string",
+            "values": [
+              "preview",
+              "deploy"
+            ]
+          },
+          "parametersFile": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "resourceGroup": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "serviceConnection": {
+            "required": true,
+            "type": "string"
+          },
+          "terraformSha256": {
+            "default": "5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b",
+            "required": false,
+            "type": "string"
+          },
+          "terraformVersion": {
+            "default": "1.16.7",
+            "required": false,
+            "type": "string"
+          },
+          "tfstateContainer": {
+            "default": "tfstate",
+            "required": false,
+            "type": "string"
+          },
+          "tfstateStorageAccount": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": "infra",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/azure-deploy.yml"
+      },
+      "bicep-check": {
+        "parameters": {
+          "bicepVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "path": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/bicep-check.yml"
+      },
+      "setup-bun": {
+        "parameters": {
+          "bunSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "bunVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "lockfile": {
+            "default": "bun.lock",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/setup-bun.yml"
+      },
+      "setup-python-uv": {
+        "parameters": {
+          "pythonVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "sync": {
+            "default": true,
+            "required": false,
+            "type": "boolean"
+          },
+          "uvRequirementsFile": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "uvVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/setup-python-uv.yml"
+      },
+      "setup-terraform": {
+        "parameters": {
+          "terraformSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "terraformVersion": {
+            "required": true,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/setup-terraform.yml"
+      },
+      "setup-tflint": {
+        "parameters": {
+          "tflintSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "tflintVersion": {
+            "required": true,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/setup-tflint.yml"
+      },
+      "terraform-check": {
+        "parameters": {
+          "runTests": {
+            "default": false,
+            "required": false,
+            "type": "boolean"
+          },
+          "terraformSha256": {
+            "required": true,
+            "type": "string"
+          },
+          "terraformVersion": {
+            "required": true,
+            "type": "string"
+          },
+          "tflintSha256": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "tflintVersion": {
+            "default": "",
+            "required": false,
+            "type": "string"
+          },
+          "workingDirectory": {
+            "default": ".",
+            "required": false,
+            "type": "string"
+          }
+        },
+        "path": "azure-devops/steps/terraform-check.yml"
+      }
+    }
+  },
+  "azureInfrastructure": {
+    "ai-foundry": {
+      "bicep": "infra/ai-foundry/bicep/main.bicep",
+      "files": [
+        "infra/ai-foundry/README.md",
+        "infra/ai-foundry/REFERENCE.md",
+        "infra/ai-foundry/bicep/bicepconfig.json",
+        "infra/ai-foundry/bicep/main.bicep",
+        "infra/ai-foundry/bicep/tests/dev.bicepparam",
+        "infra/ai-foundry/bicep/tests/prod.bicepparam",
+        "infra/ai-foundry/terraform/main.tf",
+        "infra/ai-foundry/terraform/outputs.tf",
+        "infra/ai-foundry/terraform/tests/ai-foundry.tftest.hcl",
+        "infra/ai-foundry/terraform/variables.tf",
+        "infra/ai-foundry/terraform/versions.tf"
+      ],
+      "path": "infra/ai-foundry",
+      "terraform": "infra/ai-foundry/terraform/main.tf"
+    },
+    "ai-search": {
+      "bicep": "infra/ai-search/bicep/main.bicep",
+      "files": [
+        "infra/ai-search/README.md",
+        "infra/ai-search/REFERENCE.md",
+        "infra/ai-search/bicep/bicepconfig.json",
+        "infra/ai-search/bicep/main.bicep",
+        "infra/ai-search/bicep/tests/dev.bicepparam",
+        "infra/ai-search/bicep/tests/prod.bicepparam",
+        "infra/ai-search/terraform/main.tf",
+        "infra/ai-search/terraform/outputs.tf",
+        "infra/ai-search/terraform/tests/ai-search.tftest.hcl",
+        "infra/ai-search/terraform/variables.tf",
+        "infra/ai-search/terraform/versions.tf"
+      ],
+      "path": "infra/ai-search",
+      "terraform": "infra/ai-search/terraform/main.tf"
+    },
+    "api-management": {
+      "bicep": "infra/api-management/bicep/main.bicep",
+      "files": [
+        "infra/api-management/README.md",
+        "infra/api-management/REFERENCE.md",
+        "infra/api-management/bicep/bicepconfig.json",
+        "infra/api-management/bicep/main.bicep",
+        "infra/api-management/bicep/tests/dev.bicepparam",
+        "infra/api-management/bicep/tests/prod.bicepparam",
+        "infra/api-management/policies/api.xml",
+        "infra/api-management/policies/llm-tokens.xml",
+        "infra/api-management/policies/validate-token.xml",
+        "infra/api-management/terraform/main.tf",
+        "infra/api-management/terraform/outputs.tf",
+        "infra/api-management/terraform/tests/api-management.tftest.hcl",
+        "infra/api-management/terraform/variables.tf",
+        "infra/api-management/terraform/versions.tf"
+      ],
+      "path": "infra/api-management",
+      "terraform": "infra/api-management/terraform/main.tf"
+    },
+    "application-insights": {
+      "bicep": "infra/application-insights/bicep/main.bicep",
+      "files": [
+        "infra/application-insights/README.md",
+        "infra/application-insights/REFERENCE.md",
+        "infra/application-insights/bicep/bicepconfig.json",
+        "infra/application-insights/bicep/main.bicep",
+        "infra/application-insights/bicep/tests/dev.bicepparam",
+        "infra/application-insights/bicep/tests/prod.bicepparam",
+        "infra/application-insights/terraform/main.tf",
+        "infra/application-insights/terraform/outputs.tf",
+        "infra/application-insights/terraform/tests/application-insights.tftest.hcl",
+        "infra/application-insights/terraform/variables.tf",
+        "infra/application-insights/terraform/versions.tf"
+      ],
+      "path": "infra/application-insights",
+      "terraform": "infra/application-insights/terraform/main.tf"
+    },
+    "audit-logs": {
+      "bicep": "infra/audit-logs/bicep/main.bicep",
+      "files": [
+        "infra/audit-logs/README.md",
+        "infra/audit-logs/REFERENCE.md",
+        "infra/audit-logs/bicep/activity-log.bicep",
+        "infra/audit-logs/bicep/bicepconfig.json",
+        "infra/audit-logs/bicep/main.bicep",
+        "infra/audit-logs/bicep/tests/dev.bicepparam",
+        "infra/audit-logs/bicep/tests/prod.bicepparam",
+        "infra/audit-logs/terraform/main.tf",
+        "infra/audit-logs/terraform/outputs.tf",
+        "infra/audit-logs/terraform/tests/audit-logs.tftest.hcl",
+        "infra/audit-logs/terraform/variables.tf",
+        "infra/audit-logs/terraform/versions.tf"
+      ],
+      "path": "infra/audit-logs",
+      "terraform": "infra/audit-logs/terraform/main.tf"
+    },
+    "container-apps": {
+      "bicep": "infra/container-apps/bicep/main.bicep",
+      "files": [
+        "infra/container-apps/README.md",
+        "infra/container-apps/REFERENCE.md",
+        "infra/container-apps/bicep/app.bicep",
+        "infra/container-apps/bicep/auth.bicep",
+        "infra/container-apps/bicep/bicepconfig.json",
+        "infra/container-apps/bicep/common.bicep",
+        "infra/container-apps/bicep/environment.bicep",
+        "infra/container-apps/bicep/internal-dns.bicep",
+        "infra/container-apps/bicep/main.bicep",
+        "infra/container-apps/bicep/tests/dev.bicepparam",
+        "infra/container-apps/bicep/tests/prod.bicepparam",
+        "infra/container-apps/terraform/main.tf",
+        "infra/container-apps/terraform/outputs.tf",
+        "infra/container-apps/terraform/tests/foundation.tftest.hcl",
+        "infra/container-apps/terraform/variables.tf",
+        "infra/container-apps/terraform/versions.tf"
+      ],
+      "path": "infra/container-apps",
+      "terraform": "infra/container-apps/terraform/main.tf"
+    },
+    "container-apps-alerts": {
+      "bicep": "infra/container-apps-alerts/bicep/main.bicep",
+      "files": [
+        "infra/container-apps-alerts/README.md",
+        "infra/container-apps-alerts/REFERENCE.md",
+        "infra/container-apps-alerts/bicep/bicepconfig.json",
+        "infra/container-apps-alerts/bicep/main.bicep",
+        "infra/container-apps-alerts/bicep/tests/dev.bicepparam",
+        "infra/container-apps-alerts/bicep/tests/prod.bicepparam",
+        "infra/container-apps-alerts/terraform/main.tf",
+        "infra/container-apps-alerts/terraform/outputs.tf",
+        "infra/container-apps-alerts/terraform/tests/alerts.tftest.hcl",
+        "infra/container-apps-alerts/terraform/variables.tf",
+        "infra/container-apps-alerts/terraform/versions.tf"
+      ],
+      "path": "infra/container-apps-alerts",
+      "terraform": "infra/container-apps-alerts/terraform/main.tf"
+    },
+    "container-registry": {
+      "bicep": "infra/container-registry/bicep/main.bicep",
+      "files": [
+        "infra/container-registry/README.md",
+        "infra/container-registry/REFERENCE.md",
+        "infra/container-registry/bicep/bicepconfig.json",
+        "infra/container-registry/bicep/main.bicep",
+        "infra/container-registry/bicep/tests/dev.bicepparam",
+        "infra/container-registry/bicep/tests/prod.bicepparam",
+        "infra/container-registry/terraform/main.tf",
+        "infra/container-registry/terraform/outputs.tf",
+        "infra/container-registry/terraform/tests/container-registry.tftest.hcl",
+        "infra/container-registry/terraform/variables.tf",
+        "infra/container-registry/terraform/versions.tf"
+      ],
+      "path": "infra/container-registry",
+      "terraform": "infra/container-registry/terraform/main.tf"
+    },
+    "cosmos-db": {
+      "bicep": "infra/cosmos-db/bicep/main.bicep",
+      "files": [
+        "infra/cosmos-db/README.md",
+        "infra/cosmos-db/REFERENCE.md",
+        "infra/cosmos-db/bicep/bicepconfig.json",
+        "infra/cosmos-db/bicep/main.bicep",
+        "infra/cosmos-db/bicep/tests/dev.bicepparam",
+        "infra/cosmos-db/bicep/tests/prod.bicepparam",
+        "infra/cosmos-db/terraform/main.tf",
+        "infra/cosmos-db/terraform/outputs.tf",
+        "infra/cosmos-db/terraform/tests/cosmos-db.tftest.hcl",
+        "infra/cosmos-db/terraform/variables.tf",
+        "infra/cosmos-db/terraform/versions.tf"
+      ],
+      "path": "infra/cosmos-db",
+      "terraform": "infra/cosmos-db/terraform/main.tf"
+    },
+    "document-intelligence": {
+      "bicep": "infra/document-intelligence/bicep/main.bicep",
+      "files": [
+        "infra/document-intelligence/README.md",
+        "infra/document-intelligence/REFERENCE.md",
+        "infra/document-intelligence/bicep/bicepconfig.json",
+        "infra/document-intelligence/bicep/main.bicep",
+        "infra/document-intelligence/bicep/tests/dev.bicepparam",
+        "infra/document-intelligence/bicep/tests/prod.bicepparam",
+        "infra/document-intelligence/terraform/main.tf",
+        "infra/document-intelligence/terraform/outputs.tf",
+        "infra/document-intelligence/terraform/tests/document-intelligence.tftest.hcl",
+        "infra/document-intelligence/terraform/variables.tf",
+        "infra/document-intelligence/terraform/versions.tf"
+      ],
+      "path": "infra/document-intelligence",
+      "terraform": "infra/document-intelligence/terraform/main.tf"
+    },
+    "key-vault": {
+      "bicep": "infra/key-vault/bicep/main.bicep",
+      "files": [
+        "infra/key-vault/README.md",
+        "infra/key-vault/REFERENCE.md",
+        "infra/key-vault/bicep/bicepconfig.json",
+        "infra/key-vault/bicep/main.bicep",
+        "infra/key-vault/bicep/tests/dev.bicepparam",
+        "infra/key-vault/bicep/tests/prod.bicepparam",
+        "infra/key-vault/terraform/main.tf",
+        "infra/key-vault/terraform/outputs.tf",
+        "infra/key-vault/terraform/tests/key-vault.tftest.hcl",
+        "infra/key-vault/terraform/variables.tf",
+        "infra/key-vault/terraform/versions.tf"
+      ],
+      "path": "infra/key-vault",
+      "terraform": "infra/key-vault/terraform/main.tf"
+    },
+    "managed-redis": {
+      "bicep": "infra/managed-redis/bicep/main.bicep",
+      "files": [
+        "infra/managed-redis/README.md",
+        "infra/managed-redis/REFERENCE.md",
+        "infra/managed-redis/bicep/bicepconfig.json",
+        "infra/managed-redis/bicep/main.bicep",
+        "infra/managed-redis/bicep/tests/dev.bicepparam",
+        "infra/managed-redis/bicep/tests/prod.bicepparam",
+        "infra/managed-redis/terraform/main.tf",
+        "infra/managed-redis/terraform/outputs.tf",
+        "infra/managed-redis/terraform/tests/redis.tftest.hcl",
+        "infra/managed-redis/terraform/variables.tf",
+        "infra/managed-redis/terraform/versions.tf"
+      ],
+      "path": "infra/managed-redis",
+      "terraform": "infra/managed-redis/terraform/main.tf"
+    },
+    "network": {
+      "bicep": "infra/network/bicep/main.bicep",
+      "files": [
+        "infra/network/README.md",
+        "infra/network/REFERENCE.md",
+        "infra/network/bicep/bicepconfig.json",
+        "infra/network/bicep/main.bicep",
+        "infra/network/bicep/tests/dev.bicepparam",
+        "infra/network/bicep/tests/prod.bicepparam",
+        "infra/network/terraform/main.tf",
+        "infra/network/terraform/outputs.tf",
+        "infra/network/terraform/tests/network.tftest.hcl",
+        "infra/network/terraform/variables.tf",
+        "infra/network/terraform/versions.tf"
+      ],
+      "path": "infra/network",
+      "terraform": "infra/network/terraform/main.tf"
+    },
+    "postgresql": {
+      "bicep": "infra/postgresql/bicep/main.bicep",
+      "files": [
+        "infra/postgresql/README.md",
+        "infra/postgresql/REFERENCE.md",
+        "infra/postgresql/bicep/bicepconfig.json",
+        "infra/postgresql/bicep/main.bicep",
+        "infra/postgresql/bicep/tests/dev.bicepparam",
+        "infra/postgresql/bicep/tests/prod.bicepparam",
+        "infra/postgresql/terraform/main.tf",
+        "infra/postgresql/terraform/outputs.tf",
+        "infra/postgresql/terraform/tests/postgresql.tftest.hcl",
+        "infra/postgresql/terraform/variables.tf",
+        "infra/postgresql/terraform/versions.tf"
+      ],
+      "path": "infra/postgresql",
+      "terraform": "infra/postgresql/terraform/main.tf"
+    },
+    "storage-account": {
+      "bicep": "infra/storage-account/bicep/main.bicep",
+      "files": [
+        "infra/storage-account/README.md",
+        "infra/storage-account/REFERENCE.md",
+        "infra/storage-account/bicep/bicepconfig.json",
+        "infra/storage-account/bicep/main.bicep",
+        "infra/storage-account/bicep/tests/dev.bicepparam",
+        "infra/storage-account/bicep/tests/prod.bicepparam",
+        "infra/storage-account/terraform/main.tf",
+        "infra/storage-account/terraform/outputs.tf",
+        "infra/storage-account/terraform/tests/storage-account.tftest.hcl",
+        "infra/storage-account/terraform/variables.tf",
+        "infra/storage-account/terraform/versions.tf"
+      ],
+      "path": "infra/storage-account",
+      "terraform": "infra/storage-account/terraform/main.tf"
+    },
+    "terraform-state": {
+      "bicep": "infra/terraform-state/bicep/main.bicep",
+      "files": [
+        "infra/terraform-state/README.md",
+        "infra/terraform-state/REFERENCE.md",
+        "infra/terraform-state/bicep/bicepconfig.json",
+        "infra/terraform-state/bicep/main.bicep",
+        "infra/terraform-state/bicep/tests/dev.bicepparam",
+        "infra/terraform-state/bicep/tests/prod.bicepparam",
+        "infra/terraform-state/terraform/main.tf",
+        "infra/terraform-state/terraform/outputs.tf",
+        "infra/terraform-state/terraform/tests/terraform-state.tftest.hcl",
+        "infra/terraform-state/terraform/variables.tf",
+        "infra/terraform-state/terraform/versions.tf"
+      ],
+      "path": "infra/terraform-state",
+      "terraform": "infra/terraform-state/terraform/main.tf"
+    }
+  },
+  "github": {
+    "delivery-azure-deploy": {
+      "inputs": {
+        "bicep-version": {
+          "default": "0.48.1",
+          "description": "Exact Bicep CLI version without the leading v.",
+          "required": false,
+          "type": "string"
+        },
+        "environment": {
+          "description": "Lowercase GitHub environment name; prod and production are always protected.",
+          "required": true,
+          "type": "string"
+        },
+        "health-url": {
+          "default": "",
+          "description": "Optional HTTPS URL that must answer 2xx after deployment, for example https://<public host>/health/ready.",
+          "required": false,
+          "type": "string"
+        },
+        "iac": {
+          "default": "bicep",
+          "description": "bicep (working-directory/main.bicep) or terraform (working-directory root module).",
+          "required": false,
+          "type": "string"
+        },
+        "image": {
+          "default": "",
+          "description": "Optional registry/repository@sha256 digest passed as containerImage (Bicep) or container_image (Terraform).",
+          "required": false,
+          "type": "string"
+        },
+        "parameters": {
+          "default": "",
+          "description": "Parameters file relative to working-directory; empty selects <environment>.bicepparam or <environment>.tfvars.",
+          "required": false,
+          "type": "string"
+        },
+        "protected": {
+          "default": false,
+          "description": "Require reviewers like prod (fail closed when they cannot be verified).",
+          "required": false,
+          "type": "boolean"
+        },
+        "resource-group": {
+          "default": "",
+          "description": "Existing target resource group; required for Bicep only.",
+          "required": false,
+          "type": "string"
+        },
+        "runs-on": {
+          "default": "ubuntu-24.04",
+          "description": "Linux runner label with Bash 4.4+, Python 3, Azure CLI (Bicep) and network access to Azure.",
+          "required": false,
+          "type": "string"
+        },
+        "terraform-version": {
+          "default": "1.16.7",
+          "description": "Exact Terraform version.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout-minutes": {
+          "default": 60,
+          "description": "Plan and deploy job timeout.",
+          "required": false,
+          "type": "number"
+        },
+        "working-directory": {
+          "default": "infra",
+          "description": "Repository-relative IaC directory.",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "path": ".github/workflows/delivery-azure-deploy.yml",
+      "permissions": {
+        "actions": "read",
+        "contents": "read",
+        "id-token": "write"
+      },
+      "secrets": {},
+      "sourceRoot": "repository"
+    },
+    "delivery-bicep-check": {
+      "inputs": {
+        "bicep-version": {
+          "description": "Exact Bicep CLI version without the leading v, for example 0.48.1.",
+          "required": true,
+          "type": "string"
+        },
+        "path": {
+          "default": ".",
+          "description": "Directory searched for .bicep and .bicepparam files.",
+          "required": false,
+          "type": "string"
+        },
+        "runs-on": {
+          "default": "ubuntu-24.04",
+          "description": "Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).",
+          "required": false,
+          "type": "string"
+        },
+        "timeout-minutes": {
+          "default": 15,
+          "description": "Job timeout.",
+          "required": false,
+          "type": "number"
+        }
+      },
+      "path": ".github/workflows/delivery-bicep-check.yml",
+      "permissions": {
+        "contents": "read"
+      },
+      "secrets": {},
+      "sourceRoot": "repository"
+    },
+    "delivery-bun-ci": {
+      "inputs": {
+        "bun-version": {
+          "description": "Exact Bun version.",
+          "required": true,
+          "type": "string"
+        },
+        "runs-on": {
+          "default": "ubuntu-24.04",
+          "description": "Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).",
+          "required": false,
+          "type": "string"
+        },
+        "script": {
+          "default": "check",
+          "description": "package.json script to run (the project's check-only gate).",
+          "required": false,
+          "type": "string"
+        },
+        "timeout-minutes": {
+          "default": 20,
+          "description": "Job timeout.",
+          "required": false,
+          "type": "number"
+        },
+        "working-directory": {
+          "default": ".",
+          "description": "Directory containing package.json and bun.lock.",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "path": ".github/workflows/delivery-bun-ci.yml",
+      "permissions": {
+        "contents": "read"
+      },
+      "secrets": {},
+      "sourceRoot": "repository"
+    },
+    "delivery-python-ci": {
+      "inputs": {
+        "base-url": {
+          "default": "",
+          "description": "URL of a deployed environment, exported as BASE_URL for the smoke and e2e tasks.",
+          "required": false,
+          "type": "string"
+        },
+        "python-version": {
+          "description": "Python version for actions/setup-python.",
+          "required": true,
+          "type": "string"
+        },
+        "runs-on": {
+          "default": "ubuntu-24.04",
+          "description": "Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).",
+          "required": false,
+          "type": "string"
+        },
+        "task": {
+          "default": "verify",
+          "description": "Task name to run (the project's check-only gate).",
+          "required": false,
+          "type": "string"
+        },
+        "timeout-minutes": {
+          "default": 30,
+          "description": "Job timeout.",
+          "required": false,
+          "type": "number"
+        },
+        "uv-version": {
+          "description": "Exact uv version.",
+          "required": true,
+          "type": "string"
+        },
+        "working-directory": {
+          "default": ".",
+          "description": "Directory containing pyproject.toml, uv.lock and Taskfile.yml.",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "path": ".github/workflows/delivery-python-ci.yml",
+      "permissions": {
+        "contents": "read"
+      },
+      "secrets": {},
+      "sourceRoot": "repository"
+    },
+    "delivery-terraform-check": {
+      "inputs": {
+        "run-tests": {
+          "default": false,
+          "description": "Run reviewed plan/mock-only terraform tests; tests may otherwise create resources.",
+          "required": false,
+          "type": "boolean"
+        },
+        "runs-on": {
+          "default": "ubuntu-24.04",
+          "description": "Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).",
+          "required": false,
+          "type": "string"
+        },
+        "terraform-version": {
+          "description": "Exact Terraform version.",
+          "required": true,
+          "type": "string"
+        },
+        "tflint-version": {
+          "default": "",
+          "description": "Exact TFLint version without the leading v; empty skips linting.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout-minutes": {
+          "default": 15,
+          "description": "Job timeout.",
+          "required": false,
+          "type": "number"
+        },
+        "working-directory": {
+          "default": ".",
+          "description": "Root module directory.",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "path": ".github/workflows/delivery-terraform-check.yml",
+      "permissions": {
+        "contents": "read"
+      },
+      "secrets": {},
+      "sourceRoot": "repository"
+    }
+  },
+  "githubActions": {
+    "python-check": {
+      "inputs": {
+        "base-url": {
+          "default": "",
+          "description": "Optional deployed environment URL exposed as BASE_URL to the Task.",
+          "required": false,
+          "type": "string"
+        },
+        "python-version": {
+          "description": "Python major.minor or exact patch version.",
+          "required": true,
+          "type": "string"
+        },
+        "task": {
+          "default": "verify",
+          "description": "One check-only Task name.",
+          "required": false,
+          "type": "string"
+        },
+        "uv-version": {
+          "description": "Exact uv version.",
+          "required": true,
+          "type": "string"
+        },
+        "working-directory": {
+          "default": ".",
+          "description": "Directory containing pyproject.toml, uv.lock and Taskfile.yml.",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "path": "actions/python-check/action.yml",
+      "reference": "$/packages/delivery/actions/python-check",
+      "sourceRoot": "package"
+    }
+  },
+  "renovate": [
+    "renovate/azure-pipelines.json",
+    "renovate/bicep.json",
+    "renovate/default.json",
+    "renovate/terraform.json",
+    "renovate/tool-pins.json"
+  ],
+  "schemaVersion": 4,
+  "version": "0.1.0"
+}

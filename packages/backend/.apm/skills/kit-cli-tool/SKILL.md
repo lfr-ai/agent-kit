@@ -1,6 +1,6 @@
 ---
 name: kit-cli-tool
-description: Use when building or reviewing a Python CLI or SDK entry point, exit codes, JSON output, config, or CLI tests.
+description: Use when building Python CLI/SDK entry points, exit codes, JSON output, config or tests.
 license: MIT
 ---
 

@@ -1,0 +1,148 @@
+"""Explicit process-owned Azure trace export; native FastAPI owns instrumentation."""
+
+from __future__ import annotations  # SDK types stay TYPE_CHECKING-only on 3.13
+
+import atexit
+import os
+from contextlib import ExitStack
+from threading import Lock
+from typing import TYPE_CHECKING
+
+from opentelemetry import trace
+
+from app.settings import AzureMonitorExport
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace import SpanProcessor
+
+_LOCK = Lock()
+_CONFIGURED = list[AzureMonitorExport]()
+_EXPORT_TIMEOUT_SECONDS = 10
+_FORCE_FLUSH_TIMEOUT_MILLIS = 30_000  # OpenTelemetry SpanProcessor default
+_DISABLED_BACKGROUND_FEATURES = (
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+    "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
+    "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED",
+)
+# Raw paths and queries can carry identifiers or tokens; http.route stays.
+_RAW_URL_ATTRIBUTES = frozenset({"url.path", "url.query"})
+
+
+class TelemetryConfigurationError(RuntimeError):
+    """Safe Azure startup failure; console diagnostics omit vendor exception text."""
+
+
+def configure_azure_tracing(export: AzureMonitorExport) -> None:
+    """Configure once per process or raise ``TelemetryConfigurationError``."""
+    with _LOCK:
+        if _CONFIGURED:
+            if _CONFIGURED[0] != export:
+                message = "Azure tracing is already configured with different settings."
+                raise TelemetryConfigurationError(message)
+            return
+        if not isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
+            message = "Azure tracing requires an unconfigured process tracer provider."
+            raise TelemetryConfigurationError(message)
+        _open_pipeline(export)
+        _CONFIGURED.append(export)
+
+
+def _open_pipeline(export: AzureMonitorExport) -> None:
+    # Set before importing the SDK, on every launch path (not just Docker).
+    # These exporter opt-outs prevent additional background metric pipelines.
+    for name in _DISABLED_BACKGROUND_FEATURES:
+        os.environ[name] = "true"
+    try:
+        _install_pipeline(export)
+    except (ImportError, ValueError) as error:
+        message = "Azure trace export could not initialize; check telemetry dependencies and settings."
+        raise TelemetryConfigurationError(message) from error
+
+
+def _install_pipeline(export: AzureMonitorExport) -> None:
+    # Only reached with an explicit connection string and managed identity UUID.
+    from azure.identity import ManagedIdentityCredential  # noqa: PLC0415 - optional SDK
+    from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter  # noqa: PLC0415 - optional SDK
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415 - optional SDK
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415 - optional SDK
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415 - optional SDK
+
+    with ExitStack() as resources:
+        credential = ManagedIdentityCredential(client_id=export.client_id)
+        resources.callback(credential.close)
+        exporter = AzureMonitorTraceExporter(
+            connection_string=export.connection_string,
+            credential=credential,
+            disable_offline_storage=True,
+            connection_timeout=_EXPORT_TIMEOUT_SECONDS,
+            retry_total=0,
+        )
+        provider = TracerProvider(
+            resource=Resource({"service.name": "{{ project_name }}"}),
+            shutdown_on_exit=False,
+        )
+        # Until the processor owns the exporter, construction failures close it.
+        with ExitStack() as pending:
+            pending.callback(exporter.shutdown)
+            processor = _without_raw_urls(BatchSpanProcessor(exporter))
+            pending.pop_all()
+        resources.callback(provider.shutdown)
+        provider.add_span_processor(processor)
+        trace.set_tracer_provider(provider)
+        if trace.get_tracer_provider() is not provider:
+            message = "Another component configured tracing during Azure startup."
+            raise TelemetryConfigurationError(message)
+        # OTel's global provider is write-once: app lifespans do not shut it down.
+        # At worker exit, flush/shutdown the provider BEFORE closing its identity.
+        atexit.register(resources.pop_all().close)
+
+
+def _without_raw_urls(processor: SpanProcessor) -> SpanProcessor:
+    """Wrap ``processor`` so exported spans omit ``url.path`` and ``url.query``.
+
+    FastAPI server spans record both raw; the span name and ``http.route`` keep
+    the route template, which is all the starter exports.
+    """
+    from opentelemetry.context import Context  # noqa: PLC0415 - optional SDK
+    from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor  # noqa: PLC0415 - optional SDK
+
+    def scrubbed(span: ReadableSpan) -> ReadableSpan:
+        attributes = span.attributes or {}
+        if _RAW_URL_ATTRIBUTES.isdisjoint(attributes):
+            return span
+        return ReadableSpan(
+            name=span.name,
+            context=span.context,
+            parent=span.parent,
+            resource=span.resource,
+            attributes={
+                name: value
+                for name, value in attributes.items()
+                if name not in _RAW_URL_ATTRIBUTES
+            },
+            events=span.events,
+            links=span.links,
+            kind=span.kind,
+            status=span.status,
+            start_time=span.start_time,
+            end_time=span.end_time,
+            instrumentation_scope=span.instrumentation_scope,
+        )
+
+    class WithoutRawURLs(SpanProcessor):
+        def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+            processor.on_start(span, parent_context=parent_context)
+
+        def on_end(self, span: ReadableSpan) -> None:
+            processor.on_end(scrubbed(span))
+
+        def shutdown(self) -> None:
+            processor.shutdown()
+
+        def force_flush(
+            self, timeout_millis: int = _FORCE_FLUSH_TIMEOUT_MILLIS
+        ) -> bool:
+            return processor.force_flush(timeout_millis)
+
+    return WithoutRawURLs()

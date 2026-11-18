@@ -21,7 +21,7 @@ src/shop/
     __init__.py          # empty, or re-export create_app for entry points
     app.py               # create_app factory and lifespan
     dependencies.py      # Container and Depends aliases
-    settings.py          # HttpSettings facet
+    settings.py          # HTTPSettings facet
     problems.py          # request id context and problem builder
     errors.py            # exception handlers and problem mapping
     middleware.py        # pure ASGI middleware

@@ -1,0 +1,504 @@
+name: Delivery Azure deploy
+
+# Deploys one caller-owned Bicep template or Terraform root to one GitHub environment per call;
+# callers chain dev -> test -> prod jobs. Azure access is OIDC only: non-secret IDs come from the
+# environment's variables (vars), never secrets. preflight -> plan (what-if/saved plan) -> deploy
+# applies exactly the previewed artifact. Self-contained: no toolkit checkout or kit-ref is needed.
+# Contract and operator setup: packages/delivery/docs/deploy.md.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Lowercase GitHub environment name; prod and production are always protected.
+        type: string
+        required: true
+      iac:
+        description: bicep (working-directory/main.bicep) or terraform (working-directory root module).
+        type: string
+        default: bicep
+      working-directory:
+        description: Repository-relative IaC directory.
+        type: string
+        default: infra
+      parameters:
+        description: Parameters file relative to working-directory; empty selects <environment>.bicepparam or <environment>.tfvars.
+        type: string
+        default: ""
+      resource-group:
+        description: Existing target resource group; required for Bicep only.
+        type: string
+        default: ""
+      image:
+        description: Optional registry/repository@sha256 digest passed as containerImage (Bicep) or container_image (Terraform).
+        type: string
+        default: ""
+      health-url:
+        description: Optional HTTPS URL that must answer 2xx after deployment, for example https://<public host>/health/ready.
+        type: string
+        default: ""
+      protected:
+        description: Require reviewers like prod (fail closed when they cannot be verified).
+        type: boolean
+        default: false
+      bicep-version:
+        description: Exact Bicep CLI version without the leading v.
+        type: string
+        default: 0.48.1
+      terraform-version:
+        description: Exact Terraform version.
+        type: string
+        default: 1.16.7
+      runs-on:
+        description: Linux runner label with Bash 4.4+, Python 3, Azure CLI (Bicep) and network access to Azure.
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        description: Plan and deploy job timeout.
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+# One preview/deploy per environment; in-progress deployments are never cancelled.
+concurrency:
+  group: delivery-azure-deploy-${{ inputs.environment }}
+
+jobs:
+  preflight:
+    name: Preflight ${{ inputs.environment }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      parameters: ${{ steps.inputs.outputs.parameters }}
+      artifact: ${{ steps.inputs.outputs.artifact }}
+      state-key: ${{ steps.inputs.outputs.state-key }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Mirrored in packages/delivery/azure-devops/steps/azure-deploy.yml rather than a shared
+      # script: this reusable workflow checks out only the caller, so a kit script is not on disk.
+      # tests/unit/delivery/test_pipeline_input_parity.py keeps both copies' patterns equal.
+      - name: Validate inputs
+        id: inputs
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IAC: ${{ inputs.iac }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+          PARAMETERS: ${{ inputs.parameters }}
+          RESOURCE_GROUP: ${{ inputs.resource-group }}
+          IMAGE: ${{ inputs.image }}
+          HEALTH_URL: ${{ inputs.health-url }}
+          PROTECTED: ${{ inputs.protected }}
+          BICEP_VERSION: ${{ inputs.bicep-version }}
+          TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.event.workflow_run.head_repository.full_name || github.repository }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          name_pattern='^[a-z0-9][a-z0-9_-]{0,31}$'
+          path_pattern='^[A-Za-z0-9_][A-Za-z0-9._/-]*$'
+          group_pattern='^[-_.()A-Za-z0-9]{0,89}[-_()A-Za-z0-9]$'
+          image_pattern='^[A-Za-z0-9._:/-]+/[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$'
+          relative() {
+            [[ "$1" =~ $path_pattern && "$1" != *..* && "$1" != */ && "$1" != *//* ]]
+          }
+          [[ "$ENVIRONMENT" =~ $name_pattern ]] ||
+            fail "environment must be 1-32 lowercase letters, digits, '-' or '_'"
+          if [[ "$EVENT_NAME" == pull_request_target ]]; then
+            fail "pull_request_target runs must not deploy"
+          fi
+          [[ "$HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]] ||
+            fail "Runs started from fork ${HEAD_REPOSITORY} must not deploy"
+          case "$IAC" in
+            bicep) parameters="${PARAMETERS:-${ENVIRONMENT}.bicepparam}" ;;
+            terraform) parameters="${PARAMETERS:-${ENVIRONMENT}.tfvars}" ;;
+            *) fail "iac must be bicep or terraform" ;;
+          esac
+          if [[ "$WORKING_DIRECTORY" != . ]] && ! relative "$WORKING_DIRECTORY"; then
+            fail "working-directory must be repository-relative without '..' or a trailing '/'"
+          fi
+          relative "$parameters" ||
+            fail "parameters must be relative to working-directory without '..'"
+          case "${IAC}:${parameters}" in
+            bicep:*.bicepparam | bicep:*.json | terraform:*.tfvars | terraform:*.tfvars.json) ;;
+            *) fail "parameters must be .bicepparam/.json for Bicep or .tfvars/.tfvars.json for Terraform" ;;
+          esac
+          [[ -f "${WORKING_DIRECTORY}/${parameters}" ]] ||
+            fail "Parameters file not found: ${WORKING_DIRECTORY}/${parameters}"
+          if [[ "$IAC" == bicep ]]; then
+            [[ -f "${WORKING_DIRECTORY}/main.bicep" ]] ||
+              fail "Bicep template not found: ${WORKING_DIRECTORY}/main.bicep"
+            [[ "$RESOURCE_GROUP" =~ $group_pattern ]] ||
+              fail "resource-group is required for Bicep and must be a valid resource group name"
+            [[ "$BICEP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+              fail "bicep-version must be an exact version such as 0.48.1"
+          else
+            [[ -z "$RESOURCE_GROUP" ]] ||
+              fail "resource-group is Bicep-only; declare Terraform targets in the parameters file"
+            [[ -f "${WORKING_DIRECTORY}/.terraform.lock.hcl" ]] ||
+              fail "Commit the provider lock file ${WORKING_DIRECTORY}/.terraform.lock.hcl"
+            [[ "$TERRAFORM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+              fail "terraform-version must be an exact version such as 1.16.7"
+          fi
+          if [[ -n "$IMAGE" && ! "$IMAGE" =~ $image_pattern ]]; then
+            fail "image must be registry/repository@sha256: followed by 64 lowercase hex digits"
+          fi
+          if [[ -n "$HEALTH_URL" && ! "$HEALTH_URL" =~ ^https://[^[:space:]]+$ ]]; then
+            fail "health-url must be an HTTPS URL"
+          fi
+          protected="$PROTECTED"
+          case "$ENVIRONMENT" in prod | production) protected=true ;; esac
+          if [[ "$WORKING_DIRECTORY" == . ]]; then
+            directory=root
+            state_key="${ENVIRONMENT}.tfstate"
+          else
+            directory="${WORKING_DIRECTORY//\//-}"
+            state_key="${WORKING_DIRECTORY}/${ENVIRONMENT}.tfstate"
+          fi
+          {
+            echo "parameters=${parameters}"
+            echo "protected=${protected}"
+            echo "artifact=delivery-azure-deploy-${ENVIRONMENT}-${directory}"
+            echo "state-key=${state_key}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Require a reviewed environment
+        shell: python3 {0}
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          PROTECTED: ${{ steps.inputs.outputs.protected }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          environment = os.environ["ENVIRONMENT"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          plans = (
+              "Public repositories support environments and required reviewers on every plan; "
+              "private repositories need GitHub Pro/Team for environments and GitHub Enterprise "
+              "for required reviewers."
+          )
+
+          def fail(message):
+              print(f"::error::{message} {plans}")
+              sys.exit(1)
+
+          url = "/".join(
+              (
+                  os.environ["GITHUB_API_URL"],
+                  "repos",
+                  repository,
+                  "environments",
+                  urllib.parse.quote(environment, safe=""),
+              )
+          )
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  settings = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  fail(f"Environment '{environment}' does not exist; an admin must create it with its variables.")
+              fail(f"Cannot read environment '{environment}' (HTTP {error.code}); grant actions: read to the calling job.")
+          except (OSError, ValueError) as error:
+              fail(f"Cannot verify environment '{environment}': {error}.")
+          reviews = [
+              rule
+              for rule in settings.get("protection_rules") or []
+              if rule.get("type") == "required_reviewers" and rule.get("reviewers")
+          ]
+          if os.environ["PROTECTED"] != "true":
+              print(f"Environment '{environment}' exists; reviewer rules: {len(reviews)}.")
+              sys.exit(0)
+          if not reviews:
+              fail(f"Protected environment '{environment}' has no required reviewers; add at least one.")
+          # Each gap lets a token for this environment's identity be minted without an
+          # independent reviewer, so protected environments fail instead of warning.
+          gaps = []
+          if not any(rule.get("prevent_self_review") is True for rule in reviews):
+              gaps.append("Enable 'Prevent self-review' so the person who triggers a run cannot approve it")
+          if settings.get("can_admins_bypass") is not False:
+              gaps.append("Clear 'Allow administrators to bypass configured protection rules'")
+          branches = settings.get("deployment_branch_policy")
+          if not (
+              isinstance(branches, dict)
+              and (branches.get("protected_branches") is True or branches.get("custom_branch_policies") is True)
+          ):
+              gaps.append(
+                  "Restrict deployment branches and tags to 'Protected branches only' or 'Selected branches and tags'"
+              )
+          if gaps:
+              fail(
+                  f"Protected environment '{environment}' does not enforce independent review; "
+                  f"in Settings > Environments > {environment}: {'; '.join(gaps)}."
+              )
+          print(f"Environment '{environment}' requires reviewers.")
+
+  plan:
+    name: Preview ${{ inputs.environment }}
+    needs: preflight
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    # Same identity and variables as deploy, without a deployment record; reviewers still apply.
+    # A separate <env>-preview environment (no reviewers, subject environment:<env>-preview) is
+    # not used: the delivery validator and governance gate pin this shape, the preview identity
+    # would need its own variables, branch policy and read-only grant, and the reviewed environment
+    # keeps the plan job behind the same approvals as deploy. See docs/deploy.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: false
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      subscription: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      TF_IN_AUTOMATION: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check environment configuration
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IAC: ${{ inputs.iac }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER || 'tfstate' }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          guid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          container='^[a-z0-9]([a-z0-9]|-[a-z0-9]){2,62}$'
+          require() {
+            [[ "$2" =~ $guid ]] || fail "Set variable $1 (a GUID) on environment '${ENVIRONMENT}'"
+          }
+          require AZURE_CLIENT_ID "$ARM_CLIENT_ID"
+          require AZURE_TENANT_ID "$ARM_TENANT_ID"
+          require AZURE_SUBSCRIPTION_ID "$ARM_SUBSCRIPTION_ID"
+          if [[ -n "${PREVIEWED_SUBSCRIPTION:-}" && "$PREVIEWED_SUBSCRIPTION" != "$ARM_SUBSCRIPTION_ID" ]]; then
+            fail "AZURE_SUBSCRIPTION_ID changed after the preview; rerun the whole workflow"
+          fi
+          if [[ "$IAC" == terraform ]]; then
+            [[ "$TFSTATE_STORAGE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]] ||
+              fail "Set variable TFSTATE_STORAGE_ACCOUNT on environment '${ENVIRONMENT}'"
+            [[ "$TFSTATE_CONTAINER" =~ $container && ${#TFSTATE_CONTAINER} -le 63 ]] ||
+              fail "TFSTATE_CONTAINER on environment '${ENVIRONMENT}' is not a valid container name"
+          fi
+          # Job-scoped Azure CLI profile: credentials never persist on self-hosted runners.
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/azure-cli" >> "$GITHUB_ENV"
+      - name: Azure login
+        if: inputs.iac == 'bicep'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Compile and what-if
+        if: inputs.iac == 'bicep'
+        env:
+          BICEP_VERSION: ${{ inputs.bicep-version }}
+          PARAMETERS: ${{ needs.preflight.outputs.parameters }}
+          RESOURCE_GROUP: ${{ inputs.resource-group }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/delivery-azure-deploy"
+          mkdir -p "$out"
+          az bicep install --version "v${BICEP_VERSION}"
+          az bicep build --file main.bicep --outfile "${out}/template.json"
+          if [[ "$PARAMETERS" == *.bicepparam ]]; then
+            az bicep build-params --file "$PARAMETERS" --outfile "${out}/params.json"
+          else
+            cp "$PARAMETERS" "${out}/params.json"
+          fi
+          overrides=()
+          if [[ -n "$IMAGE" ]]; then overrides=(--parameters "containerImage=${IMAGE}"); fi
+          az deployment group what-if --resource-group "$RESOURCE_GROUP" \
+            --template-file "${out}/template.json" --parameters "${out}/params.json" \
+            "${overrides[@]}"
+      - name: Set up Terraform
+        if: inputs.iac == 'terraform'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      - name: Initialize Terraform state
+        if: inputs.iac == 'terraform'
+        env:
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER || 'tfstate' }}
+          STATE_KEY: ${{ needs.preflight.outputs.state-key }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -lockfile=readonly \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${STATE_KEY}"
+          grep -qs '"type": "azurerm"' .terraform/terraform.tfstate || {
+            echo '::error::The Terraform root must declare an empty backend "azurerm" {} block'
+            exit 1
+          }
+      - name: Terraform plan
+        if: inputs.iac == 'terraform'
+        env:
+          PARAMETERS: ${{ needs.preflight.outputs.parameters }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/delivery-azure-deploy"
+          mkdir -p "$out"
+          args=(-input=false "-var-file=${PARAMETERS}" "-out=${out}/tfplan")
+          if [[ -n "$IMAGE" ]]; then args+=("-var=container_image=${IMAGE}"); fi
+          terraform plan "${args[@]}"
+      # Plans and compiled parameters can contain sensitive values: shortest retention.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ needs.preflight.outputs.artifact }}
+          path: ${{ runner.temp }}/delivery-azure-deploy
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  deploy:
+    name: Deploy ${{ inputs.environment }}
+    needs: [preflight, plan]
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      TF_IN_AUTOMATION: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.preflight.outputs.artifact }}
+          path: ${{ runner.temp }}/delivery-azure-deploy
+      - name: Check environment configuration
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IAC: ${{ inputs.iac }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER || 'tfstate' }}
+          PREVIEWED_SUBSCRIPTION: ${{ needs.plan.outputs.subscription }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          guid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          container='^[a-z0-9]([a-z0-9]|-[a-z0-9]){2,62}$'
+          require() {
+            [[ "$2" =~ $guid ]] || fail "Set variable $1 (a GUID) on environment '${ENVIRONMENT}'"
+          }
+          require AZURE_CLIENT_ID "$ARM_CLIENT_ID"
+          require AZURE_TENANT_ID "$ARM_TENANT_ID"
+          require AZURE_SUBSCRIPTION_ID "$ARM_SUBSCRIPTION_ID"
+          if [[ -n "${PREVIEWED_SUBSCRIPTION:-}" && "$PREVIEWED_SUBSCRIPTION" != "$ARM_SUBSCRIPTION_ID" ]]; then
+            fail "AZURE_SUBSCRIPTION_ID changed after the preview; rerun the whole workflow"
+          fi
+          if [[ "$IAC" == terraform ]]; then
+            [[ "$TFSTATE_STORAGE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]] ||
+              fail "Set variable TFSTATE_STORAGE_ACCOUNT on environment '${ENVIRONMENT}'"
+            [[ "$TFSTATE_CONTAINER" =~ $container && ${#TFSTATE_CONTAINER} -le 63 ]] ||
+              fail "TFSTATE_CONTAINER on environment '${ENVIRONMENT}' is not a valid container name"
+          fi
+          # Job-scoped Azure CLI profile: credentials never persist on self-hosted runners.
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/azure-cli" >> "$GITHUB_ENV"
+      - name: Azure login
+        if: inputs.iac == 'bicep'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy previewed template
+        if: inputs.iac == 'bicep'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          RESOURCE_GROUP: ${{ inputs.resource-group }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/delivery-azure-deploy"
+          overrides=()
+          if [[ -n "$IMAGE" ]]; then overrides=(--parameters "containerImage=${IMAGE}"); fi
+          az deployment group create --resource-group "$RESOURCE_GROUP" \
+            --name "delivery-${ENVIRONMENT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file "${out}/template.json" --parameters "${out}/params.json" \
+            "${overrides[@]}" --query properties.provisioningState --output tsv
+      - name: Set up Terraform
+        if: inputs.iac == 'terraform'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      - name: Initialize Terraform state
+        if: inputs.iac == 'terraform'
+        env:
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER || 'tfstate' }}
+          STATE_KEY: ${{ needs.preflight.outputs.state-key }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -lockfile=readonly \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${STATE_KEY}"
+          grep -qs '"type": "azurerm"' .terraform/terraform.tfstate || {
+            echo '::error::The Terraform root must declare an empty backend "azurerm" {} block'
+            exit 1
+          }
+      - name: Apply saved plan
+        if: inputs.iac == 'terraform'
+        run: terraform apply -input=false "${RUNNER_TEMP}/delivery-azure-deploy/tfplan"
+      - name: Check health
+        if: inputs.health-url != ''
+        env:
+          HEALTH_URL: ${{ inputs.health-url }}
+        run: |
+          set -euo pipefail
+          # New revisions can take minutes to activate; retry before failing the deployment.
+          # --fail accepts redirects, so a sign-in redirect must not count as healthy.
+          status="$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --proto '=https' --retry 10 --retry-delay 15 --retry-all-errors --max-time 10 "$HEALTH_URL")"
+          [[ "$status" =~ ^2[0-9][0-9]$ ]] || { echo "::error::health-url answered HTTP ${status}, not 2xx"; exit 1; }

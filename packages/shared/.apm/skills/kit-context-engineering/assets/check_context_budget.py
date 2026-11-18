@@ -97,14 +97,7 @@ class Limits:
 
 
 def front_matter(text: str) -> dict[str, str]:
-    """Return top-level ``key: value`` pairs of leading front matter.
-
-    Args:
-        text (str): Markdown content.
-
-    Returns:
-        Keys mapped to their raw values; empty when there is no front matter.
-    """
+    """Return top-level ``key: value`` front matter pairs; empty when there is none."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != _FRONT_MATTER_FENCE:
         return {}
@@ -181,7 +174,7 @@ def _scoped_files(
     """Return always-on instructions and unscoped Claude rules.
 
     Returns:
-        ``(path, kind)`` pairs, kind ``instruction`` or ``rule``; instructions come
+        list[tuple[Path, str]]: ``(path, kind)`` pairs, kind ``instruction`` or ``rule``; instructions come
         first and each group is in sorted path order.
     """
     instructions = [
@@ -203,17 +196,16 @@ def discover(
 ) -> list[ContextFile]:
     """Find always-on context files below ``root`` and measure them.
 
+    A discovered or extra file that cannot be read propagates ``OSError``;
+    non-UTF-8 text propagates ``UnicodeDecodeError``.
+
     Args:
         root (Path): Repository root.
         instruction_dirs (Sequence[str]): Folders searched for ``*.instructions.md``.
         extras (Iterable[Path]): Additional files that a host loads by default.
 
     Returns:
-        Measured files sorted by path, each counted once.
-
-    Raises:
-        OSError: A discovered or extra file cannot be read.
-        UnicodeDecodeError: A file is not UTF-8 text.
+        list[ContextFile]: Measured files sorted by path, each counted once.
     """
     candidates: list[tuple[Path, str]] = []
     for name in _ENTRY_FILES:
@@ -247,7 +239,7 @@ def evaluate(files: Sequence[ContextFile], *, limits: Limits) -> list[str]:
         limits (Limits): Per-file and total character limits.
 
     Returns:
-        Findings rendered as ``path:1: message``.
+        list[str]: Findings rendered as ``path:1: message``.
     """
     findings = [
         f"{item.path}:1: {item.chars} characters exceeds the per-file limit of {limits.max_file_chars}"

@@ -1,0 +1,89 @@
+# Manual image build: pushes one image to the selected environment's Azure Container Registry
+# through the environment's workload identity service connection and prints its digest for
+# .azuredevops/pipelines/deploy.yml. Only main may build; the deployment job applies the
+# environment's approvals and checks. Staging and prod registries are private: select an agent
+# pool with network access to them.
+trigger: none
+pr: none
+
+parameters:
+  - name: environment
+    displayName: Environment whose registry receives the image
+    type: string
+    default: dev
+    values: [dev, test, staging, prod]
+  - name: pool
+    displayName: Agent pool (hosted uses Microsoft-hosted ubuntu-24.04)
+    type: string
+    default: hosted
+{% raw %}
+stages:
+  - stage: image
+    displayName: Build and push image
+    pool:
+      ${{ if eq(parameters.pool, 'hosted') }}:
+        vmImage: ubuntu-24.04
+      ${{ else }}:
+        name: ${{ parameters.pool }}
+    jobs:
+      - deployment: image
+        displayName: Build and push to ${{ parameters.environment }}
+        environment: ${{ parameters.environment }}
+        timeoutInMinutes: 30
+        workspace:
+          clean: all
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: false
+
+                - bash: |
+                    set -euo pipefail
+                    if [[ "$BUILD_SOURCEBRANCH" != refs/heads/main || "$BUILD_REASON" == PullRequest ]]; then
+                      echo "##vso[task.logissue type=error]Only main may build deployable images"
+                      exit 1
+                    fi
+                    output="$(python3 scripts/validate_environment.py --print-registry "$ENVIRONMENT")"
+                    registry="${output#registry=}"
+                    [[ "$registry" =~ ^[a-z0-9]{5,50}\.azurecr\.io$ ]] || {
+                      echo "##vso[task.logissue type=error]Unexpected registry: $registry"
+                      exit 1
+                    }
+                    echo "##vso[task.setvariable variable=REGISTRY]$registry"
+                  displayName: Validate environment and registry
+                  env:
+                    ENVIRONMENT: ${{ parameters.environment }}
+
+                - task: AzureCLI@2
+                  displayName: Build and push
+                  inputs:
+                    azureSubscription: azure-${{ parameters.environment }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      export DOCKER_CONFIG="$AGENT_TEMPDIRECTORY/docker-config"
+                      # Named builder, removed on exit so self-hosted agents keep no BuildKit container.
+                      builder="image-${BUILD_BUILDID}-${SYSTEM_JOBATTEMPT:-1}"
+                      cleanup() {
+                        docker buildx rm "$builder" >/dev/null 2>&1 || true
+                        docker logout "$REGISTRY" >/dev/null 2>&1 || true
+                        rm -rf "$DOCKER_CONFIG"
+                      }
+                      trap cleanup EXIT
+                      az acr login --name "${REGISTRY%%.*}"
+                      name="${REGISTRY}/${REPOSITORY}"
+                      metadata="$AGENT_TEMPDIRECTORY/image-metadata.json"
+                      docker buildx create --name "$builder" --driver docker-container >/dev/null
+                      docker buildx build --builder "$builder" --pull --push --provenance=mode=max --sbom=true \
+                        --tag "${name}:${BUILD_SOURCEVERSION}" --metadata-file "$metadata" .
+                      digest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$metadata")"
+                      [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "##vso[task.logissue type=error]No image digest"; exit 1; }
+                      echo "Image: ${name}@${digest}"
+                      printf '# Image\n\n`%s@%s`\n' "$name" "$digest" > "$AGENT_TEMPDIRECTORY/image.md"
+                      echo "##vso[task.uploadsummary]$AGENT_TEMPDIRECTORY/image.md"
+{%- endraw %}
+                  env:
+                    REPOSITORY: {{ project_name }}

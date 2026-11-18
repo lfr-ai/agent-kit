@@ -225,19 +225,11 @@ def evaluate(
 
 
 def load_golden_set(path: Path) -> list[GoldenQuery]:
-    """Read a JSON Lines golden set.
+    """Read JSON Lines golden queries in file order; raise ``ValueError`` if invalid.
 
     Each line is an object with ``query_id``, ``text``, ``subject`` and an optional
-    ``gains`` object of identifier to non-negative number.
-
-    Args:
-        path (Path): File to read.
-
-    Returns:
-        Golden queries in file order.
-
-    Raises:
-        ValueError: If a line is malformed or a query id repeats.
+    ``gains`` object of identifier to non-negative number. A malformed line or a
+    repeated query id is invalid.
     """
     queries: list[GoldenQuery] = []
     seen: set[str] = set()

@@ -50,7 +50,7 @@ _EXIT_USAGE = 2
 class Finding:
     """One located defect in a change folder.
 
-    Args:
+    Attributes:
         path: File that holds the defect, or the expected file when missing.
         line: One-based line number; 1 when the defect concerns a whole file.
         message: Human-readable description of the defect.
@@ -69,7 +69,7 @@ class Finding:
 class Settings:
     """Configurable names and markers for one validation run.
 
-    Args:
+    Attributes:
         required: File names that must exist and be nonempty.
         spec_name: File name that holds requirements and scenarios.
         tasks_name: File name that holds the checkbox task list.
@@ -94,7 +94,7 @@ class Settings:
 class Requirement:
     """A parsed requirement section.
 
-    Args:
+    Attributes:
         identifier: Requirement identifier such as ``REQ-001``.
         line: One-based line of the requirement heading.
         kind: Declared change kind: ``add``, ``modify`` or ``remove``.
@@ -151,14 +151,7 @@ class _Draft:
 
 
 def _prose_lines(text: str) -> list[tuple[int, str]]:
-    """Return numbered lines outside fenced code blocks.
-
-    Args:
-        text (str): Markdown document text.
-
-    Returns:
-        One-based line numbers paired with line text, excluding fenced code.
-    """
+    """Return one-based ``(line, text)`` pairs outside fenced code blocks."""
     lines: list[tuple[int, str]] = []
     fenced = False
     for number, line in enumerate(text.splitlines(), start=1):
@@ -232,11 +225,7 @@ def _scenario_messages(
 
 
 def _requirement_messages(requirement: Requirement) -> list[tuple[int, str]]:
-    """Return located messages for one requirement's kind, wording and scenarios.
-
-    Returns:
-        ``(line, message)`` pairs; empty for a valid requirement.
-    """
+    """Return ``(line, message)`` pairs for the kind, wording and scenarios."""
     label = requirement.identifier
     line = requirement.line
     messages: list[tuple[int, str]] = []
@@ -439,16 +428,14 @@ def _trace_findings(
 def check_change(directory: Path, settings: Settings | None = None) -> list[Finding]:
     """Validate one change folder against the lifecycle contract.
 
+    An unreadable or non-UTF-8 file propagates ``OSError`` or ``UnicodeError``.
+
     Args:
         directory (Path): Change folder to validate.
         settings (Settings | None): Names, markers and options; defaults when omitted.
 
     Returns:
         Findings sorted by path and line.
-
-    Raises:
-        OSError: A file exists but cannot be read.
-        UnicodeError: A file is not valid UTF-8.
     """
     options = settings or Settings()
     if not directory.is_dir():
@@ -527,32 +514,17 @@ _VALID_FILES = {
 }
 
 
-class MissingFindingError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, *, expected: str) -> None:
-        """Describe the violated invariant.
-
-        Args:
-            expected (str): Diagnostic expected for the failing input.
-        """
-        super().__init__(f"missing finding: {expected}")
-
-
-def self_test() -> None:
-    """Exercise passing and failing synthetic change folders.
-
-    Raises:
-        AssertionError: A rule does not behave as documented.
-        MissingFindingError: An expected finding is missing.
-    """
+def self_test() -> list[str]:
+    """Return rule failures found on passing and failing synthetic change folders."""
     with TemporaryDirectory(prefix="spec-change-") as raw:
         change = Path(raw) / "add-invoice-export"
         change.mkdir()
         for name, text in _VALID_FILES.items():
             (change / name).write_text(text, encoding="utf-8")
-        if findings := check_change(change, Settings(trace=True)):
-            raise AssertionError([item.render() for item in findings])
+        failures = [
+            f"valid change flagged: {item.render()}"
+            for item in check_change(change, Settings(trace=True))
+        ]
         (change / "tasks.md").write_text(
             "- [ ] Add CSV writer\n- write docs\n", encoding="utf-8"
         )
@@ -560,15 +532,17 @@ def self_test() -> None:
             "## REQ-001 Export\n\nExports invoices. TBD\n", encoding="utf-8"
         )
         messages = " ".join(item.message for item in check_change(change))
-        for expected in (
-            "not a checkbox",
-            "no scenario",
-            "normative keyword",
-            "unresolved marker",
-            "unchecked task",
-        ):
-            if expected not in messages:
-                raise MissingFindingError(expected=expected)
+    expected = (
+        "not a checkbox",
+        "no scenario",
+        "normative keyword",
+        "unresolved marker",
+        "unchecked task",
+    )
+    failures.extend(
+        f"missing finding: {item}" for item in expected if item not in messages
+    )
+    return failures
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -609,9 +583,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_spec_change self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_spec_change self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.changes:
         parser.print_usage(sys.stderr)
         return _EXIT_USAGE

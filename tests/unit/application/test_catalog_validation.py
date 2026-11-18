@@ -9,39 +9,39 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_kit.application.services import catalog_service as cs
-from agent_kit.application.services.catalog_service import (
-    CatalogService,
-    _body_text,
-    _check_hidden_unicode,
-    _check_links,
-    _check_profile_cycles,
-    _check_references,
-    _contained_catalog_path,
-    _contains_hidden_unicode,
-    _effective_bundles,
-    _exact_mapping,
-    _included_paths,
-    _link_index,
-    _link_target,
-    _parse_bundles,
-    _parse_profiles,
-    _policy_mapping,
-    _same_value,
-    _skill_records,
-    _string_list,
+from agent_kit.application.catalog import CatalogService
+from agent_kit.application.catalog.documents import body_text, skill_records
+from agent_kit.application.catalog.links import (
+    check_hidden_unicode,
+    check_links,
+    contains_hidden_unicode,
+    link_index,
+    link_target,
 )
-from agent_kit.application.services.provenance_service import ProvenanceService
+from agent_kit.application.catalog.manifest import included_paths
+from agent_kit.application.catalog.policy import POLICY, policy_mapping, same_value
+from agent_kit.application.catalog.schema import (
+    check_profile_cycles,
+    check_references,
+    contained_catalog_path,
+    effective_bundles,
+    exact_mapping,
+    parse_bundles,
+    parse_profiles,
+    string_list,
+)
+from agent_kit.application.provenance import ProvenanceService
 from agent_kit.core.models import (
     Bundle,
+    BundleKind,
     BundleSource,
     Catalog,
     Finding,
     Profile,
     SourceDocument,
 )
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from agent_kit.infrastructure.output import OutputAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +62,7 @@ def test_contained_catalog_path_accepts_normal_and_rejects_unsafe(
     value: str, expected: str | None
 ) -> None:
     """Containment validation accepts normalized relative paths and rejects unsafe ones."""
-    assert _contained_catalog_path(value) == expected
+    assert contained_catalog_path(value) == expected
 
 
 @pytest.mark.parametrize("root_name", ["skills", "instructions", "prompts"])
@@ -205,15 +205,15 @@ def test_body_text_extracts_and_rejects_incorrect_frontmatter(
     text: str, expected: str | None
 ) -> None:
     """SKILL.md body extraction returns the text after YAML frontmatter or None when invalid."""
-    assert _body_text(text) == expected
+    assert body_text(text) == expected
 
 
 def test_hidden_unicode_detection_finds_control_chars() -> None:
     """Hidden Unicode controls are detected even when nested in mappings or lists."""
     value = {"a": "visible", "b": ["ok", {"c": "bad\u200bchar"}]}
-    assert _contains_hidden_unicode(value)
+    assert contains_hidden_unicode(value)
     findings: list[Finding] = []
-    _check_hidden_unicode(value, "some/path", findings)
+    check_hidden_unicode(value, "some/path", findings)
     assert any(item.code == "unicode.hidden" for item in findings)
 
 
@@ -232,7 +232,7 @@ def test_link_target_various_behaviors(
 ) -> None:
     """Different link targets produce no findings for allowed cases and diagnostics for invalid targets."""
     findings: list[Finding] = []
-    _link_target(link, "llms.txt", set(), findings, base_is_bundle=base_is_bundle)
+    link_target(link, "llms.txt", set(), findings, base_is_bundle=base_is_bundle)
     if expected_code is None:
         assert not findings
     else:
@@ -241,13 +241,13 @@ def test_link_target_various_behaviors(
 
 def test_policy_mapping_rejects_modified_policy_values() -> None:
     """Any deviation from the strict policy contract is reported as a policy.value finding."""
-    modified: dict[str, object] = dict(copy.deepcopy(cs._POLICY))
+    modified: dict[str, object] = dict(copy.deepcopy(POLICY))
     # mutate an expected nested child to provoke a mismatch
     manifest = modified["manifest"]
     assert isinstance(manifest, dict)
     manifest["require_explicit_includes"] = False
     findings: list[Finding] = []
-    assert not _policy_mapping(modified, "apm-policy.yml", findings)
+    assert not policy_mapping(modified, "apm-policy.yml", findings)
     assert any(item.code == "policy.value" for item in findings)
 
 
@@ -326,53 +326,53 @@ def test_effective_bundles_raises_for_unknown_profile() -> None:
             ("description_chars", 350),
             ("profile_description_chars", 6500),
         ),
-        bundles=(Bundle(kind="portable", name="b", path="packages/b"),),
+        bundles=(Bundle(kind=BundleKind.PORTABLE, name="b", path="packages/b"),),
         profiles=(Profile(bundles=("b",), extends=(), name="p"),),
         schema_version=1,
         supported_runtimes=("copilot", "claude"),
         version="0.1.0",
     )
     with pytest.raises(ValueError, match=r"unknown profile 'x'"):
-        _effective_bundles(catalog, ("x",))
+        effective_bundles(catalog, ("x",))
 
 
 def test_exact_mapping_string_list_and_same_value_helpers() -> None:
-    """_exact_mapping, _string_list and _same_value validate shapes and values."""
+    """exact_mapping, string_list and same_value validate shapes and values."""
     findings: list[Finding] = []
     # non-mapping value
-    assert _exact_mapping(1, {"a"}, "p", findings) is None
+    assert exact_mapping(1, {"a"}, "p", findings) is None
     assert any(f.code == "schema.mapping" for f in findings)
 
     findings.clear()
     # missing and unknown fields
     value = {"known": 1}
-    res = _exact_mapping(value, {"expected"}, "p", findings)
+    res = exact_mapping(value, {"expected"}, "p", findings)
     assert res is not None
     assert any(f.code == "schema.missing" for f in findings)
     findings.clear()
-    res = _exact_mapping({"expected": 1, "extra": 2}, {"expected"}, "p", findings)
+    res = exact_mapping({"expected": 1, "extra": 2}, {"expected"}, "p", findings)
     assert any(f.code == "schema.unknown" for f in findings)
 
     findings.clear()
     # string list validations
-    assert _string_list("nope", "p", findings) is None
+    assert string_list("nope", "p", findings) is None
     assert any(f.code == "schema.list" for f in findings)
     findings.clear()
-    assert _string_list(["ok", ""], "p", findings) is None
+    assert string_list(["ok", ""], "p", findings) is None
     assert any(f.code == "schema.string" for f in findings)
     findings.clear()
-    assert _string_list(["dup", "dup"], "p", findings) == ("dup", "dup")
+    assert string_list(["dup", "dup"], "p", findings) == ("dup", "dup")
     assert any(f.code == "schema.duplicate" for f in findings)
 
     # same value comparisons
-    assert _same_value({"a": [1, 2]}, {"a": [1, 2]})
-    assert not _same_value({"a": [1]}, {"a": [1, 2]})
-    assert not _same_value(1, "1")
+    assert same_value({"a": [1, 2]}, {"a": [1, 2]})
+    assert not same_value({"a": [1]}, {"a": [1, 2]})
+    assert not same_value(1, "1")
 
 
 def test_policy_mapping_nested_security_mismatch_reports() -> None:
     """_policy mapping reports when nested security child values differ from expectation."""
-    modified: dict[str, object] = dict(cs._POLICY)
+    modified: dict[str, object] = dict(POLICY)
     assert isinstance(modified, dict)
     security_value = modified.get("security")
     if isinstance(security_value, dict):
@@ -382,7 +382,7 @@ def test_policy_mapping_nested_security_mismatch_reports() -> None:
     nested["integrity"] = {"require_hashes": False}
     modified["security"] = nested
     findings: list[Finding] = []
-    assert not _policy_mapping(modified, "apm-policy.yml", findings)
+    assert not policy_mapping(modified, "apm-policy.yml", findings)
     assert any(f.code == "policy.value" for f in findings)
 
 
@@ -429,7 +429,7 @@ def make_bundle(
 
 
 def test_included_paths_various_edge_cases() -> None:
-    """_included_paths reports manifest shape and include path problems in many scenarios."""
+    """included_paths reports manifest shape and include path problems in many scenarios."""
     findings: list[Finding] = []
     # use a BundleSource with manifest_error True
     bs = BundleSource(
@@ -445,13 +445,13 @@ def test_included_paths_various_edge_cases() -> None:
         root_is_symlink=False,
     )
     findings.clear()
-    assert _included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
+    assert included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
     assert any(f.code == "manifest.read" for f in findings)
 
     # manifest not an object
     bs = make_bundle("x", [], 1)
     findings.clear()
-    assert _included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
+    assert included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
     assert any(f.code == "manifest.schema" for f in findings)
 
     # includes empty list
@@ -467,33 +467,33 @@ def test_included_paths_various_edge_cases() -> None:
     sd = make_doc("references/guide.md", "content")
     bs = make_bundle("x", [sd], manifest)
     findings.clear()
-    assert _included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
+    assert included_paths(bs, findings, "0.1.0", ("copilot",)) == ()
     assert any(f.code == "manifest.includes" for f in findings)
 
     # include not beneath .apm
     manifest["includes"] = ["apm/bad"]
     bs = make_bundle("x", [sd], manifest)
     findings.clear()
-    _included_paths(bs, findings, "0.1.0", ("copilot",))
+    included_paths(bs, findings, "0.1.0", ("copilot",))
     assert any("beneath .apm" in f.message for f in findings)
 
     # include escapes .apm
     manifest["includes"] = [".apm/../escape"]
     bs = make_bundle("x", [sd], manifest)
     findings.clear()
-    _included_paths(bs, findings, "0.1.0", ("copilot",))
+    included_paths(bs, findings, "0.1.0", ("copilot",))
     assert any("escapes .apm" in f.message for f in findings)
 
     # include has no resources
     manifest["includes"] = [".apm/nothing"]
     bs = make_bundle("x", [sd], manifest)
     findings.clear()
-    _included_paths(bs, findings, "0.1.0", ("copilot",))
+    included_paths(bs, findings, "0.1.0", ("copilot",))
     assert any("has no resources" in f.message for f in findings)
 
 
 def test_skill_records_detects_various_document_issues() -> None:
-    """_skill_records flags symlinks, parse/frontmatter errors, instruction and skill problems."""
+    """skill_records flags symlinks, parse/frontmatter errors, instruction and skill problems."""
 
     sd1 = make_doc("apm/links.md", "text", is_symlink=True)
     sd2 = make_doc("apm/broken.md", "text", parse_error=True)
@@ -523,7 +523,7 @@ def test_skill_records_detects_various_document_issues() -> None:
         root_is_symlink=False,
     )
     findings: list[Finding] = []
-    records = _skill_records((bs,), findings, description_limit=1, body_limit=1)
+    records = skill_records((bs,), findings, description_limit=1, body_limit=1)
     codes = {f.code for f in findings}
     assert "source.symlink" in codes
     assert "source.parse" in codes
@@ -559,17 +559,17 @@ def test_parse_bundles_and_profiles_and_references_and_cycles() -> None:
     """Low-level parsing helpers report schema and reference errors for bundles and profiles."""
     findings: list[Finding] = []
     # non-mapping bundles/profiles
-    assert _parse_bundles(1, findings) is None
+    assert parse_bundles(1, findings) is None
     assert any(f.code == "catalog.bundles" for f in findings)
     findings.clear()
-    assert _parse_profiles(1, findings) is None
+    assert parse_profiles(1, findings) is None
     assert any(f.code == "catalog.profiles" for f in findings)
 
     findings.clear()
     # check references for unknown bundles and profiles
-    bundles = (Bundle(kind="portable", name="b1", path="p1"),)
+    bundles = (Bundle(kind=BundleKind.PORTABLE, name="b1", path="p1"),)
     profiles = (Profile(bundles=("missing",), extends=("x",), name="p"),)
-    _check_references(bundles, profiles, findings)
+    check_references(bundles, profiles, findings)
     assert any(
         "unknown bundle" in f.message or "extends unknown" in f.message
         for f in findings
@@ -581,21 +581,21 @@ def test_parse_bundles_and_profiles_and_references_and_cycles() -> None:
         Profile(bundles=("b1",), extends=("p2",), name="p1"),
         Profile(bundles=("b1",), extends=("p1",), name="p2"),
     )
-    _check_profile_cycles(profiles_cycle, findings)
+    check_profile_cycles(profiles_cycle, findings)
     assert any(f.code == "profile.cycle" for f in findings)
 
 
 def test_link_target_unsupported_scheme_and_empty_path() -> None:
     """_links with unsupported schemes produce a scheme finding; empty paths are ignored."""
     findings: list[Finding] = []
-    _link_target(
+    link_target(
         "ftp://example.com/resource", "doc.md", set(), findings, base_is_bundle=True
     )
     assert any(f.code == "links.scheme" for f in findings)
 
     findings.clear()
     # empty path produces no finding
-    _link_target("", "doc.md", set(), findings, base_is_bundle=True)
+    link_target("", "doc.md", set(), findings, base_is_bundle=True)
     assert not findings
 
 
@@ -626,7 +626,7 @@ def test_fenced_python_generics_are_not_markdown_links(
     )
     findings: list[Finding] = []
 
-    _check_links(document, {"real.md"}, findings, base_is_bundle=True)
+    check_links(document, {"real.md"}, findings, base_is_bundle=True)
 
     assert findings == []
 
@@ -646,7 +646,7 @@ def test_real_unsafe_link_after_a_code_fence_is_still_rejected() -> None:
     )
     findings: list[Finding] = []
 
-    _check_links(document, set(), findings, base_is_bundle=True)
+    check_links(document, set(), findings, base_is_bundle=True)
 
     assert [finding.code for finding in findings] == ["links.escape"]
 
@@ -665,20 +665,20 @@ def test_check_links_ignores_nontext_documents() -> None:
         yaml_value=None,
     )
     findings: list[Finding] = []
-    _check_links(doc, set(), findings, base_is_bundle=True)
+    check_links(doc, set(), findings, base_is_bundle=True)
     assert findings == []
 
 
 def test_policy_mapping_rejects_non_mapping() -> None:
     """Non-mapping policy values are rejected with a schema.mapping finding."""
     findings: list[Finding] = []
-    assert not _policy_mapping(1, "apm-policy.yml", findings)
+    assert not policy_mapping(1, "apm-policy.yml", findings)
     assert any(f.code == "schema.mapping" for f in findings)
 
 
 def test_link_index_contains_files_and_every_ancestor_directory() -> None:
     """A link may name a file or any directory above a source file."""
-    index = _link_index(["skills/a/SKILL.md", "skills/a/assets/x.md", "llms.txt"])
+    index = link_index(["skills/a/SKILL.md", "skills/a/assets/x.md", "llms.txt"])
 
     assert index == {
         "skills",
@@ -692,7 +692,7 @@ def test_link_index_contains_files_and_every_ancestor_directory() -> None:
 
 def test_link_index_never_matches_an_empty_or_partial_name() -> None:
     """Only whole path segments match; the empty target is never present."""
-    index = _link_index(["skills/abc/SKILL.md"])
+    index = link_index(["skills/abc/SKILL.md"])
 
     assert "" not in index
     assert "skills/ab" not in index

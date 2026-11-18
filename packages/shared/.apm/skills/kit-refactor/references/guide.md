@@ -11,6 +11,26 @@ Move one responsibility at a time. Search indirect imports, configuration names,
 plugin registrations and package-data paths. Delete old implementations only
 after every owned caller resolves the new one.
 
+## Naming and shared ownership
+
+Group several cohesive feature modules within their existing layer before
+stripping a repeated feature prefix. Do not create a one-file directory merely
+to shorten a name. Preserve public facades and update string imports, patch
+targets and installed-package inventories alongside normal imports.
+
+Keep constants with their semantic owner; share a value only when callers use
+the same contract, not merely the same spelling. Use enums for closed domain
+choices, not for every path, header or protocol token. Factories, inheritance,
+decorators and common base classes need an actual lifecycle, substitution or
+repeated-behavior benefit.
+
+Validate untrusted wire, environment, filesystem and SDK data at the boundary.
+Repeated type checks inside an already validated model can be redundant;
+boundary checks are not. Standard parsers may normalize unsafe input, so
+characterize canonical spelling, traversal, origin and failure behavior before
+replacing a predicate. Move an equivalent shared invariant to an inward owner;
+do not merge validators with different acceptance contracts.
+
 ## Quality gates
 
 - Ordinary, boundary and failing inputs preserve observable results.

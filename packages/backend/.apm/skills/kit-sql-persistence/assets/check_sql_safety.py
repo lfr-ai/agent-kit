@@ -89,14 +89,11 @@ def check_source(text: str, path: str) -> list[str]:
     """Return findings for one module.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text; invalid Python raises ``SyntaxError``.
         path (str): Display path used as the finding prefix.
 
     Returns:
         Findings formatted as ``path:line: rule: message``, sorted by line.
-
-    Raises:
-        SyntaxError: If ``text`` is not valid Python.
     """
     tree = ast.parse(text, filename=path)
     lines = text.splitlines()

@@ -1,6 +1,6 @@
 ---
 name: kit-accessibility
-description: Use when implementing or reviewing inclusive interaction, semantics, keyboard use, and assistive-technology feedback.
+description: Use when reviewing accessibility, semantics, keyboard use or assistive feedback.
 license: MIT
 ---
 

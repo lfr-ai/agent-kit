@@ -1,6 +1,6 @@
 ---
 name: kit-client-realtime
-description: Use when a browser client consumes WebSocket, event-stream, or other long-lived updates.
+description: Use when consuming browser WebSocket, event-stream or other long-lived updates.
 license: MIT
 ---
 

@@ -32,20 +32,11 @@ class ContainerMissingError(RuntimeError):
 
 
 async def get_container(request: Request) -> Container:
-    """Return the container from lifespan state.
+    """Return the lifespan container; raise ``ContainerMissingError`` if absent.
 
     Non-blocking dependencies are ``async def`` so FastAPI does not hop to the
-    thread pool for them.
-
-    Args:
-        request (Request): Current request.
-
-    Returns:
-        The process-wide container.
-
-    Raises:
-        ContainerMissingError: Lifespan did not run; override this dependency in
-            tests that use a transport without lifespan support.
+    thread pool for them. Override this dependency in tests that use a
+    transport without lifespan support.
     """
     container = getattr(request.state, "container", None)
     if not isinstance(container, Container):

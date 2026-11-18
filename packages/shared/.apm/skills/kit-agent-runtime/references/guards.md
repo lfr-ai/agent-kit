@@ -11,8 +11,8 @@ consumer copies, reviews and registers in a configuration file they own.
 
 ## Delivered Git guard
 
-`shared` ships `git-guard.json`, a `preToolUse` hook that runs `tool_guard.py` with
-`git-guard.policy` from its `hooks/` directory. It never approves a
+`shared` ships `git-guard.json`, a `preToolUse` hook whose `scripts/git_guard.py`
+launcher runs `tool_guard.py` with `git-guard.policy` from `hooks/scripts/`. It never approves a
 call, documents its bypasses, and is not a sandbox: a project still relies on
 native controls, and the guard catches common mistakes earlier with a clearer reason.
 

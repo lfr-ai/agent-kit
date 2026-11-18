@@ -1,6 +1,6 @@
 target-version = "py313"
 line-length = 88
-src = ["src", "tests", "scripts", ".agents/guard"]
+src = ["src", "tests", "scripts", ".agents/guard", "packages/runtime/src", "packages/delivery"]
 extend-exclude = [
   ".tox",
   "build",
@@ -80,13 +80,16 @@ extend-select = [
   "ERA",   # eradicate — detects commented-out code
   "FURB",  # refurb — suggests modern, idiomatic Python replacements
   "RUF",   # Ruff-specific — e.g. unused noqa, mutable dataclass defaults
-  # pydoclint (preview, exact codes). DOC201 is off: one-line docstrings state the
-  # return in the summary. DOC502 is off: 'Raises:' also lists propagated failures.
+  # pydoclint (preview, exact codes): validate supplied structure, not doc length.
+  # DOC201/DOC402 are not selected: complete summaries may describe results and
+  # yields without sections. DOC501/DOC502 are not selected: they match names
+  # only, mistake exception factories for classes and cannot exempt interface
+  # contracts; the conventions checker owns 'Raises:' in both directions
+  # (direct raises, translations and re-raises only, never callee failures).
+  # Google itself does not require duplicated signature types.
   "DOC102", # documented parameter is not in the signature
   "DOC202", # 'Returns:' on a function that returns nothing
-  "DOC402", # yielded value missing from 'Yields:'
   "DOC403", # 'Yields:' on a function that does not yield
-  "DOC501", # raised exception missing from 'Raises:'
 ]
 # The formatter wraps code; long URLs, literals and messages may exceed the limit.
 ignore = ["E501"]
@@ -101,7 +104,7 @@ max-statements = 40
 max-complexity = 6
 
 [lint.isort]
-known-first-party = ["agent_kit"]
+known-first-party = ["agent_kit", "platform_kit_runtime", "delivery_tools"]
 force-sort-within-sections = true
 
 [lint.flake8-import-conventions]

@@ -162,6 +162,6 @@ def test_temporal_resources_link_sources_and_runtime_limitations() -> None:
     guide = (_SKILL / "references/guide.md").read_text(encoding="utf-8")
     assert "assets/execution_policy.py" in skill
     assert "assets/test_temporal_behavior.py.template" in skill
-    assert "https://temporal.mcp.kapa.ai" in guide
+    assert "`https://temporal.mcp.kapa.ai` over HTTP" in guide
     assert "tests/worker/test_workflow.py" in guide
     assert "unverified" in guide.lower()

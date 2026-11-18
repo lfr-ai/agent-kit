@@ -8,14 +8,14 @@ defaults match ``compose.vector-store.yaml`` and ``schema.sql``.
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Final, Self
 
 from retrieval.chunking import ChunkingPolicy
 from retrieval.contracts import MAX_TOP_K
 from retrieval.fusion import DEFAULT_RRF_K
 from retrieval.self_corrective import CorrectionPolicy
 
-ENV_PREFIX = "RETRIEVAL_"
+ENV_PREFIX: Final[str] = "RETRIEVAL_"
 
 _DEFAULT_EMBEDDING_DIMENSIONS = 384
 _DEFAULT_TOP_K_RESULTS = 8
@@ -108,16 +108,10 @@ class RetrievalSettings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Self:
-        """Build settings from an environment mapping.
+        """Build validated settings from ``environ``; raise ``ValueError`` if invalid.
 
-        Args:
-            environ (Mapping[str, str]): Usually ``os.environ``; tests pass a dict.
-
-        Returns:
-            Validated settings.
-
-        Raises:
-            ValueError: If a variable is missing or malformed.
+        ``environ`` is usually ``os.environ``; tests pass a dict. A missing or
+        malformed variable is invalid.
         """
         url = environ.get(ENV_PREFIX + "DATABASE_URL")
         if not url:

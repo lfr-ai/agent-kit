@@ -1,6 +1,6 @@
 ---
 name: kit-api-gateway
-description: Use when adding or reviewing an API gateway or API management policies, products, and versions.
+description: Use when designing API gateways or API management policies, products and versions.
 license: MIT
 ---
 
@@ -43,7 +43,8 @@ and Kubernetes Gateway API implementations.
    [main.bicep](assets/bicep/main.bicep.template),
    [apim.bicep](assets/bicep/apim.bicep.template),
    [api.bicep](assets/bicep/api.bicep.template), and
-   [parameters](assets/bicep/main.bicepparam.template).
+   [parameters](assets/bicep/main.bicepparam.template), or for Terraform
+   [apim.tf](assets/terraform/apim.tf.template).
 4. Write policies per [policies](references/policies.md), starting from the
    [global](assets/policies/global.xml.template),
    [API](assets/policies/api.xml.template), and
@@ -110,8 +111,9 @@ and Kubernetes Gateway API implementations.
   variables; Key Vault references are unversioned.
 - The service still validates tokens and authorizes objects; backends reject
   traffic that bypasses the gateway.
-- Bicep builds, lints, and what-if runs per environment; production deployment
-  needs an approval and runs the same commit as dev.
+- Bicep builds, lints, and what-if runs (or Terraform formats, validates, and
+  plans) per environment; production deployment needs an approval and runs
+  the same commit as dev.
 - Logging excludes bodies and credentials; sampling, alerts, SLOs, scale, DR,
   and cost are recorded in the worksheet.
 
@@ -126,6 +128,7 @@ and Kubernetes Gateway API implementations.
 | [security-and-operations.md](references/security-and-operations.md) | Defense in depth, mTLS, network, telemetry, SLOs, scale, DR, cost |
 | [kubernetes-gateway.md](references/kubernetes-gateway.md) | API routes and auth/limit policy attachment on a Gateway API implementation |
 | [cloud-equivalents.md](references/cloud-equivalents.md) | Capability matrix for Azure, AWS, Google Cloud, Kubernetes; portability |
+| [apim.tf](assets/terraform/apim.tf.template) | Azure API Management in Terraform `azurerm`: instance, telemetry, named values, policies, orders API |
 | [api-gateway-http.tf](assets/aws/api-gateway-http.tf.template) | AWS HTTP API: JWT authorizer, stage throttling, access logs |
 | [api-gateway.tf](assets/gcp/api-gateway.tf.template) | Google Cloud API Gateway from an OpenAPI document |
 | [check_apim_policy.py](assets/check_apim_policy.py) | Stdlib policy checker with `--self-test` |

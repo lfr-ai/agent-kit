@@ -349,6 +349,7 @@ def test_summarizer_normalizes_paths() -> None:
     normalize = _SUMMARIZER["normalize_path"]
     assert normalize("file:///C:/repo/src/a%20b.py", root="C:\\repo") == "src/a b.py"
     assert normalize("src\\a.py", root="") == "src/a.py"
+    assert normalize("src\\a.py", root=None) == "src/a.py"
     assert normalize("/other/a.py", root="/repo") == "/other/a.py"
 
 

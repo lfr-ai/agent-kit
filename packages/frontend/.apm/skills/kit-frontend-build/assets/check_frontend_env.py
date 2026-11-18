@@ -38,16 +38,17 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
-EXIT_CLEAN = 0
-EXIT_FINDINGS = 1
-EXIT_USAGE = 2
-DEFAULT_PREFIXES: tuple[str, ...] = ("VITE_",)
-SOURCE_SUFFIXES = frozenset(
+EXIT_CLEAN: Final[int] = 0
+EXIT_FINDINGS: Final[int] = 1
+EXIT_USAGE: Final[int] = 2
+DEFAULT_PREFIXES: Final[tuple[str, ...]] = ("VITE_",)
+SOURCE_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".html"}
 )
-SUPPRESSION = "frontend-env: allow"
-RULE = "secret-like-public-name"
+SUPPRESSION: Final[str] = "frontend-env: allow"
+RULE: Final[str] = "secret-like-public-name"
 _SKIPPED_DIRECTORIES = frozenset(
     {".git", "node_modules", "dist", "build", "coverage", "storybook-static"}
 )
@@ -104,12 +105,7 @@ def is_env_file(path: Path) -> bool:
 
 
 def _patterns(prefixes: Sequence[str]) -> tuple[re.Pattern[str], re.Pattern[str]]:
-    """Build the dotenv assignment and source identifier patterns.
-
-    Returns:
-        The dotenv assignment pattern and the source identifier pattern, in that order,
-        both restricted to ``prefixes``.
-    """
+    """Return the dotenv assignment and source identifier patterns for ``prefixes``."""
     alternatives = "|".join(re.escape(prefix) for prefix in prefixes)
     assignment = re.compile(rf"^\s*(?:export\s+)?((?:{alternatives})[A-Za-z0-9_]*)\s*=")
     identifier = re.compile(rf"(?<![A-Za-z0-9_$])((?:{alternatives})[A-Za-z0-9_]+)")
@@ -161,16 +157,9 @@ def _walk(root: Path) -> Iterator[Path]:
 
 
 def iter_files(paths: Sequence[Path]) -> Iterator[Path]:
-    """Yield dotenv and source files in deterministic order.
+    """Yield dotenv and source files in order; raise ``FileNotFoundError`` if absent.
 
-    Args:
-        paths (Sequence[Path]): Files or directories to scan.
-
-    Yields:
-        Candidate files outside dependency and build output directories.
-
-    Raises:
-        FileNotFoundError: If a given path does not exist.
+    Dependency and build output directories are skipped.
     """
     for root in paths:
         if not root.exists():
@@ -189,6 +178,9 @@ def scan_paths(
 ) -> list[Finding]:
     """Scan files and directories for secret-like public names.
 
+    A missing path propagates ``FileNotFoundError`` and a non-UTF-8 file
+    propagates ``UnicodeDecodeError``.
+
     Args:
         paths (Sequence[Path]): Files or directories to scan.
         prefixes (Sequence[str]): Public prefixes to check.
@@ -196,10 +188,6 @@ def scan_paths(
 
     Returns:
         Findings sorted by path and line.
-
-    Raises:
-        FileNotFoundError: If a given path does not exist.
-        UnicodeDecodeError: If a file is not UTF-8 text.
     """
     allowed = frozenset(allow)
     findings: list[Finding] = []
@@ -239,16 +227,8 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-class SelfTestError(AssertionError):
-    """A documented rule did not behave as expected on synthetic input."""
-
-
-def self_test() -> None:
-    """Check dotenv and source parsing on synthetic text.
-
-    Raises:
-        SelfTestError: If the reported names differ from the expectation.
-    """
+def self_test() -> list[str]:
+    """Return a failure when dotenv and source parsing report unexpected names."""
     dotenv = (
         "VITE_APP_NAME=Example\n"
         "export VITE_API_KEY=\n"
@@ -273,8 +253,8 @@ def self_test() -> None:
     ]
     expected = ["VITE_API_KEY", "VITE_AUTH_TOKEN"]
     if found != expected:
-        message = f"expected {expected}, found {found}"
-        raise SelfTestError(message)
+        return [f"expected {expected}, found {found}"]
+    return []
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -286,9 +266,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Frontend env checker self-test passed.\n")
-        return EXIT_CLEAN
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Frontend env checker self-test {verdict}.\n")
+        return EXIT_FINDINGS if failures else EXIT_CLEAN
     if not args.paths:
         parser.error("give at least one file or directory")
     prefixes = tuple(args.prefix or DEFAULT_PREFIXES)

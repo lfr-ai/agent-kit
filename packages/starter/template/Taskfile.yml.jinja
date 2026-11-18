@@ -1,0 +1,76 @@
+version: "3"
+
+env:
+  APM_NO_SCRIPTS: "1"
+  APM_NON_INTERACTIVE: "1"
+
+tasks:
+  setup:
+    desc: Resolve reviewed tool dependencies and install the selected APM profile
+    cmds:
+      - uv lock
+      - uv audit --locked --preview-features audit-command
+      - uv sync --locked
+      - uv run --locked --no-sync apm install --target {{ agent_provider | join(',') }} --no-trust-bin
+{% for target in agent_provider %}
+      - uv run --locked --no-sync apm compile --target {{ target }}
+{% endfor %}
+      - task: verify
+
+  verify:
+    desc: Check locks and explicit APM policy without installing or updating
+    cmds:
+      - uv lock --check
+      - uv run --locked --no-sync apm policy status --policy-source ./apm-policy.yml --check --json
+      - uv run --locked --no-sync apm audit --ci --policy ./apm-policy.yml
+{%- if service == 'api' %}
+      - uv run --locked --no-sync ruff format --check src tests{% if iac != 'none' %} scripts{% endif %}
+      - uv run --locked --no-sync ruff check src tests{% if iac != 'none' %} scripts{% endif %}
+      - task: test
+{%- endif %}
+
+  ci:
+    desc: Install only reviewed locks and check capability integrity
+    cmds:
+      - uv audit --locked --preview-features audit-command
+      - uv sync --locked
+      - uv run --locked --no-sync apm install --frozen --target {{ agent_provider | join(',') }} --no-trust-bin
+{% for target in agent_provider %}
+      - uv run --locked --no-sync apm compile --target {{ target }}
+{% endfor %}
+      - task: verify
+{%- if service == 'api' %}
+
+  local:setup:
+    desc: Resolve and audit the application environment without installing APM capabilities
+    cmds:
+      - uv lock
+      - uv audit --locked --preview-features audit-command
+      - uv sync --locked
+
+  check:
+    desc: Fix formatting and lint, then run the application tests
+    cmds:
+      - uv run --locked --no-sync ruff format src tests{% if iac != 'none' %} scripts{% endif %}
+      - uv run --locked --no-sync ruff check --fix src tests{% if iac != 'none' %} scripts{% endif %}
+      - task: test
+
+  start:
+    desc: Serve the local API without Azure or APM setup
+    cmds:
+      - uv run --locked --no-sync uvicorn app.main:app --reload --host 127.0.0.1 --port 8080 --no-access-log
+
+  test:
+    desc: Run application tests; pass pytest paths or selectors after --
+    cmds:
+      - uv run --locked --no-sync pytest {{ '{{.CLI_ARGS}}' }}
+{%- if iac != 'none' %}
+
+  infra:check-environment:
+    desc: Check explicit cloud stage and unfinished configuration without login
+    requires:
+      vars: [ENVIRONMENT]
+    cmds:
+      - python scripts/validate_environment.py "{{ '{{.ENVIRONMENT}}' }}"
+{%- endif %}
+{%- endif %}

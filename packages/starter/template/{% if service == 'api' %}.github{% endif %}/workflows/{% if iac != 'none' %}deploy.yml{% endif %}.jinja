@@ -1,0 +1,189 @@
+name: Deploy environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Cloud environment; local uses Compose, not deployment.
+        type: choice
+        required: true
+        default: dev
+        options: [dev, test, staging, prod]
+      runs-on:
+{%- if registry == 'acr' %}
+        description: Reviewed Linux runner label with Docker and network/DNS access to the private registry and data plane (staging and prod).
+{%- else %}
+        description: Reviewed Linux runner label with network/DNS access for private data-plane checks.
+{%- endif %}
+        type: string
+        required: true
+        default: ubuntu-24.04
+{%- if registry == 'acr' %}
+      registry-bootstrap:
+        description: First deployment of this environment only; create the registry and shared infrastructure without the app, then rerun without it.
+        type: boolean
+        required: true
+        default: false
+{%- else %}
+      public-ghcr:
+        description: I have explicitly approved this image being publicly readable on GHCR.
+        type: boolean
+        required: true
+        default: false
+{%- endif %}
+
+permissions: {}
+
+concurrency:
+{% raw %}
+  group: starter-deploy-${{ inputs.environment }}
+{% endraw %}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  intent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+{%- if registry == 'acr' %}
+    outputs:
+      registry: {% raw %}${{ steps.intent.outputs.registry }}{% endraw %}
+{%- endif %}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+{%- if registry == 'acr' %}
+      - name: Require reviewed main and read the environment registry
+        id: intent
+{%- else %}
+      - name: Require reviewed main and public image intent
+{%- endif %}
+        env:
+          REF: {% raw %}${{ github.ref }}{% endraw %}
+{%- if registry != 'acr' %}
+          PUBLIC_GHCR: {% raw %}${{ inputs.public-ghcr }}{% endraw %}
+{%- endif %}
+          ENVIRONMENT: {% raw %}${{ inputs.environment }}{% endraw %}
+{%- if iac == 'bicep' %}
+          RESOURCE_GROUP: {% raw %}${{ vars[format('AZURE_RESOURCE_GROUP_{0}', inputs.environment)] }}{% endraw %}
+{%- endif %}
+        run: |
+          set -euo pipefail
+          [[ "$REF" == refs/heads/main ]] || { echo "::error::Deploy only reviewed main"; exit 1; }
+{%- if registry != 'acr' %}
+          [[ "$PUBLIC_GHCR" == true ]] || {
+            echo "::error::Private GHCR pull is unsupported. Package settings will not be changed."
+            exit 1
+          }
+{%- endif %}
+{%- if iac == 'bicep' %}
+          [[ -n "$RESOURCE_GROUP" ]] || { echo "::error::Set the environment-specific AZURE_RESOURCE_GROUP repository variable"; exit 1; }
+{%- endif %}
+{%- if registry == 'acr' %}
+          python3 scripts/validate_environment.py --print-registry "$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: [checks, intent]
+    if: {% raw %}${{ !inputs.registry-bootstrap }}{% endraw %}
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      environment: {% raw %}${{ inputs.environment }}{% endraw %}
+      registry: {% raw %}${{ needs.intent.outputs.registry }}{% endraw %}
+      runs-on: {% raw %}${{ inputs.runs-on }}{% endraw %}
+
+  deploy:
+    needs: [checks, intent, image]
+    # The bootstrap skips the image; every other run deploys the exact built digest.
+    if: {% raw %}${{ !cancelled() && needs.checks.result == 'success' && needs.intent.result == 'success' && (needs.image.result == 'success' || (inputs.registry-bootstrap && needs.image.result == 'skipped')) }}{% endraw %}
+{%- else %}
+          python3 scripts/validate_environment.py "$ENVIRONMENT"
+
+  image:
+    needs: [checks, intent]
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+  pullable:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify anonymous pull of the exact digest
+        shell: python3 {0}
+        env:
+{% raw %}
+          IMAGE: ${{ needs.image.outputs.image }}
+{% endraw %}
+        run: |
+          import json
+          import os
+          import re
+          import urllib.parse
+          import urllib.request
+
+          match = re.fullmatch(r"ghcr.io/([a-z0-9._/-]+)@(sha256:[0-9a-f]{64})", os.environ["IMAGE"])
+          if not match:
+              raise SystemExit("Expected the build's digest-pinned GHCR image")
+          repository, digest = match.groups()
+          query = urllib.parse.urlencode({"service": "ghcr.io", "scope": f"repository:{repository}:pull"})
+          try:
+              # Anonymous registry token only: no credentials or stored login.
+              with urllib.request.urlopen(f"https://ghcr.io/token?{query}", timeout=30) as response:
+                  token = json.load(response)["token"]
+              request = urllib.request.Request(
+                  f"https://ghcr.io/v2/{repository}/manifests/{digest}",
+                  method="HEAD",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if response.headers.get("Docker-Content-Digest") != digest:
+                      raise SystemExit("Registry did not confirm the exact built digest")
+          except (OSError, KeyError, ValueError):
+              raise SystemExit("Anonymous pull failed. Private GHCR is unsupported; package settings were not changed.") from None
+
+  deploy:
+    needs: [image, pullable]
+{%- endif %}
+    uses: lfr-ai/agent-kit/.github/workflows/delivery-azure-deploy.yml@{{ kit_commit }} # reviewed toolkit commit
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    with:
+{% raw %}
+      environment: ${{ inputs.environment }}
+      runs-on: ${{ inputs.runs-on }}
+{% endraw %}
+      protected: true
+      iac: {{ iac }}
+      working-directory: infra
+{% if iac == 'bicep' %}
+      bicep-version: "0.48.1"
+{% raw %}
+      resource-group: ${{ vars[format('AZURE_RESOURCE_GROUP_{0}', inputs.environment)] }}
+{% endraw %}
+{% else %}
+      terraform-version: "1.16.7"
+{% endif %}
+{% raw %}
+      image: ${{ needs.image.outputs.image }}
+{% endraw %}

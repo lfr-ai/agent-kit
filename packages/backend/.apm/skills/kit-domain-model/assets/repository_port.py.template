@@ -51,19 +51,14 @@ class OrderRepository(Protocol):
         ...
 
     def add(self, order: Order, /) -> None:
-        """Store a new order.
-
-        Raises:
-            ValueError: If an order with the same identity already exists.
-        """
+        """Store a new order; raise ``ValueError`` if its identity already exists."""
         ...
 
     def save(self, order: Order, /) -> None:
         """Store changes to an existing order and advance its version.
 
-        Raises:
-            OrderNotFoundError: If the order was never added.
-            ConcurrencyError: If the stored version differs from ``order.version``.
+        A never-added order raises ``OrderNotFoundError``; a stored version that
+        differs from ``order.version`` raises ``ConcurrencyError``.
         """
         ...
 

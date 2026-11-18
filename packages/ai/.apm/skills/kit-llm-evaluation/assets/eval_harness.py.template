@@ -31,15 +31,15 @@ import random
 import re
 import statistics
 import sys
-from typing import Protocol, final
+from typing import Final, Protocol, final
 
-DEFAULT_RESAMPLES: int = 2000
-DEFAULT_CONFIDENCE: float = 0.95
-DEFAULT_SEED: int = 20261023
-DEFAULT_POWER: float = 0.8
-EXIT_PASSED: int = 0
-EXIT_GATE_FAILED: int = 1
-EXIT_INVALID_INPUT: int = 2
+DEFAULT_RESAMPLES: Final[int] = 2000
+DEFAULT_CONFIDENCE: Final[float] = 0.95
+DEFAULT_SEED: Final[int] = 20261023
+DEFAULT_POWER: Final[float] = 0.8
+EXIT_PASSED: Final[int] = 0
+EXIT_GATE_FAILED: Final[int] = 1
+EXIT_INVALID_INPUT: Final[int] = 2
 _TWO_SIDED = 2
 _JSON_INDENT = 2
 _DESCRIPTION = "Score recorded outputs against a versioned dataset and gate them."
@@ -62,7 +62,7 @@ class EvalInputError(ValueError):
 class EvalCase:
     """One versioned evaluation case.
 
-    Args:
+    Attributes:
         case_id (str): Stable identifier; never reused for different content.
         input (str): Synthetic or approved input text.
         expected (str): Reference answer or label.
@@ -82,7 +82,7 @@ class EvalCase:
 class Interval:
     """Mean with a percentile bootstrap confidence interval.
 
-    Args:
+    Attributes:
         mean (float): Mean of per-case scores.
         low (float): Lower interval bound.
         high (float): Upper interval bound.
@@ -98,7 +98,7 @@ class Interval:
 class MetricSummary:
     """Aggregate for one scorer across cases.
 
-    Args:
+    Attributes:
         name (str): Scorer name.
         cases (int): Number of scored cases.
         interval (Interval): Mean and bootstrap interval over case means.
@@ -249,16 +249,10 @@ def _case(record: Mapping[str, object], *, line: int) -> EvalCase:
 
 
 def load_dataset(*, path: Path) -> tuple[EvalCase, ...]:
-    """Load a JSONL dataset and reject duplicates or unknown fields.
+    """Load JSONL cases in file order; raise ``EvalInputError`` if invalid.
 
-    Args:
-        path (Path): JSONL dataset file.
-
-    Returns:
-        tuple[EvalCase, ...]: Cases in file order.
-
-    Raises:
-        EvalInputError: Invalid JSON, schema, or a duplicate identifier.
+    Invalid JSON or schema, an unknown field, an empty dataset or a duplicate
+    identifier is rejected.
     """
     cases = tuple(_case(record, line=line) for line, record in _json_lines(path))
     identifiers = [case.case_id for case in cases]
@@ -431,6 +425,9 @@ def summarize(
 ) -> tuple[MetricSummary, ...]:
     """Score every repeat, average within a case, then bootstrap across cases.
 
+    A boolean, nonnumeric, non-finite or out-of-range score propagates
+    ``EvalInputError``.
+
     Args:
         cases (Sequence[EvalCase]): Evaluated cases.
         outputs (Mapping[str, Sequence[str]]): Outputs per case id.
@@ -439,10 +436,6 @@ def summarize(
 
     Returns:
         tuple[MetricSummary, ...]: One summary per scorer, sorted by name.
-
-    Raises:
-        EvalInputError: A scorer returned a boolean, nonnumeric, non-finite
-            value or a value outside ``[0, 1]``.
     """
     summaries: list[MetricSummary] = []
     for scorer in scorers:

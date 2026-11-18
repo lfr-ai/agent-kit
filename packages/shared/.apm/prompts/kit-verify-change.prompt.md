@@ -27,6 +27,8 @@ do not reformat, regenerate, or edit files to make a check pass.
    the exact command, working directory, and result.
 4. Run static checks that cover the changed files: types, lint, format check,
    and architecture or contract checks when the project declares them.
+   Confirm their default discovery includes the changed packages, templates
+   and optional adapters rather than assuming configuration implies coverage.
 5. Exercise negative paths that the change touches: invalid input, error
    propagation, permission denial, and empty or boundary values. Add a missing
    regression only when the user asked for fixes; otherwise report the gap.

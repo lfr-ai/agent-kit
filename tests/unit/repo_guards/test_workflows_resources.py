@@ -255,6 +255,22 @@ def test_debt_scan_respects_excludes_extensions_and_custom_markers(
     assert _main(_DEBT, [str(tmp_path / "missing")]) == 2
 
 
+def test_debt_ledger_marks_absent_or_empty_metadata_with_a_dash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "job.py"
+    target.write_text(
+        "# DEBT: no metadata\n# DEBT(owner=, revisit=): empty metadata\n",
+        encoding="utf-8",
+    )
+    assert _main(_DEBT, [str(target), "--require-owner"]) == 1
+    captured = capsys.readouterr()
+    assert "| DEBT | - | - | no metadata |" in captured.out
+    assert "| DEBT | - | - | empty metadata |" in captured.out
+    assert "job.py:1: DEBT marker has no owner" in captured.err
+    assert "job.py:2: DEBT marker has no owner" in captured.err
+
+
 # Import graph
 
 

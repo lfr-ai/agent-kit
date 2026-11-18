@@ -30,7 +30,7 @@ is 1 when any breaking change is found (or any warning with ``--strict``).
 import argparse
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import re
@@ -40,6 +40,8 @@ _METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 _MAX_DEPTH = 64
 _LOCAL_REF_PREFIX = "#/"
 _EXIT_USAGE = 2
+_BREAKING = "breaking"
+_WARNING = "warning"
 _TIGHTER_WHEN_LARGER = (
     "minLength",
     "minimum",
@@ -56,8 +58,8 @@ _TIGHTER_WHEN_SMALLER = (
 )
 _COMPOSITION = ("allOf", "oneOf", "anyOf", "not")
 
-type Json = object
-type Document = Mapping[str, Json]
+type JSON = object
+type Document = Mapping[str, JSON]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -91,7 +93,7 @@ def compare(old: Document, new: Document) -> list[Change]:
     for path in sorted(old_paths):
         if path not in new_paths:
             changes.append(
-                Change(severity="breaking", location=path, message="path removed")
+                Change(severity=_BREAKING, location=path, message="path removed")
             )
             continue
         old_item = _resolve(old, old_paths[path])
@@ -103,7 +105,7 @@ def compare(old: Document, new: Document) -> list[Change]:
             if method not in new_item:
                 changes.append(
                     Change(
-                        severity="breaking",
+                        severity=_BREAKING,
                         location=location,
                         message="operation removed",
                     )
@@ -197,6 +199,7 @@ class _Operation:
     def _responses(
         self, old_operation: Document, new_operation: Document
     ) -> Iterator[Change]:
+        """Flag removed response variants and compare schemas shared by both versions."""
         old_responses = _mapping(old_operation.get("responses"))
         new_responses = _mapping(new_operation.get("responses"))
         for status in sorted(old_responses):
@@ -213,7 +216,7 @@ class _Operation:
                 where = f"{self.location} response {status} {media_type}"
                 if media_type not in new_content:
                     yield Change(
-                        severity="breaking",
+                        severity=_BREAKING,
                         location=where,
                         message="media type removed",
                     )
@@ -238,10 +241,10 @@ class _Operation:
             yield self._warning("security requirements changed")
 
     def _breaking(self, message: str) -> Change:
-        return Change(severity="breaking", location=self.location, message=message)
+        return Change(severity=_BREAKING, location=self.location, message=message)
 
     def _warning(self, message: str) -> Change:
-        return Change(severity="warning", location=self.location, message=message)
+        return Change(severity=_WARNING, location=self.location, message=message)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -254,7 +257,7 @@ class _Schema:
     request: bool
 
     def compare(
-        self, old_raw: Json, new_raw: Json, pointer: str, depth: int
+        self, old_raw: JSON, new_raw: JSON, pointer: str, depth: int
     ) -> Iterator[Change]:
         """Yield changes between two schemas at a JSON pointer below the root."""
         if depth > _MAX_DEPTH:
@@ -276,13 +279,13 @@ class _Schema:
         yield from self._compositions(old_schema, new_schema, pointer)
 
     def _remote_reference(
-        self, old_raw: Json, new_raw: Json, pointer: str
+        self, old_raw: JSON, new_raw: JSON, pointer: str
     ) -> Change | None:
         for raw in (old_raw, new_raw):
             reference = _mapping(raw).get("$ref")
             if isinstance(reference, str) and not reference.startswith("#/"):
                 return self._change(
-                    "warning", pointer, f"remote reference '{reference}' not followed"
+                    _WARNING, pointer, f"remote reference '{reference}' not followed"
                 )
         return None
 
@@ -308,7 +311,7 @@ class _Schema:
                 new_schema.get(keyword), sort_keys=True
             ):
                 yield self._change(
-                    "warning", pointer, f"'{keyword}' changed; review manually"
+                    _WARNING, pointer, f"'{keyword}' changed; review manually"
                 )
 
     def _types(
@@ -322,7 +325,7 @@ class _Schema:
         widened = not self.request and not new_types <= old_types
         if narrowed or widened:
             yield self._change(
-                "breaking",
+                _BREAKING,
                 pointer,
                 f"type changed from {sorted(old_types)} to {sorted(new_types)}",
             )
@@ -339,12 +342,12 @@ class _Schema:
         if self.request and old_values - new_values:
             removed = ", ".join(sorted(old_values - new_values))
             yield self._change(
-                "breaking", pointer, f"enum values no longer accepted: {removed}"
+                _BREAKING, pointer, f"enum values no longer accepted: {removed}"
             )
         if not self.request and new_values - old_values:
             added = ", ".join(sorted(new_values - old_values))
             yield self._change(
-                "warning", pointer, f"enum values added to response: {added}"
+                _WARNING, pointer, f"enum values added to response: {added}"
             )
 
     def _constraints(
@@ -357,7 +360,7 @@ class _Schema:
                 continue
             if not isinstance(old_value, int | float) or isinstance(old_value, bool):
                 yield self._change(
-                    "breaking", pointer, f"new constraint {keyword}={new_value}"
+                    _BREAKING, pointer, f"new constraint {keyword}={new_value}"
                 )
                 continue
             tighter = (
@@ -367,18 +370,19 @@ class _Schema:
             )
             if tighter:
                 yield self._change(
-                    "breaking",
+                    _BREAKING,
                     pointer,
                     f"{keyword} tightened from {old_value} to {new_value}",
                 )
         if new_schema.get("pattern") is not None and new_schema.get(
             "pattern"
         ) != old_schema.get("pattern"):
-            yield self._change("breaking", pointer, "pattern added or changed")
+            yield self._change(_BREAKING, pointer, "pattern added or changed")
 
     def _properties(
         self, old_schema: Document, new_schema: Document, pointer: str, depth: int
     ) -> Iterator[Change]:
+        """Apply request/response compatibility rules, then recurse into shared fields."""
         old_properties = _mapping(old_schema.get("properties"))
         new_properties = _mapping(new_schema.get("properties"))
         old_required = set(_strings(old_schema.get("required")))
@@ -388,20 +392,20 @@ class _Schema:
             yield from self._named(
                 new_required - old_required,
                 pointer,
-                "breaking",
+                _BREAKING,
                 "property became required",
             )
             yield from self._named(
-                removed, pointer, "warning", "request property removed"
+                removed, pointer, _WARNING, "request property removed"
             )
         else:
             yield from self._named(
-                removed, pointer, "breaking", "response property removed"
+                removed, pointer, _BREAKING, "response property removed"
             )
             yield from self._named(
                 old_required - new_required,
                 pointer,
-                "breaking",
+                _BREAKING,
                 "response property no longer required",
             )
         for name in sorted(old_properties.keys() & new_properties.keys()):
@@ -449,7 +453,7 @@ def _types(schema: Document) -> frozenset[str]:
     return frozenset(types)
 
 
-def _resolve(document: Document, value: Json) -> Document:
+def _resolve(document: Document, value: JSON) -> Document:
     """Follow local ``$ref`` chains; return an empty mapping when unresolvable."""
     current = _mapping(value)
     seen: set[str] = set()
@@ -458,7 +462,7 @@ def _resolve(document: Document, value: Json) -> Document:
         if not reference.startswith(_LOCAL_REF_PREFIX) or reference in seen:
             return {}
         seen.add(reference)
-        target: Json = document
+        target: JSON = document
         for part in reference.removeprefix(_LOCAL_REF_PREFIX).split("/"):
             key = part.replace("~1", "/").replace("~0", "~")
             target = _mapping(target).get(key)
@@ -466,17 +470,17 @@ def _resolve(document: Document, value: Json) -> Document:
     return current
 
 
-def _mapping(value: Json) -> Document:
+def _mapping(value: JSON) -> Document:
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
         return value
     return {}
 
 
-def _sequence(value: Json) -> list[Json]:
+def _sequence(value: JSON) -> list[JSON]:
     return value if isinstance(value, list) else []
 
 
-def _strings(value: Json) -> list[str]:
+def _strings(value: JSON) -> list[str]:
     return [item for item in _sequence(value) if isinstance(item, str)]
 
 
@@ -507,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         OSError,
         UnicodeError,
         ValueError,
-        OpenApiInputTypeError,
+        OpenAPIInputTypeError,
         re.error,
     ) as error:
         sys.stderr.write(f"cannot compare: {error}\n")
@@ -521,51 +525,58 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(
             f"{args.new.as_posix()}: {change.location}: {change.severity}: {change.message}\n"
         )
-    failing = {"breaking", "warning"} if args.strict else {"breaking"}
+    failing = {_BREAKING, _WARNING} if args.strict else {_BREAKING}
     return 1 if any(change.severity in failing for change in changes) else 0
 
 
-class OpenApiInputIssue(StrEnum):
+@unique
+class OpenAPIInputIssue(StrEnum):
     """Supported OpenAPI input validation failures and their stable messages."""
 
     DOCUMENT_SHAPE = "{path} is not an OpenAPI JSON object with 'paths'"
 
 
-class OpenApiInputError(ValueError):
+class OpenAPIInputError(ValueError):
     """An input violates the OpenAPI input contract."""
 
-    def __init__(self, issue: OpenApiInputIssue, *, path: Path | None = None) -> None:
+    def __init__(self, issue: OpenAPIInputIssue, *, path: Path | None = None) -> None:
         """Describe a supported input failure.
 
         Args:
-            issue (OpenApiInputIssue): The violated input invariant.
-            path (Path | None): Diagnostic path for the invalid input.
+            issue (OpenAPIInputIssue): The violated input invariant.
+            path (Path | None): OpenAPI file whose document has the wrong shape.
         """
         super().__init__(issue.value.format(path=path))
 
 
-class OpenApiInputTypeError(TypeError):
+class OpenAPIInputTypeError(TypeError):
     """An input has the wrong Python type for the OpenAPI input contract."""
 
-    def __init__(self, issue: OpenApiInputIssue, *, path: Path | None = None) -> None:
+    def __init__(self, issue: OpenAPIInputIssue, *, path: Path | None = None) -> None:
         """Describe a wrong input type.
 
         Args:
-            issue (OpenApiInputIssue): The violated input invariant.
-            path (Path | None): Diagnostic path for the invalid input.
+            issue (OpenAPIInputIssue): The violated input invariant.
+            path (Path | None): OpenAPI file whose document or ``paths`` is not an
+                object.
         """
         super().__init__(issue.value.format(path=path))
 
 
 def _load(path: Path) -> Document:
+    """Return the OpenAPI JSON object at ``path`` after checking its shape.
+
+    A non-object document or ``paths`` raises ``OpenAPIInputTypeError``; a missing
+    ``paths`` raises ``OpenAPIInputError``.
+    """
     loaded = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise OpenApiInputTypeError(OpenApiInputIssue.DOCUMENT_SHAPE, path=path)
+        raise OpenAPIInputTypeError(OpenAPIInputIssue.DOCUMENT_SHAPE, path=path)
     document = _mapping(loaded)
     if "paths" not in document:
-        raise OpenApiInputError(OpenApiInputIssue.DOCUMENT_SHAPE, path=path)
+        raise OpenAPIInputError(OpenAPIInputIssue.DOCUMENT_SHAPE, path=path)
     if not isinstance(document["paths"], dict):
-        raise OpenApiInputTypeError(OpenApiInputIssue.DOCUMENT_SHAPE, path=path)
+        raise OpenAPIInputTypeError(OpenAPIInputIssue.DOCUMENT_SHAPE, path=path)
     return document
 
 

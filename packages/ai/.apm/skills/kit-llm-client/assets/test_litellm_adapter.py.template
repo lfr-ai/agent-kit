@@ -13,18 +13,18 @@ import httpx
 import litellm
 import pytest
 
-from llm.adapters.litellm import LiteLlmAdapter, map_provider_error
+from llm.adapters.litellm import LiteLLMAdapter, map_provider_error
 from llm.port import (
     ChatMessage,
     CompletionRequest,
-    LlmAuthError,
-    LlmContentFilteredError,
-    LlmContextTooLongError,
-    LlmError,
-    LlmInvalidRequestError,
-    LlmRateLimitedError,
-    LlmTimeoutError,
-    LlmUnavailableError,
+    LLMAuthError,
+    LLMContentFilteredError,
+    LLMContextTooLongError,
+    LLMError,
+    LLMInvalidRequestError,
+    LLMRateLimitedError,
+    LLMTimeoutError,
+    LLMUnavailableError,
     Role,
 )
 
@@ -38,7 +38,7 @@ _ALIASES = {"summarizer": "openai/gpt-4o-mini"}
 
 
 def test_successful_call_maps_text_usage_and_alias() -> None:
-    adapter = LiteLlmAdapter(
+    adapter = LiteLLMAdapter(
         aliases=_ALIASES,
         completion_fn=partial(litellm.acompletion, mock_response="Invoice 42 is paid."),
     )
@@ -57,7 +57,7 @@ def test_request_shape_disables_gateway_retries_and_sends_schema() -> None:
         captured.update(kwargs)
         return await litellm.acompletion(**kwargs, mock_response="{}")  # type: ignore[arg-type]  # forwarded untyped kwargs
 
-    adapter = LiteLlmAdapter(aliases=_ALIASES, completion_fn=capture)
+    adapter = LiteLLMAdapter(aliases=_ALIASES, completion_fn=capture)
     request = CompletionRequest(
         operation="summarize-invoice",
         model="summarizer",
@@ -81,12 +81,12 @@ def test_request_shape_disables_gateway_retries_and_sends_schema() -> None:
 
 
 def test_unknown_alias_is_rejected_before_any_call() -> None:
-    adapter = LiteLlmAdapter(aliases=_ALIASES)
+    adapter = LiteLLMAdapter(aliases=_ALIASES)
     request = CompletionRequest(
         operation="x", model="unknown", messages=_REQUEST.messages
     )
 
-    with pytest.raises(LlmInvalidRequestError, match="unknown model alias"):
+    with pytest.raises(LLMInvalidRequestError, match="unknown model alias"):
         asyncio.run(adapter.complete(request))
 
 
@@ -104,40 +104,40 @@ def _rate_limited() -> litellm.RateLimitError:
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
-        (litellm.Timeout("echoed prompt text", "m", "openai"), LlmTimeoutError),
+        (litellm.Timeout("echoed prompt text", "m", "openai"), LLMTimeoutError),
         (
             litellm.APIConnectionError("echoed prompt text", "openai", "m"),
-            LlmUnavailableError,
+            LLMUnavailableError,
         ),
         (
             litellm.ServiceUnavailableError("echoed prompt text", "openai", "m"),
-            LlmUnavailableError,
+            LLMUnavailableError,
         ),
         (
             litellm.ContextWindowExceededError("echoed prompt text", "m", "openai"),
-            LlmContextTooLongError,
+            LLMContextTooLongError,
         ),
         (
             litellm.ContentPolicyViolationError("echoed prompt text", "m", "openai"),
-            LlmContentFilteredError,
+            LLMContentFilteredError,
         ),
         (
             litellm.AuthenticationError("echoed prompt text", "openai", "m"),
-            LlmAuthError,
+            LLMAuthError,
         ),
         (
             litellm.BadRequestError("echoed prompt text", "m", "openai"),
-            LlmInvalidRequestError,
+            LLMInvalidRequestError,
         ),
     ],
 )
 def test_provider_errors_map_to_typed_content_free_errors(
-    error: Exception, expected: type[LlmError]
+    error: Exception, expected: type[LLMError]
 ) -> None:
     async def fail(**_: object) -> litellm.ModelResponse:
         raise error
 
-    adapter = LiteLlmAdapter(aliases=_ALIASES, completion_fn=fail)
+    adapter = LiteLLMAdapter(aliases=_ALIASES, completion_fn=fail)
 
     with pytest.raises(expected) as raised:
         asyncio.run(adapter.complete(_REQUEST))
@@ -147,5 +147,5 @@ def test_provider_errors_map_to_typed_content_free_errors(
 def test_rate_limit_keeps_the_retry_after_hint() -> None:
     mapped = map_provider_error(_rate_limited())
 
-    assert isinstance(mapped, LlmRateLimitedError)
+    assert isinstance(mapped, LLMRateLimitedError)
     assert mapped.retry_after_s == 7.0

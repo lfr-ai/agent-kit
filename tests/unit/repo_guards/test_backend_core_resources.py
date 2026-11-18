@@ -18,7 +18,16 @@ _WIRING = runpy.run_path(str(_SERVICE / "assets/check_backend_wiring.py"))
 _BINDING = runpy.run_path(str(_DOMAIN / "assets/check_port_adapter_binding.py"))
 _OPENAPI = runpy.run_path(str(_API / "assets/compare_openapi.py"))
 _REDUNDANCY = runpy.run_path(str(_API / "assets/check_response_model_redundancy.py"))
-_TOOL_WORDS = ("read", "search", "edit", "execute", "write", "bash", "grep", "glob")
+_TOOL_WORDS = (
+    "read",
+    "search",
+    "edit",
+    "execute",
+    "write",
+    "bash",
+    "grep",
+    "glob",
+)
 
 
 def _write(root: Path, relative: str, text: str) -> Path:
@@ -54,8 +63,10 @@ def test_python_checker_rejects_new_violations(source: str, message: str) -> Non
 
 def test_python_checker_bool_trap_is_opt_in_and_exempts_tests() -> None:
     source = (
-        "def run(force: bool) -> None: ...\n"
-        "def run_ok(*, force: bool) -> None: ...\n"
+        "def run(force: bool) -> None:\n"
+        '    """Run with the supplied force setting."""\n'
+        "def run_ok(*, force: bool) -> None:\n"
+        '    """Run with the supplied force setting."""\n'
         "def test_case(flag: bool) -> None: ...\n"
     )
     assert _PYTHON["violations"](source, "m.py") == []
@@ -70,7 +81,7 @@ def test_python_checker_magic_numbers_are_opt_in_and_allow_named_constants() -> 
     source = (
         "from typing import Final, Literal\n"
         "_RETRIES = 3\n"
-        "LIMITS: Final = {'size': 64 * 1024}\n"
+        "LIMITS: Final[dict[str, int]] = {'size': 64 * 1024}\n"
         "WIDTH, HEIGHT = 80, 24\n"
         "class Policy:\n"
         "    TIMEOUT = 2.5\n"
@@ -81,7 +92,10 @@ def test_python_checker_magic_numbers_are_opt_in_and_allow_named_constants() -> 
         "    width = 7\n"
         "    return _RETRIES + width\n"
     )
-    assert _PYTHON["violations"](source, "m.py") == []
+    assert _PYTHON["violations"](source, "m.py") == [
+        "m.py:4: public module constant 'HEIGHT' requires explicit Final[T]",
+        "m.py:4: public module constant 'WIDTH' requires explicit Final[T]",
+    ]
     findings = _PYTHON["violations"](source, "m.py", rules=frozenset({"magic-number"}))
     assert findings == [
         "m.py:8: magic number 30.0; name it as an UPPER_CASE constant",

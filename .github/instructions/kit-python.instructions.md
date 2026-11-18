@@ -1,19 +1,15 @@
 ---
-description: Apply to the toolkit Python implementation and tests.
-applyTo: "src/**/*.py,tests/**/*.py"
+description: Apply the local typed Python contract to toolkit code, scripts, tests, and portable templates.
+applyTo: "src/**/*.py,tests/**/*.py,packages/**/*.py,scripts/**/*.py,**/*.py.template"
 ---
 
-- Core uses stdlib; dependencies point inward.
-- Inject I/O; test selection and validation independently.
-- Use concrete types and immutable records; no casts, production `Any` or quoted forward refs.
-- Dataclasses are keyword-only; immutable records are frozen and slotted.
-- Name numbers except 0 and +/-1 by intent/unit in `UPPER_CASE`; tests may use literal expectations.
-- Meet Ruff complexity/branch/return/statement limits with helpers, not suppressions.
-- Use double-backtick docstring literals; single backticks in Markdown.
-- A one-line summary may suffice regardless of parameter count or visibility.
-- Keep input/error/constraint contracts; do not restate signatures.
-- Explain initializer arguments in double-backtick prose or `Args:`; validate supplied sections.
-- Comment non-obvious intent, not the next statement.
-- Catch specific failures; report actionable, credential-free diagnostics.
+- Inject I/O so selection and validation are tested without files or processes.
+- Use concrete types; no casts, production `Any` or quoted forward refs. Dataclasses are keyword-only; records are frozen and slotted.
+- Name numbers other than 0 and +/-1 in `UPPER_CASE`; private `_UPPER` constants stay unannotated, public ones use `Final[T]`.
+- Closed enums are `@unique`; `StrEnum` members use `auto()` when the value is the lowercase name.
+- Use native naming (`SMTPFactory`); folders name the role, modules the responsibility (`infrastructure/apm.py`). Shared knowledge has one semantic owner.
+- Name the parts of conditions with three or more operands; guard `None` early. Meet Ruff limits with helpers, not suppressions.
+- Docstrings use double-backtick literals. A callable with at most one input (besides `self`/`cls`) gets a one-line summary that names the result and any error it raises, never `Args:`/`Returns:`/`Raises:` sections; sections are for several inputs and parameterized initializers. Properties read like attributes and classes use `Attributes:`. `Raises:` lists only what the body raises, translates or re-raises. The conventions gate enforces `kit-python-service/references/docstrings.md`.
+- Comment non-obvious intent only. Catch specific failures; log once at the owning boundary with stdlib `logging`; report actionable, credential-free diagnostics.
 - Use temporary test workspaces, never personal configuration or real cloud data.
 - Do not assume the consumer contains the toolkit.

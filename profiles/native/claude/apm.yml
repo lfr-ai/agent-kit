@@ -1,0 +1,14 @@
+{
+  "dependencies": {},
+  "description": "Agent Kit native claude roles.",
+  "executables": {},
+  "includes": [
+    ".apm/agents/"
+  ],
+  "license": "MIT",
+  "name": "agent-kit-native-claude",
+  "targets": [
+    "claude"
+  ],
+  "version": "0.1.0"
+}

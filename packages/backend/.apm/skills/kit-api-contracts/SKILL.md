@@ -1,6 +1,6 @@
 ---
 name: kit-api-contracts
-description: Use when designing or changing HTTP API inputs, outputs, status codes, or compatibility behavior.
+description: Use when designing HTTP API inputs, outputs, status codes or compatibility.
 license: MIT
 ---
 

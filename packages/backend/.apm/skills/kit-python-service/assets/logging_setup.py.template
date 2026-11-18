@@ -28,16 +28,20 @@ class CorrelationFilter(logging.Filter):
     """Attach the current correlation identifier to every record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Add ``correlation_id`` and keep the record."""
+        """Attach the current correlation identifier to ``record``; always keep it."""
         record.correlation_id = _CORRELATION_ID.get()
         return True
 
 
-class JsonFormatter(logging.Formatter):
+class JSONFormatter(logging.Formatter):
     """Render each record as one JSON object per line."""
 
     def format(self, record: logging.LogRecord) -> str:
-        """Serialize standard fields, extra fields, and any exception text."""
+        """Serialize ``record`` as one JSON object without a trailing newline.
+
+        Includes standard fields, extras and any exception text, with sensitive
+        keys redacted.
+        """
         payload: dict[str, object] = {
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
@@ -59,12 +63,12 @@ def configure_logging(
     """Install one root handler; repeated calls replace it instead of duplicating.
 
     Args:
-        level (str): Root level name such as ``INFO``.
+        level (str): Root level name such as ``INFO``; unknown names raise ``ValueError``.
         json_lines (bool): Emit JSON lines when true, a readable text format otherwise.
         stream (TextIO | None): Destination stream; defaults to standard error.
 
     Returns:
-        The installed handler, which tests can inspect or remove.
+        logging.Handler: The installed handler, which tests can inspect or remove.
     """
     root = logging.getLogger()
     for existing in [item for item in root.handlers if item.get_name() == _HANDLER_NAME]:
@@ -73,7 +77,7 @@ def configure_logging(
     handler.set_name(_HANDLER_NAME)
     handler.addFilter(CorrelationFilter())
     handler.setFormatter(
-        JsonFormatter()
+        JSONFormatter()
         if json_lines
         else logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(correlation_id)s] %(message)s")
     )
@@ -84,13 +88,9 @@ def configure_logging(
 
 @contextmanager
 def bind_correlation_id(correlation_id: str) -> Iterator[None]:
-    """Set the correlation identifier for the current task or thread context.
+    """Bind ``correlation_id`` for the block and restore the previous one on exit.
 
-    Args:
-        correlation_id (str): Request or job identifier; must not contain personal data.
-
-    Yields:
-        Nothing; the previous identifier is restored on exit.
+    The request or job identifier must not contain personal data.
     """
     token = _CORRELATION_ID.set(correlation_id)
     try:

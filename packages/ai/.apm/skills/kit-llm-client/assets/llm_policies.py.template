@@ -1,6 +1,6 @@
-"""Resilience and accounting policies around any ``LlmClient``.
+"""Resilience and accounting policies around any ``LLMClient``.
 
-Copy to ``llm/policies.py``. ``ResilientLlmClient`` wraps an adapter with bounded
+Copy to ``llm/policies.py``. ``ResilientLLMClient`` wraps an adapter with bounded
 retries (exponential backoff with full jitter, honoring Retry-After), an
 overall deadline, a concurrency limit, a circuit breaker, and a token and
 spend budget. It logs one structured, content-free record per attempt.
@@ -15,23 +15,24 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
+from typing import Final
 
 from llm.port import (
     Completion,
     CompletionRequest,
-    LlmBudgetExceededError,
-    LlmCircuitOpenError,
-    LlmClient,
-    LlmPermanentError,
-    LlmRateLimitedError,
-    LlmTimeoutError,
-    LlmTransientError,
+    LLMBudgetExceededError,
+    LLMCircuitOpenError,
+    LLMClient,
+    LLMPermanentError,
+    LLMRateLimitedError,
+    LLMTimeoutError,
+    LLMTransientError,
     Usage,
 )
 
 logger = logging.getLogger(__name__)
 
-CHARS_PER_TOKEN_ESTIMATE = 4
+CHARS_PER_TOKEN_ESTIMATE: Final[int] = 4
 
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_BASE_DELAY_SECONDS = 0.5
@@ -145,20 +146,15 @@ class SpendBudget:
         self.tokens = 0
 
     def check(self, request: CompletionRequest) -> None:
-        """Refuse a request that would break a cap.
+        """Refuse a request that would break a cap with ``LLMBudgetExceededError``.
 
-        Args:
-            request (CompletionRequest): Request about to be sent.
-
-        Raises:
-            LlmBudgetExceededError: If the request is too large or the scope
-                has no budget left.
+        A cap breaks when the request is too large or the scope has no budget left.
         """
         estimate = math.ceil(request.input_chars / CHARS_PER_TOKEN_ESTIMATE)
         if estimate + request.max_output_tokens > self._max_tokens:
-            raise LlmBudgetExceededError("request exceeds the per-request token cap")
+            raise LLMBudgetExceededError("request exceeds the per-request token cap")
         if self.spent_usd >= self._max_usd:
-            raise LlmBudgetExceededError("spend budget exhausted")
+            raise LLMBudgetExceededError("spend budget exhausted")
 
     def record(
         self, request: CompletionRequest, completion: Completion
@@ -211,15 +207,11 @@ class CircuitBreaker:
         return self._opened_at is not None
 
     def before_call(self) -> None:
-        """Raise while open; allow one probe after the cool-down.
-
-        Raises:
-            LlmCircuitOpenError: If the circuit is open.
-        """
+        """Raise ``LLMCircuitOpenError`` while open; allow one probe after cool-down."""
         if self._opened_at is None:
             return
         if self._clock() - self._opened_at < self._reset_after:
-            raise LlmCircuitOpenError("provider circuit open")
+            raise LLMCircuitOpenError("provider circuit open")
         self._opened_at = None
         self._failures = self._threshold - 1
 
@@ -235,12 +227,12 @@ class CircuitBreaker:
             self._opened_at = self._clock()
 
 
-class ResilientLlmClient:
-    """``LlmClient`` decorator that applies every call policy in one place."""
+class ResilientLLMClient:
+    """``LLMClient`` decorator that applies every call policy in one place."""
 
     def __init__(
         self,
-        inner: LlmClient,
+        inner: LLMClient,
         *,
         retry: RetrySettings | None = None,
         budget: SpendBudget | None = None,
@@ -253,7 +245,7 @@ class ResilientLlmClient:
         """Wrap an adapter.
 
         Args:
-            inner (LlmClient): Adapter that performs one attempt.
+            inner (LLMClient): Adapter that performs one attempt.
             retry (RetrySettings | None): Retry and deadline bounds.
             budget (SpendBudget | None): Optional token and spend caps.
             breaker (CircuitBreaker | None): Optional circuit breaker shared by callers
@@ -277,17 +269,11 @@ class ResilientLlmClient:
     async def complete(self, request: CompletionRequest) -> Completion:
         """Call the adapter under budget, concurrency, breaker and retry policies.
 
-        Args:
-            request (CompletionRequest): Request to send.
-
-        Returns:
-            The completion, annotated with attempts and cost.
-
-        Raises:
-            LlmBudgetExceededError: Before any call when a cap would be broken.
-            LlmCircuitOpenError: When the provider circuit is open.
-            LlmTimeoutError: When the overall deadline is exhausted.
-            LlmError: The last error when retries are exhausted or not allowed.
+        The completion is annotated with attempts and cost. An exhausted overall
+        deadline raises ``LLMTimeoutError``; exhausted retries re-raise the last
+        ``LLMTransientError``, and an ``LLMPermanentError`` is never retried. A
+        broken cap propagates ``LLMBudgetExceededError`` before any call and an
+        open provider circuit propagates ``LLMCircuitOpenError``.
         """
         if self._budget is not None:
             self._budget.check(request)
@@ -300,13 +286,13 @@ class ResilientLlmClient:
                     self._breaker.before_call()
                 remaining = deadline - self._clock()
                 if remaining <= 0:
-                    raise LlmTimeoutError("overall deadline exhausted")
+                    raise LLMTimeoutError("overall deadline exhausted")
                 started = self._clock()
                 try:
                     completion = await self._inner.complete(
                         replace(request, timeout_s=min(request.timeout_s, remaining))
                     )
-                except LlmTransientError as error:
+                except LLMTransientError as error:
                     if self._breaker is not None:
                         self._breaker.on_failure()
                     self._log(request, attempt=attempt, outcome=type(error).__name__)
@@ -315,7 +301,7 @@ class ResilientLlmClient:
                         raise
                     await self._sleep(delay)
                     continue
-                except LlmPermanentError as error:
+                except LLMPermanentError as error:
                     self._log(request, attempt=attempt, outcome=type(error).__name__)
                     raise
                 if self._breaker is not None:
@@ -335,12 +321,12 @@ class ResilientLlmClient:
                 return result
 
     def _next_delay(
-        self, error: LlmTransientError, attempt: int, deadline: float
+        self, error: LLMTransientError, attempt: int, deadline: float
     ) -> float | None:
         """Return the wait before the next attempt, or None to stop retrying.
 
         Args:
-            error (LlmTransientError): Failure whose Retry-After value may raise
+            error (LLMTransientError): Failure whose Retry-After value may raise
                 the jittered delay or exceed the accepted wait.
             attempt (int): One-based number of the attempt that just failed.
             deadline (float): Absolute monotonic time by which retries must end.
@@ -348,7 +334,7 @@ class ResilientLlmClient:
         if attempt >= self._retry.max_attempts:
             return None
         delay = backoff_delay(attempt, self._retry, self._rng)
-        if isinstance(error, LlmRateLimitedError) and error.retry_after_s is not None:
+        if isinstance(error, LLMRateLimitedError) and error.retry_after_s is not None:
             if error.retry_after_s > self._retry.max_retry_after_s:
                 return None
             delay = max(delay, error.retry_after_s)
@@ -368,7 +354,8 @@ class ResilientLlmClient:
 
         Args:
             request (CompletionRequest): Supplies operation, model alias, prompt
-                identity and request ID, without logging prompt content.
+                identity and request ID, without logging prompt content; an
+                absent identity field is logged as an empty string.
             attempt (int): One-based attempt number recorded in the event.
             outcome (str): Success label or failure category.
             completion (Completion | None): Successful result supplying usage,
@@ -377,9 +364,9 @@ class ResilientLlmClient:
         fields: dict[str, object] = {
             "operation": request.operation,
             "model_alias": request.model,
-            "prompt_name": request.prompt_name,
-            "prompt_version": request.prompt_version,
-            "request_id": request.request_id,
+            "prompt_name": request.prompt_name or "",
+            "prompt_version": request.prompt_version or "",
+            "request_id": request.request_id or "",
             "attempt": attempt,
             "outcome": outcome,
         }

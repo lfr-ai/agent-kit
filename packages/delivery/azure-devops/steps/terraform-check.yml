@@ -1,0 +1,70 @@
+# Backend-less validation; state and backends stay with the consumer.
+# Optional terraform tests can create resources; only enable reviewed plan/mock-only suites.
+parameters:
+  - name: terraformVersion
+    type: string
+  - name: terraformSha256
+    type: string
+  - name: workingDirectory
+    type: string
+    default: .
+  - name: tflintVersion
+    type: string
+    default: ""
+  - name: tflintSha256
+    type: string
+    default: ""
+  - name: runTests
+    type: boolean
+    default: false
+
+steps:
+  - template: setup-terraform.yml
+    parameters:
+      terraformVersion: ${{ parameters.terraformVersion }}
+      terraformSha256: ${{ parameters.terraformSha256 }}
+
+  - ${{ if ne(parameters.tflintVersion, '') }}:
+      - template: setup-tflint.yml
+        parameters:
+          tflintVersion: ${{ parameters.tflintVersion }}
+          tflintSha256: ${{ parameters.tflintSha256 }}
+
+  # Provider plugin cache for this unprivileged check only (no cache in deploy jobs). The
+  # committed lock file keys the cache and -lockfile=readonly still verifies provider hashes.
+  - task: Cache@2
+    displayName: Cache Terraform providers
+    inputs:
+      key: '"terraform" | "$(Agent.OS)" | "${{ parameters.terraformVersion }}" | ${{ parameters.workingDirectory }}/.terraform.lock.hcl'
+      path: $(Pipeline.Workspace)/.terraform-plugin-cache
+
+  - bash: |
+      set -euo pipefail
+      mkdir -p "$CACHE_DIR"
+      echo "##vso[task.setvariable variable=TF_PLUGIN_CACHE_DIR]${CACHE_DIR}"
+    displayName: Use Terraform plugin cache
+    env:
+      CACHE_DIR: $(Pipeline.Workspace)/.terraform-plugin-cache
+  - bash: terraform fmt -check -recursive -diff
+    displayName: Terraform format
+    workingDirectory: ${{ parameters.workingDirectory }}
+
+  - bash: terraform init -backend=false -input=false -lockfile=readonly
+    displayName: Terraform init without backend
+    workingDirectory: ${{ parameters.workingDirectory }}
+
+  - bash: terraform validate
+    displayName: Terraform validate
+    workingDirectory: ${{ parameters.workingDirectory }}
+
+  - ${{ if ne(parameters.tflintVersion, '') }}:
+      - bash: |
+          tflint --init
+          tflint --recursive
+        displayName: TFLint
+        workingDirectory: ${{ parameters.workingDirectory }}
+
+  - ${{ if eq(parameters.runTests, true) }}:
+      - bash: terraform test
+        displayName: Terraform test
+        workingDirectory: ${{ parameters.workingDirectory }}

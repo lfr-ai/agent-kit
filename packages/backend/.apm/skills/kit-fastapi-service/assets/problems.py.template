@@ -9,11 +9,12 @@ reference of the ``kit-api-contracts`` skill.
 from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from http import HTTPStatus
+from typing import Final
 
 from starlette.responses import JSONResponse
 
-PROBLEM_MEDIA_TYPE = "application/problem+json"
-REQUEST_ID_HEADER = "X-Request-ID"
+PROBLEM_MEDIA_TYPE: Final[str] = "application/problem+json"
+REQUEST_ID_HEADER: Final[str] = "X-Request-ID"
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 

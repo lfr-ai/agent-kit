@@ -8,7 +8,7 @@ takes a mapping so tests never mutate the real process environment.
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from typing import Self
 
 _PREFIX = "SHOP_"
@@ -17,12 +17,13 @@ _FALSE = frozenset({"0", "false", "no", "off"})
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
+@unique
 class Environment(StrEnum):
     """Deployment environment name."""
 
-    DEVELOPMENT = "development"
-    TEST = "test"
-    PRODUCTION = "production"
+    DEVELOPMENT = auto()
+    TEST = auto()
+    PRODUCTION = auto()
 
 
 class SettingsError(ValueError):
@@ -49,18 +50,10 @@ class Settings:
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> Self:
-        """Build settings from environment variables with the project prefix.
+        """Return validated settings from prefixed variables in ``environ``.
 
-        Args:
-            environ (Mapping[str, str] | None): Variables to read; defaults to the
-                process environment.
-
-        Returns:
-            Validated settings.
-
-        Raises:
-            SettingsError: If any required key is missing or any value is invalid.
-                All problems are reported together.
+        ``None`` reads the process environment. Raise ``SettingsError`` listing
+        every missing key and invalid value together.
         """
         source = os.environ if environ is None else environ
         problems: list[str] = []

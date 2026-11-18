@@ -154,7 +154,7 @@ class Block:
         kind: ``entry`` or ``record``.
         line: 1-based line of the heading or front matter start.
         label: Heading title or file name used in messages.
-        date_text: The date as written, or an empty string when absent.
+        date_text: The date as written, or ``None`` when the field is absent.
         fields: Lower-case field name mapped to its line and value.
         aged: Whether the block can become stale.
     """
@@ -162,7 +162,7 @@ class Block:
     kind: str
     line: int
     label: str
-    date_text: str
+    date_text: str | None
     fields: Mapping[str, tuple[int, str]]
     aged: bool
 
@@ -176,13 +176,9 @@ def _parse_date(text: str) -> date | None:
 
 
 def content_lines(text: str) -> list[tuple[int, str]]:
-    """Return numbered lines outside fenced code blocks and HTML comments.
+    """Return ``(line number, line)`` pairs outside code fences and HTML comments.
 
-    Args:
-        text (str): Markdown file content.
-
-    Returns:
-        ``(line number, line)`` pairs; single-line comments are removed in place.
+    Single-line comments are removed in place.
     """
     kept: list[tuple[int, str]] = []
     fence: str | None = None
@@ -203,11 +199,7 @@ def content_lines(text: str) -> list[tuple[int, str]]:
 
 
 def _fields(lines: Iterable[tuple[int, str]]) -> dict[str, tuple[int, str]]:
-    """Collect ``Field: value`` lines; the first occurrence of a field wins.
-
-    Returns:
-        ``(line, value)`` keyed by field name.
-    """
+    """Map ``Field: value`` names to ``(line, value)``; the first occurrence wins."""
     found: dict[str, tuple[int, str]] = {}
     for number, line in lines:
         match = _FIELD.match(line)
@@ -226,7 +218,10 @@ def _front_matter(lines: list[tuple[int, str]]) -> Block | None:
             fields = _fields(body)
             if not any(key in fields for key in _RECORD_REQUIRED):
                 return None
-            date_text = fields.get("date", (0, ""))[1].strip().strip("\"'")
+            date_field = fields.get("date")
+            date_text = (
+                None if date_field is None else date_field[1].strip().strip("\"'")
+            )
             return Block(
                 kind="record",
                 line=lines[0][0],
@@ -240,11 +235,7 @@ def _front_matter(lines: list[tuple[int, str]]) -> Block | None:
 
 
 def _headings(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
-    """Return ``(index, level, title)`` for every heading line.
-
-    Returns:
-        ``(index, level, title)`` triples in document order.
-    """
+    """Return ``(index, level, title)`` for every heading line in document order."""
     found: list[tuple[int, int, str]] = []
     for index, (_, line) in enumerate(lines):
         match = _HEADING.match(line)
@@ -259,7 +250,7 @@ def _entries(
     """Split dated entries at ``level`` and report undated sibling headings.
 
     Returns:
-        Dated blocks in document order and ``(line, message)`` problems for undated
+        tuple[list[Block], list[tuple[int, str]]]: Dated blocks in document order and ``(line, message)`` problems for undated
         sibling headings.
     """
     headings = _headings(lines)
@@ -291,11 +282,7 @@ def _entries(
 
 
 def _status_problems(block: Block) -> list[tuple[int, str]]:
-    """Check the status value and the replacement link of superseded blocks.
-
-    Returns:
-        ``(line, message)`` problems; empty when the status is valid.
-    """
+    """Return ``(line, message)`` problems with the status or superseded link."""
     if "status" not in block.fields:
         return []
     line, value = block.fields["status"]
@@ -328,7 +315,7 @@ def _date_problems(block: Block, *, policy: Policy) -> list[tuple[int, str]]:
     """Check date validity, future dates and age of one block.
 
     Returns:
-        ``(line, message)`` problems; empty when the date is acceptable.
+        list[tuple[int, str]]: ``(line, message)`` problems; empty when the date is acceptable.
     """
     if not block.date_text:
         return []
@@ -356,7 +343,7 @@ def _block_problems(block: Block, *, policy: Policy) -> list[tuple[int, str]]:
     """Check required fields, status and dates of one entry or record.
 
     Returns:
-        ``(line, message)`` problems in check order; empty for a valid block.
+        list[tuple[int, str]]: ``(line, message)`` problems in check order; empty for a valid block.
     """
     required = policy.required if block.kind == "entry" else _RECORD_REQUIRED
     missing = [
@@ -392,7 +379,7 @@ def _link_problems(
     """Check every local Markdown link outside inline code.
 
     Returns:
-        ``(line, message)`` problems for broken links, in line order.
+        list[tuple[int, str]]: ``(line, message)`` problems for broken links, in line order.
     """
     problems: list[tuple[int, str]] = []
     for number, line in lines:
@@ -413,7 +400,7 @@ def check_text(text: str, *, source: Path, shown: str, policy: Policy) -> list[F
         policy (Policy): Shared settings.
 
     Returns:
-        Findings sorted by line and message.
+        list[Finding]: Findings sorted by line and message.
     """
     lines = content_lines(text)
     record = _front_matter(lines)
@@ -431,16 +418,9 @@ def check_text(text: str, *, source: Path, shown: str, policy: Policy) -> list[F
 
 
 def collect(paths: Iterable[Path]) -> list[Path]:
-    """Expand folders to the Markdown files below them.
+    """Return Markdown files in stable order; raise ``FileNotFoundError`` if absent.
 
-    Args:
-        paths (Iterable[Path]): Files or folders.
-
-    Returns:
-        Markdown files in a stable order.
-
-    Raises:
-        FileNotFoundError: A path does not exist.
+    Folders expand to the Markdown files below them.
     """
     found: list[Path] = []
     for path in paths:
@@ -483,9 +463,7 @@ def self_test() -> list[str]:
 
     The sample is checked twice: with the full rules and with
     ``--freshness-only``, which must report only date, age and link findings.
-
-    Returns:
-        Descriptions of failed expectations; empty when the checker works.
+    An empty result means the checker works.
     """
     policy = Policy(
         root=Path.cwd(), today=_SELF_TEST_TODAY, max_age_days=_SELF_TEST_MAX_AGE_DAYS
@@ -560,11 +538,7 @@ def _run_self_test() -> int:
 
 
 def _policy(args: argparse.Namespace) -> Policy | str:
-    """Build the policy from arguments, or return a usage error message.
-
-    Returns:
-        The validated policy, or a usage error message.
-    """
+    """Build the policy from arguments, or return a usage error message."""
     today = datetime.now(tz=UTC).date()
     if args.today:
         parsed = _parse_date(args.today)

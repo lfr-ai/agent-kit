@@ -42,6 +42,34 @@ Code actions name Ruff's fix and import providers. If an output channel reports
 a bundled-version fallback, run bootstrap first. Do not copy tool options into
 settings when the tool configuration owns them.
 
+### Import grouping
+
+Ruff's `I` rules own import sorting. Its standard-library, third-party,
+first-party and relative-import sections already exist by default; listing
+them again does not add enforcement. The toolkit's `ruff.toml` identifies its
+three Python packages as first-party because they span multiple source roots.
+
+Generated API projects also enable `I`. Ruff discovers their `app` package
+under its default `src` directory, while the installed `platform_kit_runtime`
+package is correctly third-party in those projects. Do not copy the toolkit's
+first-party list into a consumer or maintain a list of every installed
+third-party dependency. Add classification overrides only for a layout that
+Ruff cannot infer. The [relocation tests](../tests/integration/starter/test_import_sorting.py)
+exercise actual sorting for the toolkit and generated projects.
+
+### Infrastructure authoring
+
+The workspace and dev container recommend `ms-azuretools.vscode-bicep` for
+Bicep and `hashicorp.terraform` for Terraform, alongside the existing Containers,
+GitHub Actions and YAML extensions. These are editor integrations, not cloud
+provisioning or deployment automation. They do not configure Azure identity,
+install the infrastructure command-line tools, or activate hosted pipelines.
+The minimal Copier starter does not copy this repository's editor configuration.
+It generates its own recommendations from the service, project kind and IaC
+answers: Python/container tooling for the API, Playwright/Vitest for frontend
+kinds, and only the selected Bicep or Terraform extension. No-IaC omits both
+IaC extensions.
+
 ## Canonical versus generated files
 
 Author under root or package `.apm` directories. Mirrored `.agents/skills` and

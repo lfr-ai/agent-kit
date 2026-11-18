@@ -40,6 +40,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+from typing import Final
 from urllib.parse import urlsplit
 
 _USAGE_ERROR = 2
@@ -141,7 +142,7 @@ def _health(*names: str) -> tuple[str, ...]:
     return tuple(f"{folder}{name}" for name in names for folder in _HEALTH_DIRS)
 
 
-REQUIREMENTS: tuple[Requirement, ...] = (
+REQUIREMENTS: Final[tuple[Requirement, ...]] = (
     Requirement(name="README", patterns=_health("README.md"), expected="README.md"),
     Requirement(
         name="LICENSE",
@@ -192,7 +193,7 @@ def missing_files(root: Path, *, skipped: frozenset[str]) -> list[Finding]:
         skipped (frozenset[str]): Requirement names the project decided not to meet.
 
     Returns:
-        One finding per unmet requirement.
+        list[Finding]: One finding per unmet requirement.
     """
     return [
         Finding(
@@ -228,7 +229,7 @@ def readme_emojis(path: str, text: str) -> list[Finding]:
         text (str): README content.
 
     Returns:
-        One finding per line with at least one emoji.
+        list[Finding]: One finding per line with at least one emoji.
     """
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -253,7 +254,7 @@ def is_placeholder(value: str, *, allowed: frozenset[str] = frozenset()) -> bool
         allowed (frozenset[str]): Extra exact values the project accepts.
 
     Returns:
-        True for empty, marked, numeric, mode-word and local-URL values.
+        bool: True for empty, marked, numeric, mode-word and local-URL values.
     """
     text = value.strip().strip("\"'")
     lowered = text.lower()
@@ -300,7 +301,7 @@ def env_findings(
         allowed (frozenset[str]): Extra exact values the project accepts.
 
     Returns:
-        Findings for invalid, duplicate, undocumented or real-looking entries.
+        list[Finding]: Findings for invalid, duplicate, undocumented or real-looking entries.
     """
     findings: list[Finding] = []
     seen: set[str] = set()
@@ -360,6 +361,9 @@ def check(
 ) -> list[Finding]:
     """Run every check under a root.
 
+    A file that cannot be read propagates ``OSError``; non-UTF-8 text propagates
+    ``UnicodeDecodeError``.
+
     Args:
         root (Path): Repository root.
         env_files (Iterable[Path]): Environment example files to check.
@@ -367,11 +371,7 @@ def check(
         allowed (frozenset[str]): Extra exact environment values to accept.
 
     Returns:
-        Findings sorted by path, line and message.
-
-    Raises:
-        OSError: If a file cannot be read.
-        UnicodeDecodeError: If a file is not UTF-8.
+        list[Finding]: Findings sorted by path, line and message.
     """
     findings = missing_files(root, skipped=skipped)
     readme = root / "README.md"

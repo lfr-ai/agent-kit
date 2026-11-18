@@ -1,6 +1,6 @@
 ---
 description: Apply to consumer project facts, durable decisions and knowledge indexes.
-applyTo: "PROJECT.md,projects.md,llms.txt,memories/**,.agents/knowledge-base/**"
+applyTo: "PROJECT.md,OWNERSHIP.md,projects.md,llms.txt,memories/**,.agents/knowledge-base/**"
 ---
 
 - Keep consumer facts, private data and credentials out of portable packages.

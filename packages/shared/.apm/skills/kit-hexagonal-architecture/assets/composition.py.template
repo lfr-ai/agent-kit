@@ -13,10 +13,10 @@ from functools import partial
 from typing import Self
 
 from app.adapters.notifications.smtp_notifier import (
-    SmtpInvoiceNotifier,
+    SMTPInvoiceNotifier,
     starttls_factory,
 )
-from app.adapters.payments.http_payment_gateway import HttpPaymentGateway
+from app.adapters.payments.http_payment_gateway import HTTPPaymentGateway
 from app.adapters.persistence.sqlite_invoices import SqliteUnitOfWork, connect
 from app.application.use_cases.settle_invoice import SettleInvoice
 
@@ -45,16 +45,9 @@ class Settings:
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] = os.environ) -> Self:
-        """Read required settings and fail fast with the missing names.
+        """Read required settings; raise ``KeyError`` naming all missing variables.
 
-        Args:
-            environ (Mapping[str, str]): Variable source; tests pass a plain dictionary.
-
-        Returns:
-            Validated settings.
-
-        Raises:
-            KeyError: Listing every missing variable at once.
+        ``environ`` defaults to ``os.environ``; tests pass a plain dictionary.
         """
         names = {
             "database": "APP_DATABASE",
@@ -88,15 +81,15 @@ def build_settle_invoice(
         address_book (Mapping[str, str]): Customer id to e-mail address lookup.
 
     Returns:
-        A ready-to-call use case.
+        SettleInvoice: A ready-to-call use case.
     """
     return SettleInvoice(
         unit_of_work=partial(SqliteUnitOfWork, partial(connect, settings.database)),
-        payments=HttpPaymentGateway(
+        payments=HTTPPaymentGateway(
             base_url=settings.payments_url,
             token=lambda: settings.payments_token,
         ),
-        notifier=SmtpInvoiceNotifier(
+        notifier=SMTPInvoiceNotifier(
             connect=starttls_factory(
                 host=settings.smtp_host,
                 port=settings.smtp_port,

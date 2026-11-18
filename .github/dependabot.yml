@@ -1,4 +1,4 @@
-# Dependabot version and security updates with Conventional Commit prefixes for `cz check`.
+# Give dependency PRs Conventional Commit prefixes so `cz check` accepts them.
 version: 2
 
 updates:
@@ -30,16 +30,18 @@ updates:
         dependency-type: development
         update-types: [minor, patch]
         patterns: ["*"]
-        # The APM CLI needs its own compatibility review (`task apm:smoke`), so it is never batched.
+        # Review APM CLI updates separately with `task apm:smoke`; do not batch.
         exclude-patterns: [apm-cli]
       python-runtime:
         dependency-type: production
         update-types: [minor, patch]
         patterns: ["*"]
 
-  # Actions stay pinned to full commit SHAs (check_governance.py); Dependabot updates SHA and comment.
+  # Keep Actions pinned to full SHAs with a version comment; the governance
+  # check (scripts/checks/governance) rejects any mutable ref. The reusable
+  # composite action pins its own setup steps, so it is scanned too.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/packages/delivery/actions/*"]
     schedule:
       interval: weekly
       day: monday
@@ -110,6 +112,25 @@ updates:
     labels: [dependencies]
     groups:
       devcontainer-features:
+        patterns: ["*"]
+
+  # Exact azapi provider pins in each delivery module's versions.tf.
+  - package-ecosystem: terraform
+    directories: ["/packages/delivery/infra/*/terraform"]
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [dependencies]
+    groups:
+      terraform-providers:
         patterns: ["*"]
 
   # pre-commit hook revisions in .pre-commit-config.yaml.

@@ -1,6 +1,6 @@
 ---
 name: kit-database-migrations
-description: Use when changing persisted schema or data with an ordered, reviewable migration and recovery plan.
+description: Use when migrating persisted schema or data with ordering and recovery plans.
 license: MIT
 ---
 

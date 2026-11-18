@@ -2,6 +2,7 @@
 version: "3"
 
 env:
+  # Give child tools the checkout root, even when Task starts elsewhere.
   AGENT_KIT_DIR: "{{.ROOT_DIR}}"
 
 tasks:
@@ -22,7 +23,7 @@ tasks:
       - uv run --no-project python scripts/audit_dependencies.py
       - uv sync --locked
       - bun install --frozen-lockfile
-      - uv run --locked pre-commit install --install-hooks
+      - uv run --locked --no-sync pre-commit install --install-hooks
       - cmd: '"{{.TASK_EXE}}" checkout:register'
         platforms: [windows]
 
@@ -34,10 +35,15 @@ tasks:
     cmds:
       - powershell -NoProfile -NonInteractive -File scripts/register_checkout.ps1
 
+  bootstrap:azure:
+    desc: Plan explicit Azure identity setup offline; only operator-supplied --apply permits cloud changes
+    cmds:
+      - uv run --locked --no-sync python packages/delivery/scripts/bootstrap_azure.py {{.CLI_ARGS}}
+
   lint:
     desc: Ruff lint (read-only)
     cmds:
-      - uv run --locked python scripts/verify.py lint
+      - uv run --locked --no-sync python scripts/verify.py lint
 
   format:
     desc: Explicit authoring formatter (writes files)
@@ -48,12 +54,20 @@ tasks:
   typecheck:
     desc: ty over every Python root declared in ty.toml
     cmds:
-      - uv run --locked python scripts/verify.py types
+      - uv run --locked --no-sync python scripts/verify.py types
 
   test:
     desc: All test tiers; pass pytest paths, markers, or options after --
     cmds:
       - uv run --locked pytest -n auto {{.CLI_ARGS}}
+
+  check:
+    desc: Fast inner loop - fix format and lint, then types, imports, and fast unit and property tests
+    cmds:
+      - task: format
+      - uv run --locked --no-sync ty check
+      - uv run --locked --no-sync lint-imports
+      - uv run --locked --no-sync pytest tests/unit tests/property -n auto -m "not slow" --failed-first -q {{.CLI_ARGS}}
 
   test:matrix:
     desc: Test Python 3.13, Python 3.14 and coverage in isolated tox environments
@@ -94,13 +108,14 @@ tasks:
       - uv lock
 
   release:build:
-    desc: Build and verify the wheel, sdist and capability ZIP (no overwrite or publish)
+    desc: Build and verify maintainer/runtime wheels and sdists plus capability ZIP (no publish)
     cmds:
-      - uv build --out-dir build/distributions
+      - uv build --package agent-kit --out-dir build/distributions
+      - uv build --package platform-kit-runtime --out-dir build/distributions
       - task: capabilities:build
         vars:
           CLI_ARGS: --profile fullstack --feature iac
-      - uv run --locked --no-sync python -m scripts.check_release
+      - uv run --locked --no-sync python -m scripts.checks.release
 
   release:publish:
     desc: Operator only; publish an existing reviewed GitHub draft with TAG=vX.Y.Z
@@ -114,7 +129,7 @@ tasks:
       - sh: test "$(gh release view {{.TAG | shellQuote}} --repo lfr-ai/agent-kit --json isDraft --jq .isDraft)" = true
         msg: The tag must identify an accessible draft created by the release workflow.
     cmds:
-      - uv run --locked --no-sync python scripts/check_governance.py --publication
+      - uv run --locked --no-sync python -m scripts.checks.governance --publication
       - gh release view {{.TAG | shellQuote}} --repo lfr-ai/agent-kit
       - gh release edit {{.TAG | shellQuote}} --repo lfr-ai/agent-kit --draft=false
 

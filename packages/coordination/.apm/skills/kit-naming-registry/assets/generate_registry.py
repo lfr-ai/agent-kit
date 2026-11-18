@@ -37,17 +37,20 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
-EXIT_OK = 0
-EXIT_USAGE = 2
-GENERATOR_NAME = "generate_registry.py"
+EXIT_OK: Final[int] = 0
+EXIT_USAGE: Final[int] = 2
+GENERATOR_NAME: Final[str] = "generate_registry.py"
 _GROUP_NAME = re.compile(r"[A-Z][A-Za-z0-9]*")
 _ENTRY_NAME = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 _VALUE = re.compile(r"\S(?:.*\S)?")
 _VERSION = re.compile(r"\d+\.\d+\.\d+")
 _UNSAFE_TEXT = re.compile(r'"""|"$|\\|\*/|[\x00-\x1f\x7f]')
 # Names the generated modules already bind, plus PascalCase Python keywords.
-RESERVED_GROUP_NAMES = frozenset({"StrEnum", "Final", "True", "False", "None"})
+RESERVED_GROUP_NAMES: Final[frozenset[str]] = frozenset(
+    {"StrEnum", "Final", "True", "False", "None"}
+)
 
 
 class RegistryError(ValueError):
@@ -208,17 +211,7 @@ def _group(item: dict[str, object], *, where: str) -> Group:
 
 
 def parse_registry(document: object) -> Registry:
-    """Convert a parsed registry document into render-ready records.
-
-    Args:
-        document (object): JSON value loaded from the registry file.
-
-    Returns:
-        The parsed registry.
-
-    Raises:
-        RegistryError: If a field needed for safe rendering is missing or invalid.
-    """
+    """Return render-ready records; raise ``RegistryError`` for an invalid field."""
     if not isinstance(document, dict):
         message = "registry must be a JSON object"
         raise RegistryError(message)
@@ -304,18 +297,7 @@ def render_typescript(registry: Registry) -> str:
 
 
 def load_registry(path: Path) -> Registry:
-    """Read and parse a registry file.
-
-    Args:
-        path (Path): Registry JSON file.
-
-    Returns:
-        The parsed registry.
-
-    Raises:
-        OSError: If the file cannot be read.
-        ValueError: If the JSON is invalid or the registry cannot be rendered.
-    """
+    """Read and parse a registry file, propagating ``OSError`` and ``ValueError``."""
     return parse_registry(json.loads(path.read_text(encoding="utf-8")))
 
 
@@ -334,10 +316,6 @@ def write_if_changed(path: Path, text: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
     return True
-
-
-class SelfTestError(AssertionError):
-    """Generated output did not meet a documented guarantee."""
 
 
 _SELF_TEST_REGISTRY = {
@@ -364,30 +342,27 @@ _SELF_TEST_REGISTRY = {
 }
 
 
-def self_test() -> None:
-    """Render a synthetic registry and check determinism and safety.
+def self_test() -> list[str]:
+    """Return determinism, deprecation-note and unsafe-text regressions.
 
-    Raises:
-        SelfTestError: If output differs between runs, does not compile, lacks
-            the deprecation note, or unsafe text is accepted.
+    Generated Python that does not compile propagates ``SyntaxError``.
     """
     copy = json.loads(json.dumps(_SELF_TEST_REGISTRY))
     python = render_python(parse_registry(_SELF_TEST_REGISTRY))
     typescript = render_typescript(parse_registry(_SELF_TEST_REGISTRY))
+    failures: list[str] = []
     if python != render_python(parse_registry(copy)):
-        message = "Python output is not deterministic"
-        raise SelfTestError(message)
+        failures.append("Python output is not deterministic")
     compile(python, "<generated registry>", "exec")
     if "@deprecated since 1.0.0. Use ACTIVE." not in typescript:
-        message = "TypeScript output lacks the deprecation note"
-        raise SelfTestError(message)
+        failures.append("TypeScript output lacks the deprecation note")
     copy["groups"][0]["description"] = 'Ends with a quote"'
     try:
         parse_registry(copy)
     except RegistryError:
-        return
-    message = "unsafe description was accepted"
-    raise SelfTestError(message)
+        return failures
+    failures.append("unsafe description was accepted")
+    return failures
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -407,9 +382,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Registry generator self-test passed.\n")
-        return EXIT_OK
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Registry generator self-test {verdict}.\n")
+        return int(bool(failures))
     if args.registry is None or (args.python is None and args.typescript is None):
         parser.error("give REGISTRY and --python, --typescript, or both")
     try:

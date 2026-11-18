@@ -1,0 +1,52 @@
+# Extends template: one quality-gate job; compose jobs/python-task.yml directly for multiple stages.
+# Protect consumer pipelines with a Required template check; see docs/consuming.md.
+parameters:
+  - name: pythonVersion
+    type: string
+  - name: uvVersion
+    type: string
+  - name: task
+    type: string
+    default: verify
+  - name: baseUrl
+    type: string
+    default: ""
+  - name: workingDirectory
+    type: string
+    default: .
+  - name: publishTestResults
+    type: boolean
+    default: false
+  - name: publishCoverage
+    type: boolean
+    default: false
+  - name: vmImage
+    type: string
+    default: ubuntu-24.04
+  - name: timeoutMinutes
+    type: number
+    default: 30
+  - name: extraSteps
+    type: stepList
+    default: []
+
+stages:
+  - stage: ci
+    displayName: Quality gate
+    pool:
+      vmImage: ${{ parameters.vmImage }}
+    jobs:
+      - template: ../jobs/python-task.yml
+        parameters:
+          name: gate
+          pythonVersion: ${{ parameters.pythonVersion }}
+          uvVersion: ${{ parameters.uvVersion }}
+          task: ${{ parameters.task }}
+          baseUrl: ${{ parameters.baseUrl }}
+          workingDirectory: ${{ parameters.workingDirectory }}
+          publishTestResults: ${{ parameters.publishTestResults }}
+          publishCoverage: ${{ parameters.publishCoverage }}
+          # Full history, so gates that read git history keep working.
+          fetchDepth: 0
+          timeoutMinutes: ${{ parameters.timeoutMinutes }}
+          extraSteps: ${{ parameters.extraSteps }}

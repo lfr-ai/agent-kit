@@ -1,6 +1,6 @@
 ---
 name: kit-infra-review
-description: Use when choosing IaC tooling or reviewing infrastructure changes across IaC, scripts, containers, or CI.
+description: Use when choosing IaC tools or reviewing infrastructure, scripts, containers or CI.
 license: MIT
 ---
 
@@ -12,7 +12,9 @@ risk. Detail for each layer lives in its specialist skill: `kit-ci-review`,
 bundle, and the opt-in features `kit-terraform-validation` (`terraform`),
 `kit-azure-validation` (`bicep`), and `kit-remote-access` (`remote-access`).
 To choose or migrate an IaC tool, follow [IaC selection](references/iac-selection.md)
-instead. Start reviews with the [review guide](references/guide.md).
+instead. Start reviews with the [review guide](references/guide.md). When an
+Azure change proposes self-hosted software, check
+[Azure-native services](references/azure-native-services.md).
 
 ## Procedure
 

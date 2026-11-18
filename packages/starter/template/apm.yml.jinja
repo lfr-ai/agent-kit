@@ -1,0 +1,11 @@
+name: {{ project_name | tojson }}
+version: "0.1.0"
+license: LicenseRef-Proprietary
+description: Project development capabilities installed through APM.
+targets: {{ agent_provider | tojson }}
+includes: []
+dependencies:
+  apm:
+    - "lfr-ai/agent-kit/profiles/starters/{{ kind }}{{ '-ai' if ai or ai_service | default('none') != 'none' else '' }}{{ '-identity' if identity or auth | default('none') != 'none' else '' }}{{ '-' ~ iac if iac != 'none' else '' }}#v0.1.0"
+  mcp: []
+executables: {}

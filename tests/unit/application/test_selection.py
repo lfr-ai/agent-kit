@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kit.application.services.selection import (
+from agent_kit.application.selection import (
     InvalidSelectionError,
     parse_selection,
 )

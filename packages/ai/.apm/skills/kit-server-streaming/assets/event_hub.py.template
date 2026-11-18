@@ -114,13 +114,14 @@ class EventHub:
     def admit(self, stream_id: str, after: int) -> None:
         """Check, before a response starts, that a subscription can be served.
 
+        An unknown stream propagates ``StreamNotFoundError`` and evicted replay
+        events propagate ``ReplayGapError``.
+
         Args:
             stream_id (str): Stream to follow.
             after (int): Last sequence the client saw.
 
         Raises:
-            StreamNotFoundError: If the stream is unknown.
-            ReplayGapError: If needed events were evicted.
             CapacityError: If the stream has too many subscribers.
         """
         stream = self._get(stream_id)
@@ -129,12 +130,7 @@ class EventHub:
             raise CapacityError("too many subscribers")
 
     def open(self, stream_id: str) -> None:
-        """Register a new stream.
-
-        Raises:
-            ValueError: If the id is already in use.
-            CapacityError: If the stream limit is reached.
-        """
+        """Open a stream; raise ``ValueError`` if taken or ``CapacityError`` if full."""
         if stream_id in self._streams:
             raise ValueError(f"stream {stream_id} already exists")
         if len(self._streams) >= self._limits.max_streams:
@@ -270,7 +266,9 @@ class EventHub:
         """Yield events newer than ``after``, then live events until ``end``.
 
         Replay snapshot and live registration happen without an intervening
-        await, so no event can fall between them.
+        await, so no event can fall between them. An unknown stream propagates
+        ``StreamNotFoundError`` and evicted replay events propagate
+        ``ReplayGapError``.
 
         Args:
             stream_id (str): Stream to follow.
@@ -280,8 +278,6 @@ class EventHub:
             Events in sequence order, ending with ``end`` when the stream closes.
 
         Raises:
-            StreamNotFoundError: If the stream is unknown.
-            ReplayGapError: If needed events were evicted.
             CapacityError: If the stream has too many subscribers.
             SlowConsumerError: If this subscriber fell a full queue behind.
         """

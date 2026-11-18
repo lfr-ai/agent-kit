@@ -13,7 +13,7 @@ file; redact with the browser's sanitized export or a dedicated tool, then rerun
 
 import argparse
 from collections.abc import Iterable, Mapping, Sequence
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import re
@@ -45,11 +45,7 @@ _SELF_TEST_LEAKY_FINDINGS = 5
 
 
 def _mapping(value: object) -> Mapping[str, object]:
-    """Return value when it is a JSON object, otherwise an empty mapping.
-
-    Returns:
-        ``value`` itself when it is a JSON object, otherwise an empty mapping.
-    """
+    """Return a JSON object as a string-keyed mapping and anything else as ``{}``."""
     if isinstance(value, dict):
         return {str(key): item for key, item in value.items()}
     return {}
@@ -140,6 +136,7 @@ def _response_body_findings(
     return []
 
 
+@unique
 class HarInputIssue(StrEnum):
     """Supported HAR input validation failures and their stable messages."""
 
@@ -154,7 +151,7 @@ class HarInputError(ValueError):
 
         Args:
             issue (HarInputIssue): The violated input invariant.
-            path (Path | None): Diagnostic path for the invalid input.
+            path (Path | None): HAR file without ``log.entries``, named in the message.
         """
         super().__init__(issue.value.format(path=path))
 
@@ -167,7 +164,8 @@ class HarInputTypeError(TypeError):
 
         Args:
             issue (HarInputIssue): The violated input invariant.
-            path (Path | None): Diagnostic path for the invalid input.
+            path (Path | None): HAR file whose document, ``log`` or ``entries`` has
+                the wrong JSON type, named in the message.
         """
         super().__init__(issue.value.format(path=path))
 
@@ -183,7 +181,6 @@ def check(path: Path, *, allow_bodies: bool = False) -> list[str]:
         Findings in entry order; empty when the archive looks safe to share.
 
     Raises:
-        ValueError: If the file is not valid JSON.
         HarInputTypeError: If the document or a present HAR container has the
             wrong type.
         HarInputError: If the archive has no ``log.entries``.
@@ -215,37 +212,8 @@ def _har(entries: list[dict[str, object]]) -> str:
     return json.dumps({"log": {"version": "1.2", "entries": entries}})
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    CLEAN_ARCHIVE_REJECTED = "clean archive must pass"
-    UNEXPECTED_FINDINGS = "unexpected findings: {findings}"
-    SENSITIVE_VALUE_ECHOED = "findings must not echo sensitive values"
-    NEUTRAL_BODY_REJECTED = "allow_bodies must accept neutral bodies"
-    INVALID_ARCHIVE_ACCEPTED = "non-HAR input must be rejected"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self, issue: SelfTestIssue, *, findings: list[str] | None = None
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            findings (list[str] | None): Observed findings for the failing case.
-        """
-        super().__init__(issue.value.format(findings=findings))
-
-
-def self_test() -> None:
-    """Exercise clean, header, query, body and invalid archives in a temp dir.
-
-    Raises:
-        SelfTestError: If any synthetic expectation does not hold.
-    """
+def self_test() -> list[str]:
+    """Return regressions for clean, header, query, body and invalid archives."""
     clean: dict[str, object] = {
         "request": {
             "headers": [{"name": "Accept", "value": "application/json"}],
@@ -264,23 +232,25 @@ def self_test() -> None:
             "content": {"text": '{"items": []}'},
         },
     }
+    failures: list[str] = []
     with TemporaryDirectory(prefix="agent-kit-har-") as directory:
         path = Path(directory) / "capture.har"
         path.write_text(_har([clean]), encoding="utf-8")
         if check(path):
-            raise SelfTestError(SelfTestIssue.CLEAN_ARCHIVE_REJECTED)
+            failures.append("clean archive must pass")
         path.write_text(_har([clean, leaky]), encoding="utf-8")
         findings = check(path)
         expected = _SELF_TEST_LEAKY_FINDINGS
         if len(findings) != expected or not all(":1: " in item for item in findings):
-            raise SelfTestError(SelfTestIssue.UNEXPECTED_FINDINGS, findings=findings)
+            failures.append(f"unexpected findings: {findings}")
         if any("abc" in item or "xyz" in item for item in findings):
-            raise SelfTestError(SelfTestIssue.SENSITIVE_VALUE_ECHOED)
+            failures.append("findings must not echo sensitive values")
         if len(check(path, allow_bodies=True)) != expected - 1:
-            raise SelfTestError(SelfTestIssue.NEUTRAL_BODY_REJECTED)
+            failures.append("allow_bodies must accept neutral bodies")
         path.write_text("{}", encoding="utf-8")
         if not _rejects(path):
-            raise SelfTestError(SelfTestIssue.INVALID_ARCHIVE_ACCEPTED)
+            failures.append("non-HAR input must be rejected")
+    return failures
 
 
 def _rejects(path: Path) -> bool:
@@ -311,9 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("HAR checker self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"HAR checker self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.files:
         parser.error("provide at least one HAR file or --self-test")
     try:

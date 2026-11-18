@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -93,4 +93,4 @@ class InvoicePayments(_Contract):
         return sum((payment.amount for payment in self.payments), Decimal("0"))
 
 
-PAYMENT_LIST = TypeAdapter(list[Payment])
+PAYMENT_LIST: Final[TypeAdapter[list[Payment]]] = TypeAdapter(list[Payment])

@@ -9,20 +9,20 @@ import sysconfig
 from unittest.mock import Mock
 
 import pytest
-from scripts import apm_smoke
 from scripts.apm_smoke import (
     _SMOKE_SELECTIONS,
     fixture_environment,
     resource_failures,
 )
-from scripts.check_docs import _local_targets
-from scripts.check_resources import check, inventory
+from scripts.checks.docs import _local_targets
+from scripts.checks.resources import check, inventory
 
-from agent_kit.application.services.catalog_service import CatalogService
+from agent_kit.application.catalog import CatalogService
 from agent_kit.core.models import CatalogSnapshot, SourceDocument
 from agent_kit.core.text import markdown_link_targets
-from agent_kit.infrastructure import apm_adapter
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.infrastructure import apm as apm_module
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from scripts import apm_native_smoke, apm_smoke, build_profiles
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SELF_CHECKS = sorted(
@@ -229,7 +229,7 @@ def test_smoke_rejects_nonpositive_deadlines_before_starting(
 ) -> None:
     launch = Mock()
     monkeypatch.setattr(apm_smoke.subprocess, "Popen", launch)
-    with pytest.raises(apm_adapter.InvalidApmTimeoutError):
+    with pytest.raises(apm_module.InvalidAPMTimeoutError):
         apm_smoke.run(["apm"], cwd=tmp_path, env={}, timeout_seconds=timeout)
     launch.assert_not_called()
 
@@ -324,10 +324,10 @@ def _smoke_installation(
     executable = scripts / launcher
     executable.write_bytes(b"approved launcher")
     executable.chmod(0o700)
-    metadata = site / "apm_cli-0.33.0.dist-info"
+    metadata = site / f"apm_cli-{apm_module.APM_VERSION}.dist-info"
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text(
-        "Name: apm-cli\nVersion: 0.33.0\n", encoding="utf-8"
+        f"Name: apm-cli\nVersion: {apm_module.APM_VERSION}\n", encoding="utf-8"
     )
     (metadata / "RECORD").write_text(f"{record},,\n", encoding="utf-8")
     distribution = importlib.metadata.PathDistribution(metadata)
@@ -421,7 +421,7 @@ def test_smoke_uses_approved_apm_resolver(
         return 0
 
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
-    monkeypatch.setattr(apm_adapter, "pinned_apm_executable", resolve)
+    monkeypatch.setattr(apm_module, "pinned_apm_executable", resolve)
     monkeypatch.setattr(apm_smoke, "run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(apm_smoke, "smoke_profile", smoke)
 
@@ -432,13 +432,16 @@ def test_smoke_uses_approved_apm_resolver(
 @pytest.mark.parametrize(
     ("issue", "diagnostic"),
     [
-        (apm_adapter.ApmAvailabilityIssue.MISSING_PACKAGE, "APM 0.33.0 is required.\n"),
         (
-            apm_adapter.ApmAvailabilityIssue.VERSION_MISMATCH,
-            "APM 0.33.0 is required.\n",
+            apm_module.APMAvailabilityIssue.MISSING_PACKAGE,
+            f"APM {apm_module.APM_VERSION} is required.\n",
         ),
         (
-            apm_adapter.ApmAvailabilityIssue.MISSING_EXECUTABLE,
+            apm_module.APMAvailabilityIssue.VERSION_MISMATCH,
+            f"APM {apm_module.APM_VERSION} is required.\n",
+        ),
+        (
+            apm_module.APMAvailabilityIssue.MISSING_EXECUTABLE,
             "Use the locked APM environment.\n",
         ),
     ],
@@ -446,14 +449,14 @@ def test_smoke_uses_approved_apm_resolver(
 def test_smoke_apm_availability_errors_preserve_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    issue: apm_adapter.ApmAvailabilityIssue,
+    issue: apm_module.APMAvailabilityIssue,
     diagnostic: str,
 ) -> None:
     def unavailable() -> str:
-        raise apm_adapter.ApmAvailabilityError(issue)
+        raise apm_module.APMAvailabilityError(issue)
 
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
-    monkeypatch.setattr(apm_adapter, "pinned_apm_executable", unavailable)
+    monkeypatch.setattr(apm_module, "pinned_apm_executable", unavailable)
     monkeypatch.setattr(
         apm_smoke, "run", lambda *_args, **_kwargs: pytest.fail("must not run")
     )
@@ -468,7 +471,7 @@ def test_smoke_does_not_require_toolkit_launcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["apm-smoke", "--session"])
-    monkeypatch.setattr(apm_adapter, "pinned_apm_executable", lambda: "approved")
+    monkeypatch.setattr(apm_module, "pinned_apm_executable", lambda: "approved")
     monkeypatch.setattr(apm_smoke, "smoke_profile", lambda *_args, **_kwargs: 0)
 
     assert apm_smoke.main() == 0
@@ -635,3 +638,150 @@ def test_smoke_ignores_foreign_path_toolkit_launcher(
     assert result == 0
     assert commands == []
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("change", ["missing", "metadata", "unexpected-target"])
+def test_native_profile_smoke_rejects_roster_and_metadata_drift(
+    tmp_path: Path, change: str
+) -> None:
+    relative = ".github/agents/kit-debug.agent.md"
+    content = b"---\nname: kit-debug\ntools: [read, search]\n---\nInspect.\n"
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+    if change == "missing":
+        target.unlink()
+    elif change == "metadata":
+        target.write_bytes(content.replace(b"read, search", b"read, search, edit"))
+    else:
+        target = tmp_path / ".claude/agents/kit-debug.md"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(content)
+    assert apm_native_smoke.native_delivery_failures(
+        tmp_path, expected={relative: content}
+    ) == [target.relative_to(tmp_path).as_posix()]
+
+
+def test_native_smoke_uses_unchanged_profile_dependencies_with_local_replacements(
+    source_root: Path, tmp_path: Path
+) -> None:
+    build_profiles.write(source_root)
+    consumer = apm_native_smoke.prepare_fixture(
+        source_root, workspace=tmp_path / "fixture", targets=("copilot",)
+    )
+    manifest = json.loads((consumer / "apm.yml").read_bytes())
+    assert manifest["$schema"].endswith("/manifest-source-replacements-v1.schema.json")
+    assert manifest["dependencies"]["apm"] == [
+        "lfr-ai/agent-kit/profiles/shared#v0.1.0"
+    ]
+    assert manifest["targets"] == ["copilot"]
+    assert len(manifest["replace"]) == 4
+    for replacement in manifest["replace"]:
+        original = source_root / replacement["for"]["path"] / "apm.yml"
+        local = consumer / replacement["with"]["path"] / "apm.yml"
+        assert local.read_bytes() == original.read_bytes()
+    assert not (consumer / ".apm").exists()
+    assert not (consumer / ".github").exists()
+    assert not (consumer / ".claude").exists()
+    policy = json.loads((consumer / "apm-policy.yml").read_bytes())
+    assert policy["manifest"] == {
+        "required_fields": ["name", "version", "license"],
+        "require_explicit_includes": True,
+        "scripts": "deny",
+    }
+
+
+@pytest.mark.parametrize("tamper_lock", [False, True])
+def test_native_smoke_audits_install_and_frozen_replay(
+    tmp_path: Path, tamper_lock: bool
+) -> None:
+    commands: list[list[str]] = []
+    expected = {".claude/agents/kit-debug.md": b"canonical metadata and body"}
+
+    def run(command: list[str], *, cwd: Path, **_kwargs: object) -> None:
+        commands.append(command)
+        assert cwd == tmp_path
+        if command[1] == "install":
+            for name, content in expected.items():
+                target = cwd / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            (cwd / "apm.lock.yaml").write_bytes(
+                b"changed" if tamper_lock and "--frozen" in command else b"lock"
+            )
+
+    assert (
+        apm_native_smoke._exercise(
+            tmp_path,
+            apm="released-apm",
+            env={},
+            targets=("claude",),
+            expected=expected,
+            timeout_seconds=120,
+            run_command=run,
+        )
+        is not tamper_lock
+    )
+    assert [command[1] for command in commands] == [
+        "policy",
+        "install",
+        "compile",
+        "audit",
+        "install",
+        "audit",
+    ]
+    assert commands[-2] == [
+        "released-apm",
+        "install",
+        "--frozen",
+        "--target",
+        "claude",
+        "--no-trust-bin",
+    ]
+
+
+@pytest.mark.parametrize("native_only", [False, True])
+@pytest.mark.parametrize("native_result", [0, 1])
+def test_default_and_native_mode_invoke_real_profile_smoke(
+    monkeypatch: pytest.MonkeyPatch, native_only: bool, native_result: int
+) -> None:
+    calls: list[str] = []
+
+    def native(_root: Path, **kwargs: object) -> int:
+        assert kwargs["run_command"] is apm_smoke.run
+        assert kwargs["isolate_environment"] is apm_smoke.fixture_environment
+        calls.append("native")
+        return native_result
+
+    def source(*_args: object, **_kwargs: object) -> int:
+        calls.append("source")
+        return 0
+
+    monkeypatch.setattr(
+        sys, "argv", ["apm-smoke", *(["--native"] if native_only else [])]
+    )
+    monkeypatch.setattr(apm_smoke, "_source_is_valid", lambda: True)
+    monkeypatch.setattr(apm_smoke, "_smoke_apm_executable", lambda: "released-apm")
+    monkeypatch.setattr(apm_smoke, "smoke_native_profiles", native)
+    monkeypatch.setattr(apm_smoke, "smoke_profile", source)
+    assert apm_smoke.main() == native_result
+    assert calls == (
+        ["native"]
+        if native_only or native_result
+        else ["native", *(["source"] * len(_SMOKE_SELECTIONS))]
+    )
+
+
+def test_direct_smoke_task_entry_loads_sibling_modules_away_from_checkout(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(  # noqa: S603 - fixed interpreter, owned script, help-only
+        [sys.executable, str(_ROOT / "scripts/apm_smoke.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--native" in result.stdout

@@ -1,0 +1,14 @@
+{
+  "dependencies": {},
+  "description": "Agent Kit native copilot roles.",
+  "executables": {},
+  "includes": [
+    ".apm/agents/"
+  ],
+  "license": "MIT",
+  "name": "agent-kit-native-copilot",
+  "targets": [
+    "copilot"
+  ],
+  "version": "0.1.0"
+}

@@ -4,7 +4,7 @@
 # ///
 """Reject floating versions in repository tooling and automation files.
 
-Each check runs only when its file exists under ``--root``:
+Each check runs on matching authored files anywhere under ``--root``:
 
 - ``pyproject.toml``: build requirements, dependency groups and uv constraint
   lists are pinned with ``==``; published dependencies have an upper bound.
@@ -42,7 +42,16 @@ _SHA1_HEX_LENGTH = 40
 _SHA256_HEX_LENGTH = 64
 _SELF_TEST_MIN_DIRTY_FINDINGS = 9  # every bad fixture line is counted
 _SKIPPED_DIRECTORIES = frozenset(
-    {".git", ".venv", ".tox", "node_modules", "build", "dist", "apm_modules"}
+    {
+        ".git",
+        ".venv",
+        ".tox",
+        ".terraform",
+        "node_modules",
+        "build",
+        "dist",
+        "apm_modules",
+    }
 )
 _EXACT = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?\s*===?\s*[^\s,*;<>=!~]+\s*(;.*)?$"
@@ -117,7 +126,7 @@ class Finding:
     message: str
 
     def render(self, root: Path) -> str:
-        """Return the deterministic ``path:line: message`` form."""
+        """Return ``path:line: message``, relative to ``root`` when inside it."""
         relative = (
             self.path.relative_to(root) if self.path.is_relative_to(root) else self.path
         )
@@ -134,12 +143,17 @@ def _line_of(text: str, needle: str) -> int:
 
 def _files(root: Path, *patterns: str) -> Iterator[Path]:
     """Yield matching files below ``root`` outside generated directories."""
-    for pattern in patterns:
-        for path in sorted(root.glob(pattern)):
-            if path.is_file() and not _SKIPPED_DIRECTORIES & set(
-                path.relative_to(root).parts
-            ):
+    for directory, subdirectories, files in root.walk(on_error=_walk_error):
+        subdirectories[:] = sorted(set(subdirectories) - _SKIPPED_DIRECTORIES)
+        for name in sorted(files):
+            path = directory / name
+            relative = path.relative_to(root)
+            if any(relative.full_match(pattern) for pattern in patterns):
                 yield path
+
+
+def _walk_error(error: OSError) -> None:
+    raise error
 
 
 def _requirements(value: object) -> list[str]:
@@ -156,7 +170,11 @@ def _requirements(value: object) -> list[str]:
 
 
 def check_pyproject(path: Path) -> list[Finding]:
-    """Require exact tool pins and bounded dependencies in ``pyproject.toml``."""
+    """Require exact tool pins and bounded dependencies in ``pyproject.toml``.
+
+    An unreadable manifest propagates ``OSError``; invalid TOML propagates
+    ``ValueError``.
+    """
     text = path.read_text(encoding="utf-8")
     data = tomllib.loads(text)
     findings = [
@@ -223,7 +241,11 @@ def _table_requirements(table: object) -> list[str]:
 
 
 def check_tox(path: Path) -> list[Finding]:
-    """Require exact tox provisioning requirements in ``tox.ini``."""
+    """Require exact tox provisioning requirements in ``tox.ini``.
+
+    An unreadable configuration propagates ``OSError``; invalid INI propagates
+    ``configparser.Error``.
+    """
     text = path.read_text(encoding="utf-8")
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string(text)
@@ -267,7 +289,11 @@ def _dependency_items(
 
 
 def check_precommit(path: Path) -> list[Finding]:
-    """Require frozen hook revisions, digests and exact hook dependencies."""
+    """Require frozen hook revisions, digests and exact hook dependencies.
+
+    Findings follow file order; an unreadable configuration propagates
+    ``OSError``.
+    """
     lines = path.read_text(encoding="utf-8").splitlines()
     findings: list[Finding] = []
     for index, raw in enumerate(lines):
@@ -312,7 +338,11 @@ def check_precommit(path: Path) -> list[Finding]:
 
 
 def check_package_json(path: Path) -> list[Finding]:
-    """Require exact JavaScript dependency versions and a committed lockfile."""
+    """Require exact JavaScript dependency versions and an adjacent lockfile.
+
+    An unreadable manifest propagates ``OSError``; invalid JSON propagates
+    ``ValueError``.
+    """
     text = path.read_text(encoding="utf-8")
     data: object = json.loads(text)
     findings: list[Finding] = []
@@ -345,7 +375,11 @@ def check_package_json(path: Path) -> list[Finding]:
 
 
 def check_dockerfile(path: Path) -> list[Finding]:
-    """Require every external base image to carry a digest."""
+    """Require every literal external base image to carry a digest.
+
+    Local stages and variables are excluded; an unreadable file propagates
+    ``OSError``.
+    """
     findings: list[Finding] = []
     stages: set[str] = set()
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -398,7 +432,11 @@ def _json_document(path: Path) -> object:
 
 
 def check_devcontainer(path: Path) -> list[Finding]:
-    """Require digest-pinned images and digest-locked, exact features."""
+    """Require digest-pinned images and digest-locked, exact features.
+
+    An unreadable configuration or adjacent feature lock propagates ``OSError``;
+    a document that is not valid supported JSON propagates ``ValueError``.
+    """
     data = _json_document(path)
     if not isinstance(data, dict):
         return [Finding(path=path, line=1, message="dev container must be an object")]
@@ -463,7 +501,11 @@ def _is_digest_locked(entry: object) -> bool:
 
 
 def check_commands(path: Path) -> list[Finding]:
-    """Reject floating installs in workflow, action and Taskfile commands."""
+    """Reject floating installs in workflow, action and Taskfile commands.
+
+    Findings follow line and rule order; an unreadable automation file
+    propagates ``OSError``.
+    """
     findings: list[Finding] = []
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = _COMMENT.sub("", raw)
@@ -476,7 +518,12 @@ def check_commands(path: Path) -> list[Finding]:
 
 
 def check_mcp(path: Path) -> list[Finding]:
-    """Require exact versions or digests for command-based MCP servers."""
+    """Require exact versions or digests for command-based MCP servers.
+
+    Servers come from a ``servers`` or ``mcpServers`` mapping. An unreadable
+    manifest propagates ``OSError``; a manifest that is not valid supported
+    JSON propagates ``ValueError``.
+    """
     data = _json_document(path)
     text = path.read_text(encoding="utf-8")
     servers: object = None
@@ -526,33 +573,41 @@ def _server_problem(server: dict[str, object]) -> str | None:
 
 
 def scan(root: Path) -> list[Finding]:
-    """Scan every supported file under one repository root."""
+    """Scan supported authored files, including nested reusable packages.
+
+    Generated dependency trees are pruned; findings are grouped by surface, then
+    deterministic file order. An unreadable source directory or supported file
+    propagates ``OSError``; a malformed JSON or TOML document propagates
+    ``ValueError`` and a malformed INI document ``configparser.Error``.
+    """
     findings: list[Finding] = []
-    single = (
-        ("pyproject.toml", check_pyproject),
-        ("tox.ini", check_tox),
-        (".pre-commit-config.yaml", check_precommit),
-        ("package.json", check_package_json),
-        (".mcp.json", check_mcp),
-        (".vscode/mcp.json", check_mcp),
+    manifests = (
+        ("**/pyproject.toml", check_pyproject),
+        ("**/tox.ini", check_tox),
+        ("**/.pre-commit-config.yaml", check_precommit),
+        ("**/package.json", check_package_json),
+        ("**/.mcp.json", check_mcp),
+        ("**/.vscode/mcp.json", check_mcp),
     )
-    for relative, checker in single:
-        if (root / relative).is_file():
-            findings.extend(checker(root / relative))
+    for pattern, checker in manifests:
+        for path in _files(root, pattern):
+            findings.extend(checker(path))
     for path in _files(root, "**/Dockerfile", "**/*.Dockerfile", "**/Containerfile"):
         findings.extend(check_dockerfile(path))
     for path in _files(
-        root, ".devcontainer/**/devcontainer.json", ".devcontainer.json"
+        root, "**/.devcontainer/**/devcontainer.json", "**/.devcontainer.json"
     ):
         findings.extend(check_devcontainer(path))
     for path in _files(
         root,
-        ".github/workflows/*.yml",
-        ".github/workflows/*.yaml",
-        ".github/actions/**/action.yml",
-        ".github/actions/**/action.yaml",
-        "Taskfile.yml",
-        "Taskfile.yaml",
+        "**/.github/workflows/*.yml",
+        "**/.github/workflows/*.yaml",
+        "**/action.yml",
+        "**/action.yaml",
+        "**/pipelines/**/*.yml",
+        "**/pipelines/**/*.yaml",
+        "**/Taskfile.yml",
+        "**/Taskfile.yaml",
     ):
         findings.extend(check_commands(path))
     return findings
@@ -599,7 +654,11 @@ def _self_test() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the pin scan or its self-test and return a process exit code."""
+    """Run the pin scan or its self-test and emit CLI diagnostics.
+
+    ``argv`` defaults to the process arguments. Exit ``0`` for a clean scan,
+    ``1`` for findings and ``2`` for unreadable input.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=Path())
     parser.add_argument("--self-test", action="store_true")

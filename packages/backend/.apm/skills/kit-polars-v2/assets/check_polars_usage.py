@@ -17,7 +17,6 @@ Run ``--self-test`` for built-in regressions.
 import argparse
 import ast
 from collections.abc import Sequence
-from enum import StrEnum
 from pathlib import Path
 import sys
 
@@ -114,14 +113,11 @@ def check_source(text: str, path: str) -> list[str]:
     """Report Polars anti-patterns in one source file.
 
     Args:
-        text (str): Python source.
+        text (str): Python source; unparsable text raises ``SyntaxError``.
         path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     imports_polars, modules = _polars_bindings(tree)
@@ -140,14 +136,7 @@ def check_source(text: str, path: str) -> list[str]:
 
 
 def _polars_bindings(tree: ast.Module) -> tuple[bool, set[str]]:
-    """Return whether a module imports Polars and its local module aliases.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Whether any Polars import exists, and names bound to ``polars``.
-    """
+    """Return whether a module imports Polars and the names bound to ``polars``."""
     modules: set[str] = set()
     imports_polars = False
     for node in ast.walk(tree):
@@ -174,14 +163,7 @@ def _polars_aliases(node: ast.Import) -> list[ast.alias]:
 
 
 def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
-    """Expand targets into Python files.
-
-    Args:
-        targets (Sequence[Path]): Files or directories.
-
-    Returns:
-        Sorted files and findings for missing targets.
-    """
+    """Return sorted Python files below ``targets`` and findings for missing ones."""
     files: set[Path] = set()
     problems: list[str] = []
     for target in targets:
@@ -199,39 +181,8 @@ def _python_files(targets: Sequence[Path]) -> tuple[list[Path], list[str]]:
     return sorted(files), problems
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSED_POLARS_ISSUE = "missed Polars issue: {source!r} {found}"
-    FALSE_POSITIVE = "false positive: {source!r}"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        source: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            source (str | None): Observed source for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(source=source, found=found))
-
-
-def self_test() -> None:
-    """Exercise each rule, waivers, and clean lazy pipelines.
-
-    Raises:
-        SelfTestError: A regression was detected.
-    """
+def self_test() -> list[str]:
+    """Return regressions for each rule, waivers and clean lazy pipelines."""
     risky = {
         "import polars as pl\npl.col('a').map_elements(str.upper)\n": "map_elements",
         "import polars as pl\nfor row in df.iter_rows(): ...\n": "iterates rows",
@@ -242,12 +193,11 @@ def self_test() -> None:
         "import polars as pl\ndf.groupby('a').agg()\n": "group_by",
         "from polars import DataFrame\ndf.with_row_count()\n": "with_row_index",
     }
+    failures: list[str] = []
     for source, fragment in risky.items():
         found = check_source(source, "app/report.py")
         if len(found) != 1 or fragment not in found[0]:
-            raise SelfTestError(
-                SelfTestIssue.MISSED_POLARS_ISSUE, source=source, found=found
-            )
+            failures.append(f"missed Polars issue: {source!r} {found}")
     clean = (
         (
             "import polars as pl\n"
@@ -258,9 +208,12 @@ def self_test() -> None:
         "import pandas as pd\ndf.groupby('a').cumsum()\n",
         "import polars as pl\ndf.select(pl.col('a').count())\n",
     )
-    for source in clean:
-        if check_source(source, "app/report.py"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+    failures.extend(
+        f"false positive: {source!r}"
+        for source in clean
+        if check_source(source, "app/report.py")
+    )
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,9 +226,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_polars_usage self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_polars_usage self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     files, findings = _python_files(args.paths)

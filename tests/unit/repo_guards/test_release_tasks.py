@@ -48,14 +48,15 @@ def test_version_preparation_updates_files_and_lock_without_git_mutation() -> No
 
 
 def test_release_build_reuses_the_existing_capability_builder_and_validator() -> None:
-    """No cleanup, overwrite switch or second artifact-validation engine is added."""
+    """Build only the two named packages, then reuse the source builder and gate."""
     assert _tasks()["release:build"]["cmds"] == [
-        "uv build --out-dir build/distributions",
+        "uv build --package agent-kit --out-dir build/distributions",
+        "uv build --package platform-kit-runtime --out-dir build/distributions",
         {
             "task": "capabilities:build",
             "vars": {"CLI_ARGS": "--profile fullstack --feature iac"},
         },
-        "uv run --locked --no-sync python -m scripts.check_release",
+        "uv run --locked --no-sync python -m scripts.checks.release",
     ]
 
 
@@ -73,7 +74,7 @@ def test_publication_requires_a_tag_confirmation_and_existing_draft() -> None:
     assert "shellQuote" in conditions[1]["sh"]
     assert "--json isDraft --jq .isDraft" in conditions[1]["sh"]
     assert task["cmds"] == [
-        "uv run --locked --no-sync python scripts/check_governance.py --publication",
+        "uv run --locked --no-sync python -m scripts.checks.governance --publication",
         "gh release view {{.TAG | shellQuote}} --repo lfr-ai/agent-kit",
         "gh release edit {{.TAG | shellQuote}} --repo lfr-ai/agent-kit --draft=false",
     ]

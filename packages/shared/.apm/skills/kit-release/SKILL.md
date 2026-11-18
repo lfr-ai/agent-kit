@@ -1,6 +1,6 @@
 ---
 name: kit-release
-description: Use when reviewing release readiness and artifact integrity without publishing or changing remote state.
+description: Use when reviewing release readiness and artifact integrity without publishing.
 license: MIT
 ---
 

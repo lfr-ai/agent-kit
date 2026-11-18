@@ -1,8 +1,8 @@
-"""LiteLLM-backed adapter for the ``LlmClient`` port.
+"""LiteLLM-backed adapter for the ``LLMClient`` port.
 
 Copy to ``llm/adapters/litellm.py``. Requires ``litellm``. This is the only module
 that imports LiteLLM. It resolves model aliases, disables LiteLLM's own retries
-(retries belong to ``ResilientLlmClient`` so budgets and deadlines stay visible),
+(retries belong to ``ResilientLLMClient`` so budgets and deadlines stay visible),
 and maps provider exceptions to the port's typed errors without copying
 provider messages, which can echo prompt content.
 
@@ -19,14 +19,14 @@ import litellm
 from llm.port import (
     Completion,
     CompletionRequest,
-    LlmAuthError,
-    LlmContentFilteredError,
-    LlmContextTooLongError,
-    LlmError,
-    LlmInvalidRequestError,
-    LlmRateLimitedError,
-    LlmTimeoutError,
-    LlmUnavailableError,
+    LLMAuthError,
+    LLMContentFilteredError,
+    LLMContextTooLongError,
+    LLMError,
+    LLMInvalidRequestError,
+    LLMRateLimitedError,
+    LLMTimeoutError,
+    LLMUnavailableError,
     Usage,
 )
 
@@ -52,20 +52,20 @@ def _retry_after(error: Exception) -> float | None:
 
 
 _ERROR_TABLE = (
-    ((litellm.Timeout,), LlmTimeoutError, "provider timeout"),
+    ((litellm.Timeout,), LLMTimeoutError, "provider timeout"),
     (
         (litellm.ContextWindowExceededError,),
-        LlmContextTooLongError,
+        LLMContextTooLongError,
         "context window exceeded",
     ),
     (
         (litellm.ContentPolicyViolationError,),
-        LlmContentFilteredError,
+        LLMContentFilteredError,
         "content filtered",
     ),
     (
         (litellm.AuthenticationError, litellm.PermissionDeniedError),
-        LlmAuthError,
+        LLMAuthError,
         "provider rejected credentials",
     ),
     (
@@ -74,33 +74,27 @@ _ERROR_TABLE = (
             litellm.ServiceUnavailableError,
             litellm.InternalServerError,
         ),
-        LlmUnavailableError,
+        LLMUnavailableError,
         "provider unavailable",
     ),
     (
         (litellm.BadRequestError, litellm.NotFoundError),
-        LlmInvalidRequestError,
+        LLMInvalidRequestError,
         "provider rejected request",
     ),
 )
 
 
-def map_provider_error(error: Exception) -> LlmError:
+def map_provider_error(error: Exception) -> LLMError:
     """Translate a LiteLLM exception into a typed, content-free port error.
 
     The table is ordered: LiteLLM's timeout subclasses its connection error,
     and its context-window and content-policy errors subclass its bad-request
     error, so the specific entries come first.
-
-    Args:
-        error (Exception): Exception raised by LiteLLM.
-
-    Returns:
-        The matching port error.
     """
     name = type(error).__name__
     if isinstance(error, litellm.RateLimitError):
-        return LlmRateLimitedError(
+        return LLMRateLimitedError(
             f"provider throttled ({name})", retry_after_s=_retry_after(error)
         )
     for classes, port_error, label in _ERROR_TABLE:
@@ -108,12 +102,12 @@ def map_provider_error(error: Exception) -> LlmError:
             return port_error(f"{label} ({name})")
     status = getattr(error, "status_code", None)
     if isinstance(status, int) and status >= _HTTP_SERVER_ERROR_MIN_STATUS_CODE:
-        return LlmUnavailableError(f"provider error {status} ({name})")
-    return LlmInvalidRequestError(f"unexpected provider error ({name})")
+        return LLMUnavailableError(f"provider error {status} ({name})")
+    return LLMInvalidRequestError(f"unexpected provider error ({name})")
 
 
-class LiteLlmAdapter:
-    """``LlmClient`` implementation over ``litellm.acompletion``."""
+class LiteLLMAdapter:
+    """``LLMClient`` implementation over ``litellm.acompletion``."""
 
     def __init__(
         self,
@@ -140,20 +134,13 @@ class LiteLlmAdapter:
         self._completion = completion_fn or litellm.acompletion
 
     async def complete(self, request: CompletionRequest) -> Completion:
-        """Send one attempt to the provider.
+        """Send one provider attempt; raise a typed ``LLMError`` for any failure.
 
-        Args:
-            request (CompletionRequest): Provider-neutral request.
-
-        Returns:
-            The completion with usage and, when the price is known, cost.
-
-        Raises:
-            LlmError: A typed subclass for every provider failure.
+        The completion carries usage and, when the price is known, cost.
         """
         model = self._aliases.get(request.model)
         if model is None:
-            raise LlmInvalidRequestError(f"unknown model alias {request.model!r}")
+            raise LLMInvalidRequestError(f"unknown model alias {request.model!r}")
         arguments: dict[str, object] = {
             "model": model,
             "messages": [
@@ -179,7 +166,7 @@ class LiteLlmAdapter:
         started = time.perf_counter()
         try:
             response = await self._completion(**arguments)
-        except LlmError:
+        except LLMError:
             raise
         except Exception as error:
             raise map_provider_error(error) from error

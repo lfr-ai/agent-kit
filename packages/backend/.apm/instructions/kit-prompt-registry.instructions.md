@@ -1,6 +1,6 @@
 ---
 description: Apply to prompt templates, prompt catalogs, and prompt construction code.
-applyTo: "**/*prompt*.py,**/prompts/**"
+applyTo: "**/*prompt*.py,**/prompts/**/*.py,**/prompts/**/*.j2,**/prompts/**/*.jinja,**/prompts/**/*.jinja2,**/prompts/**/*.yaml,**/prompts/**/*.yml,**/prompts/**/*.txt"
 ---
 
 - Keep prompt identifiers, versions, and intended inputs explicit and reviewable.

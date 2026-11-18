@@ -20,7 +20,6 @@ Run ``--self-test`` for built-in regressions.
 import argparse
 import ast
 from collections.abc import Sequence
-from enum import StrEnum
 from pathlib import Path
 import re
 import sys
@@ -64,14 +63,7 @@ _TEMPLATE_RULES = (
 
 
 def _jinja_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
-    """Collect names imported from Jinja and aliases of the Jinja package.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Mapping of local name to original name, and local package aliases.
-    """
+    """Return names imported from Jinja (local to original) and Jinja package aliases."""
     names: dict[str, str] = {}
     modules: set[str] = set()
     for node in ast.walk(tree):
@@ -228,14 +220,11 @@ def check_python(text: str, path: str) -> list[str]:
     """Report unsafe Jinja usage in Python source.
 
     Args:
-        text (str): Python source.
+        text (str): Python source; unparsable text raises ``SyntaxError``.
         path (str): Display path.
 
     Returns:
         Findings formatted as ``path:line: message``.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     names, modules = _jinja_bindings(tree)
@@ -333,52 +322,18 @@ def scan(targets: Sequence[Path], *, suffixes: Sequence[str]) -> list[str]:
     return findings
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSED_PYTHON_ISSUE = "missed Python issue: {source!r} {found}"
-    FALSE_POSITIVE = "false positive: {source!r}"
-    MISSED_TEMPLATE_ISSUE = "missed template issue: {source!r} {found}"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        source: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            source (str | None): Observed source for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(source=source, found=found))
+def self_test() -> list[str]:
+    """Return regressions for environment, template, waiver and clean cases."""
+    return [
+        *_risky_python_failures(),
+        *_clean_python_failures(),
+        *_risky_template_failures(),
+        *_clean_template_failures(),
+    ]
 
 
-def self_test() -> None:
-    """Exercise environment, template, waiver, and clean cases.
-
-    Raises:
-        AssertionError: A regression was detected.
-    """
-    _self_test_risky_python()
-    _self_test_clean_python()
-    _self_test_risky_templates()
-    _self_test_clean_templates()
-
-
-def _self_test_risky_python() -> None:
-    """Require a finding for each unsafe Python construct.
-
-    Raises:
-        SelfTestError: An unsafe construct was missed.
-    """
+def _risky_python_failures() -> list[str]:
+    """Return unsafe Python constructs that produced no matching finding."""
     risky_python = {
         "from jinja2 import Environment\nenv = Environment()\n": "autoescape",
         "import jinja2\nenv = jinja2.Environment(autoescape=False)\n": (
@@ -391,20 +346,16 @@ def _self_test_risky_python() -> None:
         ),
         "import jinja2\nenv.from_string(source)\n": "from_string",
     }
+    failures: list[str] = []
     for source, fragment in risky_python.items():
         found = check_python(source, "app/render.py")
         if not any(fragment in item for item in found):
-            raise SelfTestError(
-                SelfTestIssue.MISSED_PYTHON_ISSUE, source=source, found=found
-            )
+            failures.append(f"missed Python issue: {source!r} {found}")
+    return failures
 
 
-def _self_test_clean_python() -> None:
-    """Require no findings for configured, unrelated, and waived Python.
-
-    Raises:
-        SelfTestError: A clean source was reported.
-    """
+def _clean_python_failures() -> list[str]:
+    """Return configured, unrelated or waived Python sources that were reported."""
     clean_python = (
         (
             "from jinja2 import Environment, StrictUndefined, select_autoescape\n"
@@ -418,17 +369,15 @@ def _self_test_clean_python() -> None:
         ),
         "from markupsafe import Markup\nMarkup('<br>')\n",
     )
-    for source in clean_python:
-        if check_python(source, "app/render.py"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+    return [
+        f"false positive: {source!r}"
+        for source in clean_python
+        if check_python(source, "app/render.py")
+    ]
 
 
-def _self_test_risky_templates() -> None:
-    """Require a finding for each risky template construct.
-
-    Raises:
-        SelfTestError: A risky construct was missed.
-    """
+def _risky_template_failures() -> list[str]:
+    """Return risky template constructs that produced no matching finding."""
     risky_templates = {
         "{{ body|safe }}": "safe",
         "{% autoescape false %}{{ x }}{% endautoescape %}": "autoescape",
@@ -437,29 +386,27 @@ def _self_test_risky_templates() -> None:
         "{{ environ['HOME'] }}": "environment",
         "{% include name %}": "variable",
     }
+    failures: list[str] = []
     for source, fragment in risky_templates.items():
         found = check_template(source, "t.html")
         if not any(fragment in item for item in found):
-            raise SelfTestError(
-                SelfTestIssue.MISSED_TEMPLATE_ISSUE, source=source, found=found
-            )
+            failures.append(f"missed template issue: {source!r} {found}")
+    return failures
 
 
-def _self_test_clean_templates() -> None:
-    """Require no findings for literal targets, waivers, and plain output.
-
-    Raises:
-        SelfTestError: A clean template was reported.
-    """
+def _clean_template_failures() -> list[str]:
+    """Return literal-target, waived or plain templates that were reported."""
     clean_templates = (
         "{% include 'partials/footer.html' %}",
         "{% include ['a.html', 'b.html'] %}",
         "{{ user.name }} {# template-safety: reviewed #} {{ x|safe }}",
         "<p>{{ order.total|round(2) }}</p>",
     )
-    for source in clean_templates:
-        if check_template(source, "t.html"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+    return [
+        f"false positive: {source!r}"
+        for source in clean_templates
+        if check_template(source, "t.html")
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -479,9 +426,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_template_safety self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_template_safety self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     findings = scan(

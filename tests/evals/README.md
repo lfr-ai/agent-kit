@@ -5,6 +5,11 @@
 to this repository and its portable packages. Cases are invented inputs, not
 observed passes.
 
+The cleanup cases cover applicable public docstring contracts, nested package
+instruction/checker discovery, validation-preserving refactors and the difference
+between compatibility ranges and executed tool pins. They intentionally assess
+actual default-gate behavior rather than the mere presence of configuration.
+
 1. Select the affected skills in a disposable project. Record source and dataset
    hashes, host version, model, tools and effective global customizations.
 2. Run baseline and candidate in fresh sessions under the same conditions.

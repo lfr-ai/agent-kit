@@ -576,3 +576,13 @@ def test_templates_ship_the_first_hsts_stage(template: str, pattern: str) -> Non
 
     assert values == [str(_HSTS_FIRST_STAGE_SECONDS)]
     assert "stsPreload" not in text
+
+
+def test_front_door_guidance_stays_opt_in_and_documented() -> None:
+    skill = (_EDGE / "SKILL.md").read_text(encoding="utf-8")
+    hardening = (_EDGE / "references/edge-hardening.md").read_text(encoding="utf-8")
+
+    assert "references/edge-hardening.md#azure-front-door" in skill
+    assert "## Azure Front Door" in hardening
+    for term in ("AzureFrontDoor.Backend", "X-Azure-FDID", "Private Link"):
+        assert term in hardening

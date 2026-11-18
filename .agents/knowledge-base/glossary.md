@@ -7,7 +7,7 @@ adapters, layered core) are defined in [architecture](architecture.md).
 ## Sources and selection
 
 - **APM (Agent Package Manager)**: The external CLI that installs and compiles agent primitives for Copilot and
-  Claude. The toolkit pins `apm-cli==0.33.0` as a development dependency and
+  Claude. The toolkit pins `apm-cli==0.35.0` as a development dependency and
   invokes it only through explicit, non-interactive commands.
 - **Primitive**: An APM-authored unit: a skill, an instruction, or a resource inside a skill.
 - **Skill**: A folder `skills/kit-<topic>/` with a `SKILL.md` (frontmatter `name`,
@@ -67,6 +67,9 @@ adapters, layered core) are defined in [architecture](architecture.md).
 - **Advisory hook (session context)**: The `SessionStart` hook adapter in
   [`scripts/session_context.py`](../../scripts/session_context.py). It reports
   the workspace and missing entry files and grants or denies nothing.
+- **Advisory hook (edit feedback)**: The `PostToolUse` hook adapter in
+  [`scripts/edit_feedback.py`](../../scripts/edit_feedback.py). It returns lint,
+  format and convention findings for the file just edited and never blocks it.
 - **Opt-in MCP**: MCP integrations shipped as inactive, host-shaped examples in the editor
   skill. Active manifests and the policy allow-list stay empty until a consumer
   reviews and enables one.
@@ -88,7 +91,7 @@ adapters, layered core) are defined in [architecture](architecture.md).
 - **APM smoke**: [apm_smoke.py](../../scripts/apm_smoke.py): compose, install, compile per
   runtime, verify rosters and resource bytes, audit and reinstall frozen, in a
   disposable package with an isolated home directory.
-- **Coverage**: [coverage.json](../agentic-setup/coverage.json) and `scripts.check_coverage`:
+- **Coverage**: [coverage.json](../agentic-setup/coverage.json) and `scripts.checks.coverage`:
   every original capability has a replacement or a recorded exclusion, and
   replacement resources exist.
 - **Resource census**: `task resources:check -- --json`: per-skill linked references, assets and

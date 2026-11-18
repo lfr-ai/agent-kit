@@ -41,7 +41,7 @@ Raises:
 | Args | meaning, unit, range, format, default behavior when the default matters | the type already in the annotation |
 | Returns | what the value means, empty or None results | "Returns: the result" |
 | Yields | for generators: what each item is and when iteration stops | Returns for a generator |
-| Raises | each exception a caller should handle, and when | exceptions that indicate bugs (`AssertionError`), or every exception a dependency might raise |
+| Raises | each exception the body raises, translates (`raise ... from`) or re-raises, and when | exceptions that indicate bugs (`AssertionError`), or failures that only propagate from callees and dependencies |
 | Attributes | on classes and dataclasses: meaning of each public field | private fields |
 | Example | short doctest for non-obvious calls | long tutorials |
 
@@ -54,7 +54,8 @@ them, consistently; describe what they forward to.
   entry points and any import-time constraints. Scripts document usage, inputs,
   outputs and exit codes.
 - **Class**: what an instance represents and its invariants; constructor
-  arguments go in the class docstring (`Args:`) or in `__init__`, consistently.
+  arguments go on `__init__` and validation failures on the `__init__` or
+  `__post_init__` that raises them, never in the class docstring.
 - **Dataclass and record**: an `Attributes:` section for public fields.
 - **Package `__init__.py`**: what the package provides and its public API.
 - **Property**: document like an attribute ("The invoice total in cents."),
@@ -63,6 +64,7 @@ them, consistently; describe what they forward to.
 ## What not to document
 
 - Restated signatures, types, or the obvious ("Get the name." for `get_name`).
+  A single-input delegator or accessor gets one summary line, no sections.
 - Implementation narration ("loops over items and...") that will drift.
 - History ("changed in March to fix...") - that belongs in version control.
 - Private helpers whose name and signature already say everything; add a

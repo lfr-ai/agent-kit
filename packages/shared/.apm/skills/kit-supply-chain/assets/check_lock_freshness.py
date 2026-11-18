@@ -129,17 +129,10 @@ def _specifier(text: str) -> str:
 
 
 def parse_requirement(text: str) -> Requirement:
-    """Reduce one PEP 508 requirement string to its comparable fields.
+    """Parse a PEP 508 requirement; raise ``LockInputError`` if it is unrecognizable.
 
-    Args:
-        text (str): Requirement such as
-            ``"PyYAML[cext] >= 6, < 7; python_version < '4'"``.
-
-    Returns:
-        The normalized requirement.
-
-    Raises:
-        LockInputError: The text is not a recognizable requirement.
+    The text, such as ``"PyYAML[cext] >= 6, < 7; python_version < '4'"``, is
+    reduced to its comparable fields.
     """
     match = _REQUIREMENT.fullmatch(text)
     if match is None:
@@ -168,7 +161,7 @@ def _table(parent: Mapping[str, object], key: str, *, where: str) -> dict[str, o
     """Return a child table, treating a missing key as empty.
 
     Returns:
-        The child table with string keys; empty when the key is missing.
+        dict[str, object]: The child table with string keys; empty when the key is missing.
 
     Raises:
         LockInputError: The value is not a table.
@@ -262,17 +255,11 @@ def _expand_group(
 
 
 def declared_groups(manifest: Mapping[str, object]) -> dict[str, list[Requirement]]:
-    """Return every dependency group with includes expanded.
+    """Return requirements per normalized group name with includes expanded.
 
-    Args:
-        manifest (Mapping[str, object]): Parsed ``pyproject.toml``.
-
-    Returns:
-        Requirements per normalized group name; legacy
-        ``tool.uv.dev-dependencies`` entries are merged into ``dev``.
-
-    Raises:
-        LockInputError: A group is malformed, unknown, or included cyclically.
+    Legacy ``tool.uv.dev-dependencies`` entries are merged into ``dev``. A
+    malformed, unknown, or cyclically included group propagates
+    ``LockInputError``.
     """
     raw = _table(manifest, "dependency-groups", where="pyproject")
     groups: dict[str, list[object]] = {}
@@ -315,14 +302,7 @@ def _compare(
 
 
 def _packages(lock: Mapping[str, object]) -> list[dict[str, object]]:
-    """Return the lock package tables, rejecting a malformed inventory.
-
-    Returns:
-        Package tables in lock order.
-
-    Raises:
-        LockInputError: The package list is empty or unnamed.
-    """
+    """Return the lock package tables; raise ``LockInputError`` if empty or unnamed."""
     packages = _array(lock, "package", where="uv.lock")
     if not packages or not all(
         _is_table(item) and isinstance(item.get("name"), str) for item in packages
@@ -338,7 +318,7 @@ def _root_package(
     """Return the lock entry of the local root project, if uv recorded one.
 
     Returns:
-        The root project's package table, or None when uv did not record it.
+        dict[str, object] | None: The root project's package table, or None when uv did not record it.
     """
     for package in packages:
         source = _table(package, "source", where="package")
@@ -529,7 +509,7 @@ def evaluate(
         lock_path (str): Label used for every finding.
 
     Returns:
-        Findings sorted by path and message; empty when the lock is fresh.
+        list[Finding]: Findings sorted by path and message; empty when the lock is fresh.
 
     Raises:
         LockInputError: Either document has an unexpected structure.
@@ -559,11 +539,7 @@ def evaluate(
 
 
 def _load(path: Path) -> dict[str, object]:
-    """Parse one TOML file.
-
-    Returns:
-        The parsed top-level table with string keys.
-    """
+    """Parse one TOML file into its top-level table."""
     with path.open("rb") as handle:
         return tomllib.load(handle)
 

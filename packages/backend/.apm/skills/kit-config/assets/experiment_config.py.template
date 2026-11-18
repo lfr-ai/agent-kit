@@ -13,14 +13,14 @@ from itertools import product
 import json
 from pathlib import Path
 import re
-from typing import final
+from typing import Final, final
 
-DEFAULT_SEED: int = 0
-DEFAULT_TEMPERATURE: float = 1.0
-CONFIG_VERSION: str = "v1"
-MAX_JOBS: int = 16
-MAX_SEED: int = 4_294_967_295
-MAX_TEMPERATURE: float = 2.0
+DEFAULT_SEED: Final[int] = 0
+DEFAULT_TEMPERATURE: Final[float] = 1.0
+CONFIG_VERSION: Final[str] = "v1"
+MAX_JOBS: Final[int] = 16
+MAX_SEED: Final[int] = 4_294_967_295
+MAX_TEMPERATURE: Final[float] = 2.0
 _JOB_INDEX_DIGITS = 3
 _JSON_INDENT = 2
 _PUBLIC_LABEL = re.compile(r"[a-z][a-z0-9-]{0,47}")
@@ -43,7 +43,7 @@ _FIELDS = frozenset(
 class ExperimentConfig:
     """Validated public configuration; not a secret-bearing settings object.
 
-    Args:
+    Attributes:
         run_id (str): Public, unique launch label starting with ``run-``.
         seed (int): Sampling seed; providers may treat it as best effort only.
         eval_dataset_version (str): Public immutable evaluation dataset label.
@@ -67,7 +67,7 @@ class ExperimentConfig:
 class PlannedRun:
     """One independent job, with locations fixed before any working-dir change.
 
-    Args:
+    Attributes:
         config (ExperimentConfig): Validated public values for this job.
         job_index (int): Stable zero-based index in seed-major product order.
         launch_directory (Path): Absolute original working directory.
@@ -212,15 +212,11 @@ def plan_runs(
 def write_manifest(*, run: PlannedRun) -> Path:
     """Reserve a job directory exclusively and write only public provenance.
 
-    Args:
-        run (PlannedRun): Trusted planner result beneath a consumer-controlled root.
-
-    Returns:
-        Path: Manifest location; never changes the process working directory.
-
-    Raises:
-        FileExistsError: Job directory already exists; never overwrite or resume.
-        OSError: Reservation or write failed; inspect incomplete output explicitly.
+    ``run`` is a trusted planner result beneath a consumer-controlled root. The
+    result is the manifest location; the working directory never changes. An
+    existing job directory raises ``FileExistsError``; never overwrite or
+    resume. Any other ``OSError`` may leave incomplete output to inspect
+    explicitly.
     """
     payload = {
         "config": asdict(run.config),

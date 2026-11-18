@@ -1,0 +1,284 @@
+provider "azapi" {
+  enable_preflight = false
+}
+
+locals {
+  tags     = { stage = var.stage }
+  location = coalesce(var.location, data.azapi_resource.resource_group.location)
+  # Built from known inputs so the foundation's identity lookup is plannable on first apply.
+  runtime_identity_id    = "${var.resource_group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${var.name_prefix}-identity"
+  telemetry_workspace_id = "${var.resource_group_id}/providers/Microsoft.OperationalInsights/workspaces/${var.name_prefix}-telemetry"
+  # Staging rehearses production: same network isolation, zones, replicas and locks.
+  # Cost toggles (SKUs, capacity) stay explicit in each variables file.
+  prod_like     = contains(["staging", "prod"], var.stage)
+  needs_network = {% if data == 'postgresql' %}true{% elif ai_service == 'text' %}var.stage != "dev"{% else %}local.prod_like{% endif %}
+{%- if registry == 'acr' %}
+  # An empty image is the registry bootstrap: shared infrastructure without the app.
+  deploy_app = var.container_image != ""
+{%- endif %}
+{% if ai_service == 'text' %}
+  # Foundry allows Entra-only public access in dev and uses a private endpoint elsewhere.
+  ai_private = var.stage != "dev"
+{% endif %}
+  app_environment = merge(var.environment_variables, {
+    APP_ENVIRONMENT = var.stage
+
+{% if data == 'postgresql' %}
+    APP_POSTGRES_HOST                       = module.postgres.fqdn
+    APP_POSTGRES_DATABASE                   = var.postgres_database
+    APP_POSTGRES_USER                       = "${var.name_prefix}-identity"
+    APP_POSTGRES_ENTRA_AUTHENTICATION       = "true"
+    APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID = azapi_resource.runtime_identity.output.properties.clientId
+{% endif %}
+{% if ai_service == 'text' %}
+    APP_AI_API_BASE                   = module.ai_service.openai_endpoint
+    APP_AI_MODEL                      = "openai/${var.ai_deployment.name}"
+    APP_AI_ENTRA_AUTHENTICATION       = "true"
+    APP_AI_MANAGED_IDENTITY_CLIENT_ID = azapi_resource.runtime_identity.output.properties.clientId
+{% endif %}
+  })
+}
+
+module "network" {
+  source            = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/network/terraform?ref={{ kit_commit }}"
+  count             = local.needs_network ? 1 : 0
+  resource_group_id = var.resource_group_id
+  location          = local.location
+  name              = "${var.name_prefix}-network"
+  stage             = var.stage
+  address_prefix    = var.network_address_prefix
+  private_dns_zones = concat(
+    [{% if data == 'postgresql' %}"postgresql"{% endif %}],
+    {% if ai_service == 'text' %}local.ai_private ? ["cognitiveServices", "openai", "aiServices"] : []{% else %}[]{% endif %},
+    {% if registry == 'acr' %}local.prod_like ? ["containerRegistry"] : []{% else %}[]{% endif %},
+  )
+}
+
+{% if data == 'postgresql' %}
+module "postgres" {
+  source                     = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/postgresql/terraform?ref={{ kit_commit }}"
+  depends_on                 = [azapi_resource.telemetry]
+  resource_group_id          = var.resource_group_id
+  location                   = local.location
+  name                       = "${var.name_prefix}-pg"
+  stage                      = var.stage
+  administrator              = var.postgres_administrator
+  database_name              = var.postgres_database
+  log_analytics_workspace_id = local.telemetry_workspace_id
+  private_endpoint = {
+    subnet_id           = module.network[0].private_endpoint_subnet_resource_id
+    private_dns_zone_id = module.network[0].private_dns_zone_resource_ids.postgresql
+  }
+}
+{% endif %}
+{% if ai_service == 'text' %}
+module "ai_service" {
+  source                     = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/ai-foundry/terraform?ref={{ kit_commit }}"
+  depends_on                 = [azapi_resource.telemetry]
+  resource_group_id          = var.resource_group_id
+  location                   = local.location
+  name                       = "${var.name_prefix}-ai"
+  stage                      = var.stage
+  principal_id               = azapi_resource.runtime_identity.output.properties.principalId
+  deployments                = [var.ai_deployment]
+  log_analytics_workspace_id = local.telemetry_workspace_id
+  private_endpoint = local.ai_private ? {
+    subnet_id = module.network[0].private_endpoint_subnet_resource_id
+    private_dns_zone_ids = [
+      module.network[0].private_dns_zone_resource_ids.cognitiveServices,
+      module.network[0].private_dns_zone_resource_ids.openai,
+      module.network[0].private_dns_zone_resource_ids.aiServices,
+    ]
+  } : null
+  allow_public_network_access = !local.ai_private
+  allow_all_public_clients    = !local.ai_private
+}
+{% endif %}
+
+data "azapi_resource" "resource_group" {
+  type                   = "Microsoft.Resources/resourceGroups@2024-03-01"
+  resource_id            = var.resource_group_id
+  response_export_values = []
+}
+
+# Runtime principal, distinct from the deployment identity. Owning it here lets the
+# Insights role assignment precede the app without a dependency cycle.
+resource "azapi_resource" "runtime_identity" {
+  type                   = "Microsoft.ManagedIdentity/userAssignedIdentities@2024-11-30"
+  name                   = "${var.name_prefix}-identity"
+  parent_id              = var.resource_group_id
+  location               = local.location
+  tags                   = local.tags
+  body                   = {}
+  response_export_values = ["properties.principalId", "properties.clientId"]
+}
+
+# One stack-owned workspace for console logs and selected application/service telemetry.
+# Preserve this resource name and identity when upgrading an existing stack.
+resource "azapi_resource" "telemetry" {
+  type      = "Microsoft.OperationalInsights/workspaces@2025-07-01"
+  name      = "${var.name_prefix}-telemetry"
+  parent_id = var.resource_group_id
+  location  = local.location
+  tags      = local.tags
+  body = {
+    properties = {
+      sku             = { name = "PerGB2018" }
+      retentionInDays = 30
+      features = {
+        disableLocalAuth                            = true
+        enableLogAccessUsingOnlyResourcePermissions = true
+      }
+    }
+  }
+  response_export_values = []
+}
+
+# The Container Apps module locks only a workspace it creates, so the stack locks its own.
+resource "azapi_resource" "telemetry_lock" {
+  count                  = local.prod_like ? 1 : 0
+  type                   = "Microsoft.Authorization/locks@2020-05-01"
+  name                   = "telemetry-protection"
+  parent_id              = azapi_resource.telemetry.id
+  body                   = { properties = { level = "CanNotDelete" } }
+  response_export_values = []
+}
+
+{% if telemetry | default('none') == 'application-insights' %}
+module "insights" {
+  source     = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/application-insights/terraform?ref={{ kit_commit }}"
+  depends_on = [azapi_resource.telemetry]
+
+  resource_group_id          = var.resource_group_id
+  location                   = local.location
+  name                       = "${var.name_prefix}-insights"
+  stage                      = var.stage
+  log_analytics_workspace_id = local.telemetry_workspace_id
+  principal_id               = azapi_resource.runtime_identity.output.properties.principalId
+}
+{% endif %}
+
+{% if registry == 'acr' %}
+data "azapi_client_config" "current" {}
+
+# Private registry in the stack: the runtime identity pulls (AcrPull) and the CI
+# deployment identity, which also builds the image, pushes (AcrPush).
+module "registry" {
+  source     = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/container-registry/terraform?ref={{ kit_commit }}"
+  depends_on = [azapi_resource.telemetry]
+
+  resource_group_id = var.resource_group_id
+  location          = local.location
+  name              = var.registry_name
+  # Production-like staging takes every production registry guard, including the
+  # delete lock and retention policy the module reserves for prod.
+  stage             = local.prod_like ? "prod" : var.stage
+  pull_principal_id = azapi_resource.runtime_identity.output.properties.principalId
+  push_principal_id = data.azapi_client_config.current.object_id
+  sku               = var.registry_sku
+  # Basic and Standard cannot be private: dev and test keep the Entra-only public
+  # endpoint the hosted CI pushes to; production-like stages use the endpoint.
+  allow_public_network_access = !local.prod_like
+  private_endpoint = local.prod_like ? {
+    subnet_id           = module.network[0].private_endpoint_subnet_resource_id
+    private_dns_zone_id = module.network[0].private_dns_zone_resource_ids.containerRegistry
+  } : null
+  log_analytics_workspace_id = local.telemetry_workspace_id
+}
+
+# The bootstrap omits the app; refuse it when the app already exists so a missing
+# image can never plan the app's destruction.
+data "azapi_resource_list" "existing_apps" {
+  count                  = local.deploy_app ? 0 : 1
+  type                   = "Microsoft.App/containerApps@2025-07-01"
+  parent_id              = var.resource_group_id
+  response_export_values = { names = "value[].name" }
+  lifecycle {
+    postcondition {
+      condition     = !contains(try(self.output.names, []), var.name_prefix)
+      error_message = "The app already exists: pass container_image. An empty image is only for the first registry bootstrap."
+    }
+  }
+}
+
+{% endif %}
+module "foundation" {
+  source = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/container-apps/terraform?ref={{ kit_commit }}"
+{%- if registry == 'acr' %}
+  count  = local.deploy_app ? 1 : 0
+  # Defers the module's identity read until the identity exists; AcrPull precedes the pull.
+  depends_on = [azapi_resource.runtime_identity, azapi_resource.telemetry, module.registry]
+{%- else %}
+  # Defers the module's identity read until the identity exists.
+  depends_on = [azapi_resource.runtime_identity, azapi_resource.telemetry]
+{%- endif %}
+
+  resource_group_id     = var.resource_group_id
+  location              = local.location
+  app_name              = var.name_prefix
+  environment_name      = "${var.name_prefix}-env"
+  stage                 = var.stage
+  internal_environment  = local.prod_like
+  public_network_access = local.prod_like ? "Disabled" : "Enabled"
+  availability = {
+    min_replicas             = local.prod_like ? 2 : 0
+    max_replicas             = 3
+    zone_redundant           = local.prod_like
+    deletion_protection      = local.prod_like
+    infrastructure_subnet_id = local.needs_network ? module.network[0].apps_subnet_resource_id : ""
+  }
+  container_image                              = var.container_image
+  target_port                                  = 8080
+  existing_identity_resource_id                = local.runtime_identity_id
+  existing_log_analytics_workspace_resource_id = local.telemetry_workspace_id
+{%- if registry == 'acr' %}
+  registry_server                              = "${var.registry_name}.azurecr.io"
+{%- endif %}
+  environment_variables                        = local.app_environment
+  secret_references                            = var.secret_references
+{%- if telemetry | default('none') == 'application-insights' %}
+  application_insights_connection_string       = module.insights.connection_string
+{%- endif %}
+}
+
+module "notifications" {
+  source = "git::https://github.com/lfr-ai/agent-kit.git//packages/delivery/infra/container-apps-alerts/terraform?ref={{ kit_commit }}"
+{%- if registry == 'acr' %}
+  count  = local.deploy_app ? 1 : 0
+{%- endif %}
+
+  resource_group_id                 = var.resource_group_id
+  name_prefix                       = var.name_prefix
+  stage                             = var.stage
+  container_app_resource_id         = {% if registry == 'acr' %}module.foundation[0].app_resource_id{% else %}module.foundation.app_resource_id{% endif %}
+  email_receivers                   = var.alert_email_receivers
+  existing_action_group_resource_id = var.alert_action_group_resource_id
+  unmonitored                       = var.alerts_unmonitored
+}
+
+output "url" {
+{%- if registry == 'acr' %}
+  description = "HTTPS application endpoint, null after the registry bootstrap; production-like stages require VNet access and private DNS."
+  value       = one(module.foundation[*].url)
+}
+
+output "registry_login_server" {
+  description = "Push images here; resolves privately in staging and prod."
+  value       = module.registry.login_server
+{%- else %}
+  description = "HTTPS application endpoint; production-like stages require VNet access and private DNS."
+  value       = module.foundation.url
+{%- endif %}
+}
+
+output "runtime_identity_principal_id" {
+  description = "Grant this principal Key Vault Secrets User before adding secret_references."
+  value       = azapi_resource.runtime_identity.output.properties.principalId
+}
+
+{% if telemetry | default('none') == 'application-insights' %}
+output "runtime_identity_client_id" {
+  description = "Client ID of the runtime identity, set in the app as AZURE_CLIENT_ID."
+  value       = azapi_resource.runtime_identity.output.properties.clientId
+}
+{% endif %}

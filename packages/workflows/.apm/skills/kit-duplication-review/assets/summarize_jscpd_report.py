@@ -14,7 +14,7 @@ never runs jscpd itself.
 
 import argparse
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, unique
 import fnmatch
 import json
 from pathlib import Path
@@ -22,14 +22,15 @@ import sys
 from tempfile import TemporaryDirectory
 
 _EXIT_USAGE = 2
+_UNKNOWN_FORMAT = "unknown"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Fragment:
     """One side of a clone pair.
 
-    Args:
-        name: File path as written in the report.
+    Attributes:
+        name: File path from the report, with forward slashes.
         start: First duplicated line, one-based.
         end: Last duplicated line, one-based.
     """
@@ -43,12 +44,12 @@ class Fragment:
 class Clone:
     """A duplicated fragment pair.
 
-    Args:
+    Attributes:
         fmt: Source format reported by jscpd, such as ``python``.
         lines: Duplicated line count.
         tokens: Duplicated token count, 0 when absent.
-        first: First fragment.
-        second: Second fragment.
+        first: The ``firstFile`` fragment; findings are reported at its location.
+        second: The ``secondFile`` fragment, cited as the clone source.
     """
 
     fmt: str
@@ -66,6 +67,7 @@ class Clone:
         )
 
 
+@unique
 class DuplicationInputIssue(StrEnum):
     """Supported duplication input validation failures and their stable messages."""
 
@@ -85,7 +87,8 @@ class DuplicationInputError(ValueError):
 
         Args:
             issue (DuplicationInputIssue): The violated input invariant.
-            where (str | None): Diagnostic where for the invalid input.
+            where (str | None): JSON path of the offending value, such as
+                ``duplicates[0].lines``, substituted into the message.
         """
         super().__init__(issue.value.format(where=where))
 
@@ -100,18 +103,14 @@ class DuplicationInputTypeError(TypeError):
 
         Args:
             issue (DuplicationInputIssue): The violated input invariant.
-            where (str | None): Diagnostic where for the invalid input.
+            where (str | None): JSON path of the offending value, such as
+                ``duplicates[0].lines``, substituted into the message.
         """
         super().__init__(issue.value.format(where=where))
 
 
 def _int(value: object, where: str) -> int:
-    """Return a non-negative integer or raise a located error.
-
-    Raises:
-        DuplicationInputTypeError: The value is not an integer.
-        DuplicationInputError: The value is negative.
-    """
+    """Return ``value`` if it is a non-negative integer; raise an error at ``where``."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.NONNEGATIVE_INTEGER, where=where
@@ -124,11 +123,7 @@ def _int(value: object, where: str) -> int:
 
 
 def _required_int(item: dict[str, object], key: str, where: str) -> int:
-    """Require an integer field, distinguishing absence from a wrong type.
-
-    Raises:
-        DuplicationInputError: The field is missing.
-    """
+    """Return the integer field ``key``; a missing field is a value error at ``where``."""
     if key not in item:
         raise DuplicationInputError(
             DuplicationInputIssue.NONNEGATIVE_INTEGER, where=where
@@ -147,9 +142,8 @@ def _line(item: dict[str, object], key: str, where: str) -> int:
 def _fragment(value: object, where: str) -> Fragment:
     """Parse ``firstFile`` or ``secondFile`` including the ``startLoc`` fallback.
 
-    Raises:
-        DuplicationInputTypeError: The fragment or a field has the wrong type.
-        DuplicationInputError: The file name is missing or empty.
+    A wrong fragment or name type is a type error at ``where``; a missing or empty
+    name is a value error.
     """
     if not isinstance(value, dict):
         raise DuplicationInputTypeError(
@@ -172,28 +166,18 @@ def _fragment(value: object, where: str) -> Fragment:
 
 
 def _required_fragment(item: dict[str, object], key: str, where: str) -> Fragment:
-    """Require a clone fragment, distinguishing absence from a wrong type.
-
-    Raises:
-        DuplicationInputError: The fragment is missing.
-    """
+    """Return the fragment field ``key``; a missing field is a value error at ``where``."""
     if key not in item:
         raise DuplicationInputError(DuplicationInputIssue.OBJECT_REQUIRED, where=where)
     return _fragment(item[key], where)
 
 
 def parse_report(payload: object) -> tuple[list[Clone], float | None]:
-    """Validate a decoded report and return clones and total percentage.
+    """Return the clone pairs and overall percentage of a decoded jscpd report.
 
-    Args:
-        payload (object): Decoded JSON document.
-
-    Returns:
-        Clone pairs and the overall duplicated-lines percentage, if reported.
-
-    Raises:
-        DuplicationInputError: The document does not match the expected report shape.
-        DuplicationInputTypeError: The document or a present field has the wrong type.
+    The percentage is ``None`` when the report omits it. Raises
+    ``DuplicationInputTypeError`` when the document or a present field has the wrong
+    type and ``DuplicationInputError`` when it does not match the report shape.
     """
     if not isinstance(payload, dict):
         raise DuplicationInputTypeError(DuplicationInputIssue.REPORT_SHAPE)
@@ -209,18 +193,14 @@ def parse_report(payload: object) -> tuple[list[Clone], float | None]:
 
 
 def _clone(item: object, where: str) -> Clone:
-    """Parse one ``duplicates`` entry into a clone pair.
-
-    Raises:
-        DuplicationInputTypeError: The entry is not an object.
-    """
+    """Parse one ``duplicates`` entry; a non-object entry is a type error at ``where``."""
     if not isinstance(item, dict):
         raise DuplicationInputTypeError(
             DuplicationInputIssue.OBJECT_REQUIRED, where=where
         )
-    fmt = item.get("format", "unknown")
+    fmt = item.get("format", _UNKNOWN_FORMAT)
     return Clone(
-        fmt=fmt if isinstance(fmt, str) else "unknown",
+        fmt=fmt if isinstance(fmt, str) else _UNKNOWN_FORMAT,
         lines=_required_int(item, "lines", f"{where}.lines"),
         tokens=_int(item.get("tokens", 0), f"{where}.tokens"),
         first=_required_fragment(item, "firstFile", f"{where}.firstFile"),
@@ -317,71 +297,37 @@ _SAMPLE = {
 }
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSING_MARKDOWN_CLONE = "markdown table is missing the clone"
-    INVALID_REPORT_ACCEPTED = "malformed report accepted: {broken}"
-    SMALL_CLONE_GATE = "small clones under the gate must pass"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        broken: dict[str, list[dict[str, int]]] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            broken (dict[str, list[dict[str, int]]] | None): Observed broken for the
-                failing case.
-        """
-        super().__init__(issue.value.format(broken=broken))
-
-
-def _check_sample() -> None:
-    """Exercise parsing, filtering and rendering of the bundled sample.
-
-    Raises:
-        AssertionError: Parsing, filtering, or rendering is wrong.
-        SelfTestError: The Markdown clone is missing.
-    """
+def _sample_failures() -> list[str]:
+    """Return regressions in parsing, filtering and rendering the bundled sample."""
     clones, percentage = parse_report(_SAMPLE)
     if percentage != _SAMPLE_PERCENTAGE or len(clones) != len(_SAMPLE["duplicates"]):
-        raise AssertionError((clones, percentage))
+        return [f"sample parsed as {clones!r} at {percentage!r}%"]
     kept = select(clones, min_lines=0, ignore=("tests/*",))
     if [clone.first.name for clone in kept] != ["src/orders/export.py"]:
-        raise AssertionError(kept)
+        return [f"ignore globs kept {kept!r}"]
+    failures = []
     if not kept[0].render().startswith("src/orders/export.py:10: 12-line python"):
-        raise AssertionError(kept[0].render())
+        failures.append(f"unexpected finding line: {kept[0].render()}")
     if "`src/invoices/export.py:30-41`" not in to_markdown(kept):
-        raise SelfTestError(SelfTestIssue.MISSING_MARKDOWN_CLONE)
+        failures.append("markdown table is missing the clone")
+    return failures
 
 
-def self_test() -> None:
-    """Exercise parsing, filtering, rendering and malformed input.
-
-    Raises:
-        AssertionError: Behavior differs from the documented contract.
-        SelfTestError: Invalid input is accepted or the gate fails.
-    """
-    _check_sample()
+def self_test() -> list[str]:
+    """Exercise parsing, filtering, rendering and malformed input; return failures."""
+    failures = _sample_failures()
     for broken in _SELF_TEST_BROKEN_REPORTS:
         try:
             parse_report(broken)
         except ValueError:
             continue
-        raise SelfTestError(SelfTestIssue.INVALID_REPORT_ACCEPTED, broken=broken)
+        failures.append(f"malformed report accepted: {broken}")
     with TemporaryDirectory(prefix="jscpd-summary-") as raw:
         report = Path(raw) / "jscpd-report.json"
         report.write_text(json.dumps(_SAMPLE), encoding="utf-8")
         if main([str(report), "--min-lines", "20", "--max-percentage", "5"]) != 0:
-            raise SelfTestError(SelfTestIssue.SMALL_CLONE_GATE)
+            failures.append("small clones under the gate must pass")
+    return failures
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -424,9 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("summarize_jscpd_report self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"summarize_jscpd_report self-test {verdict}.\n")
+        return int(bool(failures))
     if args.report is None:
         parser.print_usage(sys.stderr)
         return _EXIT_USAGE

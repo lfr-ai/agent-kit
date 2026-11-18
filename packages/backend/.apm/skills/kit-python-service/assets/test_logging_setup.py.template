@@ -1,6 +1,6 @@
 """Tests for the logging setup template using an in-memory stream.
 
-Replace 'shop.logging_setup' with the module that holds the copied setup.
+Replace ``shop.logging_setup`` with the module that holds the copied setup.
 """
 
 import io
@@ -54,7 +54,7 @@ def test_sensitive_extra_keys_are_redacted(stream: io.StringIO) -> None:
 
 
 def test_exceptions_include_traceback_text(stream: io.StringIO) -> None:
-    """'logger.exception' inside a handler records the traceback once."""
+    """``logger.exception`` inside a handler records the traceback once."""
     logger = logging.getLogger("shop.test")
     try:
         raise RuntimeError("boom")

@@ -36,9 +36,16 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 import tempfile
+from typing import Final
 
 _USAGE_ERROR = 2
-DEFAULT_TIERS: tuple[str, ...] = ("unit", "integration", "property", "e2e", "contract")
+DEFAULT_TIERS: Final[tuple[str, ...]] = (
+    "unit",
+    "integration",
+    "property",
+    "e2e",
+    "contract",
+)
 _CACHE_DIRECTORIES = frozenset({"__pycache__", ".hypothesis", ".pytest_cache"})
 _PYTEST_EXPECTATIONS = frozenset({"raises", "warns", "fail", "deprecated_call"})
 
@@ -94,14 +101,7 @@ def asserts_something(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def find_tests(
     tree: ast.Module,
 ) -> Iterator[ast.FunctionDef | ast.AsyncFunctionDef]:
-    """Yield module-level ``test_*`` functions and ``test_*`` methods of ``Test*`` classes.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Yields:
-        Test function definitions in source order.
-    """
+    """Yield module-level and ``Test*`` class ``test_*`` functions in source order."""
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
             yield from _tests_in(node.body)
@@ -139,7 +139,7 @@ def check_module(path: str, text: str, *, in_tier: bool) -> list[Issue]:
         in_tier (bool): Whether the file lies inside an accepted tier directory.
 
     Returns:
-        Issues for the file.
+        list[Issue]: Issues for the file.
     """
     try:
         tree = ast.parse(text, filename=path)
@@ -178,16 +178,15 @@ def _issue(path: str, rule: str, message: str) -> Issue:
 def check_tree(root: Path, *, tiers: Sequence[str] = DEFAULT_TIERS) -> list[Issue]:
     """Check every Python file under a tests root.
 
+    A file that cannot be read propagates ``OSError``; non-UTF-8 text propagates
+    ``UnicodeDecodeError``.
+
     Args:
         root (Path): Tests directory, for example ``tests``.
         tiers (Sequence[str]): Directory names directly under ``root`` that hold tests.
 
     Returns:
-        Sorted issues.
-
-    Raises:
-        OSError: If a file cannot be read.
-        UnicodeDecodeError: If a file is not UTF-8.
+        list[Issue]: Sorted issues.
     """
     issues: list[Issue] = []
     for path in sorted(root.rglob("*.py")):

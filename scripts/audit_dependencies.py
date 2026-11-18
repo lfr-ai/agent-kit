@@ -56,14 +56,10 @@ class _AuditSummary:
 
 
 def source_only_packages(lock: Mapping[str, object]) -> list[str]:
-    """Identify locked registry packages without wheels.
+    """Return sorted ``name==version`` registry packages locked without wheels.
 
-    Returns:
-        list[str]: Sorted ``name==version`` strings, or an empty list if none
-            are blocked.
-
-    Raises:
-        InvalidLockMetadataError: The package inventory is missing or malformed.
+    The list is empty when none are blocked; a missing or malformed package
+    inventory raises ``InvalidLockMetadataError``.
     """
     packages = lock.get("package")
     if not isinstance(packages, list) or not packages:

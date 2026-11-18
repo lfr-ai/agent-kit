@@ -1,0 +1,47 @@
+[project]
+name = {{ project_name | tojson }}
+version = "0.1.0"
+requires-python = ">=3.13"
+{%- if service == 'api' %}
+{% set extras = (['database'] if data == 'postgresql' else []) + (['ratelimit'] if cache == 'redis' else []) + (['auth'] if auth == 'entra-bearer' else []) + (['ai'] if ai_service == 'text' else []) + (['telemetry'] if telemetry == 'application-insights' else []) -%}
+dependencies = [
+  "platform-kit-runtime{{ '[' ~ extras | join(',') ~ ']' if extras else '' }}>=0.1.0,<0.2",
+  "pydantic-settings>=2.16.2,<3",
+  "uvicorn>=0.54.0,<1",
+{%- if telemetry == 'application-insights' %}
+  "azure-identity>=1.27.0,<2",
+  "azure-monitor-opentelemetry>=1.8.12,<2",
+{%- endif %}
+]
+{%- endif %}
+
+[dependency-groups]
+{%- if service == 'api' %}
+dev = [
+  "apm-cli==0.35.0",
+  "go-task-bin==3.54.0",
+  "httpx==0.28.1",
+  "pytest==9.1.1",
+  "ruff==0.17.1",
+]
+
+[build-system]
+requires = ["uv_build==0.13.3"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.12.0,<0.14"
+
+[tool.uv.build-backend]
+module-name = "app"
+
+[tool.uv.sources]
+platform-kit-runtime = { git = "https://github.com/lfr-ai/agent-kit", subdirectory = "packages/runtime", rev = "{{ kit_commit }}" }
+
+{%- else %}
+dev = ["apm-cli==0.35.0"]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.0,<0.14"
+{%- endif %}

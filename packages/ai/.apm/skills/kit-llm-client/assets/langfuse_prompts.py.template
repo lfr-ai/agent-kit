@@ -23,7 +23,7 @@ _UNSUPPORTED_NATIVE_MARKERS = ("{{", "}}", "@@@langfusePrompt:")
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
-class SdkChatPrompt:
+class SDKChatPrompt:
     """SDK projection returned by the consumer's thin facade.
 
     Attributes:
@@ -37,7 +37,7 @@ class SdkChatPrompt:
     prompt: list[dict[str, str]]
 
 
-class PromptSdk(Protocol):
+class PromptSDK(Protocol):
     """Narrow facade; SDK imports and error classes belong in the adapter."""
 
     def get_prompt(
@@ -48,7 +48,7 @@ class PromptSdk(Protocol):
         label: str | None,
         type: Literal["chat"],
         cache_ttl_seconds: int,
-    ) -> SdkChatPrompt:
+    ) -> SDKChatPrompt:
         """Project SDK fields after chat retrieval, without SDK fallback.
 
         Args:
@@ -59,7 +59,7 @@ class PromptSdk(Protocol):
             cache_ttl_seconds (int): SDK cache TTL; zero disables the cache.
 
         Returns:
-            SdkChatPrompt: Projection of name, version, and raw chat prompt.
+            SDKChatPrompt: Projection of name, version, and raw chat prompt.
         """
         ...
 
@@ -71,14 +71,14 @@ class LangfusePromptSource:
     def __init__(
         self,
         *,
-        sdk: PromptSdk,
+        sdk: PromptSDK,
         fetch_errors: tuple[type[Exception], ...],
         cache_ttl_seconds: int,
     ) -> None:
         """Configure the adapter explicitly.
 
         Args:
-            sdk (PromptSdk): Consumer facade around its pinned SDK client.
+            sdk (PromptSDK): Consumer facade around its pinned SDK client.
             fetch_errors (tuple[type[Exception], ...]): Concrete SDK fetch failures;
                 do not supply broad base exception classes.
             cache_ttl_seconds (int): Required consumer-owned cache TTL in seconds;
@@ -99,14 +99,9 @@ class LangfusePromptSource:
     def fetch(self, selection: PromptSelection) -> PromptTemplate:
         """Resolve the selector through the SDK and validate the supported shape.
 
-        Args:
-            selection (PromptSelection): Reviewed version or label selector.
-
-        Returns:
-            PromptTemplate: Existing port template with resolved numeric version.
-
-        Raises:
-            ManagedPromptError: Unsupported prompt or a normalized fetch failure.
+        The result is the port template with its resolved numeric version. A
+        configured SDK fetch error raises ``ManagedPromptUnavailable``; an
+        unsupported prompt shape propagates ``ManagedPromptError``.
         """
         try:
             prompt = self._sdk.get_prompt(
@@ -122,7 +117,7 @@ class LangfusePromptSource:
         return _project_template(prompt)
 
 
-def _project_template(prompt: SdkChatPrompt) -> PromptTemplate:
+def _project_template(prompt: SDKChatPrompt) -> PromptTemplate:
     if len(prompt.prompt) != _SUPPORTED_MESSAGE_COUNT:
         raise ManagedPromptError("managed prompt shape is unsupported")
     system, user = prompt.prompt

@@ -6,7 +6,7 @@ change data.
 """
 
 import enum
-from enum import StrEnum
+from enum import StrEnum, auto
 from typing import Self
 
 
@@ -14,18 +14,16 @@ from typing import Self
 class OrderStatus(StrEnum):
     """Lifecycle state of an order."""
 
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    SHIPPED = "shipped"
-    CANCELLED = "cancelled"
+    DRAFT = auto()
+    CONFIRMED = auto()
+    SHIPPED = auto()
+    CANCELLED = auto()
 
     @classmethod
     def parse(cls, value: str, /) -> Self:
-        """Parse untrusted text, accepting surrounding whitespace and any case.
+        """Return the member matching untrusted ``value``, ignoring case and padding.
 
-        Raises:
-            ValueError: If the text does not name a member; the message lists
-                the accepted values.
+        Unknown text raises ``ValueError`` whose message lists the accepted values.
         """
         normalized = value.strip().lower()
         try:
@@ -42,7 +40,7 @@ class OrderStatus(StrEnum):
         return self in _TERMINAL
 
     def can_transition_to(self, target: Self, /) -> bool:
-        """Whether moving from this state to ``target`` is allowed."""
+        """Return whether the lifecycle permits moving to ``target``."""
         return target in _TRANSITIONS[self]
 
 

@@ -49,6 +49,11 @@ htmlcov/
 # APM install output
 apm_modules/
 
+# Terraform local working files; state is remote and never committed.
+.terraform/
+*.tfstate*
+tfplan
+
 # Environment and secrets
 .env
 .env.*

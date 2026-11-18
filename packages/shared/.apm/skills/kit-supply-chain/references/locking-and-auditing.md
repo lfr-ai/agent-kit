@@ -77,7 +77,7 @@ owned by `kit-verify-change`); run both.
 Pull-request dependency review evaluates the diff again on the server: fail on
 any severity in runtime, development and unknown scopes, and keep its
 `allow-licenses` list identical to the license allow-list. Its configuration
-lives with the CI templates of `kit-ci-review`. A scheduled audit of the whole
+lives with the CI templates of `kit-ci-review`, when installed. A scheduled audit of the whole
 lock catches advisories published after merge.
 
 ## License policy

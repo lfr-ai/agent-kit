@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_kit.application.services.catalog_service import (
+from agent_kit.application.catalog import (
     CatalogService,
     CompositionError,
     CompositionIssue,
 )
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

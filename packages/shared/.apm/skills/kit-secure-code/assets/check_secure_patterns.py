@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import sys
+from typing import Final
 
 _USAGE_ERROR = 2
 _SKIPPED_DIRECTORIES = frozenset(
@@ -122,7 +123,7 @@ def resolve(node: ast.expr, aliases: dict[str, str]) -> str | None:
         aliases (dict[str, str]): Local names mapped to their imported targets.
 
     Returns:
-        The dotted name with the first part replaced by its import target.
+        str | None: The dotted name with the first part replaced by its import target.
     """
     dotted = _dotted(node)
     if dotted is None:
@@ -132,14 +133,7 @@ def resolve(node: ast.expr, aliases: dict[str, str]) -> str | None:
 
 
 def import_aliases(tree: ast.Module) -> dict[str, str]:
-    """Map local names to the absolute modules or objects they import.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Local name to dotted target; relative imports are ignored.
-    """
+    """Map local names to imported absolute dotted targets; skip relative imports."""
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -177,6 +171,7 @@ def _pickle_load(call: Call) -> str | None:
 
 
 def _yaml_unsafe(call: Call) -> str | None:
+    """Flag unsafe YAML entry points or loaders not resolved to a safe-loader name."""
     if call.name in _YAML_ALWAYS_UNSAFE:
         return f"{call.name} constructs arbitrary objects; use yaml.safe_load"
     if call.name not in _YAML_LOADER_CALLS:
@@ -197,6 +192,7 @@ def _mktemp(call: Call) -> str | None:
 
 
 def _http_no_timeout(call: Call) -> str | None:
+    """Flag known HTTP calls missing a timeout, leaving unpacked keywords unjudged."""
     keywords = call.node.keywords
     unpacked = any(item.arg is None for item in keywords)
     if (
@@ -208,7 +204,7 @@ def _http_no_timeout(call: Call) -> str | None:
     return None
 
 
-RULES: dict[str, Callable[[Call], str | None]] = {
+RULES: Final[dict[str, Callable[[Call], str | None]]] = {
     "shell-true": _shell_true,
     "eval-exec": _eval_exec,
     "pickle-load": _pickle_load,
@@ -229,7 +225,7 @@ def check_source(
         rules (Sequence[str]): Rule identifiers to apply.
 
     Returns:
-        Findings for the module, or one ``syntax`` finding if it cannot parse.
+        list[Finding]: Findings for the module, or one ``syntax`` finding if it cannot parse.
     """
     try:
         tree = ast.parse(text, filename=path)
@@ -320,17 +316,11 @@ def self_test() -> list[str]:
 
 
 def python_files(paths: Sequence[Path]) -> list[Path]:
-    """Expand files and directories into Python files, skipping tool caches.
+    """Return sorted, unique Python files below ``paths``, skipping tool caches.
 
     Explicitly named files are always kept. Inside a directory argument, only
     the parts below that directory are compared with the skipped names, so a
     checkout that itself lives under a folder such as ``venv`` is still scanned.
-
-    Args:
-        paths (Sequence[Path]): Files or directories to scan.
-
-    Returns:
-        Sorted, unique Python file paths.
     """
     found: set[Path] = set()
     for path in paths:

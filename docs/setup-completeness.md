@@ -13,7 +13,7 @@ See [capability coverage](capability-review.md) for topic-specific work.
 | Resource depth | Every canonical skill has a reachable nonempty reference and usable asset; guides give concrete failure cases and gates | Owning audience and prior art |
 | Profiles | Each named, portable profile is a compact APM meta-package resolving the catalog's pinned source-package closure | Catalog, manifest and APM dependency checks |
 | Instructions | Invariants are path-scoped; consumer facts/knowledge have a distinct owner | Native scope semantics |
-| Native roles | Repository-owned roles keep their native projections; consumer profile packages do not currently deliver roles | Native projection contracts and explicit limitation |
+| Native roles | Profiles select generated Copilot and Claude role packages by target; installation and frozen replay check their exact output | Native projection contracts and intended-host checks |
 | Knowledge/setup | Consumer project/knowledge/adoption/evidence templates and a read-only context check are delivered | Consumer fills actual facts |
 | Guards/scripts | Implemented replacements name real files; parser failures have runnable regressions | Explicit accepted input schema |
 | MCP | Recorded integrations have native examples, sources, approval and removal steps; delivered servers match the selected manifests | Consumer identity, version and policy review |
@@ -48,8 +48,8 @@ dependencies:
   mcp: []
 ```
 
-`backend` groups `shared` and `backend`; the consumer needs one package
-reference. APM does not read Agent Kit's `catalog.json`; the source repository
+`backend` groups `shared`, `backend` and target-selected native role packages;
+the consumer needs one package reference. APM does not read Agent Kit's `catalog.json`; the source repository
 generates a small manifest at `profiles/backend/apm.yml` that declares those
 pinned source packages and the selected MCP configuration. APM resolves the
 closure; no capability files are copied into `profiles/`.
@@ -67,7 +67,7 @@ Review the installed output and commit `apm.lock.yaml`. In CI, use
 `apm install --frozen --target copilot,claude --no-trust-bin`; it refuses a
 missing or stale lock. Use the consumer's reviewed APM policy and keep the audit
 in CI. A project-local policy file is not automatically enforced by every APM
-0.33.0 install path.
+0.35.0 install path.
 
 Choose the smallest profile that fits the repository. APM installation does not
 narrow a profile to one skill, and a subfolder cannot suppress parent, user or
@@ -106,12 +106,13 @@ metadata checks are not replacements.
 
 ## 5. Review native roles and host behavior
 
-Consumer APM profile packages currently deliver APM primitives but not native
-agent-role files. Role metadata remains authored in skill assets and is
-rendered for this repository's own Copilot and Claude projections. Do not infer
-consumer role support from those generated source-repository files. The
-[APM smoke matrix](../scripts/apm_smoke.py) verifies package installation,
-compilation and resources. See
+Consumer APM profiles select generated native role packages for the requested
+targets. Role metadata is authored once in skill assets and rendered for both
+the native packages and this repository's projections. The
+[APM smoke matrix](../scripts/apm_smoke.py) verifies local profile dependency
+resolution, exact installed role files, compilation, audit and frozen replay.
+It does not prove a published release can be fetched or that an IDE/model obeys
+the roles. See [the evidence and deadlines](compatibility.md) and
 [native discovery and permissions](editor.md#native-discovery-and-menu).
 
 Use the delivered runtime certification worksheet for discovery, selected/absent
@@ -165,9 +166,9 @@ pinned APM workflow after auditing it. Do not repair evidence by weakening
 policy or hashes.
 
 Replace `<reviewed-tag>` only with a published release that contains these
-profile manifests. The APM smoke exercises source-package installation and
-compilation in disposable projects; it does not certify consumer-to-meta-package
-dependency resolution.
+profile manifests. The APM smoke exercises generated profile dependencies with
+local replacements and composed source packages in disposable projects; it does
+not certify fetching those dependencies from a published release.
 
 Expect check-only verification and disposable APM delivery; formatting is explicit.
 The [verification contract](verification.md) owns smoke isolation, resource-byte
@@ -209,3 +210,120 @@ profile references rather than copying files
 
 Rollback: keep the previous source, manifests, locks and native settings, and
 follow [roll back](feedback.md#roll-back).
+
+## 10. Application readiness and remaining integration
+
+For an application owner, the next action is to choose a deployment target and
+the smallest required service set, not to enable every capability. The
+[Copier starter](../packages/starter/README.md) is a scaffold and capability
+selector, not a fully provisioned platform. A five-minute target can apply to
+a warm local scaffold; it is not an established cloud-deployment guarantee.
+Tool installation, release availability, approvals, provisioning, DNS and
+notification delivery are separate dependencies.
+
+### Configuration ownership
+
+| Concern | Canonical owner | Boundary |
+| --- | --- | --- |
+| Application settings | The generated app's typed `Settings` class | Process environment overrides local `.env`, then code defaults; validate at startup |
+| Infrastructure | One consumer-owned root composition and its environment-specific Bicep parameters or Terraform variable files | The [caller layout contract](../packages/delivery/docs/deploy.md#caller-repository-layout) owns filenames and overrides; deployment does not generate or connect the root composition |
+| Resource outputs | The selected infrastructure deployment | Explicitly map endpoints and resource identities into app settings; do not copy credentials into answers or source |
+| Secrets | Deployment platform secret references or an approved secret store | Local `.env` is not a production secret store |
+| CI/CD | Consumer workflow inputs and protected environment/service-connection settings | Hosted permissions and approvals must be configured by the operator |
+| Agent capabilities | Consumer APM manifest, policy and reviewed lock | Installation is separate from application dependencies and native-host certification |
+| Development tools | Each tool's dedicated configuration file | Keep Ruff, ty, pytest, coverage, tox, Commitizen and import-linter separate; do not consolidate them into packaging metadata |
+
+There is deliberately no universal settings file for both Python and Azure.
+Keep each value with its owner; deployment passes the required outputs into
+the app. Choose `iac=none` to omit IaC capability selection. The starter does
+not generate infrastructure resources even when Bicep or Terraform guidance
+is selected. Infrastructure can live in another repository or remain
+operator-managed.
+
+### Ordered completion checklist
+
+| Order | Remaining work | Acceptance evidence |
+| --- | --- | --- |
+| 1 | Done 2026-11-16: Copier's `jinja2-ansible-filters` license finding, accepted as a dated development-only exception | The unchanged license gate passes; a lock test keeps the package out of shipped closures |
+| 2 | Publish an approved release containing the runtime, starter and generated profiles | A clean consumer resolves every immutable pin without local replacements |
+| 3 | Choose GitHub Actions or Azure Pipelines, cloud target, IaC ownership and initial services | A short consumer contract with no unresolved deployment inputs |
+| 4 | Supply the selected service configuration, compose additional infrastructure and add migrations | Local positive/negative integration tests, then a reviewed non-production preview |
+| 5 | Bootstrap cloud trust, network and state; configure environment gates | OIDC/WIF login with least privilege; unauthorized deployment is denied |
+| 6 | Connect image build, scan, immutable promotion and deployment | One successful hosted run, post-deploy health checks and a tested rollback |
+| 7 | Connect monitoring and notifications | A controlled failure reaches the intended Teams channel; telemetry is received without sensitive data |
+| 8 | Exercise production operational controls | Restore drill, backup/retention policy, secret rotation, load/rate-limit checks and named incident owners |
+| 9 | Certify the selected agent and AI behavior | Intended-host discovery/permissions checks and use-case evaluations, not just file validation |
+
+The [delivery inventory](../packages/delivery/catalog.json) supplies 17 separate
+Azure compositions and GitHub/Azure Pipelines entry points. The optional
+[API deployment scaffold](../packages/starter/DEPLOYMENT.md) connects a
+development Container App, telemetry and optional alerts; it is not an assembled
+production application stack. Application Blob Storage and Terraform-state
+storage are separate modules. Cosmos DB is an opt-in composition; Service Bus,
+App Configuration and AKS are not shipped compositions.
+Non-Azure ECS and Cloud Run APM examples are adaptation templates, not a
+configured alternate deployment selected by Copier.
+
+### Application feature boundaries
+
+| Area | Available building block | Still required in the application |
+| --- | --- | --- |
+| HTTP | FastAPI runtime, health routes, safe error responses, request IDs and structured access logging | Business routes and readiness probes for additional dependencies |
+| Authentication | Optional generated Entra bearer lifecycle and protected technical route; runtime browser-session/callback implementation | App registration, consent, business route authorization, browser-session wiring/storage and callback origins; other OIDC providers need an adapter |
+| Rate limiting | Optional generated in-memory or Redis counters and Redis lifecycle | Quotas, trusted proxies and failure policy; outages currently fail open |
+| Data | Optional generated PostgreSQL lifecycle/readiness and local Compose service profiles; runtime Redis identity/rate-limit adapters | Schema/migrations, credentials, TLS, backups and general cache behavior |
+| Telemetry | Runtime logging and optional OpenTelemetry tracing | Exporters, sampling, log/metric export, retention and receipt tests |
+| AI and retrieval | Optional generated internal text generator; runtime Azure Search retrieval and Document Intelligence OCR | Provider authentication, model/index setup, retrieval/OCR wiring, ingestion, authorization and answer generation; non-Azure retrieval/OCR adapters are not included |
+| Agents and LLMOps | APM LangGraph, prompt-management, Langfuse and evaluation templates | SDK/service adoption, persistence, datasets, quality thresholds, promotion/rollback and operational ownership |
+
+Runtime feature settings are explicit typed objects. The starter's single
+`APP_*` settings adapter configures selected PostgreSQL, Redis, Entra bearer
+and text-generation integrations; disabled services are not imported.
+Installing another runtime extra alone does not wire that feature into the app.
+Principal-keyed rate limits also need
+authentication middleware before the limiter; route guards alone are not that
+middleware.
+Generated IaC accepts nonsecret environment strings and existing Key Vault
+references in its per-environment parameters. It does not infer endpoints,
+create the selected database/Redis/model services, or grant their access.
+PostgreSQL can explicitly use a user-assigned managed identity instead of a
+password; database user mapping and grants remain operator-owned.
+
+Azure Search hybrid ranking is not a Self-CRAG implementation. The corrective
+retrieval APM template is separate adopt-and-wire code, not an installed
+retrieval strategy or a quality result. Hydra, graph databases and additional
+retrieval frameworks are workload decisions, not prerequisites for every app.
+No general ML training/deployment platform is generated.
+
+Azure alerts use email receivers or a caller-owned action group. Teams is
+preferred through an operator-owned integration with payload transformation,
+connection ownership/co-owners and a delivery test; email-only is also supported.
+The starter references the existing group by ARM ID, leaving receiver secrets
+and configuration outside its plans and state. The ID alone proves neither
+configuration nor delivery. Staging/prod require a destination; dev/test can
+explicitly opt out.
+They are not automatic CI-failure notifications. Use the
+[alert operator contract](../packages/delivery/infra/container-apps-alerts/REFERENCE.md).
+
+### Decisions needed from the operator
+
+- CI host and repository visibility/plan; confirm which hosted approval controls
+  are available.
+- Azure region, environment names and service set; for non-Azure, name the
+  actual target rather than assuming a generic cloud deployment.
+- Bicep, Terraform, external infrastructure, or no managed infrastructure.
+- Identity provider and client flow: API tokens, browser login/callbacks or
+  both; tenant and role boundaries belong to the consumer.
+- Teams channel/workflow owners, telemetry retention, budget and recovery
+  requirements. Do not put secret webhook URLs into issues or documentation.
+- Release authority and the reviewed development-only license decision.
+
+The [Azure bootstrap](../packages/delivery/docs/bootstrap.md) emits an offline
+plan and offers explicit target-checked operator apply for resource-group
+ownership, managed identity, federation and Reader access. It does not inspect
+the current account in plan mode, grant deployment permissions, configure
+hosted CI environments or create a Terraform backend.
+
+Until these choices and live checks are complete, report the kit as reusable
+building blocks and an opt-in local application scaffold, not a certified
+production deployment or a measured five-minute cloud installer.

@@ -1,6 +1,6 @@
 ---
 name: kit-agent-runtime
-description: Use when selecting session context, skills or tools, or checking native agent-runtime support and permissions.
+description: Use when selecting session tools/skills or checking agent-runtime support and permissions.
 license: MIT
 ---
 

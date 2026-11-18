@@ -7,18 +7,21 @@ here; adding a permission is a reviewed code change with a test.
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from types import MappingProxyType
+from typing import Final
 
 
+@unique
 class Role(StrEnum):
     """Roles the authorization server may assign to a subject."""
 
-    VIEWER = "viewer"
-    EDITOR = "editor"
-    ADMIN = "admin"
+    VIEWER = auto()
+    EDITOR = auto()
+    ADMIN = auto()
 
 
+@unique
 class Permission(StrEnum):
     """Operations the API protects."""
 
@@ -27,7 +30,7 @@ class Permission(StrEnum):
     ITEMS_DELETE = "items:delete"
 
 
-ROLE_PERMISSIONS: Mapping[Role, frozenset[Permission]] = MappingProxyType(
+ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = MappingProxyType(
     {
         Role.VIEWER: frozenset({Permission.ITEMS_READ}),
         Role.EDITOR: frozenset({Permission.ITEMS_READ, Permission.ITEMS_WRITE}),
@@ -35,7 +38,7 @@ ROLE_PERMISSIONS: Mapping[Role, frozenset[Permission]] = MappingProxyType(
     }
 )
 
-SCOPE_PERMISSIONS: Mapping[str, frozenset[Permission]] = MappingProxyType(
+SCOPE_PERMISSIONS: Final[Mapping[str, frozenset[Permission]]] = MappingProxyType(
     {
         "items.read": frozenset({Permission.ITEMS_READ}),
         "items.write": frozenset({Permission.ITEMS_READ, Permission.ITEMS_WRITE}),

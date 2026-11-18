@@ -1,0 +1,8 @@
+"""Opt in to the runtime's content-free JSON stdout diagnostics."""
+
+from platform_kit_runtime.logging import configure_console_logging
+
+
+def configure_logging() -> None:
+    """Configure one console sink; health events stay DEBUG, raw access logs off."""
+    configure_console_logging()

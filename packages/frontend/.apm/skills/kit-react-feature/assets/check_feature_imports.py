@@ -13,7 +13,6 @@ compiler, bundler, or package manager. It reports two rule violations:
 
 import argparse
 from collections.abc import Sequence
-from enum import StrEnum
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -35,22 +34,16 @@ class FeatureAliasError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            value (str): Diagnostic value for the failing input.
+            value (str): Alias declaration without ``=`` or with an empty prefix.
         """
         super().__init__(f"alias must look like PREFIX=DIRECTORY: {value}")
 
 
 def _parse_aliases(values: Sequence[str]) -> list[tuple[str, PurePosixPath]]:
-    """Parse ``PREFIX=DIRECTORY`` alias declarations into ordered pairs.
+    """Return ``PREFIX=DIRECTORY`` declarations as prefix and directory pairs.
 
-    Args:
-        values (Sequence[str]): Alias declarations such as ``@/=src/``.
-
-    Returns:
-        Pairs of import prefix and root-relative directory, longest prefix first.
-
-    Raises:
-        FeatureAliasError: If a declaration has no ``=`` or an empty prefix.
+    Longer prefixes come first. A declaration without ``=`` or with an empty prefix
+    raises ``FeatureAliasError``.
     """
     aliases: list[tuple[str, PurePosixPath]] = []
     for value in values:
@@ -223,40 +216,9 @@ def _boundary_violation(
     return None
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    PUBLIC_IMPORT_REJECTED = "public entry imports must pass"
-    FINDING_COUNT = "expected {expected} findings, got {findings}"
-    FINDING_LOCATION = "unexpected order or location: {findings}"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        expected: int | None = None,
-        findings: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            expected (int | None): Observed expected for the failing case.
-            findings (list[str] | None): Observed findings for the failing case.
-        """
-        super().__init__(issue.value.format(expected=expected, findings=findings))
-
-
-def self_test() -> None:
-    """Exercise passing, deep, aliased and shared-inversion imports in a temp tree.
-
-    Raises:
-        SelfTestError: If any synthetic expectation does not hold.
-    """
+def self_test() -> list[str]:
+    """Return regressions for public, deep, aliased and shared-inversion imports."""
+    failures: list[str] = []
     with TemporaryDirectory(prefix="agent-kit-feature-imports-") as directory:
         root = Path(directory)
         orders = root / "src/features/orders"
@@ -270,7 +232,7 @@ def self_test() -> None:
         )
         (shared / "util.ts").write_text("export const y = 2;\n", encoding="utf-8")
         if check(root, aliases=("@/=src/",)):
-            raise SelfTestError(SelfTestIssue.PUBLIC_IMPORT_REJECTED)
+            failures.append("public entry imports must pass")
         (invoices / "list.tsx").write_text(
             'import { x } from "../../orders/api/orders.api";\n'
             'const lazy = import("@/features/orders/ui/view");\n',
@@ -280,13 +242,12 @@ def self_test() -> None:
             'export { x } from "@/features/orders";\n', encoding="utf-8"
         )
         findings = check(root, aliases=("@/=src/",))
-        expected = _SELF_TEST_EXPECTED_FINDINGS
-        if len(findings) != expected:
-            raise SelfTestError(
-                SelfTestIssue.FINDING_COUNT, expected=expected, findings=findings
-            )
-        if not findings[0].startswith("src/features/invoices/ui/list.tsx:1:"):
-            raise SelfTestError(SelfTestIssue.FINDING_LOCATION, findings=findings)
+    expected = _SELF_TEST_EXPECTED_FINDINGS
+    if len(findings) != expected:
+        failures.append(f"expected {expected} findings, got {findings}")
+    elif not findings[0].startswith("src/features/invoices/ui/list.tsx:1:"):
+        failures.append(f"unexpected order or location: {findings}")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -312,9 +273,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Feature import checker self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Feature import checker self-test {verdict}.\n")
+        return int(bool(failures))
     try:
         findings = check(
             args.root,

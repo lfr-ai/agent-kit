@@ -3,7 +3,23 @@
     "apm": [
       "lfr-ai/agent-kit/packages/shared#v0.1.0",
       "lfr-ai/agent-kit/packages/iac#v0.1.0",
-      "lfr-ai/agent-kit/packages/remote-access#v0.1.0"
+      "lfr-ai/agent-kit/packages/remote-access#v0.1.0",
+      {
+        "git": "https://github.com/lfr-ai/agent-kit.git",
+        "path": "profiles/native/copilot",
+        "ref": "v0.1.0",
+        "targets": [
+          "copilot"
+        ]
+      },
+      {
+        "git": "https://github.com/lfr-ai/agent-kit.git",
+        "path": "profiles/native/claude",
+        "ref": "v0.1.0",
+        "targets": [
+          "claude"
+        ]
+      }
     ],
     "mcp": [
       {

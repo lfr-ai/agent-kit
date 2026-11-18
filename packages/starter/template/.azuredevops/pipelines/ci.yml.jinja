@@ -1,0 +1,25 @@
+# Quality gate on pull requests and main. Templates come from the toolkit pinned to one reviewed
+# commit; bump `ref` with `copier update`, never by following a branch.
+# Azure Repos ignores `pr`; there, make this pipeline a required build policy on main.
+trigger:
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: delivery
+      type: github
+      name: lfr-ai/agent-kit
+      # GitHub service connection authorized for this pipeline only.
+      endpoint: agent-kit-github
+      ref: {{ kit_commit }} # reviewed toolkit commit
+
+extends:
+  template: packages/delivery/azure-devops/extends/python-ci.yml@delivery
+  parameters:
+    pythonVersion: "3.13"
+    uvVersion: "0.13.3"
+    task: ci

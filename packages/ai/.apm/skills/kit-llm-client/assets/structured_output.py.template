@@ -15,8 +15,8 @@ from llm.port import (
     ChatMessage,
     Completion,
     CompletionRequest,
-    LlmClient,
-    LlmContentFilteredError,
+    LLMClient,
+    LLMContentFilteredError,
     Role,
     StructuredOutputError,
 )
@@ -50,7 +50,7 @@ def describe_errors(error: ValidationError, *, limit: int = _DEFAULT_ERROR_LIMIT
 
 
 async def complete_structured[ModelT: BaseModel](
-    client: LlmClient,
+    client: LLMClient,
     request: CompletionRequest,
     schema: type[ModelT],
     *,
@@ -59,7 +59,7 @@ async def complete_structured[ModelT: BaseModel](
     """Request JSON matching ``schema``, validate it, and repair a bounded number of times.
 
     Args:
-        client (LlmClient): Any ``LlmClient``, usually the resilient wrapper.
+        client (LLMClient): Any ``LLMClient``, usually the resilient wrapper.
         request (CompletionRequest): Base request; its JSON schema defaults to the
             model's schema.
         schema (type[ModelT]): Pydantic model describing the expected object.
@@ -69,8 +69,9 @@ async def complete_structured[ModelT: BaseModel](
         The validated object and the completion that produced it.
 
     Raises:
+        ValueError: If ``max_repairs`` is negative.
         StructuredOutputError: If output is truncated or still invalid after repairs.
-        LlmContentFilteredError: If the provider filtered the output.
+        LLMContentFilteredError: If the provider filtered the output.
     """
     if max_repairs < 0:
         raise ValueError("max_repairs must be non-negative")
@@ -80,7 +81,7 @@ async def complete_structured[ModelT: BaseModel](
     for attempt in range(max_repairs + 1):
         completion = await client.complete(current)
         if completion.finish_reason == "content_filter":
-            raise LlmContentFilteredError("structured output was filtered")
+            raise LLMContentFilteredError("structured output was filtered")
         if completion.finish_reason == "length":
             raise StructuredOutputError(
                 "structured output was truncated; raise max_output_tokens"

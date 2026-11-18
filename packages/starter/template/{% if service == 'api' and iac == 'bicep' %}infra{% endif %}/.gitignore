@@ -1,0 +1,5 @@
+*.json
+!bicepconfig.json
+!vendor/
+!vendor/**/bicepconfig.json
+!vendor/manifest.json

@@ -1,6 +1,6 @@
 ---
 name: kit-config
-description: Use when adding or changing application configuration with explicit validation, precedence, and secret handling.
+description: Use when changing application config validation, precedence or secret handling.
 license: MIT
 ---
 

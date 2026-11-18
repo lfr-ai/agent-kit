@@ -39,10 +39,7 @@ class InvoiceNotifier(Protocol):
     def invoice_paid(self, notice: InvoicePaidNotice) -> None:
         """Deliver a payment confirmation.
 
-        Args:
-            notice (InvoicePaidNotice): What happened, in application terms.
-
-        Raises:
-            NotificationError: If the channel rejected or could not take the message.
+        A channel that rejects or cannot take the message raises
+        ``NotificationError``.
         """
         ...

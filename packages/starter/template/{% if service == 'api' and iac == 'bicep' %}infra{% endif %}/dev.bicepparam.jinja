@@ -1,0 +1,36 @@
+// Caller-owned, non-secret environment configuration. The region defaults to the
+// target resource group. The delivery workflow injects containerImage after compiling.
+using none
+
+param stage = 'dev'
+param namePrefix = '{{ project_name[:20].rstrip('-') }}-dev'
+{%- if registry == 'acr' %}
+// Globally unique: change it if taken. Explicit cost toggle.
+param registryName = '{{ (project_name | replace('-', ''))[:40] }}devacr'
+param registrySku = 'Basic'
+{%- endif %}
+{%- if data == 'postgresql' %}
+param networkAddressPrefix = 'REPLACE_WITH_NONOVERLAPPING_CIDR'
+param postgresAdministrator = {
+  objectId: 'REPLACE_WITH_ENTRA_ADMIN_OBJECT_ID'
+  name: 'REPLACE_WITH_ENTRA_ADMIN_DISPLAY_NAME'
+  type: 'Group'
+}
+param postgresDatabase = 'app'
+{%- endif %}
+{%- if ai_service == 'text' %}
+param aiDeployment = {
+  name: 'text'
+  model: 'REPLACE_WITH_REGIONAL_MODEL'
+  version: 'REPLACE_WITH_PINNED_MODEL_VERSION'
+  sku: 'REPLACE_WITH_DEPLOYMENT_SKU'
+  capacity: 1
+}
+{%- endif %}
+// Nonsecret settings only; credentials use Key Vault reference objects.
+param environmentVariables = {}
+param secretReferences = []
+param alertsUnmonitored = true
+param alertEmailReceivers = []
+// To enable alerts, set alertsUnmonitored=false and supply email or an existing group.
+param alertActionGroupResourceId = ''

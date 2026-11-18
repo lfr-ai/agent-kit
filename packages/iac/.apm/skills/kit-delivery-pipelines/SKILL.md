@@ -1,6 +1,6 @@
 ---
 name: kit-delivery-pipelines
-description: Use when designing CI/CD delivery with build-once promotion, environments, rollout, and rollback.
+description: Use when designing CI/CD build-once promotion, environments, rollout or rollback.
 license: MIT
 ---
 

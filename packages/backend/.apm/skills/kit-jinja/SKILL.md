@@ -1,6 +1,6 @@
 ---
 name: kit-jinja
-description: Use when authoring, reviewing, or rendering Jinja templates with data from outside the template.
+description: Use when rendering or reviewing Jinja templates with external data.
 license: MIT
 ---
 

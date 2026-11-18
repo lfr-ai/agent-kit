@@ -1,6 +1,6 @@
 ---
 name: kit-component-library
-description: Use when creating or changing reusable UI primitives, design tokens, or shared component APIs.
+description: Use when changing reusable UI primitives, tokens or shared component APIs.
 license: MIT
 ---
 

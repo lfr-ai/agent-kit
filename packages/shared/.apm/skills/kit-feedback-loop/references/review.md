@@ -53,7 +53,7 @@ Supply each reviewer the patch, intent, relevant contracts and check evidence.
 Let specialists form their own conclusions before consolidating reports.
 Return concise candidates with evidence, not exploration transcripts.
 The coordinator challenges and deduplicates results; a vote is not verification.
-Read-only roles remain read-only and do not spawn workers or run test commands.
+Read-only roles never edit or spawn workers; they may run focused offline checks.
 
 The implementer self-check and independent review have different jobs:
 self-check establishes task acceptance; independent review challenges the

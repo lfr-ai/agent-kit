@@ -9,8 +9,10 @@
 #   app/entrypoints/    driving adapters (CLI, HTTP handlers, workers)
 #   app/composition.py  the composition root; the only module that imports adapters
 #
-# Prove each contract can fail: add a deliberate bad import in a scratch branch,
-# confirm 'lint-imports' reports it, then remove it.
+# Include every real adapter and optional public composition facade in the
+# layer map; nested feature packages still belong to their enclosing layer.
+# Prove each contract can fail with a deliberate bad import in a temporary
+# fixture package. No branch, live service or production mutation is needed.
 
 [importlinter]
 root_package = app

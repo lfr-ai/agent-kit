@@ -1,6 +1,6 @@
 ---
 name: kit-improve
-description: Use when an installed kit capability misbehaves or needs a lasting fix in the kit source, not a local copy.
+description: Use when fixing installed kit capabilities in their source, not local copies.
 license: MIT
 ---
 

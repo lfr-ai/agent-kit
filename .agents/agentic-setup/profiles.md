@@ -30,6 +30,14 @@ and [design rationale](design-rationale.md).
 The toolkit-only `toolkit` selection is intentionally not published as a
 consumer profile.
 
+## Starter profiles
+
+The finite scaffold combinations keep their generated manifests in
+`profiles/starters/<slug>/` rather than alongside the base profiles. Their
+catalog IDs and manifest names retain the `starter-` prefix; only the folder
+slug omits it. The Copier starter references these packages without copying
+their capabilities.
+
 ## Consumer installation
 
 In the **consumer repository**, add exactly the profile you chose to its own
@@ -47,14 +55,15 @@ APM lockfile. See the [complete walkthrough](../../docs/setup-completeness.md)
 for policy, updates, rollback and the distinction between source and consumer
 repositories.
 
-## Native role limitation
+## Native role packages
 
 The catalog composer still resolves role assets so this repository can render
 its own Copilot and Claude projections from
-[self.json](self.json). Those native role files are **not** included in
-generated consumer profiles. The APM smoke verifies source-package installation
-and resource bytes; it does not test profile dependency resolution or claim
-consumer role discovery.
+[self.json](self.json). Each generated consumer profile pins the two native role
+packages as dependencies; their files are not copied into each profile
+directory. The APM smoke verifies source-package installation and resource
+bytes; it does not test profile dependency resolution or claim consumer role
+discovery.
 
 ## Maintainer workflow
 
@@ -81,8 +90,8 @@ file. The regular `task verify` includes the source and package checks.
 | Source budgets and metadata | `task verify -- source` | Catalog, bundle manifests, resources, policy, and profile budgets are valid |
 | Generated profiles | `task verify -- profiles` | Each compact manifest and ownership hash matches the catalog |
 | APM delivery | `task apm:smoke` | Source packages install, compile and replay in disposable projects; it does not test a released profile dependency closure |
-| Resource depth | `uv run --locked python -m scripts.check_resources --json` | Linked references, assets and Python resource syntax |
-| Inventory coverage | `uv run --locked python -m scripts.check_coverage` | Original capabilities have replacements or recorded exclusions |
+| Resource depth | `uv run --locked python -m scripts.checks.resources --json` | Linked references, assets and Python resource syntax |
+| Inventory coverage | `uv run --locked python -m scripts.checks.coverage` | Original capabilities have replacements or recorded exclusions |
 | Repository-owned roles | `task verify -- roles` | Native role projections match their source and ownership ledger |
 
 These gates do not certify behavior inside a live IDE, model or cloud session;

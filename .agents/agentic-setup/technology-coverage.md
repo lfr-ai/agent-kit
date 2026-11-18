@@ -47,7 +47,7 @@ asset defines it, because that is the bundle that delivers it.
 | Community files, templates and `.env.example` | `kit-repository-files` (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `**/.env.example`, `.github/**/*.md`) | `kit-repository-setup` | `kit-docs-writer` |
 | Agent configuration (`AGENTS.md`, `CLAUDE.md`, Copilot instructions, `.claude/`, `.apm/`) | `kit-agent-config` | `kit-agent-runtime`, `kit-create-skill` | none |
 | Prompt files, discovery descriptions and always-on context budgets | `kit-prompt-files` (`**/*.prompt.md`, `**/*.instructions.md`, `**/SKILL.md`, `**/*.agent.md`, `**/AGENTS.md`, `**/CLAUDE.md`) | `kit-context-engineering`, `kit-create-skill` | none |
-| Project knowledge (`PROJECT.md`, `projects.md`, `llms.txt`, `memories/`, knowledge base) | `kit-knowledge` | `kit-context-onboarding` | `kit-codebase-researcher` |
+| Project knowledge (`PROJECT.md`, `OWNERSHIP.md`, `llms.txt`, `memories/`, knowledge base) | `kit-knowledge` | `kit-context-onboarding` | `kit-codebase-researcher` |
 | Project memory, decisions, lessons and handoffs | `kit-knowledge` | `kit-project-memory` | `kit-codebase-researcher` |
 | Self-review and feedback loops | none | `kit-feedback-loop` | `kit-code-reviewer` |
 | Tests (`test_*.py`, `*_test.py`, `*.test.*`, `*.spec.*`, test directories) | `kit-test`, `kit-tdd` | `kit-test-first`, `kit-verify-change` | `kit-test-author` |
@@ -79,7 +79,7 @@ asset defines it, because that is the bundle that delivers it.
 | Pydantic v2 | `kit-pydantic-v2` (DTO, schema, request, response, settings files) | `kit-pydantic-v2` | none |
 | Polars 2 | `kit-polars-v2` (polars, dataframe, analytics files) | `kit-polars-v2` | none |
 | Jinja templates | `kit-jinja-templates` (`**/*.jinja`, `**/*.j2`, template files) | `kit-jinja` | none |
-| Prompt files in Python services | `kit-prompt-registry` (`**/*prompt*.py`, `**/prompts/**`) | `kit-jinja` | none |
+| Prompt files in Python services | `kit-prompt-registry` (`**/*prompt*.py`, `**/prompts/**` code and template files) | `kit-jinja` | none |
 | In-process memoization, Redis-compatible caches, HTTP response caching and invalidation | `kit-cache-usage` (cache and Redis paths) | `kit-caching` | `kit-backend-implementer` |
 | Application rate limits (per user, tenant or cost) with a shared store | `kit-fastapi` | `kit-fastapi-service` | `kit-backend-implementer` |
 | Timeouts, deadlines, retries with jitter, circuit breakers and bulkheads | `kit-python-conventions` | `kit-python-service` (resilience reference) | `kit-backend-implementer` |
@@ -205,7 +205,7 @@ Run these from the repository root. They read source only.
 # Per-profile skill counts, body lines and description budgets
 task verify -- source
 # Include per-profile counts in JSON
-uv run --locked python scripts/check_source.py --json
+uv run --locked python -m scripts.checks.source --json
 
 # Instruction file patterns per bundle
 Get-ChildItem packages\*\.apm\instructions\*.md, .apm\instructions\*.md |
@@ -223,10 +223,10 @@ Get-ChildItem packages, .apm -Recurse -Filter agents.json |
     (((Get-Content $_.FullName -Raw | ConvertFrom-Json).roles | ForEach-Object id) -join ', ') }
 
 # Linked references, assets and scripts per skill
-uv run --locked python -m scripts.check_resources --json
+uv run --locked python -m scripts.checks.resources --json
 
 # Original inventory dispositions and resource reachability
-uv run --locked python -m scripts.check_coverage
+uv run --locked python -m scripts.checks.coverage
 ```
 
 To check generated profile manifests and exercise source-package APM delivery:

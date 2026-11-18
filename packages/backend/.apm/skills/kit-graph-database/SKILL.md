@@ -1,6 +1,6 @@
 ---
 name: kit-graph-database
-description: Use when modeling a Neo4j graph, writing Cypher, defining constraints or indexes, or building a graph repository.
+description: Use when modeling Neo4j graphs, Cypher, constraints, indexes or graph repositories.
 license: MIT
 ---
 

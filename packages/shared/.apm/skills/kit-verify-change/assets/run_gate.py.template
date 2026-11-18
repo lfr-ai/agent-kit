@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Final
 
 _DURATION_DECIMAL_PLACES = 2
 _REPORT_INDENT_SPACES = 2
@@ -94,7 +95,7 @@ class Result:
 _UV = ("uv", "run", "--locked", "--no-sync")
 
 # Order matters: cheapest and most likely to fail first, so feedback is fast.
-STEPS: tuple[Step, ...] = (
+STEPS: Final[tuple[Step, ...]] = (
     Step(
         name="lock",
         check=("uv", "lock", "--check"),
@@ -206,7 +207,7 @@ def select(
         include_slow (bool): Include the ``slow`` tier when ``only`` is empty.
 
     Returns:
-        Selected steps in gate order.
+        list[Step]: Selected steps in gate order.
 
     Raises:
         UnknownStepError: If a name in ``only`` or ``skip`` is unknown.
@@ -226,6 +227,7 @@ def select(
 def _attempt(
     step: Step, *, command: tuple[str, ...], phase: str, timeout: float
 ) -> Result:
+    """Time one command, print its status and record phase-specific evidence."""
     started = time.perf_counter()
     status, code = _run(command, timeout=timeout)
     seconds = round(time.perf_counter() - started, _DURATION_DECIMAL_PLACES)
@@ -253,7 +255,7 @@ def run_gate(
         timeout (float): Seconds allowed per command.
 
     Returns:
-        One result per fixer/check attempt; steps after a stop are skipped.
+        list[Result]: One result per fixer/check attempt; steps after a stop are skipped.
         A check still runs after its failed fixer for diagnostic evidence.
     """
     results: list[Result] = []
@@ -322,6 +324,7 @@ def write_report(path: Path, results: Sequence[Result], *, mode: str) -> None:
 
 
 def _summarize(results: Sequence[Result]) -> int:
+    """Print all outcomes; return failure for failed, unavailable or timed-out attempts."""
     print("\nSummary")
     for result in results:
         print(
@@ -339,6 +342,7 @@ def _summarize(results: Sequence[Result]) -> int:
 
 
 def _list_steps() -> None:
+    """Print configured steps with their tiers, evidence claims and fixer availability."""
     for step in STEPS:
         fixer = " (fixable)" if step.fix else ""
         print(f"{step.name:<20} {step.tier:<5} {step.proves}{fixer}")

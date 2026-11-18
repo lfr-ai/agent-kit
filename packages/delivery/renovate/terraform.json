@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Terraform and OpenTofu: providers, modules, required_version, .terraform-version and TFLint plugins. Lock files are refreshed by the lockFileMaintenance of the default preset.",
+  "packageRules": [
+    {
+      "description": "One reviewable PR for provider minor and patch updates.",
+      "matchManagers": ["terraform"],
+      "matchDepTypes": ["provider", "required_provider"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "terraform-providers"
+    },
+    {
+      "description": "Module and provider updates carry a label for reviewers.",
+      "matchManagers": ["terraform", "tflint-plugin"],
+      "addLabels": ["terraform"]
+    }
+  ]
+}

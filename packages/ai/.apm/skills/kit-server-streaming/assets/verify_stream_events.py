@@ -21,17 +21,23 @@ measure timing, or verify proxy behavior.
 """
 
 import argparse
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import sys
+from typing import Final
 
-DEFAULT_EVENTS = frozenset({"start", "delta", "progress", "end"})
-END_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
-_DEFAULT_MAX_EVENT_BYTES = 64 * 1024
+DEFAULT_EVENTS: Final[frozenset[str]] = frozenset({"start", "delta", "progress", "end"})
+END_STATUSES: Final[frozenset[str]] = frozenset(
+    {"completed", "failed", "cancelled", "timeout"}
+)
+_KIB = 1024
+# Default --max-event-bytes; mirrors MAX_EVENT_BYTES in stream_events.py.template.
+_DEFAULT_MAX_EVENT_BYTES = 64 * _KIB
 _EXIT_USAGE = 2
 
 
+@unique
 class StreamInputIssue(StrEnum):
     """Supported stream input validation failures and their stable messages."""
 
@@ -49,23 +55,17 @@ class StreamInputError(ValueError):
 
         Args:
             issue (StreamInputIssue): The violated input invariant.
-            value (str | None): Diagnostic value for the invalid input.
+            value (str | None): Non-standard JSON constant found, such as ``NaN``.
         """
         super().__init__(issue.value.format(value=value))
 
 
 def items_with_lines(text: str) -> list[tuple[int, object]]:
-    """Decode a top-level JSON array, keeping the line of each element.
+    """Return ``(line, element)`` pairs from one top-level JSON array.
 
-    Args:
-        text (str): JSON document text.
-
-    Returns:
-        Pairs of one-based line number and decoded element.
-
-    Raises:
-        StreamInputError: The document is not one JSON array.
-        ValueError: An element is not valid JSON.
+    Lines are one-based. Text that is not exactly one JSON array raises
+    ``StreamInputError``; an element that is not valid JSON propagates
+    ``ValueError``.
     """
     decoder = json.JSONDecoder()
     index = len(text) - len(text.lstrip())
@@ -88,12 +88,14 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
 
 
 def _skip_separators(text: str, index: int) -> int:
+    """Return the first index at or after ``index`` past whitespace and commas."""
     while index < len(text) and text[index] in " \t\r\n,":
         index += 1
     return index
 
 
 def _reject_constant(value: str) -> object:
+    """Raise ``StreamInputError`` for ``NaN`` or ``Infinity``, which JSON forbids."""
     raise StreamInputError(StreamInputIssue.NON_JSON_CONSTANT, value=value)
 
 

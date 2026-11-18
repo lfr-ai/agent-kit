@@ -6,30 +6,48 @@ without a reviewed change to this module.
 """
 
 from collections.abc import Iterable
+from enum import StrEnum, auto, unique
 import json
 from pathlib import PurePosixPath
 import re
 from typing import TypeGuard
 from urllib.parse import urlsplit
 
-from agent_kit.core.guards import JsonObject, is_int, is_json_object, is_str_list
+from agent_kit.core.guards import JSONObject, is_int, is_json_object, is_str_list
+
+
+@unique
+class MCPTransport(StrEnum):
+    """Transports a bundle may declare for an MCP server."""
+
+    HTTP = auto()
+    STDIO = auto()
+
+
+@unique
+class MCPLauncher(StrEnum):
+    """Commands that may launch a local stdio MCP server."""
+
+    BUNX = auto()
+    DOCKER = auto()
+
 
 _MCP_FIELDS = frozenset(
     {"name", "registry", "transport", "url", "command", "args", "headers"}
 )
+_SECURE_SCHEME = "https"
+_LOOPBACK_SCHEME = "http"
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _HEADER_NAME = re.compile(r"X-MCP-[A-Za-z0-9-]+\Z")
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9_,.-]{1,128}\Z")
 _PLAIN_ARGUMENT = re.compile(r"[A-Za-z0-9_@./:=,+-]{1,200}\Z")
 _PACKAGE = re.compile(r"(?:@[a-z0-9][a-z0-9-]*/)?[a-z0-9][a-z0-9._-]*@\d+\.\d+\.\d+\Z")
 _IMAGE = re.compile(r"[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}\Z")
-_DOCKER_PREFIX = ["run", "-i", "--rm"]
-_DOCKER_IMAGE_INDEX = len(_DOCKER_PREFIX)
-_BUNX_PREFIX_LENGTH = 2  # --bun, then package@version
 _HOOK_EVENTS = frozenset({"preToolUse"})
+_HOOK_SCHEMA_VERSION = 1
 _HOOK_FIELDS = frozenset({"type", "bash", "powershell", "timeoutSec"})
-_BASH_COMMAND = re.compile(r"python3 \./scripts/([a-z][a-z0-9_]*\.py)\Z")
-_POWERSHELL_COMMAND = re.compile(r"python \./scripts/([a-z][a-z0-9_]*\.py)\Z")
+_BASH_COMMAND = re.compile(r"python3 \./scripts/(?P<script>[a-z][a-z0-9_]*\.py)\Z")
+_POWERSHELL_COMMAND = re.compile(r"python \./scripts/(?P<script>[a-z][a-z0-9_]*\.py)\Z")
 _MAX_HOOK_TIMEOUT_SECONDS = 30
 _SCRIPT_SUFFIXES = frozenset({".py", ".policy"})
 
@@ -64,16 +82,7 @@ def mcp_issues(entries: object, *, allowed: Iterable[str]) -> list[str]:
 
 
 def _entry_issues(entry: object, label: str, permitted: frozenset[str]) -> list[str]:
-    """Validate one MCP declaration against the closed schema.
-
-    Args:
-        entry (object): Decoded declaration.
-        label (str): Safe location prefix for messages.
-        permitted (frozenset[str]): Policy-approved server names.
-
-    Returns:
-        list[str]: Safe messages; empty when the declaration is valid.
-    """
+    """Report closed-schema MCP violations without echoing declared values."""
     if not isinstance(entry, dict):
         return [f"{label} must be an object"]
     issues = [
@@ -86,25 +95,17 @@ def _entry_issues(entry: object, label: str, permitted: frozenset[str]) -> list[
     if entry.get("registry") is not False:
         issues.append(f"{label}.registry must be false; servers are declared in place")
     transport = entry.get("transport")
-    if transport == "http":
+    if transport == MCPTransport.HTTP:
         issues.extend(_http_issues(entry, label))
-    elif transport == "stdio":
+    elif transport == MCPTransport.STDIO:
         issues.extend(_stdio_issues(entry, label))
     else:
-        issues.append(f"{label}.transport must be http or stdio")
+        issues.append(f"{label}.transport must be {' or '.join(MCPTransport)}")
     return issues
 
 
 def _http_issues(entry: dict[object, object], label: str) -> list[str]:
-    """Validate a remote or loopback HTTP server declaration.
-
-    Args:
-        entry (dict[object, object]): Declaration whose transport is ``http``.
-        label (str): Safe location prefix for messages.
-
-    Returns:
-        list[str]: Safe messages; empty when the declaration is valid.
-    """
+    """Validate HTTP-only fields, URL restrictions and approved headers."""
     issues = [
         f"{label}.{key} is not allowed for an http server"
         for key in ("command", "args")
@@ -116,15 +117,7 @@ def _http_issues(entry: dict[object, object], label: str) -> list[str]:
 
 
 def _url_issues(url: object, label: str) -> list[str]:
-    """Require https, or loopback http, without credentials or query data.
-
-    Args:
-        url (object): Decoded ``url`` value.
-        label (str): Safe location prefix for messages.
-
-    Returns:
-        list[str]: Safe messages; empty when the URL is acceptable.
-    """
+    """Require HTTPS, or loopback HTTP, without credentials or query data."""
     if not isinstance(url, str):
         return [f"{label}.url must be text"]
     try:
@@ -134,12 +127,16 @@ def _url_issues(url: object, label: str) -> list[str]:
     except ValueError:
         return [f"{label}.url is not a valid URL"]
     issues: list[str] = []
-    loopback = parts.scheme == "http" and hostname in _LOOPBACK_HOSTS
-    if parts.scheme != "https" and not loopback:
+    loopback = parts.scheme == _LOOPBACK_SCHEME and hostname in _LOOPBACK_HOSTS
+    if parts.scheme != _SECURE_SCHEME and not loopback:
         issues.append(f"{label}.url must use https, or http only for localhost")
-    if not hostname or any(character.isspace() for character in url) or port == 0:
+    addressable = bool(hostname) and port != 0
+    has_whitespace = any(character.isspace() for character in url)
+    if not addressable or has_whitespace:
         issues.append(f"{label}.url must name a valid host and port")
-    if parts.username or parts.password or parts.query or parts.fragment:
+    has_credentials = bool(parts.username or parts.password)
+    has_request_data = bool(parts.query or parts.fragment)
+    if has_credentials or has_request_data:
         issues.append(f"{label}.url must not carry credentials, a query or a fragment")
     return issues
 
@@ -182,14 +179,14 @@ def _stdio_issues(entry: dict[object, object], label: str) -> list[str]:
     ]
     command = entry.get("command")
     args = entry.get("args")
-    if not isinstance(command, str) or command not in {"bunx", "docker"}:
-        issues.append(f"{label}.command must be bunx or docker")
+    if command not in MCPLauncher:
+        issues.append(f"{label}.command must be {' or '.join(MCPLauncher)}")
     if not _plain_arguments(args):
         issues.append(f"{label}.args must be plain arguments and never use latest")
         return issues
-    if command == "bunx":
+    if command == MCPLauncher.BUNX:
         issues.extend(_bunx_issues(args, label))
-    elif command == "docker":
+    elif command == MCPLauncher.DOCKER:
         issues.extend(_docker_issues(args, label))
     return issues
 
@@ -216,13 +213,11 @@ def _bunx_issues(args: list[str], label: str) -> list[str]:
     Returns:
         list[str]: One message when the prefix is wrong; empty otherwise.
     """
-    if (
-        len(args) < _BUNX_PREFIX_LENGTH
-        or args[0] != "--bun"
-        or _PACKAGE.fullmatch(args[1]) is None
-    ):
-        return [f"{label}.args must start with --bun and an exact package@version"]
-    return []
+    match args:
+        case ["--bun", package, *_] if _PACKAGE.fullmatch(package):
+            return []
+        case _:
+            return [f"{label}.args must start with --bun and an exact package@version"]
 
 
 def _docker_issues(args: list[str], label: str) -> list[str]:
@@ -235,13 +230,11 @@ def _docker_issues(args: list[str], label: str) -> list[str]:
     Returns:
         list[str]: One message when the prefix or image is wrong; empty otherwise.
     """
-    if (
-        args[:_DOCKER_IMAGE_INDEX] != _DOCKER_PREFIX
-        or len(args) <= _DOCKER_IMAGE_INDEX
-        or _IMAGE.fullmatch(args[_DOCKER_IMAGE_INDEX]) is None
-    ):
-        return [f"{label}.args must be run -i --rm and an image pinned by sha256"]
-    return []
+    match args:
+        case ["run", "-i", "--rm", image, *_] if _IMAGE.fullmatch(image):
+            return []
+        case _:
+            return [f"{label}.args must be run -i --rm and an image pinned by sha256"]
 
 
 def hook_issues(text: str, scripts: Iterable[str]) -> list[str]:
@@ -261,24 +254,27 @@ def hook_issues(text: str, scripts: Iterable[str]) -> list[str]:
         return ["hook file is not valid JSON"]
     hooks = _registrations(data)
     if hooks is None:
-        return ["hook file must hold version 1 and a hooks object"]
+        return [
+            f"hook file must hold version {_HOOK_SCHEMA_VERSION} and a hooks object"
+        ]
     available = frozenset(scripts)
     issues: list[str] = []
     for event, entries in hooks.items():
-        if event not in _HOOK_EVENTS or not isinstance(entries, list) or not entries:
+        handlers = entries if isinstance(entries, list) else []
+        if event not in _HOOK_EVENTS or not handlers:
             issues.append("hook events must be preToolUse lists")
             continue
-        for index, entry in enumerate(entries):
+        for index, entry in enumerate(handlers):
             issues.extend(_hook_entry_issues(entry, f"{event}[{index}]", available))
     return issues
 
 
-def _registrations(data: object) -> JsonObject | None:
+def _registrations(data: object) -> JSONObject | None:
     """Return the non-empty hooks object of a version 1 document, else ``None``."""
     if not is_json_object(data) or set(data) != {"version", "hooks"}:
         return None
     hooks = data["hooks"]
-    if data["version"] != 1 or not is_int(data["version"]):
+    if data["version"] != _HOOK_SCHEMA_VERSION or not is_int(data["version"]):
         return None
     return hooks if is_json_object(hooks) and hooks else None
 
@@ -286,16 +282,7 @@ def _registrations(data: object) -> JsonObject | None:
 def _hook_entry_issues(
     entry: object, label: str, available: frozenset[str]
 ) -> list[str]:
-    """Validate one command hook: shipped script, fixed interpreters, bounded time.
-
-    Args:
-        entry (object): Decoded hook entry.
-        label (str): Safe location prefix for messages.
-        available (frozenset[str]): Script names the bundle ships.
-
-    Returns:
-        list[str]: Safe messages; empty when the entry is valid.
-    """
+    """Validate shipped scripts, fixed interpreters and bounded hook execution."""
     if not isinstance(entry, dict):
         return [f"{label} must be an object"]
     issues = [
@@ -317,21 +304,11 @@ def _hook_entry_issues(
 def _command_issues(
     command: object, label: str, pattern: re.Pattern[str], available: frozenset[str]
 ) -> list[str]:
-    """Require a fixed interpreter invoking a script that ships in the bundle.
-
-    Args:
-        command (object): Decoded command string.
-        label (str): Safe location prefix for messages.
-        pattern (re.Pattern[str]): Interpreter pattern capturing the script name.
-        available (frozenset[str]): Script names the bundle ships.
-
-    Returns:
-        list[str]: One message when the command is rejected; empty otherwise.
-    """
+    """Require a fixed interpreter invoking a script that ships in the bundle."""
     match = pattern.fullmatch(command) if isinstance(command, str) else None
     if match is None:
         return [f"{label} must run a script from ./scripts with a fixed interpreter"]
-    if match.group(1) not in available:
+    if match.group("script") not in available:
         return [f"{label} names a script that the bundle does not ship"]
     return []
 
@@ -344,6 +321,6 @@ def script_issue(name: str) -> str | None:
     ``name`` is the path relative to ``.apm/hooks/scripts``.
     """
     path = PurePosixPath(name)
-    if len(path.parts) != 1 or path.suffix not in _SCRIPT_SUFFIXES:
+    if path.name != name or path.suffix not in _SCRIPT_SUFFIXES:
         return "hook scripts must be flat .py or .policy files"
     return None

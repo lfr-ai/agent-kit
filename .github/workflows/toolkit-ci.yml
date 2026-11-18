@@ -1,0 +1,221 @@
+name: Toolkit CI
+
+on:
+  # Branches are verified by pull_request and merge_group; push covers main only.
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-tag:
+        description: Optional release tag to validate before packaging
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolkit-${{ github.workflow }}-${{ github.ref }}
+  # Superseded pull request runs stop; every default-branch push completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Audit before installs; only "Required toolkit checks" is ruleset-required.
+jobs:
+  verify:
+    needs: audit
+    name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        python: ["3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      APM_NO_SCRIPTS: "1"
+      APM_NON_INTERACTIVE: "1"
+      UV_LINK_MODE: copy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Same check-only gate as task verify
+        uses: $/packages/delivery/actions/python-check
+        with:
+          python-version: ${{ matrix.python }}
+          uv-version: "0.13.3"
+      - name: Build internal maintainer distributions
+        run: uv build --package agent-kit --out-dir build/distributions
+      - name: Build independent runtime distributions
+        run: uv build --package platform-kit-runtime --out-dir build/distributions
+      - name: Build selected capability source
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        run: uv run --locked --no-sync python scripts/build_capabilities.py --profile fullstack --feature iac
+      - name: Validate release artifacts and immutable tag
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: uv run --locked --no-sync python -m scripts.checks.release
+      - name: Upload verified artifacts
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-artifacts
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Export the coverage report measured by the gate
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        run: uv run --locked --no-sync python -m coverage xml
+      - name: Keep the coverage report for the upload job
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.13'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          path: build/coverage/coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only this job can mint an OIDC token, and it runs no project code.
+  coverage:
+    name: Upload coverage to Codecov
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-report
+          path: build/coverage
+      - name: Upload with OIDC; fork pull requests use tokenless upload
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          version: v11.3.1
+          files: build/coverage/coverage.xml
+          disable_search: true
+          flags: python
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          # A Codecov outage must not block merges; the local 90% gate is authoritative.
+          fail_ci_if_error: false
+
+  precommit:
+    needs: audit
+    name: Pre-commit hooks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      APM_NO_SCRIPTS: "1"
+      APM_NON_INTERACTIVE: "1"
+      UV_LINK_MODE: copy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Pull request commit messages need the history between base and head.
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.3"
+          enable-cache: true
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.11"
+      - name: Restore pre-commit hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: uv sync --locked
+      - name: Conventional Commit messages in the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          commit_range="$merge_base..$HEAD_SHA"
+          commits="$(git rev-list --max-count=1 "$commit_range")"
+          if [ -z "$commits" ]; then
+            echo "No pull request commits to validate."
+            exit 0
+          fi
+          uv run --locked cz check --rev-range "$commit_range"
+      - name: Install locked JavaScript tooling without lifecycle scripts
+        run: bun install --frozen-lockfile
+      - name: Linters, secrets, spelling and lockfile checks
+        env:
+          # The branch-name hook guards local commits, not CI verification on main.
+          # The audit job and verify matrix already run the dependency hooks.
+          SKIP: no-commit-to-branch,uv-lock,dependency-audit,dependency-licenses
+        run: uv run --locked pre-commit run --all-files --show-diff-on-failure
+      - name: Repository-wide pre-push hooks
+        env:
+          # The verify matrix already runs every static gate through scripts/verify.py.
+          SKIP: toolkit-static
+        run: uv run --locked pre-commit run --all-files --hook-stage pre-push
+
+  smoke:
+    needs: audit
+    name: APM smoke (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        python: ["3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      APM_NO_SCRIPTS: "1"
+      APM_NON_INTERACTIVE: "1"
+      UV_LINK_MODE: copy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.3"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Real APM install, compile, policy, and provenance
+        run: uv run --locked python scripts/apm_smoke.py
+      - name: Real narrow session delivery without native roles
+        run: >-
+          uv run --locked python scripts/apm_smoke.py --session
+          --session-skill kit-python-service
+          --session-skill kit-pydantic-v2
+          --session-skill kit-polars-v2
+
+  audit:
+    uses: $/.github/workflows/security-dependency-audit.yml
+
+  checks:
+    name: Required toolkit checks
+    if: always()
+    needs: [verify, precommit, smoke, audit, coverage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every verification job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            test "$result" = success
+          done

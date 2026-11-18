@@ -1,6 +1,6 @@
 ---
 name: kit-graph-analysis
-description: Use when leveraging code-graph tools to inspect dependencies, change impact, and repository ownership without mutating indices.
+description: Use when inspecting code-graph dependencies, impact or ownership without index writes.
 license: MIT
 ---
 

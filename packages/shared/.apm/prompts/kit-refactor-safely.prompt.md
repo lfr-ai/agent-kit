@@ -39,6 +39,8 @@ side effects. Behavior changes, if requested, ship as a separate step.
 9. Re-run the focused tests, the boundary checks from
    [kit-hexagonal-architecture](../skills/kit-hexagonal-architecture/SKILL.md)
    when modules moved, and the declared completion gate.
+   Confirm moved packages and optional adapters remain in default check
+   discovery; a green gate that no longer visits the code is not equivalence.
 
 ## Acceptance gates
 

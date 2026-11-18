@@ -1,0 +1,18 @@
+.venv/
+apm_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+{%- if service == 'api' %}
+.env
+.env.*
+!.env.example
+!.env.*.example
+compose.override.yaml
+{%- endif %}
+{%- if service == 'api' and iac == 'terraform' %}
+# Terraform state and plans never enter Git (the backend is remote).
+.terraform/
+*.tfstate*
+tfplan
+{%- endif %}

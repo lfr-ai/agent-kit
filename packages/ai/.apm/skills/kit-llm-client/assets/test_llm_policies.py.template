@@ -8,11 +8,11 @@ import asyncio
 
 import pytest
 
-from llm.fakes import ScriptedLlmClient, completion
+from llm.fakes import ScriptedLLMClient, completion
 from llm.policies import (
     CircuitBreaker,
     Price,
-    ResilientLlmClient,
+    ResilientLLMClient,
     RetrySettings,
     SpendBudget,
     backoff_delay,
@@ -20,12 +20,12 @@ from llm.policies import (
 from llm.port import (
     ChatMessage,
     CompletionRequest,
-    LlmBudgetExceededError,
-    LlmCircuitOpenError,
-    LlmInvalidRequestError,
-    LlmRateLimitedError,
-    LlmTimeoutError,
-    LlmUnavailableError,
+    LLMBudgetExceededError,
+    LLMCircuitOpenError,
+    LLMInvalidRequestError,
+    LLMRateLimitedError,
+    LLMTimeoutError,
+    LLMUnavailableError,
     Role,
 )
 
@@ -57,9 +57,9 @@ def _request(**overrides: object) -> CompletionRequest:
 
 
 def _client(
-    inner: ScriptedLlmClient, clock: FakeClock, **kwargs: object
-) -> ResilientLlmClient:
-    return ResilientLlmClient(
+    inner: ScriptedLLMClient, clock: FakeClock, **kwargs: object
+) -> ResilientLLMClient:
+    return ResilientLLMClient(
         inner,
         clock=clock,
         sleep=clock.sleep,
@@ -82,8 +82,8 @@ def test_backoff_is_capped_exponential_with_full_jitter() -> None:
 
 def test_transient_errors_are_retried_then_succeed() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient(
-        [LlmUnavailableError("down"), LlmTimeoutError("slow"), completion("ok")]
+    inner = ScriptedLLMClient(
+        [LLMUnavailableError("down"), LLMTimeoutError("slow"), completion("ok")]
     )
 
     result = asyncio.run(_client(inner, clock).complete(_request()))
@@ -95,9 +95,9 @@ def test_transient_errors_are_retried_then_succeed() -> None:
 
 def test_permanent_errors_are_not_retried() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient([LlmInvalidRequestError("bad")])
+    inner = ScriptedLLMClient([LLMInvalidRequestError("bad")])
 
-    with pytest.raises(LlmInvalidRequestError):
+    with pytest.raises(LLMInvalidRequestError):
         asyncio.run(_client(inner, clock).complete(_request()))
     assert len(inner.requests) == 1
     assert clock.sleeps == []
@@ -105,9 +105,9 @@ def test_permanent_errors_are_not_retried() -> None:
 
 def test_retries_stop_at_max_attempts() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient([LlmUnavailableError("down")] * 3)
+    inner = ScriptedLLMClient([LLMUnavailableError("down")] * 3)
 
-    with pytest.raises(LlmUnavailableError):
+    with pytest.raises(LLMUnavailableError):
         asyncio.run(
             _client(inner, clock, retry=RetrySettings(max_attempts=3)).complete(
                 _request()
@@ -118,23 +118,23 @@ def test_retries_stop_at_max_attempts() -> None:
 
 def test_retry_after_is_honored_and_bounded() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient(
-        [LlmRateLimitedError("slow down", retry_after_s=4.0), completion("ok")]
+    inner = ScriptedLLMClient(
+        [LLMRateLimitedError("slow down", retry_after_s=4.0), completion("ok")]
     )
 
     asyncio.run(_client(inner, clock).complete(_request()))
     assert clock.sleeps == [4.0]
 
-    too_long = ScriptedLlmClient(
-        [LlmRateLimitedError("slow down", retry_after_s=600.0)]
+    too_long = ScriptedLLMClient(
+        [LLMRateLimitedError("slow down", retry_after_s=600.0)]
     )
-    with pytest.raises(LlmRateLimitedError):
+    with pytest.raises(LLMRateLimitedError):
         asyncio.run(_client(too_long, FakeClock()).complete(_request()))
 
 
 def test_attempt_timeout_shrinks_to_the_remaining_deadline() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient([LlmUnavailableError("down"), completion("ok")])
+    inner = ScriptedLLMClient([LLMUnavailableError("down"), completion("ok")])
     settings = RetrySettings(total_deadline_s=10.0, base_delay_s=4.0, max_delay_s=4.0)
 
     asyncio.run(
@@ -146,19 +146,19 @@ def test_attempt_timeout_shrinks_to_the_remaining_deadline() -> None:
 
 def test_retry_that_would_cross_the_deadline_is_not_attempted() -> None:
     clock = FakeClock()
-    inner = ScriptedLlmClient([LlmUnavailableError("down")])
+    inner = ScriptedLLMClient([LLMUnavailableError("down")])
     settings = RetrySettings(total_deadline_s=1.0, base_delay_s=2.0, max_delay_s=2.0)
 
-    with pytest.raises(LlmUnavailableError):
+    with pytest.raises(LLMUnavailableError):
         asyncio.run(_client(inner, clock, retry=settings).complete(_request()))
     assert clock.sleeps == []
 
 
 def test_budget_rejects_oversized_requests_before_any_call() -> None:
-    inner = ScriptedLlmClient([])
+    inner = ScriptedLLMClient([])
     budget = SpendBudget(max_tokens_per_request=50, max_total_usd=1.0, prices={})
 
-    with pytest.raises(LlmBudgetExceededError, match="per-request"):
+    with pytest.raises(LLMBudgetExceededError, match="per-request"):
         asyncio.run(_client(inner, FakeClock(), budget=budget).complete(_request()))
     assert inner.requests == []
 
@@ -168,30 +168,30 @@ def test_budget_accounts_cost_from_the_price_table_and_stops_spending() -> None:
     budget = SpendBudget(
         max_tokens_per_request=1000, max_total_usd=10.0, prices={"summarizer": price}
     )
-    inner = ScriptedLlmClient([completion("ok", input_tokens=10, output_tokens=5)])
+    inner = ScriptedLLMClient([completion("ok", input_tokens=10, output_tokens=5)])
     client = _client(inner, FakeClock(), budget=budget)
 
     result = asyncio.run(client.complete(_request()))
 
     assert result.cost_usd == pytest.approx(10.0)
     assert budget.tokens == 15
-    with pytest.raises(LlmBudgetExceededError, match="exhausted"):
+    with pytest.raises(LLMBudgetExceededError, match="exhausted"):
         asyncio.run(client.complete(_request()))
 
 
 def test_circuit_opens_after_threshold_and_probes_after_cool_down() -> None:
     clock = FakeClock()
     breaker = CircuitBreaker(failure_threshold=2, reset_after_s=30.0, clock=clock)
-    inner = ScriptedLlmClient(
-        [LlmUnavailableError("down"), LlmUnavailableError("down"), completion("ok")]
+    inner = ScriptedLLMClient(
+        [LLMUnavailableError("down"), LLMUnavailableError("down"), completion("ok")]
     )
     client = _client(inner, clock, breaker=breaker, retry=RetrySettings(max_attempts=1))
 
     for _ in range(2):
-        with pytest.raises(LlmUnavailableError):
+        with pytest.raises(LLMUnavailableError):
             asyncio.run(client.complete(_request()))
     assert breaker.is_open
-    with pytest.raises(LlmCircuitOpenError):
+    with pytest.raises(LLMCircuitOpenError):
         asyncio.run(client.complete(_request()))
     assert len(inner.requests) == 2
 
@@ -213,7 +213,7 @@ def test_concurrency_limit_is_enforced() -> None:
             active -= 1
             return completion("ok")
 
-    client = ResilientLlmClient(SlowClient(), max_concurrency=2)  # type: ignore[arg-type]  # structural test double
+    client = ResilientLLMClient(SlowClient(), max_concurrency=2)  # type: ignore[arg-type]  # structural test double
 
     async def scenario() -> None:
         await asyncio.gather(*(client.complete(_request()) for _ in range(6)))
@@ -225,7 +225,7 @@ def test_concurrency_limit_is_enforced() -> None:
 def test_logs_contain_metadata_but_never_content(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    inner = ScriptedLlmClient([completion("secret answer text")])
+    inner = ScriptedLLMClient([completion("secret answer text")])
     caplog.set_level("INFO", logger="llm.policies")
 
     asyncio.run(_client(inner, FakeClock()).complete(_request(prompt_version="v3")))

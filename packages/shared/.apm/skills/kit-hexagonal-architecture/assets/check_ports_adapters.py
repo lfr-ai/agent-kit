@@ -30,7 +30,7 @@ import argparse
 import ast
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from pathlib import Path
 import sys
 from typing import NamedTuple
@@ -61,12 +61,13 @@ _ANY_DEFAULT = "..."
 _EXIT_USAGE = 2
 
 
+@unique
 class _CallableKind(StrEnum):
     """Syntactic execution kinds, independent of method binding."""
 
-    NORMAL = "normal"
-    GENERATOR = "generator"
-    COROUTINE = "coroutine"
+    NORMAL = auto()
+    GENERATOR = auto()
+    COROUTINE = auto()
     ASYNC_GENERATOR = "async generator"
 
 
@@ -171,7 +172,7 @@ class Finding(NamedTuple):
         return f"{self.path}:{self.line}: {self.message}"
 
 
-def _simple_name(node: ast.expr) -> str:
+def _simple_name(node: ast.expr) -> str | None:
     """Return ``Protocol`` for ``Protocol``, ``typing.Protocol`` and ``Protocol[T]``."""
     if isinstance(node, ast.Subscript):
         return _simple_name(node.value)
@@ -181,7 +182,7 @@ def _simple_name(node: ast.expr) -> str:
         return node.id
     if isinstance(node, ast.Call):
         return _simple_name(node.func)
-    return ""
+    return None
 
 
 def _unparse(node: ast.expr | None) -> str | None:
@@ -219,7 +220,8 @@ def _params(arguments: ast.arguments) -> tuple[Param, ...]:
 
 def _decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     """Return simple decorator names, for example ``property`` or ``setter``."""
-    return {_simple_name(item) for item in node.decorator_list}
+    names = map(_simple_name, node.decorator_list)
+    return {name for name in names if name is not None}
 
 
 def _has_yield(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -321,11 +323,7 @@ def _instance_attributes(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[M
 
 
 def _members(node: ast.ClassDef) -> dict[str, Member]:
-    """Collect methods, properties and attributes declared by a class body.
-
-    Returns:
-        Members keyed by name; methods take precedence over attributes.
-    """
+    """Collect class-body members by name; methods take precedence over attributes."""
     members: dict[str, Member] = {}
     attributes: list[Member] = []
     for item in node.body:
@@ -356,15 +354,14 @@ def _assigned_attributes(item: ast.stmt) -> list[Member]:
 def parse_classes(path: str, text: str) -> list[ClassInfo]:
     """Parse one module and describe its top-level classes.
 
+    Source that is not valid Python propagates ``SyntaxError``.
+
     Args:
         path (str): Path used in findings.
         text (str): Module source.
 
     Returns:
-        Top-level classes in source order.
-
-    Raises:
-        SyntaxError: If the source is not valid Python.
+        list[ClassInfo]: Top-level classes in source order.
     """
     tree = ast.parse(text, filename=path)
     classes: list[ClassInfo] = []
@@ -400,7 +397,7 @@ def _port_members(
     """Merge a port's members with those of the protocols it extends.
 
     Returns:
-        Members keyed by name, including those of every scanned base protocol.
+        dict[str, Member]: Members keyed by name, including those of every scanned base protocol.
     """
     merged: dict[str, Member] = {}
     for base in reversed(port.bases):
@@ -421,7 +418,7 @@ def _resolved_members(
     """Merge members inherited from scanned non-protocol base classes.
 
     Returns:
-        Members keyed by name; the class's own definitions win over inherited ones.
+        dict[str, Member]: Members keyed by name; the class's own definitions win over inherited ones.
     """
     merged: dict[str, Member] = {}
     for base in reversed(cls.bases):
@@ -590,7 +587,7 @@ def analyze(
         options (Options): Reporting switches.
 
     Returns:
-        Findings sorted by path, line and message.
+        list[Finding]: Findings sorted by path, line and message.
     """
     by_path = dict(sources)
     by_path.update(port_sources)
@@ -627,11 +624,7 @@ def analyze(
 def _parse_sources(
     by_path: dict[str, str],
 ) -> tuple[list[ClassInfo], list[Finding]]:
-    """Parse every source in path order, reporting unparsable modules.
-
-    Returns:
-        Parsed classes and findings for modules that could not be parsed.
-    """
+    """Parse sources in path order into classes and findings for unparsable modules."""
     findings: list[Finding] = []
     all_classes: list[ClassInfo] = []
     for path, text in sorted(by_path.items()):
@@ -654,7 +647,7 @@ def _matched_ports(
     """Return the ports a class implements explicitly or structurally.
 
     Returns:
-        ``(port, port members)`` pairs for each implemented port, in port order.
+        list[tuple[ClassInfo, dict[str, Member]]]: ``(port, port members)`` pairs for each implemented port, in port order.
     """
     return [
         (protocols[name], members)
@@ -680,11 +673,7 @@ def _python_files(paths: Iterable[Path]) -> list[Path]:
 
 
 def _read(paths: Iterable[Path]) -> list[tuple[str, str]]:
-    """Read sources as ``(posix path, text)`` pairs.
-
-    Returns:
-        ``(posix path, text)`` pairs in input order.
-    """
+    """Read sources as ``(posix path, text)`` pairs in input order."""
     return [
         (path.as_posix(), path.read_text(encoding="utf-8"))
         for path in _python_files(paths)

@@ -28,17 +28,7 @@ class ItemCatalog(Protocol):
     """Read access to catalog items."""
 
     async def get(self, item_id: str, /) -> Item:
-        """Return one item.
-
-        Args:
-            item_id (str): Identifier to look up.
-
-        Returns:
-            The matching item.
-
-        Raises:
-            NotFoundError: No item has this identifier.
-        """
+        """Return the item with ``item_id``; raise ``NotFoundError`` if none matches."""
         ...
 
 
@@ -53,11 +43,7 @@ class ReadinessCheck(Protocol):
     async def check(self) -> bool:
         """Return whether the dependency can serve traffic now.
 
-        Returns:
-            True when the dependency is usable.
-
-        Raises:
-            OSError: The dependency could not be reached.
-            TimeoutError: The probe exceeded its own deadline.
+        An unreachable dependency raises ``OSError`` and a probe past its own
+        deadline ``TimeoutError``.
         """
         ...

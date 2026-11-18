@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from shop.api.app import create_app
 from shop.api.dependencies import Container
 from shop.api.rate_limit import InMemoryRateLimitStore
-from shop.api.settings import HttpSettings
+from shop.api.settings import HTTPSettings
 from shop.application.ports import Item
 from shop.core.exceptions import NotFoundError
 
@@ -59,7 +59,7 @@ def build_app() -> FastAPI:
     """Configure logging once, then build the application from settings."""
     logging.basicConfig(level=logging.INFO)
     return create_app(
-        settings=HttpSettings(),
+        settings=HTTPSettings(),
         container_factory=open_container,
         rate_limit_store=InMemoryRateLimitStore(),
     )

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import date
 import hashlib
 import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from apm_cli.install.mcp.ownership import mcp_native_hash
 import pytest
 import yaml
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.application.services.provenance_service import ProvenanceService
+from agent_kit.application.catalog import CatalogService
+from agent_kit.application.provenance import ProvenanceService
 from agent_kit.core.errors import UnreadableDocumentError
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from agent_kit.infrastructure.output import OutputAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -336,11 +338,30 @@ def test_rewritten_ledger_cannot_authorize_changed_hook_registration(
     assert any(item.code == "provenance.hooks" for item in _verify(output).findings)
 
 
-@pytest.mark.parametrize("runtime", ["claude", "copilot"])
-@pytest.mark.parametrize("transport", ["http", "stdio"])
-def test_native_mcp_projection_matches_only_selected_runtime(
-    source_root: Path, tmp_path: Path, runtime: str, transport: str
+def test_hooks_without_a_package_name_fail_with_a_named_finding(
+    source_root: Path, tmp_path: Path
 ) -> None:
+    _with_hook(source_root)
+    output = _compose(source_root, tmp_path / "backend")
+    _install_hook(output, _HOOK_DELIVERY)
+    manifest_path = output / "apm.yml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    del manifest["name"]
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    findings = _verify(output).findings
+
+    assert any(
+        item.code == "provenance.hooks"
+        and item.message == "hook needs a named apm.yml package"
+        for item in findings
+    )
+    assert not any(item.path.endswith("/-guard.json") for item in findings)
+
+
+def _mcp_workspace(
+    source_root: Path, tmp_path: Path, *, runtime: str, transport: str
+) -> tuple[Path, dict[str, object], Path]:
     path = source_root / "packages/backend/apm.yml"
     manifest = json.loads(path.read_text())
     connection = (
@@ -375,6 +396,17 @@ def test_native_mcp_projection_matches_only_selected_runtime(
     target.write_text(
         json.dumps({"mcpServers": {"context7": server}}), encoding="utf-8"
     )
+    return output, server, target
+
+
+@pytest.mark.parametrize("runtime", ["claude", "copilot"])
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+def test_native_mcp_projection_matches_only_selected_runtime(
+    source_root: Path, tmp_path: Path, runtime: str, transport: str
+) -> None:
+    output, server, target = _mcp_workspace(
+        source_root, tmp_path, runtime=runtime, transport=transport
+    )
 
     assert _verify(output).valid
 
@@ -383,6 +415,123 @@ def test_native_mcp_projection_matches_only_selected_runtime(
         json.dumps({"mcpServers": {"context7": server}}), encoding="utf-8"
     )
     assert any(item.code == "provenance.mcp" for item in _verify(output).findings)
+
+
+@pytest.mark.parametrize("runtime", ["claude", "copilot"])
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+@pytest.mark.parametrize(
+    "override",
+    [
+        {},
+        {"kind": "project-relative"},
+        {"target": "lsp"},
+        {"runtime": "unknown"},
+        {"runtime": None},
+        {"scope": "user"},
+        {"owners": ["other"]},
+        {"active_owner": "other"},
+        {"value": "undeclared"},
+        {"value": None},
+        {"content_hash": "sha256:" + "0" * 64},
+        {"content_hash": "invalid"},
+    ],
+)
+def test_native_mcp_fingerprint_is_bound_to_authored_projection(
+    source_root: Path,
+    tmp_path: Path,
+    runtime: str,
+    transport: str,
+    override: dict[str, object],
+) -> None:
+    output, server, target = _mcp_workspace(
+        source_root, tmp_path, runtime=runtime, transport=transport
+    )
+    entry = {
+        "kind": "uri",
+        "target": "mcp",
+        "runtime": runtime,
+        "value": "context7",
+        "scope": "project",
+        "owners": ["."],
+        "active_owner": ".",
+        "content_hash": mcp_native_hash(server),
+        **override,
+    }
+    lock = output / "apm.lock.yaml"
+    value = yaml.safe_load(lock.read_text(encoding="utf-8"))
+    value["deployments"].append(entry)
+    lock.write_text(yaml.safe_dump(value), encoding="utf-8")
+
+    report = _verify(output)
+    assert report.valid is (not override)
+    if override:
+        assert any(item.code == "provenance.delivery" for item in report.findings)
+        return
+
+    server["url" if transport == "http" else "command"] = "changed"
+    target.write_text(
+        json.dumps({"mcpServers": {"context7": server}}), encoding="utf-8"
+    )
+    entry["content_hash"] = mcp_native_hash(server)
+    lock.write_text(yaml.safe_dump(value), encoding="utf-8")
+    assert not _verify(output).valid
+
+
+@pytest.mark.parametrize("runtime", ["claude", "copilot"])
+def test_unselected_mcp_host_cannot_gain_ownership_from_matching_configuration(
+    source_root: Path, tmp_path: Path, runtime: str
+) -> None:
+    output, server, _ = _mcp_workspace(
+        source_root, tmp_path, runtime=runtime, transport="http"
+    )
+    other = "copilot" if runtime == "claude" else "claude"
+    native = {key: value for key, value in server.items() if key not in {"tools", "id"}}
+    if other == "copilot":
+        native.update({"tools": ["*"], "id": ""})
+    relative = ".mcp.json" if other == "claude" else ".github/mcp.json"
+    target = output / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"mcpServers": {"context7": native}}), encoding="utf-8"
+    )
+    lock = output / "apm.lock.yaml"
+    value = yaml.safe_load(lock.read_text(encoding="utf-8"))
+    value["deployments"].append(
+        {
+            "kind": "uri",
+            "target": "mcp",
+            "runtime": other,
+            "value": "context7",
+            "scope": "project",
+            "owners": ["."],
+            "active_owner": ".",
+            "content_hash": mcp_native_hash(native),
+        }
+    )
+    lock.write_text(yaml.safe_dump(value), encoding="utf-8")
+
+    codes = {item.code for item in _verify(output).findings}
+    assert {"provenance.delivery", "provenance.mcp"} <= codes
+
+
+@pytest.mark.parametrize(
+    "invalid", [date(2026, 1, 1), float("nan"), {1: "one", "two": "two"}]
+)
+def test_non_json_mcp_declaration_reports_a_safe_finding(
+    source_root: Path, tmp_path: Path, invalid: object
+) -> None:
+    output, _, _ = _mcp_workspace(
+        source_root, tmp_path, runtime="claude", transport="http"
+    )
+    path = output / "apm.yml"
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    manifest["dependencies"]["mcp"][0]["env"] = {"sensitive-value": invalid}
+    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    report = _verify(output)
+
+    assert any(item.code == "provenance.mcp" for item in report.findings)
+    assert all("sensitive-value" not in item.message for item in report.findings)
 
 
 def test_denied_extra_subtree_enumeration_aborts_provenance_capture(

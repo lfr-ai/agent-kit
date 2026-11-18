@@ -1,6 +1,6 @@
 ---
 name: kit-python-package
-description: Use when structuring, building, or validating a distributable Python package or command-line entry point.
+description: Use when structuring, building or validating Python packages or CLI entry points.
 license: MIT
 ---
 
@@ -21,7 +21,7 @@ license: MIT
 11. Automate steps 4, 8, 9, and 10 in CI with the [build workflow template](assets/ci-build.yml.template); signing and publication remain operator-approved jobs.
 12. Record evidence in the [package review](assets/package-review.md.template): commands, artifact inventory, smoke results, checksums, and the interpreter/platform matrix actually exercised.
 13. Preserve the lockfile through the project's manager; never hand-edit generated lock data.
-14. Read the [packaging guide](references/guide.md) and the root [checklist](guide.md) for failure modes and scope.
+14. Read the [packaging guide](references/guide.md) and the [pre-publish checklist](references/pre-publish-checklist.md) for failure modes and scope.
 
 ## Acceptance gates
 

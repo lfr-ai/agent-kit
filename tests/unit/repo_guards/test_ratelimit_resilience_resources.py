@@ -61,16 +61,22 @@ def _method(cls: ast.ClassDef, name: str) -> ast.FunctionDef | ast.AsyncFunction
 
 def _string_constant(tree: ast.Module, name: str) -> str:
     for node in tree.body:
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign)
+            else [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else []
+        )
+        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
         if (
-            isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == name
-                for target in node.targets
+            any(
+                isinstance(target, ast.Name) and target.id == name for target in targets
             )
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
         ):
-            return node.value.value
+            return value.value
     raise AssertionError(name)
 
 
@@ -262,7 +268,7 @@ def test_redis_test_template_skips_without_a_server_url() -> None:
 def test_http_settings_validate_rate_limit_fields(tmp_path: Path) -> None:
     target = tmp_path / "http_settings.py"
     shutil.copyfile(_FASTAPI / "assets/settings.py.template", target)
-    settings_type = runpy.run_path(str(target))["HttpSettings"]
+    settings_type = runpy.run_path(str(target))["HTTPSettings"]
     defaults = settings_type()
     assert defaults.rate_limit_failure_mode == "open"
     assert defaults.rate_limit_headers is False

@@ -5,7 +5,6 @@
 """Check explicit consumer context entries and their local links without execution."""
 
 import argparse
-from enum import StrEnum
 from pathlib import Path, PureWindowsPath
 import re
 import sys
@@ -81,62 +80,31 @@ def check(root: Path, *, entries: tuple[str, ...] = _DEFAULT_ENTRIES) -> list[st
     return failures
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSING_CONTEXT_ACCEPTED = "missing context must fail"
-    VALID_CONTEXT_REJECTED = "valid context must pass"
-    EMPTY_CONTEXT_ACCEPTED = "empty context must fail"
-    INVALID_LINK_ACCEPTED = "missing and escaping links must fail"
-    ESCAPING_ENTRY_ACCEPTED = "escaping entry must fail"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-        """
-        super().__init__(issue.value)
-
-
-def _expect(issue: SelfTestIssue, *, holds: bool) -> None:
-    """Raise ``SelfTestError`` for ``issue`` unless the expectation ``holds``.
-
-    Raises:
-        SelfTestError: The expectation does not hold.
-    """
-    if not holds:
-        raise SelfTestError(issue)
-
-
-def self_test() -> None:
-    """Exercise missing, empty, valid and escaping links with synthetic files."""
+def self_test() -> list[str]:
+    """Return regressions for missing, empty, valid and escaping synthetic context."""
     with TemporaryDirectory(prefix="agent-kit-context-") as directory:
         root = Path(directory)
-        _expect(
-            SelfTestIssue.MISSING_CONTEXT_ACCEPTED,
-            holds=len(check(root)) == len(_DEFAULT_ENTRIES),
-        )
+        checks = [
+            (len(check(root)) == len(_DEFAULT_ENTRIES), "missing context must fail")
+        ]
         for entry in _DEFAULT_ENTRIES:
             (root / entry).write_text("# Synthetic context\n", encoding="utf-8")
-        _expect(SelfTestIssue.VALID_CONTEXT_REJECTED, holds=not check(root))
+        checks.append((not check(root), "valid context must pass"))
         (root / "PROJECT.md").write_text("", encoding="utf-8")
-        _expect(SelfTestIssue.EMPTY_CONTEXT_ACCEPTED, holds=bool(check(root)))
+        checks.append((bool(check(root)), "empty context must fail"))
         (root / "PROJECT.md").write_text(
             "[outside](../outside.md)\n[missing](absent.md)", encoding="utf-8"
         )
-        _expect(
-            SelfTestIssue.INVALID_LINK_ACCEPTED,
-            holds=len(check(root)) == _SELF_TEST_INVALID_LINKS,
+        checks.append(
+            (
+                len(check(root)) == _SELF_TEST_INVALID_LINKS,
+                "missing and escaping links must fail",
+            )
         )
-        _expect(
-            SelfTestIssue.ESCAPING_ENTRY_ACCEPTED,
-            holds=bool(check(root, entries=("../outside.md",))),
+        checks.append(
+            (bool(check(root, entries=("../outside.md",))), "escaping entry must fail")
         )
+    return [message for holds, message in checks if not holds]
 
 
 def main() -> int:
@@ -147,9 +115,11 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
-        sys.stdout.write("Context checker self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Context checker self-test {verdict}.\n")
+        return int(bool(failures))
     try:
         failures = check(args.root, entries=tuple(args.entry) or _DEFAULT_ENTRIES)
     except (OSError, UnicodeError) as error:

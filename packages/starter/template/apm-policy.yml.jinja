@@ -1,0 +1,23 @@
+name: Consumer explicit APM policy
+version: "1.0.0"
+enforcement: block
+fetch_failure: block
+dependencies:
+  allow:
+    - "lfr-ai/agent-kit/profiles/*"
+    - "lfr-ai/agent-kit/packages/*"
+mcp:
+  allow: [azure, chrome-devtools, context7, github, langfuse-docs, microsoft-learn, playwright, postman, shadcn, storybook, temporal-docs, terraform]
+  self_defined: allow
+  trust_transitive: false
+  transport:
+    allow: [http, stdio]
+manifest:
+  required_fields: [name, version, license]
+  require_explicit_includes: true
+  scripts: deny
+security:
+  integrity:
+    require_hashes: true
+  audit:
+    fail_on_drift: true

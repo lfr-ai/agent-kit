@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from scripts.check_resources import inventory
+from scripts.checks.resources import inventory
 
 
 def _write(root: Path, relative: str) -> None:

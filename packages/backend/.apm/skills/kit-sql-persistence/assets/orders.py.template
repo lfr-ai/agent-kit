@@ -9,7 +9,7 @@ field names so the adapter mapping stays unchanged.
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from enum import StrEnum, unique
+from enum import StrEnum, auto, unique
 import uuid
 
 
@@ -67,10 +67,10 @@ class ConcurrentUpdateError(OrderPersistenceError):
 class OrderStatus(StrEnum):
     """Lifecycle states persisted by value."""
 
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    SHIPPED = "shipped"
-    CANCELLED = "cancelled"
+    DRAFT = auto()
+    CONFIRMED = auto()
+    SHIPPED = auto()
+    CANCELLED = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

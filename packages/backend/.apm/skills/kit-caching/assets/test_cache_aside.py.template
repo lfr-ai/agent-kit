@@ -7,6 +7,7 @@ fixed jitter, counting tokens, and a recording sleep; concurrency is driven by
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Final
 import itertools
 
 import pytest
@@ -17,13 +18,13 @@ from shop.cache.port import (
     Cache,
     CacheUnavailableError,
     DistributedLock,
-    JsonCodec,
-    JsonValue,
+    JSONCodec,
+    JSONValue,
 )
 
 pytestmark = pytest.mark.anyio
 
-POLICY = CachePolicy(
+POLICY: Final[CachePolicy] = CachePolicy(
     ttl_seconds=100.0,
     negative_ttl_seconds=10.0,
     jitter_ratio=0.1,
@@ -49,11 +50,11 @@ class FakeClock:
 class CountingLoad:
     """Loader double that counts calls and returns a fixed result."""
 
-    def __init__(self, result: JsonValue) -> None:
+    def __init__(self, result: JSONValue) -> None:
         self.result = result
         self.calls = 0
 
-    async def __call__(self) -> JsonValue:
+    async def __call__(self) -> JSONValue:
         self.calls += 1
         return self.result
 
@@ -90,7 +91,7 @@ def make_loader(
     lock: DistributedLock | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
     events: list[str] | None = None,
-) -> CachedLoader[JsonValue]:
+) -> CachedLoader[JSONValue]:
     tokens = itertools.count()
     recorded = events if events is not None else []
 
@@ -99,7 +100,7 @@ def make_loader(
 
     return CachedLoader(
         cache=cache,
-        codec=JsonCodec(),
+        codec=JSONCodec(),
         policy=POLICY,
         key_prefix="shop",
         namespace="catalog:product",
@@ -171,7 +172,7 @@ async def test_loader_errors_are_not_cached(cache: InMemoryCache) -> None:
     loader = make_loader(cache)
     attempts = 0
 
-    async def flaky() -> JsonValue:
+    async def flaky() -> JSONValue:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -217,7 +218,7 @@ async def test_concurrent_misses_share_one_load(cache: InMemoryCache) -> None:
     release = asyncio.Event()
     calls = 0
 
-    async def slow() -> JsonValue:
+    async def slow() -> JSONValue:
         nonlocal calls
         calls += 1
         await release.wait()
@@ -239,7 +240,7 @@ async def test_cancelling_one_waiter_does_not_cancel_the_shared_load(
     loader = make_loader(cache)
     release = asyncio.Event()
 
-    async def slow() -> JsonValue:
+    async def slow() -> JSONValue:
         await release.wait()
         return "shared"
 

@@ -404,7 +404,7 @@ def test_http_settings_reject_wildcards_and_malformed_origins(tmp_path: Path) ->
     target = tmp_path / "http_settings.py"
     shutil.copyfile(_FASTAPI / "assets/settings.py.template", target)
     namespace = runpy.run_path(str(target))
-    settings_type = namespace["HttpSettings"]
+    settings_type = namespace["HTTPSettings"]
     defaults = settings_type()
     assert defaults.cors_origins == ()
     assert "*" not in defaults.trusted_hosts
@@ -467,10 +467,13 @@ def test_token_adapter_pins_asymmetric_algorithms_and_claims() -> None:
     algorithms = next(
         node.value
         for node in tree.body
-        if isinstance(node, ast.Assign)
+        if isinstance(node, ast.Assign | ast.AnnAssign)
+        and node.value is not None
         and any(
             isinstance(target, ast.Name) and target.id == "ASYMMETRIC_ALGORITHMS"
-            for target in node.targets
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
         )
     )
     values = {
@@ -642,6 +645,7 @@ def test_cli_template_main_returns_codes_and_separates_streams(
     assert "s3cr3t-value" not in captured.out + captured.err
 
 
+@pytest.mark.slow
 def test_cli_test_template_passes_against_the_cli_template(
     cli_package: Path, tmp_path: Path
 ) -> None:

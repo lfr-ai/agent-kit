@@ -13,7 +13,8 @@ For every public module, class, function and method:
 - **Arguments**: meaning, units, accepted range or format, and what `None`
   means. Types come from annotations; do not repeat them in prose.
 - **Returns / yields**: what the value represents, including empty results.
-- **Raises**: each exception a caller should handle and when it is raised.
+- **Raises**: each exception the callable itself raises, translates or
+  re-raises, and when; not failures that only propagate from callees.
 - **Side effects**: I/O, mutation of arguments, global state, network calls.
 - **Example**: a short, runnable usage example where the call is not obvious.
 

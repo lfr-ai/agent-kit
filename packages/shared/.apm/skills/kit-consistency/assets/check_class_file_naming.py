@@ -106,7 +106,7 @@ def names_correspond(class_stem: str, module_stem: str, *, match: str) -> bool:
         match (str): ``exact``, or ``affix`` to allow whole-word prefixes and suffixes.
 
     Returns:
-        True when the names correspond under the chosen rule.
+        bool: True when the names correspond under the chosen rule.
     """
     if class_stem == module_stem:
         return True
@@ -116,15 +116,15 @@ def names_correspond(class_stem: str, module_stem: str, *, match: str) -> bool:
     return longer.startswith(f"{shorter}_") or longer.endswith(f"_{shorter}")
 
 
-def _base_name(node: ast.expr) -> str:
-    """Return the simple name of a base class expression."""
+def _base_name(node: ast.expr) -> str | None:
+    """Return the simple name of a base class expression, or ``None`` when dynamic."""
     if isinstance(node, ast.Subscript):
         return _base_name(node.value)
     if isinstance(node, ast.Attribute):
         return node.attr
     if isinstance(node, ast.Name):
         return node.id
-    return ""
+    return None
 
 
 def _counted(tree: ast.Module, options: Options) -> list[ast.ClassDef]:
@@ -147,7 +147,7 @@ def is_exempt(path: str, options: Options) -> bool:
         options (Options): Policy holding the patterns.
 
     Returns:
-        True when the full path or the file name matches a pattern.
+        bool: True when the full path or the file name matches a pattern.
     """
     name = PurePosixPath(path).name
     return any(
@@ -194,7 +194,7 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
         options (Options): Policy switches.
 
     Returns:
-        Findings for this module.
+        list[Finding]: Findings for this module.
     """
     if is_exempt(path, options):
         return []
@@ -237,7 +237,7 @@ def check_files(
         options (Options): Policy switches.
 
     Returns:
-        Findings sorted by path, line and message.
+        list[Finding]: Findings sorted by path, line and message.
     """
     findings: list[Finding] = []
     for path, text in sources:

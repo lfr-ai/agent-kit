@@ -1,0 +1,86 @@
+name: Delivery Terraform check
+
+# Backend-less validation; installation, provider/module init and TFLint init can use network.
+# terraform test is opt-in and may create resources; only use it with reviewed plan/mock tests.
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: Exact Terraform version.
+        type: string
+        required: true
+      working-directory:
+        description: Root module directory.
+        type: string
+        default: .
+      tflint-version:
+        description: Exact TFLint version without the leading v; empty skips linting.
+        type: string
+        default: ""
+      run-tests:
+        description: Run reviewed plan/mock-only terraform tests; tests may otherwise create resources.
+        type: boolean
+        default: false
+      runs-on:
+        description: Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        description: Job timeout.
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: terraform ${{ inputs.terraform-version }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      # Provider cache for this unprivileged check only; deploy jobs never restore caches.
+      # The lock file keys the cache and -lockfile=readonly still verifies provider hashes.
+      - name: Use Terraform plugin cache
+        env:
+          CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        run: |
+          mkdir -p "$CACHE_DIR"
+          echo "TF_PLUGIN_CACHE_DIR=${CACHE_DIR}" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-${{ runner.os }}-${{ inputs.terraform-version }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working-directory)) }}
+      - name: Format
+        run: terraform fmt -check -recursive -diff
+      - name: Init without backend
+        run: terraform init -backend=false -input=false -lockfile=readonly
+      - name: Validate
+        run: terraform validate
+      - name: Set up TFLint
+        if: inputs.tflint-version != ''
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v${{ inputs.tflint-version }}
+          tflint_wrapper: false
+      - name: TFLint
+        if: inputs.tflint-version != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init
+          tflint --recursive
+      - name: Test
+        if: inputs.run-tests
+        run: terraform test

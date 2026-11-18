@@ -39,24 +39,23 @@ _DEFAULT_TIMEOUT_SECONDS = 10.0
 def urllib_transport(request: urllib.request.Request, timeout: float) -> bytes:
     """Send one request with the standard library and return the body.
 
+    Non-2xx responses propagate ``urllib.error.HTTPError``; DNS, connection and
+    TLS failures propagate ``urllib.error.URLError``; a socket timeout propagates
+    ``TimeoutError``.
+
     Args:
         request (urllib.request.Request): Fully built request including method, headers
             and body.
         timeout (float): Seconds to wait for connect and for each read.
 
     Returns:
-        The raw response body of a 2xx response.
-
-    Raises:
-        urllib.error.HTTPError: For non-2xx responses.
-        urllib.error.URLError: For DNS, connection and TLS failures.
-        TimeoutError: When the socket timed out.
+        bytes: The raw response body of a 2xx response.
     """
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - base URL is validated in __init__
         return response.read()
 
 
-class HttpPaymentGateway(PaymentGateway):
+class HTTPPaymentGateway(PaymentGateway):
     """Charge invoices through a JSON-over-HTTPS payment provider."""
 
     def __init__(
@@ -106,7 +105,7 @@ class HttpPaymentGateway(PaymentGateway):
             idempotency_key (str): Forwarded so the provider deduplicates retries.
 
         Returns:
-            The provider receipt mapped to the port's value type.
+            PaymentReceipt: The provider receipt mapped to the port's value type.
         """
         body = json.dumps(
             {"invoice_id": invoice_id, "amount": str(amount), "currency": currency}
@@ -162,11 +161,9 @@ class HttpPaymentGateway(PaymentGateway):
 
 
 def _json_object(raw: bytes) -> Mapping[str, object]:
-    """Decode a JSON object or raise the port's protocol error.
+    """Decode a JSON object; raise ``PaymentProtocolError`` for anything else.
 
-    Returns:
-        Mapping[str, object]: Provider JSON fields with nested values preserved.
-        This validates only the top-level object, not required receipt fields.
+    Nested values are preserved; required receipt fields are not validated here.
     """
     try:
         decoded: object = json.loads(raw)

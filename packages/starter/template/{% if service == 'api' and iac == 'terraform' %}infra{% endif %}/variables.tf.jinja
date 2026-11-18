@@ -1,0 +1,187 @@
+variable "stage" {
+  type     = string
+  nullable = false
+  validation {
+    condition     = contains(["dev", "test", "staging", "prod"], var.stage)
+    error_message = "stage must be dev, test, staging or prod."
+  }
+}
+
+variable "network_address_prefix" {
+  type        = string
+  description = "Caller-owned non-overlapping IPv4 CIDR /16 to /24; required when a VNet is needed."
+  default     = ""
+  nullable    = false
+}
+
+{% if data == 'postgresql' %}
+variable "postgres_administrator" {
+  type        = object({ object_id = string, name = string, type = string })
+  description = "Existing Entra admin, never the runtime identity. Separately create/grant the app database role."
+  nullable    = false
+}
+
+variable "postgres_database" {
+  type     = string
+  default  = "app"
+  nullable = false
+}
+{% endif %}
+{% if ai_service == 'text' %}
+variable "ai_deployment" {
+  type        = object({ name = string, model = string, version = string, sku = string, capacity = number })
+  description = "Explicit regional model/version/quota selection; no inferred model or region."
+  nullable    = false
+  validation {
+    condition     = var.ai_deployment.capacity > 0 && var.ai_deployment.capacity == floor(var.ai_deployment.capacity)
+    error_message = "Model capacity must be a positive integer."
+  }
+}
+{% endif %}
+
+locals {
+  owned_environment_names = [
+    "APP_ENVIRONMENT",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING", "AZURE_CLIENT_ID",
+    "OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES",
+    "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL",
+{% if data == 'postgresql' %}
+    "APP_POSTGRES_HOST", "APP_POSTGRES_DATABASE", "APP_POSTGRES_USER",
+    "APP_POSTGRES_ENTRA_AUTHENTICATION", "APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID", "APP_POSTGRES_PASSWORD",
+{% endif %}
+{% if ai_service == 'text' %}
+    "APP_AI_API_BASE", "APP_AI_MODEL", "APP_AI_ENTRA_AUTHENTICATION", "APP_AI_MANAGED_IDENTITY_CLIENT_ID", "APP_AI_API_KEY",
+    "APP_AI_API_VERSION",
+{% endif %}
+  ]
+}
+
+variable "resource_group_id" {
+  type        = string
+  description = "Existing target resource group ARM ID; never owned by this stack."
+  nullable    = false
+}
+
+variable "location" {
+  type        = string
+  description = "Azure region; defaults to the target resource group region."
+  default     = null
+}
+
+variable "name_prefix" {
+  type        = string
+  description = "Short, distinct per-environment resource prefix."
+  nullable    = false
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{0,26}[a-z0-9]$", var.name_prefix)) && !strcontains(var.name_prefix, "--")
+    error_message = "Use 2-28 lowercase letters, digits or single hyphens; start with a letter and end alphanumeric."
+  }
+}
+
+{% if registry == 'acr' %}
+variable "container_image" {
+  type        = string
+  description = "Digest-pinned image from the stack registry; empty only for the registry bootstrap, which omits the app."
+  default     = ""
+  nullable    = false
+  validation {
+    condition     = var.container_image == "" || startswith(var.container_image, "${var.registry_name}.azurecr.io/")
+    error_message = "container_image must come from this stack's registry_name.azurecr.io, or be empty for the registry bootstrap."
+  }
+}
+
+variable "registry_name" {
+  type        = string
+  description = "Globally unique lowercase alphanumeric Azure Container Registry name."
+  nullable    = false
+  validation {
+    condition     = can(regex("^[a-z0-9]{5,50}$", var.registry_name))
+    error_message = "registry_name must be 5-50 lowercase letters or digits."
+  }
+}
+
+variable "registry_sku" {
+  type        = string
+  description = "Basic or Standard in dev and test; Premium in staging and prod, where the registry is private."
+  nullable    = false
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.registry_sku)
+    error_message = "registry_sku must be Basic, Standard or Premium."
+  }
+  validation {
+    # Premium denies public traffic without IP rules, and dev and test have no
+    # private endpoint, so a Premium dev or test registry would be unreachable.
+    condition     = contains(["staging", "prod"], var.stage) == (var.registry_sku == "Premium")
+    error_message = "registry_sku must be Premium in staging and prod, and Basic or Standard in dev and test."
+  }
+}
+{% else %}
+variable "container_image" {
+  type        = string
+  description = "Digest supplied by delivery-azure-deploy from the one image build."
+  nullable    = false
+}
+{% endif %}
+
+variable "alerts_unmonitored" {
+  type        = bool
+  description = "Explicit dev/test-only opt-out; staging and prod require email or an existing action group."
+  default     = false
+  nullable    = false
+  validation {
+    condition     = !var.alerts_unmonitored || contains(["dev", "test"], var.stage)
+    error_message = "alerts_unmonitored is allowed only for dev and test."
+  }
+  validation {
+    condition     = (length(var.alert_email_receivers) > 0 ? 1 : 0) + (var.alert_action_group_resource_id != "" ? 1 : 0) + (var.alerts_unmonitored ? 1 : 0) == 1
+    error_message = "Set exactly one of alert_email_receivers or alert_action_group_resource_id${contains(["dev", "test"], var.stage) ? ", or alerts_unmonitored=true" : ""}."
+  }
+}
+
+variable "alert_email_receivers" {
+  type        = list(string)
+  description = "Email destinations for a managed action group; mutually exclusive with an existing group or unmonitored."
+  default     = []
+  nullable    = false
+  validation {
+    condition     = alltrue([for address in var.alert_email_receivers : can(regex("^[^@\\s]+@[^@\\s]+$", address))])
+    error_message = "alert_email_receivers must contain valid email addresses."
+  }
+}
+
+variable "alert_action_group_resource_id" {
+  type        = string
+  description = "Caller-owned action group, preferably with Teams and optionally email receivers configured outside this stack."
+  default     = ""
+  nullable    = false
+  validation {
+    condition     = var.alert_action_group_resource_id == "" || can(regex("^/subscriptions/[^/\\s]+/resourceGroups/[^/\\s]+/providers/Microsoft\\.Insights/actionGroups/[^/\\s]+$", var.alert_action_group_resource_id))
+    error_message = "alert_action_group_resource_id must be an action group ARM ID."
+  }
+}
+
+variable "environment_variables" {
+  type        = map(string)
+  description = "Caller-provided nonsecret APP_* settings; canonical module checks names and collisions."
+  default     = {}
+  nullable    = false
+  validation {
+    condition     = length(setintersection([for name in keys(var.environment_variables) : upper(name)], local.owned_environment_names)) == 0
+    error_message = "Caller environment settings collide with provisioner-owned settings; remove the conflicting names."
+  }
+}
+
+variable "secret_references" {
+  type = list(object({
+    name                 = string
+    environment_variable = string
+    key_vault_url        = string
+  }))
+  description = "Key Vault references only; grant the runtime_identity_principal_id output Key Vault Secrets User first."
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(setintersection([for ref in var.secret_references : upper(ref.environment_variable)], local.owned_environment_names)) == 0
+    error_message = "Caller secret settings collide with provisioner-owned settings; remove the conflicting names."
+  }
+}

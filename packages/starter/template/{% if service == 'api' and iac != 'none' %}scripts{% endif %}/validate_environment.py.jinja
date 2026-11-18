@@ -1,0 +1,496 @@
+"""Validate canonical cloud parameters before image building or Azure login."""
+
+import argparse
+import ast
+import ipaddress
+import json
+import re
+from pathlib import Path
+
+_STAGES = ("dev", "test", "staging", "prod")
+_EXTENSION = "{{ 'bicepparam' if iac == 'bicep' else 'tfvars' }}"
+_BICEP = {{ 'True' if iac == 'bicep' else 'False' }}
+_DECLARATION = r"{{ 'param\\s+stage' if iac == 'bicep' else 'stage' }}\s*="
+_LITERAL = r"""{{ 'param\\s+stage' if iac == 'bicep' else 'stage' }}\s*=\s*['"]([a-z]+)['"]\s*(?://[^\n]*|#[^\n]*)?"""
+{%- if registry == 'acr' %}
+_REGISTRY = r"""(?m)^[ \t]*{{ 'param\\s+registryName' if iac == 'bicep' else 'registry_name' }}\s*=\s*['"]([a-z0-9]{5,50})['"][ \t]*$"""
+{%- endif %}
+
+# Only literal parameter files are accepted. No expression evaluation, environment
+# lookups, cloud calls or third-party parser is needed before the build/bootstrap.
+_TOKEN = re.compile(
+    r"""[ \t\r]+|//[^\n]*|\#[^\n]*|\n|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[A-Za-z_][A-Za-z_0-9]*|-?(?:0|[1-9][0-9]*)|[][{}=:,]"""
+)
+_OWNED = {
+    "APP_ENVIRONMENT",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING",
+    "AZURE_CLIENT_ID",
+    "OTEL_SERVICE_NAME",
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+{%- if data == 'postgresql' %}
+    "APP_POSTGRES_HOST",
+    "APP_POSTGRES_DATABASE",
+    "APP_POSTGRES_USER",
+    "APP_POSTGRES_ENTRA_AUTHENTICATION",
+    "APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID",
+    "APP_POSTGRES_PASSWORD",
+{%- endif %}
+{%- if ai_service == 'text' %}
+    "APP_AI_API_BASE",
+    "APP_AI_MODEL",
+    "APP_AI_ENTRA_AUTHENTICATION",
+    "APP_AI_MANAGED_IDENTITY_CLIENT_ID",
+    "APP_AI_API_KEY",
+    "APP_AI_API_VERSION",
+{%- endif %}
+}
+_GROUP = r"/subscriptions/[^/\s]+/resourceGroups/[^/\s]+"
+_MIN_NETWORK_PREFIX = 16
+_MAX_NETWORK_PREFIX = 24
+
+
+def _require(condition: object, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def _snake(name: str) -> str:
+    return re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), name)
+
+
+class _Literals:
+    """Parse the canonical literal subset shared by the generated parameter files."""
+
+    def __init__(self, text: str) -> None:
+        """Tokenize parameter text, dropping comments and insignificant spaces.
+
+        Args:
+            text: Complete parameter file contents.
+        """
+        self.tokens: list[str] = []
+        position = 0
+        while position < len(text):
+            match = _TOKEN.match(text, position)
+            _require(
+                match is not None, "Parameters require literal values and valid syntax."
+            )
+            symbol = match[0]
+            position = match.end()
+            _require(
+                not (_BICEP and symbol.startswith("#")), "Bicep comments must use //."
+            )
+            if symbol == "\n" or (
+                not symbol.isspace() and not symbol.startswith(("//", "#"))
+            ):
+                self.tokens.append(symbol)
+        self.tokens.append("")
+        self.index = 0
+
+    def pop(self) -> str:
+        symbol = self.tokens[self.index]
+        self.index += 1
+        return symbol
+
+    def peek(self) -> str:
+        return self.tokens[self.index]
+
+    def lines(self) -> None:
+        while self.peek() == "\n":
+            self.pop()
+
+    def value(self) -> object:
+        symbol = self.pop()
+        if symbol.startswith(("'", '"')):
+            _require(
+                symbol.startswith("'" if _BICEP else '"')
+                and "${" not in symbol
+                and "%{" not in symbol,
+                "Use literal strings in parameter files; interpolation is unsupported.",
+            )
+            return ast.literal_eval(symbol) if _BICEP else json.loads(symbol)
+        if symbol in ("true", "false"):
+            return symbol == "true"
+        if re.fullmatch(r"-?[0-9]+", symbol):
+            return int(symbol)
+        _require(symbol in ("[", "{"), "Parameters require literal values.")
+        closing = "]" if symbol == "[" else "}"
+        array: list[object] = []
+        mapping: dict[str, object] = {}
+        self.lines()
+        while self.peek() != closing:
+            if symbol == "[":
+                array.append(self.value())
+            else:
+                key = self.pop()
+                _require(
+                    bool(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", key)),
+                    "Use literal setting names.",
+                )
+                _require(key not in mapping, "Duplicate parameter object setting.")
+                _require(
+                    self.pop() == (":" if _BICEP else "="), "Invalid object syntax."
+                )
+                mapping[key] = self.value()
+            separator = self.peek()
+            if separator == ",":
+                self.pop()
+            elif separator != closing:
+                _require(
+                    separator == "\n" and (_BICEP or symbol == "{"),
+                    "Missing parameter separator.",
+                )
+            self.lines()
+        self.pop()
+        return array if symbol == "[" else mapping
+
+    def parameters(self) -> dict[str, object]:
+        result: dict[str, object] = {}
+        self.lines()
+        if _BICEP:
+            _require(
+                self.pop() == "using" and self.pop() == "none",
+                "Parameters must use 'using none'.",
+            )
+            _require(
+                self.peek() == "\n", "Put parameter declarations on separate lines."
+            )
+            self.lines()
+        while self.peek():
+            if _BICEP:
+                _require(self.pop() == "param", "Expected a parameter declaration.")
+            name = self.pop()
+            _require(
+                bool(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name)),
+                "Invalid parameter name.",
+            )
+            _require(
+                not _BICEP or "_" not in name,
+                "Use the Bicep camelCase parameter names.",
+            )
+            key = _snake(name) if _BICEP else name
+            _require(key not in result, "Duplicate parameter declaration.")
+            _require(self.pop() == "=", "Expected a literal parameter assignment.")
+            result[key] = self.value()
+            _require(self.peek() in ("", "\n"), "Unsupported parameter expression.")
+            self.lines()
+        return result
+
+
+def _settings(values: dict[str, object]) -> None:
+    environment = values.get("environment_variables", {})
+    secrets = values.get("secret_references", [])
+    _require(
+        isinstance(environment, dict) and isinstance(secrets, list),
+        "Invalid environment/secret settings.",
+    )
+    names: list[str] = []
+    for name, value in environment.items():
+        _require(
+            isinstance(value, str), "Environment values must be nonsecret strings."
+        )
+        _require(
+            not re.search(
+                r"(?:^|_)(?:PASSWORD|SECRET|TOKEN|API_KEY|CONNECTION_STRING)$",
+                name.upper(),
+            ),
+            "Use Key Vault references for credentials.",
+        )
+        names.append(name.upper())
+    secret_names: list[str] = []
+    for reference in secrets:
+        _require(
+            isinstance(reference, dict), "Secrets must be Key Vault reference objects."
+        )
+        ref = {
+            _snake(key) if _BICEP else key: value for key, value in reference.items()
+        }
+        _require(
+            set(ref) == {"name", "environment_variable", "key_vault_url"},
+            "Use only Key Vault reference fields.",
+        )
+        _require(
+            all(isinstance(value, str) for value in ref.values()),
+            "Key Vault reference fields must be strings.",
+        )
+        _require(
+            bool(re.fullmatch(r"[a-z][a-z0-9-]{0,252}", ref["name"])),
+            "Invalid secret name.",
+        )
+        _require(
+            bool(
+                re.fullmatch(
+                    r"https://[a-zA-Z0-9-]+\.vault\.azure\.net/secrets/[a-zA-Z0-9-]+(?:/[a-zA-Z0-9]+)?",
+                    ref["key_vault_url"],
+                )
+            ),
+            "Use a Key Vault secret URL, never a credential.",
+        )
+        secret_names.append(ref["name"])
+        names.append(ref["environment_variable"].upper())
+    _require(len(secret_names) == len(set(secret_names)), "Duplicate secret name.")
+    _require(
+        all(re.fullmatch(r"[A-Z_][A-Z_0-9]*", name) for name in names),
+        "Invalid environment name.",
+    )
+    _require(
+        len(names) == len(set(names)),
+        "Duplicate environment destinations, ignoring case.",
+    )
+    _require(
+        not _OWNED.intersection(names),
+        "Settings collide with provisioner-owned settings.",
+    )
+
+
+def _validate_values(values: dict[str, object], stage: str) -> None:
+    known = {
+        "stage",
+        "name_prefix",
+        "location",
+        "network_address_prefix",
+        "environment_variables",
+        "secret_references",
+        "alerts_unmonitored",
+        "alert_email_receivers",
+        "alert_action_group_resource_id",
+{%- if iac == 'terraform' %}
+        "resource_group_id",
+{%- endif %}
+{%- if registry == 'acr' %}
+        "registry_name",
+        "registry_sku",
+{%- endif %}
+{%- if data == 'postgresql' %}
+        "postgres_administrator",
+        "postgres_database",
+{%- endif %}
+{%- if ai_service == 'text' %}
+        "ai_deployment",
+{%- endif %}
+    }
+    _require(
+        not (values.keys() - known),
+        "Unknown parameter; image/identity/service wiring belongs to the pipeline and stack.",
+    )
+    _require(
+        values.get("stage") == stage, "Parameter stage must match the environment."
+    )
+    prefix = values.get("name_prefix")
+    _require(
+        isinstance(prefix, str)
+        and bool(re.fullmatch(r"[a-z][a-z0-9-]{0,26}[a-z0-9]", prefix))
+        and "--" not in prefix,
+        "Invalid name prefix.",
+    )
+    if "location" in values:
+        _require(
+            isinstance(values["location"], str)
+            and bool(re.fullmatch(r"[a-z][a-z0-9]+", values["location"])),
+            "Use a literal Azure region name.",
+        )
+{%- if iac == 'terraform' %}
+    group = values.get("resource_group_id")
+    _require(
+        isinstance(group, str) and bool(re.fullmatch(_GROUP, group)),
+        "Set the target resource group ARM ID.",
+    )
+{%- endif %}
+{%- if registry == 'acr' %}
+    registry = values.get("registry_name")
+    _require(
+        isinstance(registry, str) and bool(re.fullmatch(r"[a-z0-9]{5,50}", registry)),
+        "Parameters must set one literal lowercase registry name.",
+    )
+    sku = values.get("registry_sku")
+    _require(
+        sku in ("Basic", "Standard", "Premium")
+        and (stage in ("staging", "prod")) == (sku == "Premium"),
+        "Registry SKU must be Premium only in staging/prod; Basic or Standard otherwise.",
+    )
+{%- endif %}
+    network = values.get("network_address_prefix", "")
+    needs_network = {{ "True" if data == "postgresql" else 'stage != "dev"' if ai_service == "text" else 'stage in ("staging", "prod")' }}
+    _require(isinstance(network, str), "Network prefix must be an IPv4 CIDR.")
+    if network or needs_network:
+        subnet = ipaddress.ip_network(network, strict=True)
+        _require(
+            isinstance(subnet, ipaddress.IPv4Network)
+            and _MIN_NETWORK_PREFIX <= subnet.prefixlen <= _MAX_NETWORK_PREFIX,
+            "Network prefix must be a non-overlapping IPv4 /16 to /24.",
+        )
+{%- if data == 'postgresql' %}
+    admin = values.get("postgres_administrator")
+    _require(
+        isinstance(admin, dict), "Set the existing Entra PostgreSQL administrator."
+    )
+    admin = {_snake(key) if _BICEP else key: value for key, value in admin.items()}
+    _require(
+        set(admin) == {"object_id", "name", "type"},
+        "Invalid PostgreSQL administrator fields.",
+    )
+    _require(
+        isinstance(admin["object_id"], str)
+        and bool(
+            re.fullmatch(
+                r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+                admin["object_id"],
+            )
+        ),
+        "Use an Entra administrator object ID.",
+    )
+    _require(
+        isinstance(admin["name"], str)
+        and bool(admin["name"].strip())
+        and admin["type"] in ("User", "Group", "ServicePrincipal"),
+        "Invalid Entra administrator name/type.",
+    )
+    database = values.get("postgres_database", "app")
+    _require(
+        isinstance(database, str)
+        and bool(re.fullmatch(r"[a-zA-Z_][a-zA-Z_0-9]{0,62}", database)),
+        "Invalid PostgreSQL database name.",
+    )
+{%- endif %}
+{%- if ai_service == 'text' %}
+    deployment = values.get("ai_deployment")
+    _require(
+        isinstance(deployment, dict)
+        and set(deployment) == {"name", "model", "version", "sku", "capacity"},
+        "Set the explicit regional AI deployment.",
+    )
+    _require(
+        all(
+            isinstance(deployment[key], str) and deployment[key].strip()
+            for key in ("name", "model", "version", "sku")
+        ),
+        "AI deployment strings must be nonempty literals.",
+    )
+    _require(
+        type(deployment["capacity"]) is int and deployment["capacity"] > 0,
+        "AI capacity must be a positive integer.",
+    )
+{%- endif %}
+    emails = values.get("alert_email_receivers", [])
+    group = values.get("alert_action_group_resource_id", "")
+    unmonitored = values.get("alerts_unmonitored", False)
+    _require(
+        isinstance(emails, list)
+        and all(
+            isinstance(address, str) and re.fullmatch(r"[^@\s]+@[^@\s]+", address)
+            for address in emails
+        ),
+        "Alert receivers must be email addresses.",
+    )
+    _require(
+        isinstance(group, str)
+        and (
+            not group
+            or bool(
+                re.fullmatch(
+                    _GROUP + r"/providers/Microsoft\.Insights/actionGroups/[^/\s]+",
+                    group,
+                )
+            )
+        ),
+        "Alert destination must be an action group ARM ID.",
+    )
+    _require(type(unmonitored) is bool, "alerts_unmonitored must be a literal boolean.")
+    _require(
+        sum((bool(emails), bool(group), unmonitored)) == 1,
+        "Set exactly one of email, existing action group or explicit unmonitored.",
+    )
+    _require(
+        not unmonitored or stage in ("dev", "test"),
+        "Staging/prod require monitored alerts.",
+    )
+    _settings(values)
+
+
+def validate(stage: str, root: Path) -> None:
+    """Validate stage agreement and explicit configuration.
+
+    Args:
+        stage: Requested cloud environment.
+        root: Consumer repository root.
+
+    Raises:
+        ValueError: Unsupported stage, placeholders or ambiguous stage declaration.
+    """
+    if stage not in _STAGES:
+        message = "Select dev, test, staging or prod; local uses Compose only."
+        raise ValueError(message)
+    parameters = root / "infra" / f"{stage}.{_EXTENSION}"
+    text = parameters.read_text(encoding="utf-8")
+    if "REPLACE_" in text:
+        message = "Complete caller-owned environment parameters before deployment."
+        raise ValueError(message)
+    # Keep the stage declaration canonical. Do not interpret executable expressions
+    # or block comments in a pre-build guard.
+    declarations = re.findall(rf"(?m)^[ \t]*{_DECLARATION}", text)
+    stages = re.findall(rf"(?m)^[ \t]*{_LITERAL}[ \t]*$", text)
+    ambiguous = len(declarations) != 1 or "/*" in text
+    if ambiguous or stages != [stage]:
+        message = (
+            "Parameter stage must be one literal matching the selected environment."
+        )
+        raise ValueError(message)
+    try:
+        _validate_values(_Literals(text).parameters(), stage)
+    except (IndexError, SyntaxError, TypeError) as error:
+        raise ValueError("Invalid literal parameter syntax or type.") from error
+{%- if registry == 'acr' %}
+
+
+def registry_server(stage: str, root: Path) -> str:
+    """Return the environment's ACR login server after validating its parameters.
+
+    Args:
+        stage: Requested cloud environment.
+        root: Consumer repository root.
+
+    Returns:
+        The ``<registry>.azurecr.io`` login server named by the parameters.
+
+    Raises:
+        ValueError: Invalid parameters or not exactly one literal registry name.
+    """
+    validate(stage, root)
+    text = (root / "infra" / f"{stage}.{_EXTENSION}").read_text(encoding="utf-8")
+    names = re.findall(_REGISTRY, text)
+    if len(names) != 1:
+        message = "Parameters must set one literal lowercase registry name."
+        raise ValueError(message)
+    return f"{names[0]}.azurecr.io"
+{%- endif %}
+
+
+def main() -> None:
+    """Validate dispatch parameters or exit with a credential-free diagnostic."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("environment", choices=_STAGES)
+{%- if registry == 'acr' %}
+    parser.add_argument(
+        "--print-registry",
+        action="store_true",
+        help="print registry=<login server> for the workflow output",
+    )
+{%- endif %}
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    try:
+{%- if registry == 'acr' %}
+        if args.print_registry:
+            print(f"registry={registry_server(args.environment, root)}")
+        else:
+            validate(args.environment, root)
+{%- else %}
+        validate(args.environment, root)
+{%- endif %}
+    except (ValueError, OSError) as error:
+        raise SystemExit(str(error)) from None
+
+
+if __name__ == "__main__":
+    main()

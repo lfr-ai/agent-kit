@@ -1,0 +1,112 @@
+"""``APP_*`` settings build the runtime configuration with documented precedence."""
+
+from pathlib import Path
+
+import pytest
+from platform_kit_runtime import RuntimeConfig
+from platform_kit_runtime.middleware import RateLimitPolicy
+
+from app.settings import ConfigurationError, Settings, load_settings
+
+
+@pytest.fixture(autouse=True)
+def _without_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Read ``.env`` from an empty directory, not the developer's checkout."""
+    monkeypatch.chdir(tmp_path)
+
+
+def test_environment_overrides_every_runtime_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_READINESS_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("APP_RATE_LIMIT", '{"limit": 100, "window_seconds": 60}')
+    monkeypatch.setenv("APP_TRUSTED_PROXY_HOPS", "1")
+    monkeypatch.setenv("APP_TRACING", "true")
+
+    assert Settings().runtime_config() == RuntimeConfig(
+        readiness_timeout_seconds=5.0,
+        rate_limit=RateLimitPolicy(limit=100, window_seconds=60),
+        trusted_proxy_hops=1,
+        tracing=True,
+    )
+
+
+def test_environment_overrides_dotenv_and_ignores_foreign_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".env").write_text(
+        "APP_TRUSTED_PROXY_HOPS=2\nAPP_TRACING=true\nPOSTGRES_PASSWORD=local\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("APP_TRUSTED_PROXY_HOPS", "3")
+
+    config = Settings().runtime_config()
+
+    assert config.trusted_proxy_hops == 3
+    assert config.tracing is True
+
+
+def test_out_of_range_value_names_the_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_TRUSTED_PROXY_HOPS", "17")
+
+    with pytest.raises(ValueError, match="trusted_proxy_hops"):
+        Settings().runtime_config()
+
+
+@pytest.mark.parametrize("stage", ["local", "dev", "test", "staging", "prod"])
+def test_stage_is_explicit(stage: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENVIRONMENT", stage)
+    assert load_settings().environment.value == stage
+
+
+@pytest.mark.parametrize("stage", [None, "", "production", "DEV"])
+def test_missing_or_unknown_stage_is_rejected(
+    stage: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APP_ENVIRONMENT")
+    if stage is not None:
+        monkeypatch.setenv("APP_ENVIRONMENT", stage)
+    with pytest.raises(ConfigurationError, match="APP_ENVIRONMENT"):
+        load_settings()
+{%- if ai_service == 'text' %}
+
+
+def test_ai_managed_identity_excludes_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_AI_ENTRA_AUTHENTICATION", "true")
+    monkeypatch.setenv(
+        "APP_AI_MANAGED_IDENTITY_CLIENT_ID", "33333333-3333-4333-8333-333333333333"
+    )
+    monkeypatch.setenv("APP_AI_MODEL", "openai/deployment")
+    monkeypatch.setenv("APP_AI_API_BASE", "https://provider.invalid/openai/v1/")
+    monkeypatch.delenv("APP_AI_API_VERSION", raising=False)
+    with pytest.raises(ConfigurationError):
+        load_settings()
+    monkeypatch.delenv("APP_AI_API_KEY")
+    config = load_settings().text_config()
+    assert config.entra_authentication is True
+    assert config.api_key is None
+{%- endif %}
+{%- if data == 'postgresql' %}
+
+
+def test_database_password_authentication_remains_the_default() -> None:
+    config = Settings().database_config()
+    expected = "synthetic-password"
+    assert config.entra_authentication is False
+    assert config.password == expected
+
+
+def test_database_managed_identity_uses_no_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_POSTGRES_ENTRA_AUTHENTICATION", "true")
+    monkeypatch.setenv(
+        "APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID",
+        "33333333-3333-4333-8333-333333333333",
+    )
+    monkeypatch.delenv("APP_POSTGRES_PASSWORD")
+    config = Settings().database_config()
+    assert config.entra_authentication is True
+    assert config.password is None
+    assert config.require_tls is True
+{%- endif %}

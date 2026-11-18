@@ -16,7 +16,6 @@ Run ``--self-test`` for built-in regressions.
 import argparse
 import ast
 from collections.abc import Iterable, Sequence
-from enum import StrEnum
 from fnmatch import fnmatchcase
 from pathlib import Path
 import sys
@@ -44,14 +43,10 @@ _ELLIPSIS = "..."
 
 
 def _bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
-    """Collect local names bound to the ``os`` module and to its environment API.
+    """Return local names bound to the ``os`` module and to its environment API.
 
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Names that refer to the ``os`` module and names that refer directly to
-        ``environ``, ``getenv``, or a sibling environment attribute.
+    The second set holds names bound directly to ``environ``, ``getenv`` or a
+    sibling environment attribute.
     """
     modules: set[str] = set()
     direct: set[str] = set()
@@ -82,14 +77,7 @@ def _direct_aliases(node: ast.ImportFrom) -> set[str]:
 
 
 def _parents(tree: ast.Module) -> dict[ast.AST, ast.AST]:
-    """Map every node to its syntactic parent.
-
-    Args:
-        tree (ast.Module): Parsed module.
-
-    Returns:
-        Child-to-parent mapping for the whole tree.
-    """
+    """Return a mapping from every node in ``tree`` to its syntactic parent."""
     return {
         child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }
@@ -141,14 +129,11 @@ def find_env_access(text: str, path: str) -> list[str]:
     """Report environment access in one source file.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text; unparsable text raises ``SyntaxError``.
         path (str): Display path used in findings.
 
     Returns:
         Findings formatted as ``path:line: message``, in source order.
-
-    Raises:
-        SyntaxError: The source cannot be parsed.
     """
     tree = ast.parse(text, filename=path)
     modules, direct = _bindings(tree)
@@ -252,53 +237,13 @@ def scan(
     return findings
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSED_ENVIRONMENT_ACCESS = "missed environment access: {source!r} {found}"
-    FALSE_POSITIVE = "false positive: {source!r}"
-    SETTINGS_REJECTED = "default allow glob must accept settings modules"
-    ORDINARY_MODULE_ALLOWED = "default allow glob must reject ordinary modules"
-    VIRTUAL_ENVIRONMENT_SCANNED = "virtual environments must be excluded"
+def self_test() -> list[str]:
+    """Return regressions for aliases, waivers, allow globs and clean sources."""
+    return [*_risky_failures(), *_clean_failures(), *_glob_failures()]
 
 
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        source: str | None = None,
-        found: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            source (str | None): Observed source for the failing case.
-            found (list[str] | None): Observed found for the failing case.
-        """
-        super().__init__(issue.value.format(source=source, found=found))
-
-
-def self_test() -> None:
-    """Exercise aliases, waivers, allow globs, and clean sources.
-
-    Raises:
-        AssertionError: A regression was detected.
-    """
-    _self_test_risky()
-    _self_test_clean()
-    _self_test_globs()
-
-
-def _self_test_risky() -> None:
-    """Require one finding for each environment access form.
-
-    Raises:
-        SelfTestError: An access form was missed.
-    """
+def _risky_failures() -> list[str]:
+    """Return environment access forms that did not produce exactly one finding."""
     risky = {
         "import os\nvalue = os.environ['ORDER_LIMIT']\n": "os.environ['ORDER_LIMIT']",
         "import os\nvalue = os.getenv('REGION', 'west')\n": "os.getenv('REGION'",
@@ -307,42 +252,45 @@ def _self_test_risky() -> None:
         "from os import getenv\nvalue = getenv('MODE')\n": "getenv('MODE')",
         "import os.path\nos.environ['MODE'] = 'x'\n": "os.environ['MODE']",
     }
+    failures: list[str] = []
     for source, fragment in risky.items():
         found = find_env_access(source, "app/service.py")
         if len(found) != 1 or fragment not in found[0]:
-            raise SelfTestError(
-                SelfTestIssue.MISSED_ENVIRONMENT_ACCESS, source=source, found=found
-            )
+            failures.append(f"missed environment access: {source!r} {found}")
+    return failures
 
 
-def _self_test_clean() -> None:
-    """Require no findings for unrelated names and waived lines.
-
-    Raises:
-        SelfTestError: A clean source was reported.
-    """
+def _clean_failures() -> list[str]:
+    """Return unrelated-name and waived sources that were reported."""
     clean = (
         "import os\npath = os.path.join('a', 'b')\n",
         "environ = {}\nvalue = environ.get('x')\n",
         "import os\nvalue = os.environ['X']  # config: env-access-reviewed\n",
     )
-    for source in clean:
-        if find_env_access(source, "app/service.py"):
-            raise SelfTestError(SelfTestIssue.FALSE_POSITIVE, source=source)
+    return [
+        f"false positive: {source!r}"
+        for source in clean
+        if find_env_access(source, "app/service.py")
+    ]
 
 
-def _self_test_globs() -> None:
-    """Require the default allow and exclude globs to classify paths correctly.
-
-    Raises:
-        SelfTestError: A default glob misclassified a path.
-    """
-    if not matches("src/app/settings.py", _DEFAULT_ALLOW):
-        raise SelfTestError(SelfTestIssue.SETTINGS_REJECTED)
-    if matches("src/app/orders.py", _DEFAULT_ALLOW):
-        raise SelfTestError(SelfTestIssue.ORDINARY_MODULE_ALLOWED)
-    if not matches("project/.venv/lib/x.py", _DEFAULT_EXCLUDE):
-        raise SelfTestError(SelfTestIssue.VIRTUAL_ENVIRONMENT_SCANNED)
+def _glob_failures() -> list[str]:
+    """Return default allow and exclude globs that misclassify a path."""
+    checks = (
+        (
+            matches("src/app/settings.py", _DEFAULT_ALLOW),
+            "default allow glob must accept settings modules",
+        ),
+        (
+            not matches("src/app/orders.py", _DEFAULT_ALLOW),
+            "default allow glob must reject ordinary modules",
+        ),
+        (
+            matches("project/.venv/lib/x.py", _DEFAULT_EXCLUDE),
+            "virtual environments must be excluded",
+        ),
+    )
+    return [message for holds, message in checks if not holds]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -368,9 +316,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("check_from_config_pattern self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"check_from_config_pattern self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.error("at least one path is required unless --self-test is used")
     findings = scan(

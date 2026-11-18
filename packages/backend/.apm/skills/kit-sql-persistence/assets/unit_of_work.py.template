@@ -12,14 +12,14 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from shop.core.ports import OrderRepository
-from shop.infrastructure.persistence.orders import SqlAlchemyOrderRepository
+from shop.infrastructure.persistence.orders import SQLAlchemyOrderRepository
 
 
 class UnitOfWorkStateError(RuntimeError):
     """Raised when the unit of work is used outside its ``async with`` block."""
 
 
-class SqlAlchemyUnitOfWork:
+class SQLAlchemyUnitOfWork:
     """Async unit of work over one ``AsyncSession`` per ``async with`` block."""
 
     orders: OrderRepository
@@ -37,17 +37,14 @@ class SqlAlchemyUnitOfWork:
     async def __aenter__(self) -> Self:
         """Open a session and expose repositories bound to it.
 
-        Returns:
-            This unit of work.
-
-        Raises:
-            UnitOfWorkStateError: If the block is entered twice without exiting.
+        The result is this unit of work; entering twice without exiting raises
+        ``UnitOfWorkStateError``.
         """
         if self._session is not None:
             message = "unit of work is already active"
             raise UnitOfWorkStateError(message)
         self._session = self._session_factory()
-        self.orders = SqlAlchemyOrderRepository(session=self._session)
+        self.orders = SQLAlchemyOrderRepository(session=self._session)
         return self
 
     async def __aexit__(
@@ -68,16 +65,14 @@ class SqlAlchemyUnitOfWork:
     async def commit(self) -> None:
         """Flush and commit every staged change atomically.
 
-        Raises:
-            UnitOfWorkStateError: If called outside the ``async with`` block.
+        Outside the ``async with`` block this raises ``UnitOfWorkStateError``.
         """
         await self._require_session().commit()
 
     async def rollback(self) -> None:
         """Discard every staged change and keep the block usable.
 
-        Raises:
-            UnitOfWorkStateError: If called outside the ``async with`` block.
+        Outside the ``async with`` block this raises ``UnitOfWorkStateError``.
         """
         await self._require_session().rollback()
 

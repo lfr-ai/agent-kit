@@ -7,7 +7,8 @@ confirm version-sensitive options against the primary sources before adopting.
 
 The decision to admit, constrain, audit, update and remove third-party code,
 and the evidence that ties a shipped artifact to its inputs. Mechanics that
-another skill already owns are linked by name, not repeated here.
+another skill already owns are linked by name, not repeated here; `kit-ci-review`,
+`kit-containers` and `kit-modernize` apply when installed.
 
 | Concern | Owner | What to use there |
 | --- | --- | --- |

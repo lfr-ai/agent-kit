@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import scripts.render_native as renderer
 
+from agent_kit.infrastructure import owned_output
+
 _ROOT = Path(__file__).resolve().parents[3]
 _SELF_PICKER_ROLES = frozenset({"kit-orchestrator", "kit-debug"})
 
@@ -78,13 +80,13 @@ def test_refresh_does_not_replace_unchanged_attested_files(
     if changed:
         output[first] = b"updated"
     replaced: set[str] = set()
-    replace = renderer._replace
+    replace = owned_output.replace_file
 
     def record(path: Path, content: bytes) -> None:
         replaced.add(path.relative_to(tmp_path).as_posix())
         replace(path, content)
 
-    monkeypatch.setattr(renderer, "_replace", record)
+    monkeypatch.setattr(owned_output, "replace_file", record)
     renderer.write(tmp_path)
 
     assert replaced == ({first, renderer._LOCK_PATH} if changed else set())
@@ -531,7 +533,7 @@ def test_projection_failure_restores_previous_bytes_and_ledger(
     monkeypatch.setattr(
         renderer, "expected", lambda _root: {a: b"second", b: b"second"}
     )
-    replace = renderer._replace
+    replace = owned_output.replace_file
     calls = 0
     failure = OSError("controlled file replacement failure")
 
@@ -542,7 +544,7 @@ def test_projection_failure_restores_previous_bytes_and_ledger(
             raise failure
         replace(path, data)
 
-    monkeypatch.setattr(renderer, "_replace", fail_once)
+    monkeypatch.setattr(owned_output, "replace_file", fail_once)
     with pytest.raises(OSError, match="controlled") as raised:
         renderer.write(tmp_path)
     assert raised.value is failure

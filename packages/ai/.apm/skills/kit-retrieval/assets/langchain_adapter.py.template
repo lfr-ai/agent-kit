@@ -61,20 +61,13 @@ class LangChainRetrieverAdapter:
         return self._name
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Run the framework retriever and convert its documents.
+        """Run the framework retriever and convert its documents in framework order.
 
-        Documents with missing provenance are dropped and logged rather than
-        returned unattributed; documents that fail the visibility re-check are
-        dropped and logged as an access-control defect in the filter factory.
-
-        Args:
-            query (Query): Request to execute.
-
-        Returns:
-            Visible, attributable hits in framework order.
-
-        Raises:
-            RetrievalUnavailableError: If the framework raises a transport error.
+        Only visible, attributable hits are returned: documents with missing
+        provenance are dropped and logged rather than returned unattributed;
+        documents that fail the visibility re-check are dropped and logged as an
+        access-control defect in the filter factory. A framework transport error
+        raises ``RetrievalUnavailableError``.
         """
         try:
             documents: list[Document] = await self._factory(query).ainvoke(query.text)

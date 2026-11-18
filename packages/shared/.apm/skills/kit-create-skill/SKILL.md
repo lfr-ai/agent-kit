@@ -1,6 +1,6 @@
 ---
 name: kit-create-skill
-description: Use when authoring a reusable agent skill with explicit triggers, safe boundaries, and verifiable steps.
+description: Use when authoring agent skills with explicit triggers and verifiable steps.
 license: MIT
 ---
 

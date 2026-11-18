@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 _PROMPT = (
     "---\ndescription: Plan a backend change.\nagent: agent\n---\n\n"

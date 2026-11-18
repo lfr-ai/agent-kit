@@ -1,0 +1,40 @@
+# Check-only {{ 'Bicep' if iac == 'bicep' else 'Terraform' }} gate for infra/: no Azure login, plan or deployment.
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [infra, scripts]
+pr:
+  branches:
+    include: [main]
+  paths:
+    include: [infra, scripts]
+
+resources:
+  repositories:
+    - repository: delivery
+      type: github
+      name: lfr-ai/agent-kit
+      endpoint: agent-kit-github
+      ref: {{ kit_commit }} # reviewed toolkit commit
+
+extends:
+{%- if iac == 'bicep' %}
+  template: packages/delivery/azure-devops/extends/bicep-check.yml@delivery
+  parameters:
+    bicepVersion: "0.48.1"
+    path: infra
+    extraSteps:
+      - bash: python3 scripts/vendor_bicep.py --check
+        displayName: Verify vendored modules
+{%- else %}
+  template: packages/delivery/azure-devops/extends/terraform-check.yml@delivery
+  parameters:
+    terraformVersion: "1.16.7"
+    # SHA-256 of terraform_1.16.7_linux_amd64.zip from SHA256SUMS; update with the version.
+    terraformSha256: 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b
+    workingDirectory: infra
+    extraSteps:
+      - bash: test -s infra/.terraform.lock.hcl
+        displayName: Require reviewed provider lock
+{%- endif %}

@@ -16,7 +16,7 @@ Usage::
 import logging
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,7 +26,7 @@ from shop.auth.tokens import RejectionReason, TokenRejectedError, TokenVerifier
 
 logger = logging.getLogger(__name__)
 
-REALM = "api"
+REALM: Final[str] = "api"
 _KEYS_RETRY_AFTER_SECONDS = 30
 
 bearer_scheme = HTTPBearer(auto_error=False, description="OAuth 2.0 access token")
@@ -40,17 +40,7 @@ class VerifierMissingError(RuntimeError):
 
 
 async def get_token_verifier(request: Request) -> TokenVerifier:
-    """Return the verifier placed in lifespan state.
-
-    Args:
-        request (Request): Current request.
-
-    Returns:
-        The process-wide verifier.
-
-    Raises:
-        VerifierMissingError: Lifespan did not provide a verifier.
-    """
+    """Return the lifespan verifier; raise ``VerifierMissingError`` if absent."""
     verifier = getattr(request.state, "token_verifier", None)
     if not isinstance(verifier, TokenVerifier):
         msg = "no token_verifier in lifespan state"
@@ -104,13 +94,9 @@ PrincipalDep = Annotated[Principal, Depends(authenticate)]
 
 
 def require(permission: Permission) -> Callable[[Principal], Awaitable[Principal]]:
-    """Build a dependency that admits only principals holding a permission.
+    """Build a dependency that admits only principals holding ``permission``.
 
-    Args:
-        permission (Permission): Permission the route requires.
-
-    Returns:
-        An async dependency that returns the principal or raises 403.
+    The async dependency returns the principal or raises a 403 ``HTTPException``.
     """
     scope_hint = " ".join(scopes_granting(permission))
 

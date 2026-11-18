@@ -27,6 +27,7 @@ import sys
 
 _EXCLUDED = frozenset({".venv", "node_modules", "apm_modules", "build", "__pycache__"})
 _DEFAULT_RULE = "presentation:infrastructure"
+_TYPE_CHECKING = "TYPE_CHECKING"
 _EXIT_USAGE = 2
 
 
@@ -65,7 +66,7 @@ def parse_rule(text: str, *, absolute: bool = False) -> Rule:
         absolute (bool): Treat targets as absolute module prefixes.
 
     Returns:
-        The parsed rule.
+        Rule: The parsed rule.
 
     Raises:
         ImportRuleError: If the text has no source or no target.
@@ -81,8 +82,12 @@ def module_name(path: Path, root: Path) -> str:
     """Return the dotted module name of ``path`` relative to the source root.
 
     Args:
-        path (Path): Python source file under ``root``.
+        path (Path): Python source file under ``root``; a path outside ``root``
+            raises ``ValueError``.
         root (Path): Source root that anchors the dotted name.
+
+    Returns:
+        str: Dotted module name, omitting a trailing ``__init__``.
     """
     parts = list(path.relative_to(root).with_suffix("").parts)
     if parts and parts[-1] == "__init__":
@@ -103,7 +108,8 @@ def check_module(
     """Report forbidden imports in one module.
 
     Args:
-        text (str): Python source text.
+        text (str): Python source text, parsed only when a rule applies to the
+            module's layer; unparsable applicable text raises ``SyntaxError``.
         path (str): Display path used as the finding prefix.
         module (str): Dotted name of the module.
         is_package (bool): Whether the module is a package ``__init__``.
@@ -112,7 +118,7 @@ def check_module(
         ignore_type_checking (bool): Skip imports guarded by ``if TYPE_CHECKING:``.
 
     Returns:
-        Findings formatted as ``path:line: message``.
+        list[str]: Findings formatted as ``path:line: message``.
     """
     source_layer = _layer(module, packages)
     if source_layer is None:
@@ -159,8 +165,8 @@ def _type_checking_nodes(tree: ast.Module) -> set[int]:
 
 
 def _is_type_checking(test: ast.expr) -> bool:
-    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    return (isinstance(test, ast.Name) and test.id == _TYPE_CHECKING) or (
+        isinstance(test, ast.Attribute) and test.attr == _TYPE_CHECKING
     )
 
 
@@ -214,7 +220,8 @@ def _violated_target(imported: str, rule: Rule, packages: frozenset[str]) -> str
 def main(argv: list[str] | None = None) -> int:
     """Check every module under the source roots against the layer rules.
 
-    Returns zero when no forbidden import exists, one on findings, two on usage errors.
+    The exit status is 0 when clean, 1 for findings and 2 for invalid rule
+    syntax; ``argv=None`` reads the process arguments.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter

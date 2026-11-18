@@ -74,8 +74,7 @@ class PreparedPrompt:
     def trace_metadata(self) -> dict[str, str]:
         """Return an allowlist without content, labels, names, or variable keys.
 
-        Returns:
-            dict[str, str]: Selector kind and actual numeric version only.
+        Only the selector kind and actual numeric version are included.
         """
         return {
             "prompt_selection": self.selection_kind,

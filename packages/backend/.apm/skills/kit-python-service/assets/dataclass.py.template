@@ -33,7 +33,11 @@ class LineItem:
     note: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
-        """Reject values that would make the line meaningless."""
+        """Reject values that would make the line meaningless.
+
+        Raises:
+            ValueError: SKU, quantity, price or tags violate a line invariant.
+        """
         if not _SKU.fullmatch(self.sku):
             raise ValueError(f"sku must match {_SKU.pattern!r}, got {self.sku!r}")
         if self.quantity <= 0:
@@ -47,7 +51,10 @@ class LineItem:
 
     @classmethod
     def parse(cls, *, sku: str, quantity: str, unit_price_minor: str) -> Self:
-        """Build a line from untrusted text, normalizing the SKU case.
+        """Build a validated line from untrusted text, normalizing the SKU case.
+
+        ``int`` and ``__post_init__`` reject malformed or invalid values with
+        ``ValueError``.
 
         Args:
             sku (str): SKU text in any case; surrounding whitespace is ignored.
@@ -55,10 +62,7 @@ class LineItem:
             unit_price_minor (str): Decimal integer text in minor units.
 
         Returns:
-            A validated line item.
-
-        Raises:
-            ValueError: If any value is not a valid integer or violates an invariant.
+            Self: A validated line item.
         """
         return cls(
             sku=sku.strip().upper(),
@@ -72,5 +76,5 @@ class LineItem:
         return self.quantity * self.unit_price_minor
 
     def with_quantity(self, quantity: int, /) -> Self:
-        """Return a validated copy with a different quantity."""
+        """Return a copy with ``quantity``, validated again by ``__post_init__``."""
         return dataclasses.replace(self, quantity=quantity)

@@ -18,7 +18,7 @@ means the inputs could not be read.
 
 import argparse
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, unique
 import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -27,7 +27,9 @@ import sys
 from typing import TextIO
 
 _CONFIG_EXIT = 2
-_DEFAULT_MAX_BYTES = 5 * 1024 * 1024
+_KIB = 1024
+_MIB = 1024 * _KIB
+_DEFAULT_MAX_BYTES = 5 * _MIB  # default --max-bytes per diff or evidence file
 _EVIDENCE_FIELDS = frozenset(
     {"task", "worker", "summary", "acceptance", "commands", "limitations", "follow_up"}
 )
@@ -220,6 +222,7 @@ def parse_diff(text: str) -> list[FileChange]:
     return state.files
 
 
+@unique
 class EvidenceInputIssue(StrEnum):
     """Supported evidence input validation failures and their stable messages."""
 
@@ -249,11 +252,12 @@ class EvidenceInputError(ValueError):
 
         Args:
             issue (EvidenceInputIssue): The violated input invariant.
-            label (str | None): Diagnostic label for the invalid input.
-            field (str | None): Diagnostic field for the invalid input.
-            index (int | None): Diagnostic index for the invalid input.
-            path (Path | None): Diagnostic path for the invalid input.
-            limit (int | None): Diagnostic limit for the invalid input.
+            label (str | None): Evidence path of the offending value, such as
+                ``commands[0].command``.
+            field (str | None): Unknown field found under ``label``.
+            index (int | None): Position of the offending command or criterion.
+            path (Path | None): Input file larger than ``limit``.
+            limit (int | None): The ``--max-bytes`` limit the file exceeded.
         """
         super().__init__(
             issue.value.format(
@@ -276,8 +280,8 @@ class EvidenceInputTypeError(TypeError):
 
         Args:
             issue (EvidenceInputIssue): The violated input invariant.
-            label (str | None): Diagnostic label for the invalid input.
-            index (int | None): Diagnostic index for the invalid input.
+            label (str | None): Evidence path of the wrongly typed value.
+            index (int | None): Position of the offending command or criterion.
         """
         super().__init__(issue.value.format(label=label, index=index))
 
@@ -326,7 +330,7 @@ def _closed(value: object, fields: frozenset[str], label: str) -> dict[str, obje
     """Require an object with only known fields.
 
     Returns:
-        The object with string keys, limited to ``fields``.
+        dict[str, object]: The object with string keys, limited to ``fields``.
 
     Raises:
         EvidenceInputTypeError: The value is not an object.
@@ -385,9 +389,8 @@ def _criterion(raw: object, index: int) -> Criterion:
 def parse_evidence(text: str) -> Evidence:
     """Validate the verification JSON against its closed schema.
 
-    Raises:
-        ValueError: A required field is missing or a value is invalid.
-        TypeError: A present field has the wrong Python type.
+    A missing required field or invalid value propagates ``ValueError``; a
+    present field of the wrong Python type propagates ``TypeError``.
     """
     data = _closed(json.loads(text), _EVIDENCE_FIELDS, "evidence")
     commands = [
@@ -601,8 +604,8 @@ def build(
         stderr (TextIO): Destination of input errors.
 
     Returns:
-        The Markdown package, or None when inputs are unusable, and the exit status for
-        the caller.
+        tuple[str | None, int]: The Markdown package, or None when inputs are
+        unusable, and the exit status for the caller.
     """
     try:
         diff_text = _read(diff_path, max_bytes)

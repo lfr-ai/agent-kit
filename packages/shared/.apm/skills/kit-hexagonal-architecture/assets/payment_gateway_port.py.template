@@ -45,7 +45,7 @@ class PaymentGateway(Protocol):
             idempotency_key (str): Same key means same charge; never charge twice.
 
         Returns:
-            The receipt for the captured (or previously captured) charge.
+            PaymentReceipt: The receipt for the captured (or previously captured) charge.
 
         Raises:
             PaymentDeclinedError: The provider refused the charge.

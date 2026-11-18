@@ -1,0 +1,159 @@
+{% if registry == 'acr' %}{% raw %}name: Image
+
+# Builds once per deployment into the selected environment's private registry. The
+# job runs in that GitHub environment so its OIDC subject matches the federated
+# credential of the identity that the stack grants AcrPush.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Cloud environment whose registry receives the image.
+        type: string
+        required: true
+      registry:
+        description: Login server of the environment's Azure Container Registry.
+        type: string
+        required: true
+      runs-on:
+        description: Linux runner with Docker and network access to the registry (private in staging and prod).
+        type: string
+        required: true
+    outputs:
+      image:
+        description: Pushed image reference pinned by digest.
+        value: ${{ jobs.image.outputs.image }}
+
+permissions: {}
+
+jobs:
+  image:
+    name: Build, push and attest
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check registry and isolate credentials
+        id: name
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          [[ "$REGISTRY" =~ ^[a-z0-9]{5,50}\.azurecr\.io$ ]] || {
+            echo "::error::registry must be an Azure Container Registry login server"
+            exit 1
+          }
+          # Job-scoped Azure CLI and Docker credentials: nothing persists on self-hosted runners.
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/azure-cli" >> "$GITHUB_ENV"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker" >> "$GITHUB_ENV"
+          echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Azure login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Registry login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login --name "${REGISTRY%%.*}"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.name.outputs.name }}:${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.name.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Report image digest
+        id: reference
+        env:
+          NAME: ${{ steps.name.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "image=${NAME}@${DIGEST}" >> "$GITHUB_OUTPUT"
+      - name: Remove registry and Azure credentials
+        if: always()
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          docker logout "$REGISTRY" || true
+          rm -rf "${AZURE_CONFIG_DIR:?}" "${DOCKER_CONFIG:?}"
+{% endraw %}{% else %}{% raw %}name: Image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      image:
+        description: Pushed image reference pinned by digest.
+        value: ${{ jobs.image.outputs.image }}
+
+permissions: {}
+
+jobs:
+  image:
+    name: Build, push and attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Name image
+        id: name
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.name.outputs.name }}:${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.name.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Report image digest
+        id: reference
+        env:
+          NAME: ${{ steps.name.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "image=${NAME}@${DIGEST}" >> "$GITHUB_OUTPUT"
+{% endraw %}{% endif %}

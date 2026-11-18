@@ -8,6 +8,7 @@ digest before use; never point these fixtures at a shared database.
 """
 
 from collections.abc import AsyncIterator, Iterator
+from typing import Final
 
 import pytest
 import pytest_asyncio
@@ -24,8 +25,8 @@ from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 from shop.infrastructure.persistence.models import Base
 
-POSTGRES_IMAGE = "postgres:17-bookworm@sha256:PIN_IMAGE_DIGEST"
-SQLITE_MEMORY_URL = "sqlite+aiosqlite://"
+POSTGRES_IMAGE: Final[str] = "postgres:17-bookworm@sha256:PIN_IMAGE_DIGEST"
+SQLITE_MEMORY_URL: Final[str] = "sqlite+aiosqlite://"
 
 
 @pytest.fixture(scope="session", params=["sqlite", "postgres"])

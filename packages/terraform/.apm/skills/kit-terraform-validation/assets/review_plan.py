@@ -11,7 +11,7 @@ No credentials, network access, state changes or approval overrides are supporte
 
 import argparse
 from collections.abc import Callable
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import re
@@ -31,6 +31,7 @@ _ACTIONS = {
 }
 
 
+@unique
 class PlanInputIssue(StrEnum):
     """Supported plan input validation failures and their stable messages."""
 
@@ -56,7 +57,8 @@ class PlanInputError(ValueError):
 
         Args:
             issue (PlanInputIssue): The violated input invariant.
-            value (str | None): Diagnostic value for the invalid input.
+            value (str | None): Rejected JSON constant, such as ``NaN``, substituted
+                into the message.
         """
         super().__init__(issue.value.format(value=value))
 
@@ -154,15 +156,12 @@ def _action_kind(change: dict[object, object]) -> str:
 
 
 def analyze_plan(value: object) -> dict[str, list[str]]:
-    """Reject incomplete/unknown input and classify supported resource actions.
+    """Return resource addresses keyed by action kind, rejecting unknown input.
 
-    Returns:
-        Resource addresses keyed by action kind; every kind is present, empty when
-        unused, and addresses keep plan order.
-
-    Raises:
-        ValueError: A required field is missing or a plan value is unsupported.
-        PlanInputTypeError: The document or a present field has the wrong type.
+    Every kind is present, empty when unused, and addresses keep plan order. Raises
+    ``PlanInputTypeError`` when the document or a present field has the wrong type; a
+    missing field or unsupported value propagates from the field helpers as
+    ``PlanInputError`` (a ``ValueError``).
     """
     if not isinstance(value, dict):
         raise PlanInputTypeError(PlanInputIssue.OBJECT_REQUIRED)
@@ -187,39 +186,19 @@ def _read(text: str) -> dict[str, list[str]]:
     )
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    CLASSIFICATION = "resource action classification regressed"
-    INVALID_PLAN_ACCEPTED = "unsupported plan was accepted"
-    INVALID_JSON_ACCEPTED = "malformed JSON was accepted"
-    EMPTY_PLAN = "explicit empty plan must have zero changes"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-        """
-        super().__init__(issue.value)
-
-
-def _expect_rejected(
+def _accepts_any(
     values: tuple[object, ...],
     check: Callable[[object], object],
     errors: type[Exception] | tuple[type[Exception], ...],
-    issue: SelfTestIssue,
-) -> None:
+) -> bool:
+    """Return whether ``check`` completes for any value without raising ``errors``."""
     for value in values:
         try:
             check(value)
         except errors:
             continue
-        raise SelfTestError(issue)
+        return True
+    return False
 
 
 def _read_object(value: object) -> object:
@@ -228,23 +207,24 @@ def _read_object(value: object) -> object:
     return _read(value)
 
 
-def self_test() -> None:
-    """Exercise ordinary, risky, unsupported, incomplete and duplicate inputs.
+def _classifies(actions: tuple[str, ...], kind: str) -> bool:
+    """Return whether a one-resource plan with ``actions`` is grouped under ``kind``."""
+    groups = analyze_plan(
+        {
+            "format_version": "1.2",
+            "resource_changes": [
+                {"address": "example.item", "change": {"actions": list(actions)}}
+            ],
+        }
+    )
+    return groups[kind] == ["example.item"]
 
-    Raises:
-        SelfTestError: A plan is misclassified or wrongly accepted.
-    """
-    for actions, kind in _ACTIONS.items():
-        groups = analyze_plan(
-            {
-                "format_version": "1.2",
-                "resource_changes": [
-                    {"address": "example.item", "change": {"actions": list(actions)}}
-                ],
-            }
-        )
-        if groups[kind] != ["example.item"]:
-            raise SelfTestError(SelfTestIssue.CLASSIFICATION)
+
+def self_test() -> list[str]:
+    """Exercise ordinary, risky, unsupported, incomplete and duplicate inputs."""
+    failures: list[str] = []
+    if not all(_classifies(actions, kind) for actions, kind in _ACTIONS.items()):
+        failures.append("resource action classification regressed")
     invalid: tuple[object, ...] = (
         {},
         {"format_version": "99.0", "resource_changes": []},
@@ -257,23 +237,17 @@ def self_test() -> None:
             ],
         },
     )
-    _expect_rejected(
-        invalid, analyze_plan, ValueError, SelfTestIssue.INVALID_PLAN_ACCEPTED
-    )
-    _expect_rejected(
-        ([], {"format_version": "1.2", "resource_changes": None}),
-        analyze_plan,
-        PlanInputTypeError,
-        SelfTestIssue.INVALID_PLAN_ACCEPTED,
-    )
-    _expect_rejected(
-        ("{", '{"format_version":"1.2","format_version":"1.3"}', "NaN"),
-        _read_object,
-        ValueError,
-        SelfTestIssue.INVALID_JSON_ACCEPTED,
-    )
+    wrong_types = ([], {"format_version": "1.2", "resource_changes": None})
+    if _accepts_any(invalid, analyze_plan, ValueError) or _accepts_any(
+        wrong_types, analyze_plan, PlanInputTypeError
+    ):
+        failures.append("unsupported plan was accepted")
+    malformed = ("{", '{"format_version":"1.2","format_version":"1.3"}', "NaN")
+    if _accepts_any(malformed, _read_object, ValueError):
+        failures.append("malformed JSON was accepted")
     if any(analyze_plan({"format_version": "1.2", "resource_changes": []}).values()):
-        raise SelfTestError(SelfTestIssue.EMPTY_PLAN)
+        failures.append("explicit empty plan must have zero changes")
+    return failures
 
 
 def main() -> int:
@@ -283,9 +257,11 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
-        sys.stdout.write("Terraform reviewer self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Terraform reviewer self-test {verdict}.\n")
+        return int(bool(failures))
     if args.file is None:
         parser.error("--file is required unless --self-test is selected")
     try:

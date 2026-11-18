@@ -1,6 +1,6 @@
 ---
 name: kit-verify-change
-description: Use when handing off a source change or preparing to claim a quality gate passes.
+description: Use when verifying a change for handoff or a quality-gate claim.
 license: MIT
 ---
 
@@ -17,7 +17,9 @@ license: MIT
    [gate script template](assets/run_gate.py.template), and expose it through the
    [Taskfile template](assets/Taskfile.yml.template).
 3. Check types, lint, formatting, architecture, and owning contracts in fast-to-slow order
-   ([gate ordering](references/gate-ordering.md)).
+   ([gate ordering](references/gate-ordering.md)). Confirm discovery includes every
+   changed source root, reusable package and production template. For a new rule,
+   prove the default gate rejects a forbidden fixture and accepts a valid one.
 4. Keep checks read-only. Formatting and other fixers are an explicit separate action
    (`run_gate.py --fix`); review their diff before committing it.
 5. Check spelling and links for changed prose
@@ -28,8 +30,13 @@ license: MIT
    ([secrets scanning](references/secrets-scanning.md)).
 7. Exercise invalid inputs, error propagation, and changed boundary behavior; record the
    red and green runs of the original symptom.
-8. Run the declared completion gate after the last edit; in CI-equivalent mode use
-   `--keep-going --report gate-report.json`.
+8. Before handoff, inspect untracked artifacts, including unexpected root files, and
+   verify them with the project's declared gate. Authorized external research downloads
+   and reports use explicit absolute temporary/session paths, never relative checkout
+   paths; include these path and permission constraints in delegated research tasks.
+   Retain source links and decisions, not copies. Run the declared completion gate
+   after the last edit; in CI-equivalent mode use `--keep-going` and `--report` with an
+   explicit absolute temporary/session path.
 9. Keep pre-commit and CI on the same definition and tool versions
    ([parity guidance](references/precommit-ci-parity.md),
    [pre-commit template](assets/pre-commit-config.yaml.template),

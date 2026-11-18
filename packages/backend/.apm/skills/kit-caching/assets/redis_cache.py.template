@@ -59,7 +59,11 @@ def create_redis_client(settings: CacheSettings) -> redis.Redis:
 
 
 class RedisCache:
-    """Cache and advisory lock backed by a Redis-compatible server."""
+    """Cache and advisory lock backed by a Redis-compatible server.
+
+    Every operation raises ``CacheUnavailableError`` when the server fails or the
+    operation budget expires.
+    """
 
     def __init__(
         self, client: redis.Redis, *, operation_timeout_seconds: float
@@ -76,11 +80,7 @@ class RedisCache:
         self._release_script = client.register_script(_RELEASE_IF_OWNER)
 
     async def get(self, key: str) -> bytes | None:
-        """Return stored bytes or ``None``.
-
-        Raises:
-            CacheUnavailableError: The server failed or the budget expired.
-        """
+        """Return stored bytes or ``None``."""
         value = await self._call("get", self._client.get(key))
         return _as_bytes(value)
 
@@ -88,9 +88,6 @@ class RedisCache:
         """Return stored bytes for several keys in request order.
 
         In a cluster, the keys must share one hash slot (use a hash tag).
-
-        Raises:
-            CacheUnavailableError: The server failed or the budget expired.
         """
         if not keys:
             return []
@@ -107,9 +104,6 @@ class RedisCache:
             value (bytes): Encoded value sent unchanged to Redis.
             ttl_seconds (float): Lifetime converted to milliseconds; zero or less
                 deletes the key.
-
-        Raises:
-            CacheUnavailableError: The server failed or the budget expired.
         """
         if ttl_seconds <= 0:
             await self.delete(key)
@@ -118,11 +112,7 @@ class RedisCache:
         await self._call("set", pending)
 
     async def delete(self, *keys: str) -> int:
-        """Unlink keys without blocking the server; return how many existed.
-
-        Raises:
-            CacheUnavailableError: The server failed or the budget expired.
-        """
+        """Unlink keys without blocking the server; return how many existed."""
         if not keys:
             return 0
         return int(await self._call("unlink", self._client.unlink(*keys)))
@@ -137,7 +127,6 @@ class RedisCache:
 
         Raises:
             ValueError: ``ttl_seconds`` is not positive.
-            CacheUnavailableError: The server failed or the budget expired.
         """
         if ttl_seconds <= 0:
             msg = "lock ttl_seconds must be positive"
@@ -154,9 +143,6 @@ class RedisCache:
         Args:
             key (str): Redis lock key passed to the atomic release script.
             token (str): Expected ownership token; a mismatch preserves the lock.
-
-        Raises:
-            CacheUnavailableError: The server failed or the budget expired.
         """
         result = await self._call(
             "unlock", self._release_script(keys=[key], args=[token])
@@ -187,8 +173,7 @@ def _milliseconds(ttl_seconds: float) -> int:
 def _as_bytes(value: object) -> bytes | None:
     """Narrow a client reply to ``bytes`` or ``None``.
 
-    Raises:
-        CacheUnavailableError: The client decodes replies to text.
+    A client that decodes replies to text raises ``CacheUnavailableError``.
     """
     if value is None or isinstance(value, bytes):
         return value

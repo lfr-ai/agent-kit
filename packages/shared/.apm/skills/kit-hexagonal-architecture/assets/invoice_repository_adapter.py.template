@@ -51,10 +51,8 @@ def connect(database: str) -> sqlite3.Connection:
 def _to_row(invoice: Invoice) -> tuple[str, str, str, str, str, str | None]:
     """Map a domain object to column values; Decimal is stored as exact text.
 
-    Returns:
-        tuple[str, str, str, str, str, str | None]: Values in schema order:
-        invoice ID, customer ID, decimal amount text, currency, status value
-        and optional payment reference.
+    Values follow schema order: invoice ID, customer ID, decimal amount text,
+    currency, status value and optional payment reference.
     """
     return (
         invoice.invoice_id,

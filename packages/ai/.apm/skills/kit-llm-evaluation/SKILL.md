@@ -1,6 +1,6 @@
 ---
 name: kit-llm-evaluation
-description: Use when building or changing LLM evaluations - golden datasets, judges, statistics, CI gates, sweeps.
+description: Use when designing LLM evaluations, golden datasets, judges, statistics, CI gates or sweeps.
 license: MIT
 ---
 

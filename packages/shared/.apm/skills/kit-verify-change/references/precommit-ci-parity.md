@@ -21,8 +21,8 @@ flowchart LR
   is the single ordered definition of the full gate.
 - Pre-commit ([`pre-commit-config.yaml.template`](../assets/pre-commit-config.yaml.template))
   runs the fast, file-scoped subset on staged files, invoking the same pinned
-  tools (`uv run --locked ...`), plus a manual-stage hook that runs the whole
-  gate.
+  tools (`uv run --locked --no-sync ...`), unit tests and repository-wide pin
+  checks at pre-push, plus a manual-stage hook that runs the whole gate.
 - CI ([`ci-gate.yml.template`](../assets/ci-gate.yml.template)) calls the gate
   script, never a hand-copied list of commands.
 
@@ -37,7 +37,7 @@ an offline gate; the runner is not a network sandbox.
 
 | Drift | Example | Remedy |
 | --- | --- | --- |
-| Tool versions | hook pins ruff 0.5, lockfile has 0.8 | run Python tools through the lockfile (`language: unsupported` + `uv run --locked`) |
+| Tool versions | hook pins ruff 0.5, lockfile has 0.8 | run Python tools through the lockfile (`language: unsupported` + `uv run --locked --no-sync`) |
 | Arguments | CI runs `ruff check src`, hook runs on all files | both call the same configuration; scope comes from the tool config, not the command |
 | File selection | hooks see staged files only; CI sees all files | CI runs `pre-commit run --all-files` or the gate on the whole tree |
 | Fix vs check | hook auto-fixes, CI only checks | hooks check-only for code tools; fixers are explicit local actions |
@@ -48,7 +48,8 @@ an offline gate; the runner is not a network sandbox.
 ## Practical rules
 
 - Hooks must be fast enough that nobody disables them: keep the default stage
-  under roughly ten seconds on a typical change; move the rest to `manual`.
+  under roughly ten seconds on a typical change; move tests and repository-wide
+  checks to `pre-push` and the rest to `manual`.
 - Every hook and gate step must be runnable on all supported developer
   platforms. Avoid shell-specific syntax in `entry`; call executables with
   arguments.

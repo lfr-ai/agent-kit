@@ -1,6 +1,6 @@
 ---
 name: kit-sql-persistence
-description: Use when implementing a SQLAlchemy 2 repository, unit of work, session, query or PostgreSQL/SQLite adapter.
+description: Use when using SQLAlchemy 2 repositories, units of work, sessions or PostgreSQL/SQLite queries.
 license: MIT
 ---
 

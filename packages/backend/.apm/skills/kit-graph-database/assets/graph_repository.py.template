@@ -48,14 +48,10 @@ class Neo4jPurchaseGraph:
         self._database = database
 
     async def record_purchases(self, purchases: Sequence[Purchase]) -> None:
-        """Merge purchases in batches; recording the same purchases twice is a no-op.
+        """Merge purchases in batches; recording the same ones twice is a no-op.
 
-        Args:
-            purchases (Sequence[Purchase]): Purchases to record; an empty sequence does
-                nothing.
-
-        Raises:
-            GraphUnavailableError: If the database stays unreachable after retries.
+        An empty sequence does nothing. A database that stays unreachable after
+        retries raises ``GraphUnavailableError``.
         """
         rows = [_purchase_row(purchase) for purchase in purchases]
         try:
@@ -73,13 +69,13 @@ class Neo4jPurchaseGraph:
 
         Args:
             sku (str): Product to start from.
-            limit (int): Maximum number of products to return.
+            limit (int): Maximum number of products to return; a value outside the
+                supported range raises ``ValueError``.
 
         Returns:
             Products ordered by shared customers, then by SKU.
 
         Raises:
-            ValueError: If ``limit`` is outside the supported range.
             GraphUnavailableError: If the database stays unreachable after retries.
         """
         _check_limit(limit)
@@ -102,13 +98,13 @@ class Neo4jPurchaseGraph:
             customer_id (str): Customer whose purchases are listed.
             after_sku (str | None): Last SKU of the previous page; ``None`` starts at
                 the beginning.
-            limit (int): Maximum number of SKUs to return.
+            limit (int): Maximum number of SKUs to return; a value outside the
+                supported range raises ``ValueError``.
 
         Returns:
             SKUs greater than ``after_sku``; fewer than ``limit`` means the last page.
 
         Raises:
-            ValueError: If ``limit`` is outside the supported range.
             GraphUnavailableError: If the database stays unreachable after retries.
         """
         _check_limit(limit)
@@ -128,15 +124,8 @@ class Neo4jPurchaseGraph:
     async def count(self, kind: NodeKind) -> int:
         """Count nodes of an allow-listed kind.
 
-        Args:
-            kind (NodeKind): Node kind; the enum selects a constant query, never a
-                formatted label.
-
-        Returns:
-            Number of nodes with the kind's label.
-
-        Raises:
-            GraphUnavailableError: If the database stays unreachable after retries.
+        The enum selects a constant query, never a formatted label. A database
+        that stays unreachable after retries raises ``GraphUnavailableError``.
         """
         try:
             records, _, _ = await self._driver.execute_query(

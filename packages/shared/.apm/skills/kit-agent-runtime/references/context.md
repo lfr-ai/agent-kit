@@ -27,6 +27,12 @@ in `.apm/selection.json`.
   into every prompt.
 - Search targeted symbols before reading files; bound tool results and retain
   exact failing diagnostics rather than entire logs.
+- When network access and writes are authorized, put external research downloads
+  and reports at explicit absolute temporary/session paths, never relative checkout
+  paths. Include these path and permission constraints in delegated research tasks;
+  they grant no additional permissions. Record source links and decisions, not copies.
+- Before handoff, inspect untracked artifacts and verify them with the project's
+  declared gate, including unexpected files at the repository root.
 - Use one role for the task. Delegate only genuinely independent work that needs
   separate context, with a bounded scope and concise evidence returned.
 - Start a new session for unrelated work; compact long work at verified milestones.

@@ -1,0 +1,174 @@
+_min_copier_version: "9.19.1"
+_subdirectory: packages/starter/template
+# Emit only the selected CI system. Short source names keep rendered test
+# copies below the Windows MAX_PATH limit.
+_exclude:
+  - "{% if ci != 'github' %}/.github{% endif %}"
+  - "{% if service != 'api' or ci != 'azure-devops' %}/.azuredevops{% endif %}"
+
+project_name:
+  type: str
+  help: Project slug for the APM manifest.
+  default: my-project
+  validator: >-
+    {% if not (project_name | regex_search('^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$'))
+       or project_name | regex_search('[^a-z0-9-]')
+       or project_name | length > 64
+       or project_name | regex_search('^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$') %}
+    Use a lowercase hyphenated project name, at most 64 characters.
+    {% endif %}
+
+kind:
+  type: str
+  help: Application stack whose development capabilities APM will install.
+  choices: [library, backend, frontend, fullstack]
+  default: backend
+
+ai:
+  type: bool
+  help: Include AI development capabilities (not an application implementation).
+  default: false
+  when: "{{ kind in ['backend', 'fullstack'] }}"
+  validator: >-
+    {% if ai and kind not in ['backend', 'fullstack'] %}
+    AI capabilities require a backend or fullstack project.
+    {% endif %}
+
+identity:
+  type: bool
+  help: Include identity development capabilities.
+  default: false
+  when: "{{ kind != 'library' }}"
+  validator: >-
+    {% if identity and kind == 'library' %}
+    The library starter does not select identity capabilities.
+    {% endif %}
+
+iac:
+  type: str
+  help: Infrastructure guidance and optional API deployment scaffold; generation never provisions resources.
+  choices: [none, bicep, terraform]
+  default: none
+  when: "{{ kind != 'library' }}"
+  validator: >-
+    {% if iac != 'none' and kind == 'library' %}
+    The library starter does not select infrastructure capabilities.
+    {% endif %}
+
+service:
+  type: str
+  help: Optional application scaffold; api adds a minimal FastAPI service.
+  choices: [none, api]
+  default: none
+  when: "{{ kind in ['backend', 'fullstack'] }}"
+  validator: >-
+    {% if service != 'none' and kind not in ['backend', 'fullstack'] %}
+    The api scaffold requires a backend or fullstack project.
+    {% endif %}
+
+telemetry:
+  type: str
+  help: Optional trace-only Application Insights export; console logging is always local stdout.
+  choices: [none, application-insights]
+  default: none
+  when: "{{ service == 'api' and iac != 'none' }}"
+  validator: >-
+    {% if telemetry == 'application-insights' and (service != 'api' or iac == 'none') %}
+    application-insights requires service=api and iac=bicep or terraform.
+    {% endif %}
+
+data:
+  type: str
+  help: Optional executable PostgreSQL database integration.
+  choices: [none, postgresql]
+  default: none
+  when: "{{ service == 'api' }}"
+  validator: >-
+    {% if data != 'none' and service != 'api' %}
+    PostgreSQL requires service=api.
+    {% endif %}
+
+cache:
+  type: str
+  help: Optional shared Redis rate limiter; requires an explicit APP_RATE_LIMIT.
+  choices: [none, redis]
+  default: none
+  when: "{{ service == 'api' }}"
+  validator: >-
+    {% if cache != 'none' and service != 'api' %}
+    Redis requires service=api.
+    {% elif cache == 'redis' and iac != 'none' %}
+    Azure Redis Entra runtime integration is not supported yet. Use iac=none for local Redis; no keys or secret fallback will be provisioned.
+    {% endif %}
+
+auth:
+  type: str
+  help: Optional Entra bearer validation and protected technical identity endpoint.
+  choices: [none, entra-bearer]
+  default: none
+  when: "{{ service == 'api' }}"
+  validator: >-
+    {% if auth != 'none' and service != 'api' %}
+    Bearer validation requires service=api.
+    {% endif %}
+
+ai_service:
+  type: str
+  help: Optional internal text generator; no public paid inference endpoint.
+  choices: [none, text]
+  default: none
+  when: "{{ service == 'api' }}"
+  validator: >-
+    {% if ai_service != 'none' and service != 'api' %}
+    Text generation requires service=api.
+    {% endif %}
+
+registry:
+  type: str
+  help: >-
+    Image registry for the API. acr (default with cloud IaC) builds and pushes to an
+    Azure Container Registry in the stack through OIDC and pulls it by managed identity;
+    ghcr publishes a public GitHub package and is for dev/evaluation only.
+  choices: [acr, ghcr]
+  default: "{{ 'acr' if service == 'api' and iac != 'none' else 'ghcr' }}"
+  when: "{{ service == 'api' and iac != 'none' }}"
+  validator: >-
+    {% if registry == 'acr' and (service != 'api' or iac == 'none') %}
+    registry=acr requires service=api and iac=bicep or terraform.
+    {% endif %}
+
+ci:
+  type: str
+  help: CI/CD system for the generated API pipelines; the other system's files are not emitted.
+  choices: [github, azure-devops]
+  default: github
+  when: "{{ service == 'api' }}"
+  validator: >-
+    {% if ci != 'github' and service != 'api' %}
+    ci=azure-devops requires service=api.
+    {% elif ci == 'azure-devops' and iac != 'none' and registry != 'acr' %}
+    Azure DevOps deployment pushes to ACR only; select registry=acr.
+    {% endif %}
+
+kit_commit:
+  type: str
+  help: Reviewed published toolkit commit (40 lowercase hexadecimal characters).
+  default: ""
+  validator: >-
+    {% if (service == 'api' or kit_commit)
+       and (not (kit_commit | regex_search('^[0-9a-f]{40}$'))
+       or kit_commit | regex_search('[^0-9a-f]')
+       or kit_commit == '0000000000000000000000000000000000000000') %}
+    Supply an explicit reviewed toolkit commit of 40 lowercase hexadecimal characters, not an all-zero placeholder.
+    {% endif %}
+
+agent_provider:
+  type: str
+  multiselect: true
+  help: Native agent targets; APM owns their installation.
+  choices: [copilot, claude]
+  default: [copilot]
+  validator: >-
+    {% if not agent_provider %}
+    Select at least one agent target.
+    {% endif %}

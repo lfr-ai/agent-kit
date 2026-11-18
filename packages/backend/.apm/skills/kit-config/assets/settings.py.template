@@ -9,7 +9,7 @@ them.
 from __future__ import annotations
 
 from functools import cache
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -27,8 +27,8 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-ENV_PREFIX = "ORDERS_"
-NESTED_DELIMITER = "__"
+ENV_PREFIX: Final[str] = "ORDERS_"
+NESTED_DELIMITER: Final[str] = "__"
 
 _DEFAULT_POOL_SIZE_CONNECTIONS = 5
 _MAX_POOL_SIZE_CONNECTIONS = 100
@@ -66,7 +66,7 @@ class BillingClientSettings(BaseModel):
     )
 
 
-class TlsSettings(BaseModel):
+class TLSSettings(BaseModel):
     """Optional TLS material for the HTTP listener."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -76,7 +76,7 @@ class TlsSettings(BaseModel):
     key_path: str | None = None
 
     @model_validator(mode="after")
-    def _require_material_when_enabled(self) -> TlsSettings:
+    def _require_material_when_enabled(self) -> TLSSettings:
         if self.enabled and not (self.certificate_path and self.key_path):
             raise ValueError("certificate_path and key_path are required when enabled")
         return self
@@ -99,7 +99,7 @@ class AppSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     database: DatabaseSettings
     billing: BillingClientSettings
-    tls: TlsSettings = Field(default_factory=TlsSettings)
+    tls: TLSSettings = Field(default_factory=TLSSettings)
 
     @classmethod
     def settings_customise_sources(

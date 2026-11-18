@@ -1,0 +1,62 @@
+# Keeps the SHA-pinned actions, the digest-pinned base images and the locked
+# Python dependencies current. Each update arrives as a reviewable pull request.
+# Toolkit pins (reusable workflows, IaC modules, provider and tool versions) move
+# together with kit_commit through `copier update`, never one file at a time.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Let new releases settle before proposing them; security updates are exempt.
+    cooldown:
+      default-days: 14
+    labels: [dependencies, ci]
+    ignore:
+      - dependency-name: lfr-ai/agent-kit*
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Refreshes the @sha256 digests in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: [dependencies]
+    groups:
+      base-images:
+        patterns: ["*"]
+{% if data == 'postgresql' or cache == 'redis' %}
+
+  # Refreshes the @sha256 digests of the local service images in compose.yaml.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: [dependencies]
+    groups:
+      compose-images:
+        patterns: ["*"]
+{% endif %}
+
+  # pyproject.toml and uv.lock are updated together.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: [dependencies]
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      python-dependencies:
+        update-types: [minor, patch]
+        patterns: ["*"]

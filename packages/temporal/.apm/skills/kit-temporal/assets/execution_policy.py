@@ -31,9 +31,6 @@ class ActivityPolicy:
         retry_initial (timedelta): Positive initial retry delay.
         retry_maximum (timedelta): Maximum retry delay, at least the initial delay.
         maximum_attempts (int): Positive finite total attempts, including the first.
-
-    Raises:
-        InvalidPolicyError: A duration or attempt bound is invalid.
     """
 
     start_to_close: timedelta
@@ -79,20 +76,17 @@ def _synthetic_policy(heartbeat: timedelta) -> ActivityPolicy:
     )
 
 
-def self_test() -> None:
-    """Accept a bounded synthetic policy and reject a heartbeat beyond the attempt.
+def self_test() -> list[str]:
+    """Return a failure when a heartbeat beyond the attempt timeout is accepted.
 
-    Raises:
-        InvalidPolicyError: If the bounded synthetic policy is rejected.
-        RuntimeError: If the incoherent synthetic policy is accepted.
+    A rejected bounded policy propagates ``InvalidPolicyError``.
     """
     _synthetic_policy(_SELF_TEST_STEP)
     try:
         _synthetic_policy(_SELF_TEST_BUDGET)
     except InvalidPolicyError:
-        return
-    message = "a heartbeat beyond the attempt timeout must be rejected"
-    raise RuntimeError(message)
+        return []
+    return ["a heartbeat beyond the attempt timeout must be rejected"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -104,9 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.self_test:
         parser.error("pass --self-test; import ActivityPolicy to check real settings")
-    self_test()
-    sys.stdout.write("Activity policy self-test passed.\n")
-    return 0
+    failures = self_test()
+    sys.stderr.writelines(f"{failure}\n" for failure in failures)
+    verdict = "failed" if failures else "passed"
+    sys.stdout.write(f"Activity policy self-test {verdict}.\n")
+    return int(bool(failures))
 
 
 if __name__ == "__main__":

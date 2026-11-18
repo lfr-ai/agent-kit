@@ -1,6 +1,6 @@
 ---
 name: kit-ui-review
-description: Use when reviewing a user interface change for state completeness, responsiveness, clarity, and accessibility.
+description: Use when reviewing UI states, responsiveness, clarity or accessibility.
 license: MIT
 ---
 

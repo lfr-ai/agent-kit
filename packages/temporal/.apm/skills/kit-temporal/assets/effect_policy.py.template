@@ -1,7 +1,7 @@
 """Pure deduplication decision for a destination transaction, not a distributed lock."""
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 import hashlib
 
 
@@ -13,18 +13,19 @@ class IdempotencyConflictError(ValueError):
     """A stored receipt belongs to a different operation or payload."""
 
 
+@unique
 class EffectDisposition(StrEnum):
     """Closed decision values for an Activity's destination adapter."""
 
-    EXECUTE = "execute"
-    REUSE = "reuse"
+    EXECUTE = auto()
+    REUSE = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class EffectRecord:
     """Previously committed receipt, loaded under destination concurrency control.
 
-    Args:
+    Attributes:
         operation_key: Stable business-operation key, not an attempt/run number.
         payload_digest: SHA-256 digest of the canonical effect payload.
         result_ref: Opaque reference to the committed result; no sensitive body.
@@ -39,7 +40,7 @@ class EffectRecord:
 class EffectDecision:
     """Validated decision; persistence and effect execution belong to the adapter.
 
-    Args:
+    Attributes:
         operation_key: Unchanged business-operation key.
         payload_digest: Canonical payload digest for conflict detection.
         disposition: Execute when absent, otherwise reuse the saved receipt.

@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from jwt import PyJWK, PyJWKClientError
 from jwt.algorithms import RSAAlgorithm
-from typing import Annotated
+from typing import Annotated, Final
 
 from shop.auth.policy import (
     Permission,
@@ -33,16 +33,16 @@ from shop.auth.policy import (
 )
 from shop.auth.security import require
 from shop.auth.tokens import (
-    JwtPolicy,
+    JWTPolicy,
     PolicyError,
-    PyJwtVerifier,
+    PyJWTVerifier,
     RejectionReason,
     TokenRejectedError,
 )
 
-ISSUER = "https://issuer.example.test"
-AUDIENCE = "https://api.example.test"
-KID = "test-key-1"
+ISSUER: Final[str] = "https://issuer.example.test"
+AUDIENCE: Final[str] = "https://api.example.test"
+KID: Final[str] = "test-key-1"
 
 
 @pytest.fixture(scope="session")
@@ -62,13 +62,13 @@ class StaticKeys:
 
 
 @pytest.fixture
-def verifier(private_key: rsa.RSAPrivateKey) -> PyJwtVerifier:
+def verifier(private_key: rsa.RSAPrivateKey) -> PyJWTVerifier:
     public_jwk = RSAAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
     public_jwk |= {"kid": KID, "alg": "RS256", "use": "sig"}
-    policy = JwtPolicy(
+    policy = JWTPolicy(
         issuer=ISSUER, audience=AUDIENCE, algorithms=frozenset({"RS256"})
     )
-    return PyJwtVerifier(
+    return PyJWTVerifier(
         policy=policy, keys=StaticKeys({KID: PyJWK.from_dict(public_jwk)})
     )
 
@@ -101,7 +101,7 @@ def b64(data: bytes) -> str:
 
 
 def test_valid_token_yields_principal(
-    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+    private_key: rsa.RSAPrivateKey, verifier: PyJWTVerifier
 ) -> None:
     principal = verifier.verify(sign(private_key, claims()))
     assert principal.subject == "user-123"
@@ -120,7 +120,7 @@ def test_valid_token_yields_principal(
 )
 def test_registered_claims_are_enforced(
     private_key: rsa.RSAPrivateKey,
-    verifier: PyJwtVerifier,
+    verifier: PyJWTVerifier,
     overrides: dict[str, object],
     reason: RejectionReason,
 ) -> None:
@@ -130,13 +130,13 @@ def test_registered_claims_are_enforced(
 
 
 def test_leeway_accepts_small_clock_skew(
-    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+    private_key: rsa.RSAPrivateKey, verifier: PyJWTVerifier
 ) -> None:
     token = sign(private_key, claims(exp=int(time.time()) - 5))
     assert verifier.verify(token).subject == "user-123"
 
 
-def test_alg_none_is_rejected(verifier: PyJwtVerifier) -> None:
+def test_alg_none_is_rejected(verifier: PyJWTVerifier) -> None:
     unsigned = ".".join(
         [
             b64(json.dumps({"alg": "none", "typ": "at+jwt"}).encode()),
@@ -150,7 +150,7 @@ def test_alg_none_is_rejected(verifier: PyJwtVerifier) -> None:
 
 
 def test_hmac_signed_with_public_key_is_rejected(
-    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+    private_key: rsa.RSAPrivateKey, verifier: PyJWTVerifier
 ) -> None:
     public_pem = private_key.public_key().public_bytes(
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
@@ -168,7 +168,7 @@ def test_hmac_signed_with_public_key_is_rejected(
 
 
 def test_unknown_kid_and_tampered_signature(
-    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+    private_key: rsa.RSAPrivateKey, verifier: PyJWTVerifier
 ) -> None:
     with pytest.raises(TokenRejectedError) as unknown:
         verifier.verify(sign(private_key, claims(), kid="rotated-away"))
@@ -180,7 +180,7 @@ def test_unknown_kid_and_tampered_signature(
 
 
 def test_wrong_token_type_is_rejected(
-    private_key: rsa.RSAPrivateKey, verifier: PyJwtVerifier
+    private_key: rsa.RSAPrivateKey, verifier: PyJWTVerifier
 ) -> None:
     with pytest.raises(TokenRejectedError) as error:
         verifier.verify(sign(private_key, claims(), typ="JWT"))
@@ -192,7 +192,7 @@ def test_wrong_token_type_is_rejected(
 )
 def test_policy_rejects_unsafe_algorithms(algorithms: frozenset[str]) -> None:
     with pytest.raises(PolicyError):
-        JwtPolicy(issuer=ISSUER, audience=AUDIENCE, algorithms=algorithms)
+        JWTPolicy(issuer=ISSUER, audience=AUDIENCE, algorithms=algorithms)
 
 
 def test_scopes_narrow_roles_and_unknown_values_grant_nothing() -> None:
@@ -207,9 +207,9 @@ def test_scopes_narrow_roles_and_unknown_values_grant_nothing() -> None:
 
 
 @pytest.fixture
-def client(verifier: PyJwtVerifier) -> Iterator[TestClient]:
+def client(verifier: PyJWTVerifier) -> Iterator[TestClient]:
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, PyJwtVerifier]]:
+    async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, PyJWTVerifier]]:
         yield {"token_verifier": verifier}
 
     app = FastAPI(lifespan=lifespan)

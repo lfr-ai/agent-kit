@@ -23,7 +23,7 @@ import logging
 import operator
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from typing import Annotated, TypedDict
+from typing import Annotated, Final, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -45,10 +45,12 @@ from workflows.ports import (
 
 logger = logging.getLogger(__name__)
 
-STATE_SCHEMA_VERSION = 1
-MAX_REQUEST_CHARS = 4000
-MAX_DRAFT_CHARS = 8000
+STATE_SCHEMA_VERSION: Final[int] = 2
+MAX_REQUEST_CHARS: Final[int] = 4000
+MAX_DRAFT_CHARS: Final[int] = 8000
 
+_LEGACY_STATE_SCHEMA_VERSION = 1
+_RESUMABLE_SCHEMA_VERSIONS = (_LEGACY_STATE_SCHEMA_VERSION, STATE_SCHEMA_VERSION)
 _DEFAULT_MODEL_TIMEOUT_SECONDS = 30.0
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_INITIAL_RETRY_INTERVAL_SECONDS = 0.5
@@ -61,7 +63,10 @@ class ApprovalState(TypedDict):
     """Checkpointed workflow state; keep it small and JSON-friendly.
 
     Bump ``STATE_SCHEMA_VERSION`` whenever a key is added, removed or changes
-    meaning, and decide how existing threads migrate or are rejected.
+    meaning, and decide how existing threads migrate or are rejected. Version 2
+    stores ``None`` for an absent ``draft_model``, ``prompt_version``,
+    ``reviewer``, ``receipt_id`` or ``error``; version 1 threads stored ``""``
+    and still resume.
     """
 
     schema_version: int
@@ -69,12 +74,12 @@ class ApprovalState(TypedDict):
     request: str
     status: str
     draft: str
-    draft_model: str
-    prompt_version: str
+    draft_model: str | None
+    prompt_version: str | None
     final_text: str
-    reviewer: str
-    receipt_id: str
-    error: str
+    reviewer: str | None
+    receipt_id: str | None
+    error: str | None
     history: Annotated[list[str], operator.add]
 
 
@@ -124,27 +129,20 @@ def initial_state(*, request_id: str, request: str) -> ApprovalState:
         request=request,
         status="received",
         draft="",
-        draft_model="",
-        prompt_version="",
+        draft_model=None,
+        prompt_version=None,
         final_text="",
-        reviewer="",
-        receipt_id="",
-        error="",
+        reviewer=None,
+        receipt_id=None,
+        error=None,
         history=[],
     )
 
 
 def parse_decision(raw: object) -> ReviewDecision:
-    """Validate an untrusted resume payload.
+    """Validate a resume payload; raise ``InvalidDecisionError`` when malformed.
 
-    Args:
-        raw (object): Value supplied with ``Command(resume=...)``.
-
-    Returns:
-        The validated decision.
-
-    Raises:
-        InvalidDecisionError: If the payload is not a well-formed decision.
+    The untrusted payload is the value supplied with ``Command(resume=...)``.
     """
     if not isinstance(raw, Mapping):
         raise InvalidDecisionError("decision must be an object")
@@ -171,9 +169,8 @@ def parse_decision(raw: object) -> ReviewDecision:
 def validate(state: ApprovalState) -> dict[str, object]:
     """Reject empty or oversized requests before any model call.
 
-    Returns:
-        dict[str, object]: Partial state with ``status`` and a one-entry
-        ``history`` list; invalid input also adds an ``error`` message.
+    The partial state has ``status`` and a one-entry ``history`` list; invalid
+    input also adds an ``error`` message.
     """
     text = state["request"].strip()
     if not text or len(text) > MAX_REQUEST_CHARS:
@@ -189,12 +186,9 @@ def review(state: ApprovalState) -> dict[str, object]:
     """Pause for a human decision, then record it.
 
     Code before ``interrupt()`` runs again on resume, so it must stay free of
-    side effects; the decision is validated after resuming.
-
-    Returns:
-        dict[str, object]: Partial state with ``status``, ``reviewer`` and a
-        one-entry ``history`` list. Approval or editing adds ``final_text``;
-        rejection omits it.
+    side effects; the decision is validated after resuming. The partial state
+    has ``status``, ``reviewer`` and a one-entry ``history`` list; approval or
+    editing adds ``final_text`` and rejection omits it.
     """
     raw = interrupt(
         {
@@ -249,10 +243,9 @@ class BoundaryNodes:
     async def draft(self, state: ApprovalState) -> dict[str, object]:
         """Ask the model for a proposal under a per-attempt timeout.
 
-        Returns:
-            dict[str, object]: Partial state containing ``status="drafted"``,
-            trimmed ``draft`` text, ``draft_model``, ``prompt_version`` and
-            ``history=["draft:ok"]``.
+        The partial state holds ``status="drafted"``, trimmed ``draft`` text,
+        ``draft_model``, ``prompt_version`` and ``history=["draft:ok"]``. A timeout
+        raises ``TransientError`` and an unusable draft ``PermanentError``.
         """
         try:
             async with asyncio.timeout(self._settings.model_timeout_s):
@@ -273,9 +266,8 @@ class BoundaryNodes:
     async def apply(self, state: ApprovalState) -> dict[str, object]:
         """Apply the approved text under a stable idempotency key.
 
-        Returns:
-            dict[str, object]: Partial state containing ``status="applied"``,
-            the gateway's ``receipt_id`` and ``history=["apply:ok"]``.
+        The partial state holds ``status="applied"``, the gateway's ``receipt_id``
+        and ``history=["apply:ok"]``.
         """
         receipt = await self._gateway.apply(
             idempotency_key=f"{state['request_id']}:apply", text=state["final_text"]
@@ -396,6 +388,9 @@ class ApprovalWorkflow:
     ) -> WorkflowStatus:
         """Resume a thread that is waiting for review.
 
+        A malformed decision propagates ``InvalidDecisionError`` from
+        ``parse_decision``; the thread stays paused and can be resumed again.
+
         Args:
             request_id (str): Identifier used at start.
             decision (Mapping[str, object]): Untrusted reviewer payload.
@@ -405,14 +400,13 @@ class ApprovalWorkflow:
 
         Raises:
             WorkflowError: If the thread is unknown or not awaiting review.
-            IncompatibleCheckpointError: If the thread uses another schema.
-            InvalidDecisionError: If the decision is malformed; the thread
-                stays paused and can be resumed again.
+            IncompatibleCheckpointError: If the thread uses a schema this code cannot
+                resume.
         """
         snapshot = await self._graph.aget_state(self._config(request_id))
         if not snapshot.values:
             raise WorkflowError(f"unknown request {request_id}")
-        if snapshot.values.get("schema_version") != STATE_SCHEMA_VERSION:
+        if snapshot.values.get("schema_version") not in _RESUMABLE_SCHEMA_VERSIONS:
             raise IncompatibleCheckpointError(
                 f"request {request_id} uses another schema"
             )
@@ -496,7 +490,8 @@ class ApprovalWorkflow:
         Args:
             request_id (str): Caller identifier attached to the returned status.
             values (Mapping[str, object]): Checkpoint or invocation state holding
-                status, draft, receipt and error fields.
+                status, draft, receipt and error fields; a version 1 checkpoint
+                stores ``""`` for no error.
             upcoming (tuple[str, ...]): Pending node names; a pending review
                 takes precedence over the stored status.
         """
@@ -508,16 +503,18 @@ class ApprovalWorkflow:
             )
         status = str(values.get("status", "failed"))
         if status == "applied":
+            receipt_id = values.get("receipt_id")
             return WorkflowStatus(
                 request_id=request_id,
                 status=status,
-                receipt_id=str(values.get("receipt_id")),
+                receipt_id=None if receipt_id is None else str(receipt_id),
             )
         if status in {"rejected", "invalid"}:
+            error = values.get("error")
             return WorkflowStatus(
                 request_id=request_id,
                 status=status,
-                error=str(values.get("error")) or None,
+                error=None if error is None else (str(error) or None),
             )
         return WorkflowStatus(
             request_id=request_id,

@@ -1,0 +1,40 @@
+# Caller-owned, non-secret environment configuration. Replace every REPLACE value.
+# The region defaults to the resource group; the workflow passes container_image.
+resource_group_id = "REPLACE_WITH_RESOURCE_GROUP_ARM_ID"
+stage             = "dev"
+name_prefix       = "{{ project_name[:20].rstrip('-') }}-dev"
+{% if registry == 'acr' %}
+# Globally unique: change it if taken. Explicit cost toggle.
+registry_name = "{{ (project_name | replace('-', ''))[:40] }}devacr"
+registry_sku  = "Basic"
+{% endif %}
+
+{% if data == 'postgresql' %}
+network_address_prefix = "REPLACE_WITH_NONOVERLAPPING_CIDR"
+
+postgres_administrator = {
+  object_id = "REPLACE_WITH_ENTRA_ADMIN_OBJECT_ID"
+  name      = "REPLACE_WITH_ENTRA_ADMIN_DISPLAY_NAME"
+  type      = "Group"
+}
+postgres_database = "app"
+{% endif %}
+{% if ai_service == 'text' %}
+ai_deployment = {
+  name     = "text"
+  model    = "REPLACE_WITH_REGIONAL_MODEL"
+  version  = "REPLACE_WITH_PINNED_MODEL_VERSION"
+  sku      = "REPLACE_WITH_DEPLOYMENT_SKU"
+  capacity = 1
+}
+{% endif %}
+
+# Nonsecret settings only; credentials use Key Vault reference objects.
+environment_variables = {}
+secret_references     = []
+
+# Set exactly one destination. Dev may stay explicitly unmonitored; for email set
+# alert_email_receivers, or for Teams set an existing action group ID instead.
+alerts_unmonitored             = true
+alert_email_receivers          = []
+alert_action_group_resource_id = ""

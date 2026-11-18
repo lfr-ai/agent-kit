@@ -30,7 +30,7 @@ _CHAIN_ENDPOINTS = ("FROM", "TO")
 class Graph:
     """Directed import graph between modules of one package.
 
-    Args:
+    Attributes:
         root: Top-level package name.
         files: Module name to source file for internal modules.
         edges: Importer to imported module to first importing line.
@@ -54,9 +54,7 @@ class Graph:
     def reverse(self) -> dict[str, set[str]]:
         """Return imported module to the set of its direct importers.
 
-        Returns:
-            Direct importers keyed by imported module; modules nobody imports are
-            absent.
+        Modules nobody imports are absent.
         """
         result: dict[str, set[str]] = {name: set() for name in self.files}
         for source, targets in self.edges.items():
@@ -183,6 +181,8 @@ def build_graph(
 ) -> Graph:
     """Parse every module under ``package_dir`` and resolve its imports.
 
+    An unreadable or unparsable module propagates ``OSError`` or ``SyntaxError``.
+
     Args:
         package_dir (Path): Directory of the top-level package to analyze.
         skip_type_checking (bool): Ignore imports under ``if TYPE_CHECKING:``.
@@ -194,8 +194,6 @@ def build_graph(
 
     Raises:
         GraphInputError: The directory holds no Python modules.
-        SyntaxError: A module cannot be parsed.
-        OSError: A module cannot be read.
     """
     sources = sorted(
         path
@@ -287,14 +285,7 @@ class _Tarjan:
 
 
 def strongly_connected(graph: Graph) -> list[list[str]]:
-    """Return strongly connected components with more than one module.
-
-    Args:
-        graph (Graph): Import graph.
-
-    Returns:
-        Sorted components, each sorted by module name.
-    """
+    """Return sorted multi-module strongly connected components, each sorted."""
     search = _Tarjan(graph.edges)
     for start in sorted(graph.edges):
         if start not in search.index:
@@ -413,20 +404,8 @@ def _write_package(root: Path, files: dict[str, str]) -> Path:
     return root / "shop"
 
 
-class ChainQueryRegressionError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self) -> None:
-        """Describe the violated invariant."""
-        super().__init__("chain query failed")
-
-
-def self_test() -> None:
-    """Exercise resolution, cycles, filters and queries on a synthetic package.
-
-    Raises:
-        AssertionError: Behavior differs from the documented contract.
-    """
+def self_test() -> list[str]:
+    """Return resolution, cycle, filter and query failures on a synthetic package."""
     with TemporaryDirectory(prefix="import-graph-") as raw:
         package = _write_package(
             Path(raw),
@@ -443,53 +422,48 @@ def self_test() -> None:
                 "shop/api/helpers.py": "",
             },
         )
-        _check_graph(package)
+        graph = build_graph(package)
+        return _edge_failures(graph) + _query_failures(package, graph)
 
 
-def _check_graph(package: Path) -> None:
-    """Verify edges, cycles, filters and queries for the synthetic package."""
-    graph = build_graph(package)
-    _check_edges(graph)
-    _check_queries(package, graph)
-
-
-def _check_edges(graph: Graph) -> None:
-    """Verify resolved edges and the reported cycle.
-
-    Raises:
-        AssertionError: An edge or the cycle is wrong.
-    """
-    if graph.edges["shop.api"] != {"shop.orders": 1}:
-        raise AssertionError(graph.edges["shop.api"])
-    if set(graph.edges["shop.api.views"]) != {"shop.billing", "shop.api.helpers"}:
-        raise AssertionError(graph.edges["shop.api.views"])
+def _edge_failures(graph: Graph) -> list[str]:
+    """Return messages for wrong resolved edges or a wrong reported cycle."""
     findings = cycle_findings(graph)
-    if (
-        len(findings) != 1
-        or "shop.billing -> shop.orders -> shop.billing" not in (findings[0])
-    ):
-        raise AssertionError(findings)
+    checks = (
+        (graph.edges["shop.api"] == {"shop.orders": 1}, graph.edges["shop.api"]),
+        (
+            set(graph.edges["shop.api.views"]) == {"shop.billing", "shop.api.helpers"},
+            graph.edges["shop.api.views"],
+        ),
+        (
+            len(findings) == 1
+            and "shop.billing -> shop.orders -> shop.billing" in findings[0],
+            findings,
+        ),
+    )
+    return [f"edges: {observed}" for ok, observed in checks if not ok]
 
 
-def _check_queries(package: Path, graph: Graph) -> None:
-    """Verify import filters, reverse reachability and chain queries.
-
-    Raises:
-        AssertionError: A filter or reverse query is wrong.
-        ChainQueryRegressionError: A chain query is wrong.
-    """
+def _query_failures(package: Path, graph: Graph) -> list[str]:
+    """Return messages for wrong import filters, reverse or chain queries."""
     filtered = build_graph(package, skip_type_checking=True, module_level_only=True)
-    if filtered.edges["shop.api.views"]:
-        raise AssertionError(filtered.edges["shop.api.views"])
     importers = [name for _, name, _ in reachable(graph.reverse(), "shop.orders", None)]
-    if importers != ["shop.api", "shop.billing", "shop.api.views"]:
-        raise AssertionError(importers)
-    if shortest_path(graph, "shop.api.views", "shop.orders") != [
-        "shop.api.views",
-        "shop.billing",
-        "shop.orders",
-    ]:
-        raise ChainQueryRegressionError
+    chain = shortest_path(graph, "shop.api.views", "shop.orders")
+    checks = (
+        (
+            not filtered.edges["shop.api.views"],
+            f"filter: {filtered.edges['shop.api.views']}",
+        ),
+        (
+            importers == ["shop.api", "shop.billing", "shop.api.views"],
+            f"reverse: {importers}",
+        ),
+        (
+            chain == ["shop.api.views", "shop.billing", "shop.orders"],
+            "chain query failed",
+        ),
+    )
+    return [message for ok, message in checks if not ok]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -542,9 +516,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("import_graph self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"import_graph self-test {verdict}.\n")
+        return int(bool(failures))
     if args.package is None or not args.package.is_dir():
         sys.stderr.write("a package directory is required\n")
         return _EXIT_USAGE

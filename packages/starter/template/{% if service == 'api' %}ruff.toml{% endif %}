@@ -1,0 +1,8 @@
+[lint]
+extend-select = ["ANN", "B", "D", "FAST", "FBT", "I", "PL", "PT", "RUF", "S", "UP"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/**" = ["D", "PLR2004", "S101"]

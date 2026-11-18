@@ -3,114 +3,88 @@
 Decoded JSON and TOML arrive as ``object``. These helpers narrow them once, in
 one place, so callers state the shape they expect instead of repeating
 ``isinstance`` chains and hand-written ``InputTypeError`` branches.
+The ``require_*`` helpers return the input without coercion; invalid shapes
+raise ``InputTypeError`` using the caller-supplied, safe ``location`` label.
 """
 
+import re
 from typing import TypeGuard, TypeIs
 
-from agent_kit.core.errors import InputTypeError
+from agent_kit.core.errors import DuplicateJSONFieldError, InputTypeError
 
-type JsonObject = dict[str, object]
+type JSONObject = dict[str, object]
+
+_SEMANTIC_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\Z")
 
 
-def is_json_object(value: object) -> TypeIs[JsonObject]:
-    """Report whether ``value`` is a dict whose keys are all strings."""
+def is_json_object(value: object) -> TypeIs[JSONObject]:
+    """Recognize dictionaries whose keys are all strings."""
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
+def unique_json_object(pairs: list[tuple[str, object]]) -> JSONObject:
+    """Merge ``pairs`` in order; a repeated key raises ``DuplicateJSONFieldError``.
+
+    Serves as the ``object_pairs_hook`` for strict JSON decoding.
+    """
+    result: JSONObject = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONFieldError(key)
+        result[key] = value
+    return result
+
+
 def is_nonempty_text(value: object) -> TypeGuard[str]:
-    """Report whether ``value`` is a string with a non-whitespace character."""
+    """Recognize strings containing at least one non-whitespace character."""
     return isinstance(value, str) and bool(value.strip())
 
 
 def is_str_list(value: object) -> TypeIs[list[str]]:
-    """Report whether ``value`` is a list whose items are all strings."""
+    """Recognize lists of strings, including the empty list."""
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def is_int(value: object) -> TypeGuard[int]:
-    """Report whether ``value`` is an integer; ``bool`` is deliberately excluded."""
+    """Recognize exact integers, excluding booleans and integer subclasses."""
     return type(value) is int
 
 
-def require_object(value: object, *, location: str) -> JsonObject:
-    """Return ``value`` as a string-keyed object.
+def is_semantic_version(value: object) -> TypeGuard[str]:
+    """Recognize a ``MAJOR.MINOR.PATCH`` version string with optional suffix."""
+    return isinstance(value, str) and _SEMANTIC_VERSION.fullmatch(value) is not None
 
-    Args:
-        value (object): Decoded value to narrow.
-        location (str): Safe field or document location for the diagnostic.
 
-    Returns:
-        JsonObject: ``value`` unchanged, now typed as ``dict[str, object]``.
-
-    Raises:
-        InputTypeError: ``value`` is not an object with string keys.
-    """
+def require_object(value: object, *, location: str) -> JSONObject:
+    """Return a string-keyed dictionary unchanged, or raise ``InputTypeError``."""
     if is_json_object(value):
         return value
     raise InputTypeError(location=location, expected="an object")
 
 
 def require_list(value: object, *, location: str) -> list[object]:
-    """Return ``value`` as a list.
-
-    Args:
-        value (object): Decoded value to narrow.
-        location (str): Safe field or document location for the diagnostic.
-
-    Returns:
-        list[object]: ``value`` unchanged, with untyped items.
-
-    Raises:
-        InputTypeError: ``value`` is not a list.
-    """
+    """Return a list unchanged, or raise ``InputTypeError``."""
     if isinstance(value, list):
         return value
     raise InputTypeError(location=location, expected="a list")
 
 
 def require_text(value: object, *, location: str) -> str:
-    """Return ``value`` as a string, rejecting every other type.
-
-    Args:
-        value (object): Decoded value to narrow.
-        location (str): Safe field or document location for the diagnostic.
-
-    Raises:
-        InputTypeError: ``value`` is not a string.
-    """
+    """Return any string unchanged, or raise ``InputTypeError``."""
     if isinstance(value, str):
         return value
     raise InputTypeError(location=location, expected="a string")
 
 
 def require_str_list(value: object, *, location: str) -> list[str]:
-    """Return ``value`` as a list of strings.
-
-    Args:
-        value (object): Decoded value to narrow.
-        location (str): Safe field or document location for the diagnostic.
-
-    Returns:
-        list[str]: ``value`` unchanged, now typed as strings.
-
-    Raises:
-        InputTypeError: ``value`` is not a list, or an item is not a string.
-    """
+    """Return a list of strings unchanged, or raise ``InputTypeError``."""
     if is_str_list(value):
         return value
     raise InputTypeError(location=location, expected="a list of strings")
 
 
 def require_int(value: object, *, location: str) -> int:
-    """Return ``value`` as an integer, rejecting ``bool`` and every other type.
-
-    Args:
-        value (object): Decoded value to narrow.
-        location (str): Safe field or document location for the diagnostic.
-
-    Raises:
-        InputTypeError: ``value`` is not an integer.
-    """
+    """Return an exact integer, not ``bool``, or raise ``InputTypeError``."""
     if is_int(value):
         return value
     raise InputTypeError(location=location, expected="an integer")

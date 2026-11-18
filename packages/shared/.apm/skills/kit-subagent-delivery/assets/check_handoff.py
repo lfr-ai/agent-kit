@@ -126,13 +126,9 @@ class Section:
 
 
 def content_lines(text: str) -> list[tuple[int, str]]:
-    """Return numbered lines outside fenced code blocks and HTML comments.
+    """Return ``(line number, line)`` pairs outside code fences and HTML comments.
 
-    Args:
-        text (str): Markdown content.
-
-    Returns:
-        ``(line number, line)`` pairs with single-line comments removed.
+    Single-line comments are removed.
     """
     kept: list[tuple[int, str]] = []
     fence: str | None = None
@@ -153,13 +149,10 @@ def content_lines(text: str) -> list[tuple[int, str]]:
 
 
 def _markers(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
-    """Return ``(index, depth, title)`` section markers.
+    """Return ``(index, depth, title)`` section markers in document order.
 
     Headings are used when any heading names a required section; otherwise
     top-level numbered items are used, all at the same depth.
-
-    Returns:
-        ``(index, depth, title)`` triples in document order.
     """
     headings: list[tuple[int, int, str]] = []
     for index, (_, line) in enumerate(lines):
@@ -177,13 +170,9 @@ def _markers(lines: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
 
 
 def find_sections(lines: list[tuple[int, str]]) -> dict[str, Section]:
-    """Locate each required section by its first matching marker.
+    """Map each required section name to its location and body.
 
-    Args:
-        lines (list[tuple[int, str]]): Content lines from ``content_lines``.
-
-    Returns:
-        Section name mapped to its location and body.
+    A section starts at its first matching marker in ``content_lines`` output.
     """
     markers = _markers(lines)
     found: dict[str, Section] = {}
@@ -207,11 +196,7 @@ def _text(section: Section) -> str:
 
 
 def _changed_problems(section: Section) -> list[tuple[int, str]]:
-    """Require at least one path or an explicit ``none``.
-
-    Returns:
-        ``(line, message)`` problems; empty when the section is valid.
-    """
+    """Return ``(line, message)`` problems unless a path or ``none`` is listed."""
     text = _text(section)
     if not text:
         return [(section.line, "section 'changed paths' is empty")]
@@ -230,11 +215,7 @@ def _has_result(line: str) -> bool:
 
 
 def _evidence_problems(section: Section) -> list[tuple[int, str]]:
-    """Require commands in inline code, each with a result on its line.
-
-    Returns:
-        ``(line, message)`` problems; empty when every command has a result.
-    """
+    """Require inline-code commands with a result on their line; empty when valid."""
     commands = [
         (number, line, match[0])
         for number, line in section.body
@@ -257,11 +238,7 @@ def _is_placeholder(name: str) -> bool:
 
 
 def _placeholder_problems(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
-    """Report template placeholders that were left unfilled.
-
-    Returns:
-        ``(line, message)`` problems, one per unfilled placeholder.
-    """
+    """Return one ``(line, message)`` problem per unfilled template placeholder."""
     return [
         (number, f"unfilled placeholder '{match[0]}'")
         for number, line in lines
@@ -278,7 +255,7 @@ def check_text(text: str, *, shown: str) -> list[Finding]:
         shown (str): Path printed in findings.
 
     Returns:
-        Findings sorted by line and message.
+        list[Finding]: Findings sorted by line and message.
     """
     lines = content_lines(text)
     sections = find_sections(lines)

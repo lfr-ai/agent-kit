@@ -29,6 +29,6 @@ from role assets for this repository and are not included in consumer profiles.
 
 Run `task verify -- coverage` to detect missing/disappearing replacements and
 `task verify` for the full gate. Features remain opt-in; available is not active.
-Run `uv run --locked python -m scripts.check_resources --json` for the actual per-skill resource census.
+Run `uv run --locked python -m scripts.checks.resources --json` for the actual per-skill resource census.
 The coverage gate also rejects checklist-only or unreachable resource delivery;
 this minimum structure does not itself establish semantic completeness.

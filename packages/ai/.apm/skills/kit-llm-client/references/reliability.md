@@ -63,7 +63,7 @@ region. Client-side controls:
 ## Circuit breaker
 
 After a threshold of consecutive transient failures, the breaker opens and
-calls fail immediately with `LlmCircuitOpenError` for a cool-down period, then
+calls fail immediately with `LLMCircuitOpenError` for a cool-down period, then
 one probe call is allowed. This keeps a provider outage from turning into
 thread or connection exhaustion, and gives callers a fast, typed signal to show
 a degraded experience. Share one breaker per provider endpoint across callers.

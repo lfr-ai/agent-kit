@@ -1,6 +1,6 @@
 """Tests for the settings template; they never touch the real environment.
 
-Replace 'shop.settings' with the module that holds the copied settings.
+Replace ``shop.settings`` with the module that holds the copied settings.
 """
 
 import pytest

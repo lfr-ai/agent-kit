@@ -9,8 +9,9 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_DOWN, Decimal
+from typing import Final
 
-CENT = Decimal("0.01")
+CENT: Final[Decimal] = Decimal("0.01")
 
 
 class InvoiceStateError(ValueError):
@@ -45,7 +46,7 @@ def split_amount(total: Decimal, *, parts: int) -> list[Decimal]:
         parts (int): Number of installments; at least 1.
 
     Returns:
-        Installments in payment order.
+        list[Decimal]: Installments in payment order.
 
     Raises:
         ValueError: If ``parts`` is less than 1 or ``total`` is negative.
@@ -71,7 +72,7 @@ def overdue_invoices(invoices: Iterable[Invoice], *, today: date) -> Iterator[In
         today (date): The reporting date; injected so callers control time.
 
     Yields:
-        Each overdue invoice, in input order. Iteration ends when the input
+        Invoice: Each overdue invoice, in input order. Iteration ends when the input
         is exhausted.
     """
     for invoice in invoices:
@@ -111,7 +112,7 @@ class ReminderPolicy:
             today (date): The reporting date.
 
         Returns:
-            True when the invoice is overdue and outside the quiet period.
+            bool: True when the invoice is overdue and outside the quiet period.
 
         Raises:
             InvoiceStateError: If the invoice is already paid.

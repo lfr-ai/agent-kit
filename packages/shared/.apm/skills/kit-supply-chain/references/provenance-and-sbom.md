@@ -8,7 +8,7 @@ artifact digest and verified by the consumer.
 
 ## Automation references
 
-| Reference | Pin | Updated by | Detailed owner |
+| Reference | Pin | Updated by | Detailed owner (when installed) |
 | --- | --- | --- | --- |
 | GitHub Action or reusable workflow | full 40-character commit SHA plus a version comment | Dependabot `github-actions` | `kit-ci-review` (SHA pins, zizmor, permissions) |
 | Same-repository action or workflow | self-repository syntax, reviewed with the change | not needed | `kit-ci-review` |

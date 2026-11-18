@@ -50,7 +50,7 @@ _REDACTED_KEYS = frozenset(
 )
 
 
-class JsonFormatter(logging.Formatter):
+class JSONFormatter(logging.Formatter):
     """Emit one JSON object per record with trace correlation fields.
 
     Structured context is passed as ``extra={"fields": {...}}`` so that keys are
@@ -122,11 +122,8 @@ class Telemetry:
     def operation(self, name: str) -> Iterator[trace.Span]:
         """Trace a unit of work and mark the span as an error on exceptions.
 
-        Args:
-            name (str): Low-cardinality span name such as ``orders.process``.
-
-        Yields:
-            The active span, for adding attributes and events.
+        ``name`` is a low-cardinality span name such as ``orders.process``. The
+        active span is yielded for attributes and events; exceptions re-raise.
         """
         with self.tracer.start_as_current_span(name) as span:
             try:
@@ -191,7 +188,7 @@ def configure_telemetry(
     metrics.set_meter_provider(meter_provider)
 
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter())
+    handler.setFormatter(JSONFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
     meter = metrics.get_meter(service_name, service_version)

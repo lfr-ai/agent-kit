@@ -536,7 +536,7 @@ def test_langfuse_adapter_is_facade_only_and_requires_export_approval() -> None:
     assert _imports(path) - sys.stdlib_module_names == {"evals"}
     names = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
     assert {
-        "ExperimentSdk",
+        "ExperimentSDK",
         "ExperimentIdentity",
         "LangfuseExperimentRunner",
         "ExportNotApprovedError",

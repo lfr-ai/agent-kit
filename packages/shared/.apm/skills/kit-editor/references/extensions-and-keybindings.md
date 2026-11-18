@@ -22,6 +22,23 @@ linters and type checkers (including Mypy and Pylance) are unwanted. Ruff owns
 formatting, linting and imports; ty owns types. Remove the Python entries and
 matching settings in a repository without Python.
 
+Add a stack entry only when the repository owns matching files:
+
+| Repository owns | Recommend | Mark unwanted |
+| --- | --- | --- |
+| Bicep files | `ms-azuretools.vscode-bicep` | |
+| Terraform files | `hashicorp.terraform` | |
+| Dockerfiles or Compose files | `ms-azuretools.vscode-containers` | `ms-azuretools.vscode-docker` (superseded) |
+| Jinja or Copier templates | `samuelcolvin.jinjahtml` | |
+| GitHub workflows | `github.vscode-github-actions` | |
+| Vitest tests | `vitest.explorer` | |
+| Playwright tests | `ms-playwright.playwright` | |
+| PostgreSQL schema or queries | `ms-ossdata.vscode-pgsql` | |
+
+Azure account extensions (resource explorers, Container Apps, GitHub Copilot
+for Azure) are personal choices under rule 4: deployments run from CI with
+workload identity, so the repository does not depend on them.
+
 Review each identifier before committing it:
 
 1. Confirm the publisher and identifier in the Marketplace or the Open VSX

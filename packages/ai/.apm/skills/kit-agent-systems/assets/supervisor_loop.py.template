@@ -8,13 +8,13 @@ and records a content-free trajectory for evaluation and tracing.
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum, unique
+from enum import StrEnum, auto, unique
 import hashlib
 import json
 import time
-from typing import Protocol, final
+from typing import Final, Protocol, final
 
-DEFAULT_MAX_REPEATS: int = 2
+DEFAULT_MAX_REPEATS: Final[int] = 2
 _DIGEST_CHARS = 16
 
 
@@ -23,7 +23,7 @@ _DIGEST_CHARS = 16
 class CallTool:
     """Ask the tool gateway to run one allow-listed tool.
 
-    Args:
+    Attributes:
         name (str): Tool name.
         arguments (Mapping[str, object]): Model-proposed arguments.
     """
@@ -37,7 +37,7 @@ class CallTool:
 class Delegate:
     """Hand a bounded subtask to a named worker agent.
 
-    Args:
+    Attributes:
         worker (str): Registered worker name.
         task (str): Self-contained subtask description.
     """
@@ -51,7 +51,7 @@ class Delegate:
 class Finish:
     """End the run with an answer.
 
-    Args:
+    Attributes:
         answer (str): Final answer for the caller.
     """
 
@@ -66,7 +66,7 @@ type Action = CallTool | Delegate | Finish
 class Observation:
     """Result of one action as seen by the supervisor model.
 
-    Args:
+    Attributes:
         action (Action): Action that produced it.
         ok (bool): Whether the action succeeded.
         content (str): Result text, already bounded by the tool or worker.
@@ -82,7 +82,7 @@ class Observation:
 class ModelTurn:
     """One supervisor decision and its cost.
 
-    Args:
+    Attributes:
         action (Action): Chosen action.
         cost_micros (int): Cost of this model call in millionths of a currency unit.
     """
@@ -95,11 +95,11 @@ class ModelTurn:
 class Outcome(StrEnum):
     """Terminal status of a run; only ``COMPLETED`` carries an answer."""
 
-    COMPLETED = "completed"
+    COMPLETED = auto()
     STEP_BUDGET = "step_budget_exhausted"
     COST_BUDGET = "cost_budget_exhausted"
     DEADLINE = "deadline_exceeded"
-    REPEATED_ACTION = "repeated_action"
+    REPEATED_ACTION = auto()
 
 
 @final
@@ -107,7 +107,7 @@ class Outcome(StrEnum):
 class TrajectoryStep:
     """Content-free record of one step for traces and trajectory evaluation.
 
-    Args:
+    Attributes:
         index (int): Zero-based step number.
         kind (str): ``tool``, ``delegate`` or ``finish``.
         target (str): Tool or worker name; empty for ``finish``.
@@ -129,7 +129,7 @@ class TrajectoryStep:
 class RunResult:
     """Terminal result of a supervisor run.
 
-    Args:
+    Attributes:
         outcome (Outcome): Why the run stopped.
         answer (str | None): Answer when completed.
         trajectory (tuple[TrajectoryStep, ...]): Steps taken.
@@ -147,7 +147,7 @@ class RunResult:
 class Budget:
     """Hard limits for one run.
 
-    Args:
+    Attributes:
         max_steps (int): Maximum supervisor decisions.
         max_cost_micros (int): Maximum total model cost.
         deadline_seconds (float): Wall-clock limit for the whole run.

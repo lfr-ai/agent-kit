@@ -1,0 +1,378 @@
+# Azure API Management and the orders API in Terraform, mirroring
+# main.bicep, apim.bicep, and api.bicep: system-assigned identity, TLS 1.0
+# and 1.1 off, Application Insights logger with managed identity, sampled
+# request telemetry without headers or bodies, resource logs to Log
+# Analytics, Key Vault-backed named values, and the global and API policies.
+# Copy to apim/main.tf next to policies/ and openapi/ (see
+# references/apiops.md), keep per-environment values in env/<env>.tfvars
+# (non-secret values only), and commit .terraform.lock.hcl. Review the tier
+# against the current feature matrix before choosing it.
+#
+# Every argument here exists in azurerm 5.x, so azapi is not needed. Use one
+# publisher per instance: do not also deploy the Bicep templates or APIOps
+# CLI artifacts to it.
+
+terraform {
+  required_version = ">= 1.10.0, < 2.0.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 5.13"
+    }
+  }
+}
+
+# Credentials come from the environment (OIDC in CI, Azure CLI locally).
+# azurerm 5.x no longer registers resource providers: register
+# Microsoft.ApiManagement and Microsoft.Insights once per subscription.
+provider "azurerm" {
+  features {}
+}
+
+variable "environment" {
+  description = "Environment name used in tags; prod requires subscription approval."
+  type        = string
+
+  validation {
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "environment must be dev, test, or prod."
+  }
+}
+
+variable "resource_group_name" {
+  description = "Existing resource group for the service; also holds Application Insights and Key Vault."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region of the service."
+  type        = string
+}
+
+variable "apim_name" {
+  description = "API Management service name (globally unique, 1-50 characters)."
+  type        = string
+}
+
+variable "sku_name" {
+  description = "Tier and scale units, for example BasicV2_1 outside production."
+  type        = string
+  default     = "StandardV2_1"
+}
+
+variable "publisher_email" {
+  description = "Publisher contact shown in notifications and the developer portal."
+  type        = string
+}
+
+variable "publisher_name" {
+  description = "Publisher organization name."
+  type        = string
+}
+
+variable "app_insights_name" {
+  description = "Existing Application Insights component in the resource group."
+  type        = string
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Existing Log Analytics workspace resource ID for resource logs."
+  type        = string
+}
+
+variable "key_vault_name" {
+  description = "Existing Key Vault in the resource group that holds named-value secrets."
+  type        = string
+}
+
+variable "sampling_percentage" {
+  description = "Percentage of requests sent to Application Insights; errors are always logged."
+  type        = number
+  default     = 25
+}
+
+variable "jwt_issuer" {
+  description = "Token issuer, for example https://login.example.com/tenant/v2.0."
+  type        = string
+}
+
+variable "jwt_openid_config_url" {
+  description = "OpenID Connect metadata URL of the token issuer."
+  type        = string
+}
+
+variable "global_calls_per_minute" {
+  description = "Global per-client call backstop per minute."
+  type        = number
+  default     = 600
+}
+
+variable "orders_audience" {
+  description = "Audience that callers request tokens for."
+  type        = string
+}
+
+variable "orders_backend_url" {
+  description = "Orders service base URL without a trailing slash."
+  type        = string
+}
+
+variable "orders_backend_app_id" {
+  description = "Entra application ID URI or client ID that the orders service accepts as token audience."
+  type        = string
+}
+
+variable "orders_backend_key_secret_id" {
+  description = "Optional Key Vault secret URI without a version for a backend key; empty when the backend accepts Entra tokens."
+  type        = string
+  default     = ""
+}
+
+locals {
+  tags = {
+    environment = var.environment
+    workload    = "shop-api"
+  }
+
+  # Plain named values referenced as {{name}} by policies/global.xml and
+  # policies/orders-api.xml. Never put a secret here; secrets are Key
+  # Vault-backed (orders-backend-key below).
+  named_values = {
+    "jwt-issuer"              = var.jwt_issuer
+    "jwt-openid-config-url"   = var.jwt_openid_config_url
+    "global-calls-per-minute" = tostring(var.global_calls_per_minute)
+    "orders-api-audience"     = var.orders_audience
+    "orders-backend-app-id"   = var.orders_backend_app_id
+  }
+}
+
+data "azurerm_application_insights" "shop" {
+  name                = var.app_insights_name
+  resource_group_name = var.resource_group_name
+}
+
+data "azurerm_key_vault" "shop" {
+  name                = var.key_vault_name
+  resource_group_name = var.resource_group_name
+}
+
+resource "azurerm_api_management" "shop" {
+  name                = var.apim_name
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  publisher_name      = var.publisher_name
+  publisher_email     = var.publisher_email
+  sku_name            = var.sku_name
+  tags                = local.tags
+
+  # Reject management calls from old API versions that ignore newer safeguards.
+  min_api_version = "2021-08-01"
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  # These equal the provider defaults, but the security block is optional and
+  # computed: only a declared block makes plan revert an old protocol that was
+  # re-enabled outside Terraform.
+  security {
+    frontend_tls10_enabled = false
+    frontend_tls11_enabled = false
+    backend_tls10_enabled  = false
+    backend_tls11_enabled  = false
+  }
+}
+
+# The logger authenticates to Application Insights with the service identity.
+resource "azurerm_role_assignment" "metrics_publisher" {
+  scope                = data.azurerm_application_insights.shop.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_api_management.shop.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+# Key Vault-backed named values are read with the service identity.
+resource "azurerm_role_assignment" "key_vault_secrets_user" {
+  scope                = data.azurerm_key_vault.shop.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_api_management.shop.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_api_management_logger" "app_insights" {
+  name                = "appinsights"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  resource_id         = data.azurerm_application_insights.shop.id
+
+  application_insights {
+    connection_string  = data.azurerm_application_insights.shop.connection_string
+    identity_client_id = "SystemAssigned"
+  }
+
+  depends_on = [azurerm_role_assignment.metrics_publisher]
+}
+
+# Instance-wide request telemetry. No frontend_* or backend_* blocks: headers
+# and bodies can carry tokens, keys, and personal data, so none are logged.
+# Client IPs are not logged either (service default). Add named headers only
+# after review.
+resource "azurerm_api_management_diagnostic" "app_insights" {
+  identifier                = "applicationinsights"
+  api_management_name       = azurerm_api_management.shop.name
+  resource_group_name       = var.resource_group_name
+  api_management_logger_id  = azurerm_api_management_logger.app_insights.id
+  sampling_percentage       = var.sampling_percentage
+  always_log_errors         = true
+  http_correlation_protocol = "W3C"
+  verbosity                 = "information"
+  metrics_enabled           = true
+}
+
+# Gateway resource logs and platform metrics for dashboards and alerts.
+resource "azurerm_monitor_diagnostic_setting" "apim" {
+  name                           = "to-log-analytics"
+  target_resource_id             = azurerm_api_management.shop.id
+  log_analytics_workspace_id     = var.log_analytics_workspace_id
+  log_analytics_destination_type = "Dedicated"
+
+  enabled_log {
+    category_group = "allLogs"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_api_management_named_value" "plain" {
+  for_each = local.named_values
+
+  name                = each.key
+  display_name        = each.key
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  value               = each.value
+}
+
+# Reference the secret without a version so rotation is picked up.
+resource "azurerm_api_management_named_value" "orders_backend_key" {
+  count = var.orders_backend_key_secret_id == "" ? 0 : 1
+
+  name                = "orders-backend-key"
+  display_name        = "orders-backend-key"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  secret              = true
+
+  value_from_key_vault {
+    secret_id = var.orders_backend_key_secret_id
+  }
+
+  depends_on = [azurerm_role_assignment.key_vault_secrets_user]
+}
+
+# Policies are read with file(), not templatefile(), so {{named-value}}
+# references reach API Management unchanged.
+resource "azurerm_api_management_policy" "global" {
+  api_management_id = azurerm_api_management.shop.id
+  xml_content       = file("${path.module}/policies/global.xml")
+
+  depends_on = [azurerm_api_management_named_value.plain]
+}
+
+resource "azurerm_api_management_api_version_set" "orders" {
+  name                = "orders"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Orders"
+  versioning_scheme   = "Segment"
+}
+
+# Certificate chain and name validation stay on (service default); never add
+# a tls block that turns them off.
+resource "azurerm_api_management_backend" "orders" {
+  name                = "orders-backend"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  protocol            = "http"
+  url                 = var.orders_backend_url
+
+  circuit_breaker_rule {
+    name                       = "orders-server-errors"
+    trip_duration              = "PT1M"
+    accept_retry_after_enabled = true
+
+    failure_condition {
+      count             = 10
+      interval_duration = "PT1M"
+      error_reasons     = ["Server errors"]
+
+      status_code_range {
+        min = 500
+        max = 599
+      }
+    }
+  }
+}
+
+# One API per version, imported from the contract owner's OpenAPI document;
+# never edit the imported operations in the portal.
+resource "azurerm_api_management_api" "orders_v1" {
+  name                = "orders-v1"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  revision            = "1"
+  display_name        = "Orders"
+  path                = "orders"
+  protocols           = ["https"]
+  version             = "v1"
+  version_set_id      = azurerm_api_management_api_version_set.orders.id
+
+  import {
+    content_format = "openapi+json"
+    content_value  = file("${path.module}/openapi/orders.v1.json")
+  }
+}
+
+resource "azurerm_api_management_api_policy" "orders_v1" {
+  api_name            = azurerm_api_management_api.orders_v1.name
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  xml_content         = file("${path.module}/policies/orders-api.xml")
+
+  depends_on = [
+    azurerm_api_management_named_value.plain,
+    azurerm_api_management_named_value.orders_backend_key,
+    azurerm_api_management_backend.orders,
+  ]
+}
+
+resource "azurerm_api_management_product" "orders_standard" {
+  product_id          = "orders-standard"
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Orders standard"
+  description         = "Standard access to Orders; limits are enforced by API and product policies."
+  published           = true
+  approval_required   = var.environment == "prod"
+  subscriptions_limit = 1
+}
+
+resource "azurerm_api_management_product_api" "orders_v1" {
+  api_name            = azurerm_api_management_api.orders_v1.name
+  product_id          = azurerm_api_management_product.orders_standard.product_id
+  api_management_name = azurerm_api_management.shop.name
+  resource_group_name = var.resource_group_name
+}
+
+output "gateway_url" {
+  description = "Gateway base URL."
+  value       = azurerm_api_management.shop.gateway_url
+}
+
+output "principal_id" {
+  description = "Principal ID of the system-assigned identity; grant it backend roles."
+  value       = azurerm_api_management.shop.identity[0].principal_id
+}

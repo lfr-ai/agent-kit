@@ -57,17 +57,11 @@ class Policy:
     def __call__[**P, R](self, function: Callable[P, R], /) -> Callable[P, R]: ...
 
     def __call__(self, function: Callable[..., object], /) -> Callable[..., object]:
-        """Return a wrapper that runs ``function`` inside the scope.
+        """Wrap ``function`` to run in the scope; generators raise ``TypeError``.
 
-        Args:
-            function (Callable[..., object]): Ordinary or coroutine function.
-
-        Returns:
-            A wrapper of the same kind (``async def`` for a coroutine function)
-            whose signature and result type match ``function``.
-
-        Raises:
-            TypeError: If ``function`` is a generator or async generator function.
+        The wrapper keeps the kind (``async def`` for a coroutine function),
+        signature and result type of ``function``; async generator functions are
+        rejected too.
         """
         if inspect.isgeneratorfunction(function) or inspect.isasyncgenfunction(
             function

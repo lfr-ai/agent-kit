@@ -11,12 +11,29 @@ folder in the example. A small CLI or library may need fewer modules. Keep
 cohesive records and helpers together; split when responsibilities or change
 ownership diverge. Introduce a subpackage for a real cluster of modules with a
 clear public API, not a speculative future layer or an arbitrary class count.
+Follow native Python naming: `snake_case` modules/functions, `PascalCase` classes
+and type aliases, and `UPPER_CASE` constants. PEP 8 recommends uppercase acronym
+chunks in CapWords (for example `SMTPFactory` and `APMClient`, not `SmtpFactory`
+or `ApmClient`); the bundled checker's `acronym-case` rule flags common acronyms
+in class and type alias names, including `TypeAlias` declarations. It preserves
+standard leading spellings `HttpOnly` and `XMLHttpRequest` (for example
+`HttpOnlyCookieJar` and `XMLHttpRequestShim`) and checks acronym plurals such as
+`URLsConfig` and `SMTPSClient`. Group only cohesive features and do not repeat
+the folder in a module name: inside `invoicing/` prefer `service.py` over
+`invoicing_service.py`; inside `infrastructure/` prefer `postgres.py` over
+`postgres_adapter.py`
+(the package names the role; compare Cosmic Python's `adapters/repository.py`).
+Flatten a subpackage that holds a single module. Preserve established
+public imports rather than performing cosmetic breaking renames.
 
 Use the selected `kit-consistency` naming/layout guidance for canonical names
 and centralization decisions. Shared knowledge belongs to its semantic owner;
 similar syntax does not justify a global registry, universal DTO or `common`
 package. Preserve inward imports when extracting shared code. Renames must also
 update entry points, fixtures, resource paths and known public import aliases.
+Keep module constants with their semantic owner; share only when meaning and
+reuse justify it, not in a central global constants dump. Local convention:
+private `_UPPER` stays unannotated; public `UPPER` uses explicit `Final[T]`.
 
 ## Default layout
 
@@ -100,7 +117,8 @@ class Container:
 
 
 def build_container(settings: Settings) -> Container:
-    repository = SqlInvoiceRepository(dsn=settings.database_dsn)
+    """Return invoice services wired to production adapters from ``settings``."""
+    repository = SQLInvoiceRepository(dsn=settings.database_dsn)
     return Container(
         invoices=InvoiceService(repository=repository, clock=SystemClock())
     )
@@ -110,6 +128,7 @@ Tests build the same graph with fakes:
 
 ```python
 def build_test_container() -> Container:
+    """Return invoice services wired to fake storage and a fixed clock."""
     return Container(
         invoices=InvoiceService(
             repository=InMemoryInvoiceRepository(), clock=FixedClock()

@@ -3,12 +3,19 @@
 Copy into ``src/shop/cache/port.py``. Application code depends on these
 protocols only; the Redis adapter (``redis_cache.py``) and the in-memory fake
 (``memory.py``) implement them. Values cross the port as ``bytes`` so the
-codec, not the store, owns the serialized shape.
+codec, not the store, owns the serialized shape. The jitter and lock defaults
+below are shared by ``CachePolicy`` and ``CacheSettings``.
 """
 
 from collections.abc import Mapping, Sequence
 import json
-from typing import Protocol
+from typing import Final, Protocol
+
+DEFAULT_JITTER_RATIO: Final[float] = 0.1
+MAX_JITTER_RATIO: Final[float] = 0.5
+DEFAULT_LOCK_TTL_SECONDS: Final[float] = 10.0
+DEFAULT_LOCK_WAIT_SECONDS: Final[float] = 2.0
+DEFAULT_LOCK_POLL_SECONDS: Final[float] = 0.05
 
 
 class CacheUnavailableError(Exception):
@@ -21,16 +28,14 @@ class Cache(Protocol):
     async def get(self, key: str) -> bytes | None:
         """Return the stored bytes for a key, or ``None`` on a miss.
 
-        Raises:
-            CacheUnavailableError: The store failed or timed out.
+        A failed or timed-out store raises ``CacheUnavailableError``.
         """
         ...
 
     async def get_many(self, keys: Sequence[str]) -> list[bytes | None]:
         """Return stored bytes for several keys, in the order requested.
 
-        Raises:
-            CacheUnavailableError: The store failed or timed out.
+        A failed or timed-out store raises ``CacheUnavailableError``.
         """
         ...
 
@@ -52,8 +57,7 @@ class Cache(Protocol):
     async def delete(self, *keys: str) -> int:
         """Delete keys and return how many existed.
 
-        Raises:
-            CacheUnavailableError: The store failed or timed out.
+        A failed or timed-out store raises ``CacheUnavailableError``.
         """
         ...
 
@@ -100,30 +104,24 @@ class Codec[T](Protocol):
         ...
 
 
-type JsonValue = (
-    str | int | float | bool | Sequence[JsonValue] | Mapping[str, JsonValue] | None
+type JSONValue = (
+    str | int | float | bool | Sequence[JSONValue] | Mapping[str, JSONValue] | None
 )
 
 
-class JsonCodec:
+class JSONCodec:
     """Compact UTF-8 JSON codec for plain data; never use pickle for shared stores."""
 
-    def encode(self, value: JsonValue) -> bytes:
-        """Serialize plain data as compact, key-sorted JSON.
-
-        Raises:
-            TypeError: The value contains a type JSON cannot represent.
-        """
+    def encode(self, value: JSONValue) -> bytes:
+        """Serialize plain data as compact, key-sorted JSON or raise ``TypeError``."""
         return json.dumps(
             value, separators=(",", ":"), sort_keys=True, ensure_ascii=False
         ).encode()
 
-    def decode(self, data: bytes) -> JsonValue:
-        """Parse JSON bytes.
+    def decode(self, data: bytes) -> JSONValue:
+        """Parse UTF-8 JSON bytes or raise ``ValueError`` when they are invalid.
 
-        Raises:
-            ValueError: The bytes are not valid UTF-8 JSON (``JSONDecodeError``
-                and ``UnicodeDecodeError`` both subclass ``ValueError``).
+        ``JSONDecodeError`` and ``UnicodeDecodeError`` both subclass ``ValueError``.
         """
-        parsed: JsonValue = json.loads(data)
+        parsed: JSONValue = json.loads(data)
         return parsed

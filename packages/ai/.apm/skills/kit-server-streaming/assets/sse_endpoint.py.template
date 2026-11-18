@@ -20,6 +20,7 @@ import contextlib
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from typing import Final
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -49,7 +50,7 @@ _DEFAULT_RETRY_MILLISECONDS = 3000
 # Authenticate with headers or cookies; never accept tokens in the query string.
 Authorizer = Callable[[Request, str], Awaitable[bool]]
 
-SSE_HEADERS = {
+SSE_HEADERS: Final[dict[str, str]] = {
     "Cache-Control": "no-cache, no-transform",
     "X-Accel-Buffering": "no",
 }

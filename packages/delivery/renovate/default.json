@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Digest-pinned actions and images, 7-day release-age gate, OSV alerts, approved majors, weekly lock maintenance.",
+  "extends": [
+    "config:best-practices",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":semanticCommitTypeAll(chore)"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 5,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "labels": [
+      "dependencies",
+      "security"
+    ],
+    "minimumReleaseAge": null,
+    "schedule": [
+      "at any time"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "config:best-practices lowers npm (Bun) to 3 days; retain the 7-day gate.",
+      "matchDatasources": [
+        "npm"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "One reviewable PR for all GitHub Actions updates.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "Majors, including shared delivery workflows and templates, wait for Dependency Dashboard approval.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

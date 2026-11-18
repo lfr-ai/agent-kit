@@ -8,12 +8,12 @@ failures to stable error codes without exception text.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum, unique
+from enum import StrEnum, auto, unique
 import logging
 import re
-from typing import Protocol, final
+from typing import Final, Protocol, final
 
-MAX_TEXT_LENGTH: int = 4000
+MAX_TEXT_LENGTH: Final[int] = 4000
 _NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 logger = logging.getLogger(__name__)
@@ -23,20 +23,20 @@ logger = logging.getLogger(__name__)
 class SideEffect(StrEnum):
     """What a tool can change outside the agent."""
 
-    NONE = "none"
-    WRITE = "write"
-    EXTERNAL = "external"
+    NONE = auto()
+    WRITE = auto()
+    EXTERNAL = auto()
 
 
 @unique
 class ToolErrorCode(StrEnum):
     """Stable codes returned to the model and recorded in traces."""
 
-    UNKNOWN_TOOL = "unknown_tool"
-    INVALID_ARGUMENTS = "invalid_arguments"
-    APPROVAL_REQUIRED = "approval_required"
-    NOT_FOUND = "not_found"
-    UNAVAILABLE = "unavailable"
+    UNKNOWN_TOOL = auto()
+    INVALID_ARGUMENTS = auto()
+    APPROVAL_REQUIRED = auto()
+    NOT_FOUND = auto()
+    UNAVAILABLE = auto()
 
 
 type ParameterType = type[str | int | float | bool]
@@ -47,7 +47,7 @@ type ParameterType = type[str | int | float | bool]
 class Parameter:
     """One typed tool argument.
 
-    Args:
+    Attributes:
         name (str): Argument name.
         kind (ParameterType): Exact Python type; ``bool`` is not an ``int``.
         description (str): Meaning and units, shown to the model.
@@ -67,7 +67,7 @@ class Parameter:
 class ToolSpec:
     """Narrow, documented tool contract.
 
-    Args:
+    Attributes:
         name (str): Lowercase snake-case name.
         description (str): When to use the tool and what it returns.
         parameters (tuple[Parameter, ...]): Accepted arguments; others fail.
@@ -82,11 +82,7 @@ class ToolSpec:
     errors: tuple[ToolErrorCode, ...]
 
     def json_schema(self) -> dict[str, object]:
-        """Return a JSON Schema for provider tool definitions.
-
-        Returns:
-            dict[str, object]: Object schema without additional properties.
-        """
+        """Return the provider tool JSON Schema, an object with no extra properties."""
         names = {str: "string", int: "integer", float: "number", bool: "boolean"}
         return {
             "type": "object",
@@ -104,7 +100,7 @@ class ToolSpec:
 class ToolResult:
     """Result returned to the model; never contains exception text.
 
-    Args:
+    Attributes:
         ok (bool): Whether the tool succeeded.
         content (str): Bounded result text, empty on failure.
         error (ToolErrorCode | None): Stable code on failure.
@@ -190,11 +186,7 @@ class ToolRegistry:
         self._completed: dict[str, ToolResult] = {}
 
     def definitions(self) -> list[dict[str, object]]:
-        """Return provider-neutral definitions for the allowed tools.
-
-        Returns:
-            list[dict[str, object]]: Name, description and schema per tool.
-        """
+        """Return provider-neutral name, description and schema per allowed tool."""
         return [
             {
                 "name": tool.spec.name,

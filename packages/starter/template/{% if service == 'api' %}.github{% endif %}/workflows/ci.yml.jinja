@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+# Superseded pull request runs stop; pushes and deploy calls never cancel each other.
+concurrency:
+  group: ci-{% raw %}${{ github.event.pull_request.number || github.run_id }}{% endraw %}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    permissions:
+      contents: read
+    uses: lfr-ai/agent-kit/.github/workflows/delivery-python-ci.yml@{{ kit_commit }} # reviewed toolkit commit
+    with:
+      python-version: "3.13"
+      uv-version: "0.13.3"
+      task: ci
+{% if iac != 'none' %}
+
+  sources:
+    name: Verify IaC sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+{% if iac == 'bicep' %}
+      - run: python3 scripts/vendor_bicep.py --check
+{% else %}
+      - name: Require reviewed provider lock
+        run: test -s infra/.terraform.lock.hcl
+{% endif %}
+
+  infra:
+    needs: sources
+    permissions:
+      contents: read
+    uses: lfr-ai/agent-kit/.github/workflows/delivery-{{ iac }}-check.yml@{{ kit_commit }} # reviewed toolkit commit
+    with:
+{% if iac == 'bicep' %}
+      bicep-version: "0.48.1"
+      path: infra
+{% else %}
+      terraform-version: "1.16.7"
+      working-directory: infra
+{% endif %}
+{% endif %}

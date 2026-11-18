@@ -9,12 +9,13 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from shop.cli import ExitCode, main
 
-ORDER = {
+ORDER: Final[dict[str, list[dict[str, str | int]]]] = {
     "lines": [
         {"unit_price": "1.20", "quantity": 2},
         {"unit_price": "0.05", "quantity": 1},

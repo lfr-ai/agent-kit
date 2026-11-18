@@ -1,6 +1,6 @@
 ---
 name: kit-refactor
-description: Use when restructuring code while preserving its observable contract and keeping the change narrowly scoped.
+description: Use when restructuring code without changing observable behavior.
 license: MIT
 ---
 

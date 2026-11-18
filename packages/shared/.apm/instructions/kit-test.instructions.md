@@ -13,5 +13,5 @@ applyTo: "**/test_*.py,**/*_test.py,**/*.test.*,**/*.spec.*"
 - Keep tests independent of execution order, wall-clock timing, and undeclared local state; clean up created files.
 - Use parameterized cases for input tables instead of loops with shared assertions.
 - Keep unit, integration, and end-to-end tests in their declared locations and markers.
-- Preserve meaningful assertions; diagnose failures rather than weakening, skipping, or retrying gates.
+- Preserve meaningful assertions; change one only when the contract changed, and diagnose failures rather than weakening, skipping, or retrying gates.
 - Mark an expected failure only with a linked reason and a removal condition.

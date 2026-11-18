@@ -1,0 +1,24 @@
+"""Health endpoints served through the runtime foundation."""
+
+import asyncio
+from http import HTTPStatus
+from importlib import import_module
+
+from httpx import ASGITransport, AsyncClient
+
+
+async def _get(path: str) -> tuple[int, object]:
+    app = import_module("app.main").build_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://service.test"
+    ) as client:
+        response = await client.get(path)
+    return response.status_code, response.json()
+
+
+def test_liveness_reports_ok() -> None:
+    assert asyncio.run(_get("/health/live")) == (HTTPStatus.OK, {"status": "ok"})
+
+
+def test_readiness_reports_ready_with_available_dependencies() -> None:
+    assert asyncio.run(_get("/health/ready")) == (HTTPStatus.OK, {"status": "ready"})

@@ -4,8 +4,12 @@
 # - Hooks in the default stage are fast and check-only where a tool offers it,
 #   so a commit never silently rewrites code you did not review. The few
 #   whitespace fixers below are safe, idempotent and easy to review.
-# - Python tools pinned in the project lockfile run through 'uv run --locked'
-#   so pre-commit, CI and the editor use one version.
+# - Python tools pinned in the project lockfile run through
+#   'uv run --locked --no-sync' from the environment 'uv sync --locked' built,
+#   so a commit never installs packages and pre-commit, CI and the editor use
+#   one version.
+# - Commit hooks stay file-scoped and fast; unit tests and repository-wide pin
+#   checks run at pre-push, once per push instead of once per commit.
 # - Slow or network-bound hooks use the 'manual' stage and run in CI or with
 #   'pre-commit run --hook-stage manual --all-files'.
 # - Hook repositories are frozen to full commit SHAs. Update them with
@@ -14,7 +18,7 @@
 #   undigested images, package runners and unlocked installs.
 
 minimum_pre_commit_version: "4.4"
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit, manual]
 # Lockfiles belong to package-manager validation; build outputs are checked
 # through their authored sources, not rewritten by file-hygiene hooks.
@@ -92,12 +96,12 @@ repos:
         files: ^(pyproject\.toml|uv\.lock)$
       - id: ruff-format-check
         name: ruff format (check only)
-        entry: uv run --locked ruff format --check
+        entry: uv run --locked --no-sync ruff format --check
         language: unsupported
         types_or: [python, pyi]
       - id: ruff-check
         name: ruff lint (check only)
-        entry: uv run --locked ruff check
+        entry: uv run --locked --no-sync ruff check
         language: unsupported
         types_or: [python, pyi]
       - id: type-check
@@ -109,25 +113,27 @@ repos:
         files: (\.pyi?$|^(ty\.toml|pyproject\.toml|uv\.lock)$)
       - id: import-contracts
         name: import contracts
-        entry: uv run --locked lint-imports
+        entry: uv run --locked --no-sync lint-imports
         language: unsupported
         pass_filenames: false
         types: [python]
       - id: unit-tests
         name: unit and property tests
-        entry: uv run --locked pytest -m "unit or property" -q
+        entry: uv run --locked --no-sync pytest -m "unit or property" -q
         language: unsupported
         pass_filenames: false
         types: [python]
+        stages: [pre-push]
       - id: version-pins
         name: exact versions, frozen hooks and digest-pinned images
-        entry: uv run --locked python scripts/check_pins.py --root .
+        entry: uv run --locked --no-sync python scripts/check_pins.py --root .
         language: unsupported
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
       - id: full-gate
         name: full gate including slow steps (manual)
-        entry: uv run --locked python scripts/run_gate.py --include-slow --keep-going
+        entry: uv run --locked --no-sync python scripts/run_gate.py --include-slow --keep-going
         language: unsupported
         pass_filenames: false
         always_run: true

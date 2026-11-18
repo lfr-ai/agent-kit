@@ -144,11 +144,10 @@ def enqueue(task: Task, body: bytes, *, countdown_s: float = 0.0) -> None:
 def describe_settings() -> Mapping[str, object]:
     """Return the delivery-relevant settings, for startup logs and reviews.
 
-    Returns:
-        Mapping[str, object]: Current Celery values keyed by ``task_acks_late``,
-        ``task_reject_on_worker_lost``, ``worker_prefetch_multiplier``,
-        ``task_time_limit``, ``task_soft_time_limit`` and
-        ``broker_transport_options``; the last value is the transport options map.
+    Current Celery values are keyed by ``task_acks_late``,
+    ``task_reject_on_worker_lost``, ``worker_prefetch_multiplier``,
+    ``task_time_limit``, ``task_soft_time_limit`` and
+    ``broker_transport_options``; the last value is the transport options map.
     """
     keys = (
         "task_acks_late",

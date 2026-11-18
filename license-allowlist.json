@@ -7,6 +7,7 @@
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    "CNRI-Python",
     "ISC",
     "LicenseRef-BSD-unspecified",
     "MIT",
@@ -34,9 +35,24 @@
       "reason": "The distribution's bundled LICENSE contains BSD redistribution terms; its trove classifier is inaccurate. Reviewed 2026-10-22.",
       "expires": "2027-04-30"
     },
+    "jinja2-ansible-filters": {
+      "license": "GPL3",
+      "reason": "Genuinely GPL-3.0-or-later. Accepted by the owner on 2026-11-16 as development-only tooling: Copier requires it unconditionally to render and test the starter, and shipped Python dependency closures must exclude it. test_gpl_generator_dependency_stays_development_only enforces that locked scope. Remove when copier-org/copier#2039 ships.",
+      "expires": "2027-04-30"
+    },
     "multidict": {
       "license": "Apache License 2.0",
       "reason": "The free-text License field and bundled LICENSE are Apache-2.0. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    },
+    "protobuf": {
+      "license": "3-Clause BSD License",
+      "reason": "The free-text License field and bundled LICENSE are BSD-3-Clause; required by the runtime telemetry OTLP exporter. Reviewed 2026-11-11.",
+      "expires": "2027-04-30"
+    },
+    "pytest-timeout": {
+      "license": "UNKNOWN",
+      "reason": "The License field and OSI classifier are MIT and the bundled LICENSE is MIT; the extra 'License :: DFSG approved' classifier has no SPDX mapping. Development-only test dependency. Reviewed 2026-11-14.",
       "expires": "2027-04-30"
     },
     "rich-click": {
@@ -47,6 +63,11 @@
     "sqlite-fts4": {
       "license": "Apache License, Version 2.0",
       "reason": "The free-text License field and bundled LICENSE are Apache-2.0. Reviewed 2026-10-22.",
+      "expires": "2027-04-30"
+    },
+    "tiktoken": {
+      "license": "UNKNOWN",
+      "reason": "The distribution's License field embeds full text and is unusable by the metadata-only guard; bundled licenses/LICENSE is MIT. Reviewed 2026-11-05.",
       "expires": "2027-04-30"
     }
   }

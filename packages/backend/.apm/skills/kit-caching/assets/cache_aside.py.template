@@ -36,18 +36,23 @@ import random
 import re
 import secrets
 
-from shop.cache.port import Cache, CacheUnavailableError, Codec, DistributedLock
+from shop.cache.port import (
+    DEFAULT_JITTER_RATIO,
+    DEFAULT_LOCK_POLL_SECONDS,
+    DEFAULT_LOCK_TTL_SECONDS,
+    DEFAULT_LOCK_WAIT_SECONDS,
+    MAX_JITTER_RATIO,
+    Cache,
+    CacheUnavailableError,
+    Codec,
+    DistributedLock,
+)
 
 _VALUE_MARKER = b"v"
 _MISSING_MARKER = b"n"
 _LOCK_SUFFIX = ":lock"
 _MAX_PLAIN_PART_LENGTH = 64
 _PLAIN_PART = re.compile(r"[A-Za-z0-9._@{}-]+")
-_DEFAULT_JITTER_RATIO = 0.1
-_MAX_JITTER_RATIO = 0.5
-_DEFAULT_LOCK_TTL_SECONDS = 10.0
-_DEFAULT_LOCK_WAIT_SECONDS = 2.0
-_DEFAULT_LOCK_POLL_SECONDS = 0.05
 
 type CacheEventSink = Callable[[str, str], None]
 """Receives ``(namespace, event)``; events are hit, negative_hit, miss, load,
@@ -82,10 +87,10 @@ class CachePolicy:
 
     ttl_seconds: float
     negative_ttl_seconds: float | None = None
-    jitter_ratio: float = _DEFAULT_JITTER_RATIO
-    lock_ttl_seconds: float = _DEFAULT_LOCK_TTL_SECONDS
-    lock_wait_seconds: float = _DEFAULT_LOCK_WAIT_SECONDS
-    lock_poll_seconds: float = _DEFAULT_LOCK_POLL_SECONDS
+    jitter_ratio: float = DEFAULT_JITTER_RATIO
+    lock_ttl_seconds: float = DEFAULT_LOCK_TTL_SECONDS
+    lock_wait_seconds: float = DEFAULT_LOCK_WAIT_SECONDS
+    lock_poll_seconds: float = DEFAULT_LOCK_POLL_SECONDS
 
     def __post_init__(self) -> None:
         """Reject policies that would never expire or would wait forever.
@@ -101,8 +106,8 @@ class CachePolicy:
         ):
             msg = "negative_ttl_seconds must be positive and at most ttl_seconds"
             raise ValueError(msg)
-        if not 0 <= self.jitter_ratio <= _MAX_JITTER_RATIO:
-            msg = f"jitter_ratio must be between 0 and {_MAX_JITTER_RATIO}"
+        if not 0 <= self.jitter_ratio <= MAX_JITTER_RATIO:
+            msg = f"jitter_ratio must be between 0 and {MAX_JITTER_RATIO}"
             raise ValueError(msg)
         if (
             self.lock_poll_seconds <= 0
@@ -239,9 +244,8 @@ class CachedLoader[T]:
     async def invalidate(self, *parts: str) -> None:
         """Delete one entry after the source change has committed.
 
-        Raises:
-            CacheUnavailableError: The delete failed; the entry stays until its
-                TTL. Retry through an outbox when the budget requires it.
+        A failed delete raises ``CacheUnavailableError`` and the entry stays until
+        its TTL; retry through an outbox when the budget requires it.
         """
         await self._cache.delete(self.key(*parts))
 

@@ -19,6 +19,7 @@ owning CLI handles one-off work. Prerequisites: [contributing](../CONTRIBUTING.m
 | Fast subset | `task test -- -m "not integration and not slow"` |
 | tox Python matrix and coverage | `task test:matrix`, `task test:matrix -- -e unit` |
 | Format, lint, types | `task format`, `task lint`, `task typecheck` |
+| Fast inner loop (fix, types, unit and property tests) | `task check` |
 | All pre-commit-stage hooks | `task precommit` |
 | Conventional Commit | `task commit` |
 | Version and changelog preview / preparation | `task version:preview`, `task version:prepare` |
@@ -31,7 +32,7 @@ One-off commands, not Task targets:
 
 ```powershell
 uv run --locked --no-sync python scripts/verify.py --help
-uv run --locked python -m scripts.check_resources --json
+uv run --locked python -m scripts.checks.resources --json
 uv run --locked python -m scripts.render_native --write
 uv run --locked pre-commit run jscpd --all-files
 ```
@@ -47,7 +48,7 @@ Notes:
 - Do not run `task test:matrix` alongside another coverage gate: they share
   report paths. Test tiers: [tests/README.md](../tests/README.md).
 - `AGENT_KIT_DIR` handling: see [improve the kit](feedback.md#change-a-capability).
-- [check_conventions.py](../scripts/check_conventions.py) owns the AST gate
+- [conventions.py](../scripts/checks/conventions.py) owns the AST gate
   (`--templates --only magic-number` for templates). Name nontrivial numbers;
   `0`, `1`, `-1`, annotations and test expectations are exempt. Docstrings use
   double-backtick literals; Markdown uses single backticks.
@@ -55,14 +56,22 @@ Notes:
 ## Hooks and runtimes
 
 [.pre-commit-config.yaml](../.pre-commit-config.yaml) owns hook order, frozen
-SHAs, image digests and stages: **pre-commit** by default, **commit-msg** for
-Commitizen, no manual stage. Changed locks are audited before hooks sync; see
+SHAs, image digests and stages: **pre-commit** by default for fast
+file-scoped checks, **pre-push** for one `toolkit-static` hook running
+`scripts/verify.py static` (every read-only gate, including ty, import
+contracts and pins, in parallel) plus duplication and links, **commit-msg** for
+Commitizen, no manual stage. CI runs both stages on every file and skips only
+`toolkit-static` there, because the verify matrix runs the same registry.
+Existing clones run `task bootstrap` again to
+install the pre-push hook. Local hooks reuse the bootstrapped environment
+(`uv run --locked --no-sync`); only `dependency-licenses` syncs, and only after
+`dependency-audit` has audited a changed lock; see
 [dependency security](dependency-security.md).
 
 | Requirement | Detail |
 | --- | --- |
 | Node.js | Needed for upstream Node hooks managed by pre-commit |
-| Bun | Runs locked jscpd with `bun run --bun jscpd`; bootstrap uses `bun install --frozen-lockfile`; [bunfig.toml](../bunfig.toml) disables lifecycle scripts; CI's pin is in [ci.yml](../.github/workflows/ci.yml) |
+| Bun | Runs locked jscpd with `bun run --bun jscpd`; bootstrap uses `bun install --frozen-lockfile`; [bunfig.toml](../bunfig.toml) disables lifecycle scripts; CI's pin is in [toolkit-ci.yml](../.github/workflows/toolkit-ci.yml) |
 | Docker engine | Needed by the `lychee-docker` link hook; Container Tools does not provide it |
 | Network | Link checks; jscpd scans the whole repository |
 
@@ -94,13 +103,48 @@ canonical source and regenerate with its owner; never edit attested output.
 Lychee accepts HTTP 403/429, so success does not prove content. The offline docs
 gate checks local files, not external links or anchors.
 
+### Convention ownership
+
+The [Python instructions](../.apm/instructions/kit-python.instructions.md) and
+[portable checker](../packages/backend/.apm/skills/kit-python-service/assets/check_python.py)
+own the Python contract. Prefer a complete one-line summary for simple helpers.
+Expand documentation when constraints, side effects, return semantics or errors
+need explanation, not because a function is public or has several parameters.
+Do not repeat signatures mechanically or add empty sections; supplied sections
+must remain accurate. Nontrivial private helpers need useful explanations too.
+
+Private `_UPPER` constants are unannotated; public constants use explicit
+`Final[T]`. This is a local convention: bare `Final` is valid Python typing and
+supports inference. `Final` prevents rebinding during static checking, not
+mutation of a referenced dictionary. Keep constants with their semantic owner;
+extract shared definitions only for genuinely shared knowledge.
+Enums reject accidental aliases and retain explicit serialized values.
+Boundary type, path and URL checks remain necessary even when a native parser
+handles syntax.
+
+When changing a rule, prove the default gate discovers the affected package or
+template and rejects a forbidden synthetic fixture. An import configuration
+must cover optional adapters and public composition facades too. Metadata
+presence alone proves neither enforcement nor native agent behavior.
+
+PEP 8 recommends keeping acronym chunks uppercase in class names, such as
+`APMCLIAdapter`. A pinned version stays a string unless ordering or version
+arithmetic requires a parser. Positional indexes such as `items[0]` are not
+automatically unexplained magic numbers; name protocol versions, units and
+opaque capture groups when that clarifies their meaning.
+
+The `# /// script` block in portable scripts follows
+[PyPA's inline metadata specification](https://packaging.python.org/en/latest/specifications/inline-script-metadata/).
+Keep this machine-readable metadata; place long procedural guidance in linked
+references rather than expanding every module's docstring.
+
 ### Exceptions must explain intent
 
 Every active suppression needs a short, specific reason. Name the narrow rule
 and explain why it does not apply; a rule code or “reviewed exception” is not a
 reason. Remove obsolete suppressions rather than justifying them after the fact.
-The [suppression gate](../scripts/check_suppressions.py) runs in `task verify`
-and the always-on pre-commit hooks. It checks authored code and templates,
+The [suppression gate](../scripts/checks/suppressions.py) runs in `task verify`
+and the pre-push static gate. It checks authored code and templates,
 not dependencies or generated projections. It validates the presence of a
 reason; reviewers still decide whether the exception is justified.
 Keep reasons in the directive only when the tool supports trailing prose.
@@ -120,9 +164,9 @@ the rationale for the existing JSON settings is recorded here:
 | [.coveragerc](../.coveragerc) | Typing-only branches, launch guards and abstract placeholders are excluded; executable implementations and CLI behavior remain test obligations. |
 | [.coderabbit.yaml](../.coderabbit.yaml) | Review canonical source rather than generated projections or machine-written locks; Ruff replaces overlapping Flake8/Pylint feedback. Hosted configuration is not proof the service is active. |
 
-[Source selection](../src/agent_kit/infrastructure/catalog_adapter.py) prunes
+[Source selection](../src/agent_kit/infrastructure/catalog.py) prunes
 bytecode, Git internals, Node dependencies and caches; such files in composed
-output still fail provenance. The [APM adapter](../src/agent_kit/infrastructure/apm_adapter.py)
+output still fail provenance. The [APM adapter](../src/agent_kit/infrastructure/apm.py)
 times out at 900 seconds by default and [smoke](../scripts/apm_smoke.py) at 1800;
 both use the pinned environment's APM launcher. Nonzero exits and timeouts fail.
 
@@ -141,7 +185,10 @@ A committed configuration does not prove a hosted scanner reads it.
 | detect-secrets | `--baseline .secrets.baseline` passed explicitly | None |
 
 - zizmor policies only set a 14-day Dependabot cooldown. actionlint's `-ignore`
-  covers only the unsupported `$/` workflow-call diagnostic; remove it when supported.
+  covers the unsupported `$/` workflow-call diagnostic and the exact source-bound
+  Python check action reference. Native schemas, delivery closure checks and
+  governance validate those references; unknown actions are not ignored.
+  Remove each syntax exception when actionlint supports it.
 - Do not add empty Gitleaks/OSV suppression files without a reviewed exception.
 - Hosted checks are advisory and may skip or use other versions.
 - Run `ty check` at the root; `ty check packages` finding no files is not evidence.
@@ -174,12 +221,14 @@ The [editor contract](editor.md#workspace-contract) owns recognized filenames.
 Keep strict **.vscode/settings.json** with `check-json` and no exclusions;
 renaming to **settings.jsonc** breaks discovery.
 
-## Future Copier templates
+## Copier template
 
-This repository is not yet a Copier template. When one is built: render only
-selected workflows and toolchains; keep Task small and Bun/Node/Python pinned;
-keep recognized editor filenames; review trust before executable tasks and never
-auto-enable them; test fresh renders and updates in disposable projects.
+The root [copier.yml](../copier.yml) renders the
+[starter](../packages/starter/README.md) from **packages/starter/template**. Keep
+it that way: render only selected workflows and toolchains; keep Task small and
+Bun/Node/Python pinned; keep recognized editor filenames; declare no executable
+`_tasks`, so rendering never requires `--trust`; test fresh renders and updates
+in disposable projects.
 
 ## Primary references
 

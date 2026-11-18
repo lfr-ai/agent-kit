@@ -1,0 +1,40 @@
+{
+  "recommendations": [
+    "davidanson.vscode-markdownlint",
+    "editorconfig.editorconfig",
+{%- if service == 'api' %}
+    "charliermarsh.ruff",
+    "github.vscode-github-actions",
+{%- endif %}
+{%- if iac == 'terraform' %}
+    "hashicorp.terraform",
+{%- endif %}
+{%- if iac == 'bicep' %}
+    "ms-azuretools.vscode-bicep",
+{%- endif %}
+{%- if service == 'api' %}
+    "ms-azuretools.vscode-containers",
+    "ms-python.debugpy",
+    "ms-python.python",
+{%- endif %}
+{%- if kind in ['frontend', 'fullstack'] %}
+    "ms-playwright.playwright",
+{%- endif %}
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml",
+    "task.vscode-task"
+{%- if kind in ['frontend', 'fullstack'] %},
+    "vitest.explorer"
+{%- endif %}
+  ],
+  "unwantedRecommendations": [
+    "ms-azuretools.vscode-docker"
+{%- if service == 'api' %},
+    "ms-python.autopep8",
+    "ms-python.black-formatter",
+    "ms-python.flake8",
+    "ms-python.isort",
+    "ms-python.pylint"
+{%- endif %}
+  ]
+}

@@ -36,9 +36,10 @@ import argparse
 import ast
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, unique
 from pathlib import Path
 import sys
+from typing import Final
 
 _EXIT_FINDINGS = 1
 _EXIT_USAGE = 2
@@ -76,6 +77,7 @@ _DEFAULT_EXCLUDES = frozenset(
 )
 
 
+@unique
 class Rule(StrEnum):
     """Rule identifiers printed with each finding."""
 
@@ -85,14 +87,16 @@ class Rule(StrEnum):
     OS_PATH = "os-path"
 
 
-DEFAULT_RULES = frozenset({Rule.TYPING_ALIAS, Rule.PERCENT_FORMAT})
+DEFAULT_RULES: Final[frozenset[Rule]] = frozenset(
+    {Rule.TYPING_ALIAS, Rule.PERCENT_FORMAT}
+)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Finding:
     """One legacy construct.
 
-    Args:
+    Attributes:
         path: File that contains the construct.
         line: One-based line number.
         rule: Rule that matched.
@@ -110,11 +114,7 @@ class Finding:
 
 
 def _module_aliases(tree: ast.Module) -> dict[str, str]:
-    """Map local names bound by ``import`` statements to their modules.
-
-    Returns:
-        Module names keyed by local alias.
-    """
+    """Return module names keyed by the local alias each ``import`` binds."""
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -202,6 +202,8 @@ class _Scanner(ast.NodeVisitor):
 def check_source(source: str, path: str, *, rules: frozenset[Rule]) -> list[Finding]:
     """Return legacy constructs in one source text.
 
+    Source that does not parse propagates ``SyntaxError``.
+
     Args:
         source (str): Python source code.
         path (str): Path used in findings.
@@ -209,9 +211,6 @@ def check_source(source: str, path: str, *, rules: frozenset[Rule]) -> list[Find
 
     Returns:
         Findings sorted by line and rule.
-
-    Raises:
-        SyntaxError: The source does not parse.
     """
     tree = ast.parse(source, filename=path)
     scanner = _Scanner(rules=rules, aliases=_module_aliases(tree))
@@ -274,48 +273,25 @@ def f(x: list[int] | None) -> int:
 """
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by ``--self-test``."""
-
-    LEGACY_MISSED = "legacy sample findings differ from the expected findings"
-    DEFAULTS_CHANGED = "policy opt-in rules fired with default rules"
-    MODERN_FLAGGED = "modern sample produced findings"
-    SYNTAX_ACCEPTED = "unparsable source was accepted"
-
-
-class SelfTestError(RuntimeError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-        """
-        super().__init__(issue.value)
-
-
-def self_test() -> None:
-    """Exercise every rule, the opt-in defaults and parse failures.
-
-    Raises:
-        SelfTestError: A documented behavior regressed.
-    """
+def self_test() -> list[str]:
+    """Return regressions in every rule, the opt-in defaults and parse failures."""
     every_rule = frozenset(Rule)
     found = check_source(_SELF_TEST_SOURCE, "self.py", rules=every_rule)
     rendered = tuple(item.render().rsplit(": ", 1)[0] for item in found)
+    failures: list[str] = []
     if rendered != _SELF_TEST_EXPECTED:
-        raise SelfTestError(SelfTestIssue.LEGACY_MISSED)
+        failures.append("legacy sample findings differ from the expected findings")
     defaults = check_source(_SELF_TEST_SOURCE, "self.py", rules=DEFAULT_RULES)
     if {item.rule for item in defaults} != DEFAULT_RULES:
-        raise SelfTestError(SelfTestIssue.DEFAULTS_CHANGED)
+        failures.append("policy opt-in rules fired with default rules")
     if check_source(_SELF_TEST_CLEAN, "clean.py", rules=every_rule):
-        raise SelfTestError(SelfTestIssue.MODERN_FLAGGED)
+        failures.append("modern sample produced findings")
     try:
         check_source("def broken(:\n", "broken.py", rules=every_rule)
     except SyntaxError:
-        return
-    raise SelfTestError(SelfTestIssue.SYNTAX_ACCEPTED)
+        return failures
+    failures.append("unparsable source was accepted")
+    return failures
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -357,11 +333,7 @@ def _rules(args: argparse.Namespace) -> frozenset[Rule]:
 
 
 def _scan(files: Sequence[Path], *, rules: frozenset[Rule]) -> tuple[list[str], int]:
-    """Return rendered findings and the number of unreadable files.
-
-    Returns:
-        Rendered findings in file order and the number of unreadable files.
-    """
+    """Return rendered findings in file order and the number of unreadable files."""
     lines: list[str] = []
     failures = 0
     for path in files:
@@ -394,10 +366,11 @@ def _check(args: argparse.Namespace) -> int:
 
 def _run_self_test() -> int:
     """Run the self-test, print its outcome and return the exit status."""
-    try:
-        self_test()
-    except SelfTestError as error:
-        sys.stderr.write(f"check_legacy_syntax self-test failed: {error}\n")
+    failures = self_test()
+    sys.stderr.writelines(
+        f"check_legacy_syntax self-test failed: {failure}\n" for failure in failures
+    )
+    if failures:
         return _EXIT_FINDINGS
     sys.stdout.write("check_legacy_syntax self-test passed.\n")
     return 0

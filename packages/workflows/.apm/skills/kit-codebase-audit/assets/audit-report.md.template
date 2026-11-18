@@ -29,7 +29,7 @@ command with its output file.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | high | high | architecture | domain imports the HTTP client directly | `src/shop/domain/pricing.py:7`; `lint-imports` contract "Domain stays free of frameworks" broken | 3 | `kit-hexagonal-architecture` | B1 |
 | 2 | high | medium | error handling | broad except hides declined payments, caller retries | `src/shop/application/checkout.py:88` | 1 | `kit-python-service` | B1 |
-| 3 | medium | high | complexity | functions above complexity 10 in hot spots | `audit/tool-findings.md` rank 2 (`C901`), `src/shop/orders/rules.py:40` | 14 | `kit-refactor` | B2 |
+| 3 | medium | high | complexity | functions above complexity 10 in hot spots | `$AUDIT_DIR/tool-findings.md` rank 2 (`C901`), `src/shop/orders/rules.py:40` | 14 | `kit-refactor` | B2 |
 | 4 | `<severity>` | `<confidence>` | `<area>` | `<finding>` | `<path:line or command>` | `<n>` | `<skill>` | `<batch>` |
 
 ## Tool summary

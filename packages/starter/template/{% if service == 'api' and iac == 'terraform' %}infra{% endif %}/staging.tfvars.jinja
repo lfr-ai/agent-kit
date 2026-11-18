@@ -1,0 +1,35 @@
+# Production-like: zone redundancy, >=2 replicas, locks and an internal environment.
+# Caller-owned region defaults to the target resource group; image comes from CI.
+resource_group_id = "REPLACE_WITH_RESOURCE_GROUP_ARM_ID"
+stage             = "staging"
+name_prefix       = "{{ project_name[:20].rstrip('-') }}-staging"
+{% if registry == 'acr' %}
+# Globally unique: change it if taken. Premium is required for the private endpoint.
+registry_name = "{{ (project_name | replace('-', ''))[:40] }}stagingacr"
+registry_sku  = "Premium"
+{% endif %}
+
+network_address_prefix = "REPLACE_WITH_NONOVERLAPPING_CIDR"
+
+{% if data == 'postgresql' %}
+postgres_administrator = {
+  object_id = "REPLACE_WITH_ENTRA_ADMIN_OBJECT_ID"
+  name      = "REPLACE_WITH_ENTRA_ADMIN_DISPLAY_NAME"
+  type      = "Group"
+}
+postgres_database = "app"
+{% endif %}
+{% if ai_service == 'text' %}
+ai_deployment = {
+  name     = "text"
+  model    = "REPLACE_WITH_REGIONAL_MODEL"
+  version  = "REPLACE_WITH_PINNED_MODEL_VERSION"
+  sku      = "REPLACE_WITH_DEPLOYMENT_SKU"
+  capacity = 1
+}
+{% endif %}
+environment_variables          = {}
+secret_references              = []
+alerts_unmonitored             = false
+alert_email_receivers          = []
+alert_action_group_resource_id = "REPLACE_WITH_ACTION_GROUP_ARM_ID"

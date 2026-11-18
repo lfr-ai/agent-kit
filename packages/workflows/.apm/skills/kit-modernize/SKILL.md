@@ -1,6 +1,6 @@
 ---
 name: kit-modernize
-description: Use when upgrading Python versions, dependencies, packaging, or syntax in measured, reversible batches.
+description: Use when upgrading Python, dependencies, packaging or syntax in reversible batches.
 license: MIT
 ---
 

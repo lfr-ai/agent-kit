@@ -43,8 +43,8 @@ license: MIT
 9. Write docstrings per [docstring patterns](references/docstrings.md) and order
    code top-down per [method ordering](references/method-ordering.md). Apply
    the language idioms in [Python idioms](references/python-idioms.md):
-   parameter kinds, unrepeated defaults, enums for closed sets, `Final`,
-   `override`, record-type choice, and what to annotate.
+   parameter kinds, unrepeated defaults, named repeated literals, enums for
+   closed sets, `Final`, `override`, record-type choice, and what to annotate.
 10. Verify negative cases, types, import direction, and the project gate; run
     the bundled checkers below on the touched paths.
 
@@ -54,11 +54,14 @@ Avoid speculative layers or one-method wrappers without meaningful policy.
 
 - Public service API has unit and regression tests, including every documented
   error and at least one negative input per public operation.
-- Error contracts are typed, documented in `Raises:`, and stable.
+- Error contracts are typed, stable, and explained in prose or `Raises:` sections that list only what the body raises.
 - No secrets or personal data in logs, exception messages, or `repr`.
 - No production `Any`, `cast`, quoted forward references, or positional `bool`.
-- Records are frozen, keyword-only, and slotted; enums persisted on the wire
-  have explicit values.
+- Records are frozen, keyword-only, and slotted; ordinary closed enums declare
+  `unique` or `verify(UNIQUE)`. Use `auto()` for lowercase-name `StrEnum` values;
+  preserve other wire values explicitly and test serialization. Private module
+  constants stay unannotated; public constants use explicit `Final[T]`, beside
+  their semantic owner.
 - Presentation does not import infrastructure; the composition root is the only
   module that constructs adapters.
 - The bundled checkers report no findings for the touched paths, or each
@@ -68,21 +71,32 @@ Avoid speculative layers or one-method wrappers without meaningful policy.
 
 All are standard-library scripts that parse source without importing it, print
 `path:line: message`, and exit 1 on findings.
+Their `# /// script` headers retain standard PEP 723 inline metadata; this is
+not a custom comment convention. The living specification is
+[PyPA inline script metadata](https://packaging.python.org/en/latest/specifications/inline-script-metadata/).
 
 | Script | Purpose |
 | --- | --- |
-| [check_python.py](assets/check_python.py) | Double-backtick docstring literals, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`, opt-in `--bool-trap`, `--magic-numbers`, `--redundant-defaults`, and `--docstrings` section validation. |
+| [check_python.py](assets/check_python.py) | Double-backtick literals, constant visibility, enum uniqueness and default `StrEnum` auto values, `Any`/`cast`, quoted annotations, initializer returns, dataclass options, bare `except`; opt-in `--bool-trap`, `--magic-numbers`, `--redundant-defaults`, `--repeated-literals` (literals compared twice in a module), and `--docstrings` presence, supplied-section, `Raises:` scope, one-input one-line and class-section checks. |
 | [check_method_ordering.py](assets/check_method_ordering.py) | Private helper placed after its sole caller (`--order`, `--scope`, `--ignore`). |
 | [check_backend_wiring.py](assets/check_backend_wiring.py) | Layer import rules (`--package`, `--forbid`, `--forbid-module`). |
 
 ```text
-python check_python.py src --bool-trap --magic-numbers --redundant-defaults --docstrings
+python check_python.py src --bool-trap --magic-numbers --redundant-defaults --repeated-literals --docstrings
 python check_python.py tests --bool-trap
-python check_python.py --only docstring-backtick packages
-python check_python.py --templates --only magic-number packages
+python check_python.py packages scripts --magic-numbers --docstrings
+python check_python.py --templates --magic-numbers --docstrings packages
 python check_method_ordering.py src
 python check_backend_wiring.py src --package shop --forbid presentation:infrastructure
 ```
+
+These are consumer invocation examples, not an installed gate configuration.
+The portable checker keeps docstring rules opt-in for selective use; this
+repository's actual `task verify -- conventions` gate enables them by default
+for production code, scripts, portable assets and production templates.
+Test docstrings and numeric expectations remain exempt; module constants follow
+the same private/public convention in tests. Neither the checker
+nor these commands rewrite source, wire values, or generated projections.
 
 ## Templates
 
@@ -106,17 +120,22 @@ Native role procedures for this profile live in [agents.json](assets/agents.json
 - Mark inline code with paired double-backtick reStructuredText literals in
   Python docstrings. Do not mark code with single quotes or single backticks.
   Markdown prose keeps normal CommonMark single-backtick syntax.
-- Keep summaries useful and concise. Expand Google-style sections only for
-  caller-relevant semantics, constraints, side effects, and expected failures.
-- Choose detail by the caller's contract, not parameter count: simple wrappers
-  and delegates may use one line even with several parameters. Preserve real
-  inputs, errors, constraints, and effects in concise prose or meaningful sections.
-  Document initializer arguments. See [docstrings](references/docstrings.md) for
-  the decision table and mechanical checks; structured return docs describe
-  fields/keys, ordering, and empty cases.
+- Public callables need docstrings. A callable with at most one input (excluding
+  `self`/`cls`) gets a one-line summary that folds in its result and raised
+  errors, never sections; initializers still explain their arguments in prose
+  or `Args:`. Do not mechanically restate signatures.
+- Add sections only when useful; preserve real constraints, effects, failures,
+  structured-result fields, ordering and empty cases. Supplied sections must be
+  complete; optional repeated types must be correct. No `Returns:` for `None`,
+  `Never` or `NoReturn`. `Raises:` lists only what the body raises, translates
+  or re-raises, never callee failures; class docstrings use `Attributes:`, never
+  `Args:` or `Raises:`.
+  Tests and explicit inherited documented interfaces keep narrow exceptions;
+  see [docstrings](references/docstrings.md).
 - Google permits descriptive or imperative summaries, consistently within a file,
-  and does not require repeating annotated types. The toolkit includes types
-  when `Args:`, `Returns:`, or `Yields:` sections are present.
+  and does not require repeating annotated types. This checker follows that
+  guidance while checking any optional repeated type. Likewise bare `Final` is
+  valid Python typing syntax; explicit public `Final[T]` is our local style choice.
 - Sphinx/reStructuredText renders double-backtick literals as code. The local
   conventions gate enforces paired double backticks in docstrings; it does not
   change Markdown file syntax.

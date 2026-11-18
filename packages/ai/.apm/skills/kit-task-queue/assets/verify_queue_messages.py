@@ -23,16 +23,22 @@ configuration, visibility timeouts, or delivery guarantees.
 
 import argparse
 from datetime import datetime
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import sys
+from typing import Final
 
-SECRET_KEYS = frozenset({"password", "secret", "token", "api_key", "authorization"})
-_DEFAULT_MAX_ENVELOPE_BYTES = 64 * 1024
+SECRET_KEYS: Final[frozenset[str]] = frozenset(
+    {"password", "secret", "token", "api_key", "authorization"}
+)
+_KIB = 1024
+# Default --max-bytes; mirrors MAX_ENVELOPE_BYTES in task_contracts.py.template.
+_DEFAULT_MAX_ENVELOPE_BYTES = 64 * _KIB
 _EXIT_USAGE = 2
 
 
+@unique
 class QueueInputIssue(StrEnum):
     """Supported queue input validation failures and their stable messages."""
 
@@ -50,23 +56,17 @@ class QueueInputError(ValueError):
 
         Args:
             issue (QueueInputIssue): The violated input invariant.
-            value (str | None): Diagnostic value for the invalid input.
+            value (str | None): Raw ``--supported`` value that is not
+                ``TYPE:VERSION``.
         """
         super().__init__(issue.value.format(value=value))
 
 
 def items_with_lines(text: str) -> list[tuple[int, object]]:
-    """Decode a top-level JSON array, keeping the line of each element.
+    """Return ``(line, element)`` pairs from one top-level JSON array.
 
-    Args:
-        text (str): JSON document text.
-
-    Returns:
-        Pairs of one-based line number and decoded element.
-
-    Raises:
-        QueueInputError: The document is not one JSON array.
-        ValueError: An element is not valid JSON.
+    Lines are one-based. Text that is not exactly one JSON array raises
+    ``QueueInputError``; an element that is not valid JSON propagates ``ValueError``.
     """
     decoder = json.JSONDecoder()
     index = len(text) - len(text.lstrip())
@@ -88,22 +88,16 @@ def items_with_lines(text: str) -> list[tuple[int, object]]:
 
 
 def _skip_separators(text: str, index: int) -> int:
+    """Return the first index at or after ``index`` past whitespace and commas."""
     while index < len(text) and text[index] in " \t\r\n,":
         index += 1
     return index
 
 
 def parse_supported(values: list[str]) -> dict[str, set[int]]:
-    """Parse ``--supported TYPE:VERSION`` values.
+    """Return task type to versions from ``--supported TYPE:VERSION`` values.
 
-    Args:
-        values (list[str]): Raw option values.
-
-    Returns:
-        Task type to supported versions.
-
-    Raises:
-        QueueInputError: If a value is malformed.
+    A malformed value raises ``QueueInputError``.
     """
     supported: dict[str, set[int]] = {}
     for value in values:

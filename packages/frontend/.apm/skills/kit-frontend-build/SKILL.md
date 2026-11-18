@@ -1,6 +1,6 @@
 ---
 name: kit-frontend-build
-description: Use when configuring Vite, Bun, tsconfig, Vitest, client environment variables, bundle budgets or source maps.
+description: Use when configuring Vite, Bun, tsconfig, Vitest, client env, bundle budgets or source maps.
 license: MIT
 ---
 

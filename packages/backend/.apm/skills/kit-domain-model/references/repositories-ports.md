@@ -29,7 +29,7 @@ Rules:
 
 ## Adapters
 
-- Production adapter in infrastructure (`SqlOrderRepository`) maps rows to
+- Production adapter in infrastructure (`SQLOrderRepository`) maps rows to
   aggregates using the aggregate's restore factory, and aggregates to rows.
 - In-memory adapter for tests (`InMemoryOrderRepository`) stores copies, honors
   the same version checks, and lives with the test support code or in

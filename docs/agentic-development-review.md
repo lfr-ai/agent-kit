@@ -66,19 +66,48 @@ Owners: [planning](../packages/shared/.apm/skills/kit-change-plan/SKILL.md),
 [verification](../packages/shared/.apm/skills/kit-verify-change/SKILL.md).
 Record durable failures as regressions, not more always-on prose.
 
+### Fast feedback and context ownership
+
+The everyday loop is one behavior, its owning source and a focused test. Use
+`task test -- <path> -n 0` for a small scope; use `--lf` while fixing failures.
+Full verification belongs at integration/handoff and CI, not after each edit.
+The [command matrix](../PROJECT.md#commands) is authoritative; this review does
+not introduce another gate registry or mandatory checklist runner.
+
+Keep root instructions short. Path-scoped instructions carry language rules;
+skills supply procedures only when selected. The session hook checks whether
+the three entry documents exist; it does not read or inject their contents.
+The edit hook examines one in-checkout Python file and caps diagnostic output.
+Neither hook installs tools, invokes a model, scans the whole catalog, or grants
+permission. Native host timeouts bound them; observed IDE latency still needs a
+named-host measurement.
+
+Use a worker when a substantial independent slice benefits from separate
+context, not for every lookup or test invocation. Give it an explicit write set
+and return only changes, evidence and blockers. Reuse reports rather than
+re-reading its entire scope. Do not add user-global skills, MCP services or
+duplicate instructions to make this repository appear more capable.
+Parent, user and plugin customizations can still add context; repository budgets
+do not measure or control those independently owned layers.
+
+The [current official-source review](sources.md#infrastructure-and-feedback-loop-review-2026-11-16)
+supports selective customization, cached tool environments and focused tests.
+It does not establish a model-quality or development-time improvement for
+this checkout. Measure comparable tasks before claiming one.
+
 ## 8. Repaired contracts
 
 The tests are the evidence, not old test counts.
 
 | Boundary | Required behavior |
 | --- | --- |
-| [Filesystem capture](../src/agent_kit/infrastructure/catalog_adapter.py), [provenance](../src/agent_kit/application/services/provenance_service.py) | Surface read failures; never attest missing or placeholder bytes |
-| [Composition](../src/agent_kit/application/services/catalog_service.py) | Reject generated-selection collisions before publication |
-| [Release products](../scripts/check_release.py) | Reject unsafe checksum paths, incomplete archives, case-changed entry points |
+| [Filesystem capture](../src/agent_kit/infrastructure/catalog.py), [provenance](../src/agent_kit/application/provenance/hashes.py) | Surface read failures; never attest missing or placeholder bytes |
+| [Composition](../src/agent_kit/application/catalog/planning.py) | Reject generated-selection collisions before publication |
+| [Release products](../scripts/checks/release.py) | Reject unsafe checksum paths, incomplete archives, case-changed entry points |
 | [Review package](../packages/shared/.apm/skills/kit-agent-runtime/assets/review_package.py) | Require acceptance criteria; reject traversal, including rename sources |
 | [Native rendering](../scripts/render_native.py) | Reject aliases, unowned collisions, edited output, extra roles |
-| [Session entry](../scripts/check_native.py) | Advisory only; no installs or authorization |
-| [CI governance](../scripts/check_governance.py) | Audit before install; reject weakened ref, review, status, timeout contracts |
+| [Session entry](../scripts/checks/native.py) | Advisory only; no installs or authorization |
+| [CI governance](../scripts/checks/governance/__init__.py) | Audit before install; reject weakened ref, review, status, timeout contracts |
 | [Template checks](../tests/unit/repo_guards/test_template_toolchains.py) | Resolve symbols in their declared module |
 | [YAML checks](../tests/unit/repo_guards/test_structured_templates.py) | Compare decoded key identity |
 | [Feedback loop](../packages/shared/.apm/skills/kit-feedback-loop/SKILL.md) | COMPLETE, ITERATE and BLOCKED differ; missing access is not a pass |

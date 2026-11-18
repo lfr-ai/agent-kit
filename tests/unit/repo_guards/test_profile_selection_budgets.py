@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 _ROOT = Path(__file__).resolve().parents[3]
+# Each case composes every supported profile combination; `task check` skips them.
+pytestmark = pytest.mark.slow
 _TOOL_SKILLS = {
     "terraform": "kit-terraform-validation",
     "bicep": "kit-azure-validation",

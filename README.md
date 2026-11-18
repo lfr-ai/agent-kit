@@ -1,7 +1,7 @@
 # Agent Kit
 
-[![CI](https://github.com/lfr-ai/agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/lfr-ai/agent-kit/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/lfr-ai/agent-kit/actions/workflows/codeql.yml/badge.svg)](https://github.com/lfr-ai/agent-kit/actions/workflows/codeql.yml)
+[![CI](https://github.com/lfr-ai/agent-kit/actions/workflows/toolkit-ci.yml/badge.svg)](https://github.com/lfr-ai/agent-kit/actions/workflows/toolkit-ci.yml)
+[![CodeQL](https://github.com/lfr-ai/agent-kit/actions/workflows/security-codeql.yml/badge.svg)](https://github.com/lfr-ai/agent-kit/actions/workflows/security-codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/lfr-ai/agent-kit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/lfr-ai/agent-kit)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

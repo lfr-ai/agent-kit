@@ -151,3 +151,18 @@ def test_exported_type_gates_use_the_same_checker(gate: SimpleNamespace) -> None
     for path in ("src/main.py", "src/main.pyi", "ty.toml", "pyproject.toml", "uv.lock"):
         assert re.search(hook["files"], path)
     assert not re.search(hook["files"], "README.md")
+
+
+def test_exported_hooks_reuse_the_environment_and_test_once_per_push() -> None:
+    """Commits never install packages; tests and repository-wide pins run at push."""
+    config = yaml.safe_load(
+        (_ASSET.parent / "pre-commit-config.yaml.template").read_text(encoding="utf-8")
+    )
+    hooks = {hook["id"]: hook for repo in config["repos"] for hook in repo["hooks"]}
+    for name, hook in hooks.items():
+        entry = hook.get("entry", "").split()
+        if entry[:2] == ["uv", "run"]:
+            assert entry[2:4] == ["--locked", "--no-sync"], name
+    assert "pre-push" in config["default_install_hook_types"]
+    assert hooks["unit-tests"]["stages"] == ["pre-push"]
+    assert hooks["version-pins"]["stages"] == ["pre-push"]

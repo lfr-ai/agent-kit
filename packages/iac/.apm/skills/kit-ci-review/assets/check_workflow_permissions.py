@@ -15,7 +15,6 @@ Exit codes: 0 clean, 1 findings, 2 unreadable input or bad arguments.
 import argparse
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 import re
 import sys
@@ -253,22 +252,16 @@ class WorkflowInputError(ValueError):
         """Describe the violated invariant.
 
         Args:
-            path (Path): Diagnostic path for the failing input.
+            path (Path): Missing file or directory named on the command line.
         """
         super().__init__(f"path does not exist: {path}")
 
 
 def collect_files(paths: Iterable[Path]) -> list[Path]:
-    """Expand directories into sorted YAML files; keep explicit files as given.
+    """Expand directories into sorted YAML files and keep explicit files as given.
 
-    Args:
-        paths (Iterable[Path]): Files or directories supplied by the operator.
-
-    Returns:
-        Sorted, de-duplicated file list.
-
-    Raises:
-        WorkflowInputError: If a path does not exist.
+    Return a sorted, de-duplicated file list; raise ``WorkflowInputError`` when a
+    path does not exist.
     """
     files: set[Path] = set()
     for path in paths:
@@ -285,39 +278,15 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     return sorted(files)
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    CLEAN_WORKFLOW_REJECTED = "clean workflow produced findings"
-    RISKY_WORKFLOW_FINDINGS = "risky workflow findings regressed: {lines}"
-    COMPOSITE_PERMISSIONS = "composite action must not require permissions"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue, *, lines: list[int] | None = None) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            lines (list[int] | None): Observed lines for the failing case.
-        """
-        super().__init__(issue.value.format(lines=lines))
-
-
-def self_test() -> None:
-    """Exercise passing and failing synthetic workflows without touching disk.
-
-    Raises:
-        SelfTestError: A synthetic workflow is misjudged.
-    """
+def self_test() -> list[str]:
+    """Return regressions found by scanning clean and risky synthetic workflows."""
     options = Options(
         trusted_owners=frozenset({"trusted-org"}),
         allowed_expressions=("runner.",),
         require_permissions=True,
     )
-    sha = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret - synthetic commit SHA
+    # This fake SHA lets the fixture test ownership checks without real credentials.
+    sha = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
     clean = (
         "name: ci\non:\n  push:\npermissions:\n  contents: read\n"
         "defaults:\n  run:  # job settings, not a script\n    shell: bash\n"
@@ -330,8 +299,9 @@ def self_test() -> None:
         '        run: |\n          echo "$TITLE"\n'
         "          echo ${{ runner.temp }}\n"
     )
+    failures: list[str] = []
     if scan_text(Path("clean.yml"), clean, options):
-        raise SelfTestError(SelfTestIssue.CLEAN_WORKFLOW_REJECTED)
+        failures.append("clean workflow produced findings")
     risky = (
         "on: pull_request_target\njobs:\n  build:\n    permissions: write-all\n"
         "    steps:\n      - uses: actions/checkout@v4\n      - uses: owner/action\n"
@@ -341,10 +311,11 @@ def self_test() -> None:
     )
     lines = [finding.line for finding in scan_text(Path("risky.yml"), risky, options)]
     if tuple(lines) != _SELF_TEST_RISKY_LINES:
-        raise SelfTestError(SelfTestIssue.RISKY_WORKFLOW_FINDINGS, lines=lines)
+        failures.append(f"risky workflow findings regressed: {lines}")
     action = "runs:\n  using: composite\n  steps:\n    - run: echo hi\n"
     if scan_text(Path("action.yml"), action, options):
-        raise SelfTestError(SelfTestIssue.COMPOSITE_PERMISSIONS)
+        failures.append("composite action must not require permissions")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -380,9 +351,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Workflow permission checker self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Workflow permission checker self-test {verdict}.\n")
+        return int(bool(failures))
     options = Options(
         trusted_owners=frozenset(args.trusted_owner),
         allowed_expressions=tuple(args.allow_expression),

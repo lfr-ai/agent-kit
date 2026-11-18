@@ -1,7 +1,7 @@
 # Ruff configuration for a one-off codebase audit.
-# Copy to audit-ruff.toml at the repository root (outside the audited paths
-# is fine) and run:
-#   ruff check --config audit-ruff.toml --output-format json --exit-zero . > audit/ruff.json
+# Copy to $AUDIT_DIR/audit-ruff.toml (an absolute temporary/session directory
+# outside the checkout) and run from the repository root:
+#   ruff check --config $AUDIT_DIR/audit-ruff.toml --output-format json --exit-zero . > $AUDIT_DIR/ruff.json
 # The selection is wider than a typical gate on purpose. Findings that only
 # this file enables are "not enforced today" in the report. Do not commit this
 # file as the project gate; adopt rules one family at a time from a baseline.

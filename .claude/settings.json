@@ -70,6 +70,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --locked --no-sync python -m scripts.edit_feedback claude",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

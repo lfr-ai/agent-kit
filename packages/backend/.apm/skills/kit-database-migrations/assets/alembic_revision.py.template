@@ -12,6 +12,7 @@ Create Date: 2026-01-15 10:00:00
 """
 
 from collections.abc import Sequence
+from typing import Final
 
 import sqlalchemy as sa
 from alembic import op
@@ -21,8 +22,8 @@ down_revision: str | None = "8e41b0c5a2f3"  # pragma: allowlist secret - Alembic
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-LOCK_TIMEOUT = "3s"
-STATEMENT_TIMEOUT = "60s"
+LOCK_TIMEOUT: Final[str] = "3s"
+STATEMENT_TIMEOUT: Final[str] = "60s"
 
 
 def _guard_locks() -> None:

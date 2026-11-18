@@ -21,7 +21,7 @@ class InvoiceNotFoundError(BillingError):
         """Record the missing identifier.
 
         Args:
-            invoice_id: Identifier that was looked up.
+            invoice_id (str): Identifier that was looked up.
         """
         super().__init__(f"invoice {invoice_id!r} was not found")
         self.invoice_id = invoice_id

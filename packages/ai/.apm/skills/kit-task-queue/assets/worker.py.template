@@ -19,7 +19,7 @@ import logging
 import random
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 
 from tasks.contracts import (
     Broker,
@@ -48,15 +48,16 @@ _DEFAULT_IDEMPOTENCY_LEASE_SECONDS = 600.0
 _RETRY_BACKOFF_FACTOR = 2
 
 
+@unique
 class Outcome(StrEnum):
     """What the worker did with one delivery."""
 
-    ACKED = "acked"
-    DUPLICATE = "duplicate"
-    DEFERRED = "deferred"
-    RETRIED = "retried"
-    DEAD_LETTERED = "dead_lettered"
-    LEASE_LOST = "lease_lost"
+    ACKED = auto()
+    DUPLICATE = auto()
+    DEFERRED = auto()
+    RETRIED = auto()
+    DEAD_LETTERED = auto()
+    LEASE_LOST = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -302,7 +303,8 @@ class Worker:
         """Emit one content-free lifecycle record.
 
         Args:
-            envelope (TaskEnvelope): Supplies task, type and correlation identifiers.
+            envelope (TaskEnvelope): Supplies task, type and correlation identifiers;
+                an absent correlation id is logged as an empty string.
             delivery (Delivery): Supplies the one-based delivery attempt count.
             outcome (Outcome): Lifecycle result recorded without payload content.
         """
@@ -311,7 +313,7 @@ class Worker:
             extra={
                 "task_type": envelope.task_type,
                 "task_id": envelope.task_id,
-                "correlation_id": envelope.correlation_id,
+                "correlation_id": envelope.correlation_id or "",
                 "attempt": delivery.receive_count,
                 "outcome": outcome.value,
             },

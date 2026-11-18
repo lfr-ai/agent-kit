@@ -1,0 +1,148 @@
+"""ASGI entry point for the {{ project_name }} service."""
+
+{% if data != 'none' or cache != 'none' or auth != 'none' or ai_service != 'none' -%}
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
+
+{% endif -%}
+from fastapi import FastAPI{% if auth == 'entra-bearer' %}, Request{% endif %}
+from platform_kit_runtime import create_app
+{%- if ai_service == 'text' %}
+from platform_kit_runtime.ai import AsyncTokenProvider, create_text_generator
+{%- endif %}
+{%- if data == 'postgresql' %}
+from platform_kit_runtime.database import create_database
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+from platform_kit_runtime.identity import (
+    BearerGuard,
+    Principal,
+    install_identity_handlers,
+    open_entra_bearer,
+)
+{%- endif %}
+{%- if cache == 'redis' %}
+from platform_kit_runtime.middleware import RedisRateLimitStore
+from redis.asyncio import Redis
+{%- endif %}
+
+from app.logging import configure_logging
+from app.settings import load_settings
+{%- if telemetry == 'application-insights' %}
+from app.telemetry import configure_azure_tracing
+{%- endif %}
+{%- if cache == 'redis' %}
+
+_REDIS_TIMEOUT_SECONDS = 2
+_REDIS_MAX_CONNECTIONS = 32
+_RATE_LIMIT_NAMESPACE = "{{ project_name }}:rate:"
+{%- endif %}
+
+
+def build_app() -> FastAPI:
+    """Return a configured app or raise ``RuntimeError`` for invalid settings."""
+    configure_logging()
+    settings = load_settings()
+{%- if telemetry == 'application-insights' %}
+    export = settings.azure_monitor()
+    if export is not None:
+        configure_azure_tracing(export)
+{%- endif %}
+{%- if data == 'postgresql' %}
+    credential = None
+    if settings.postgres_entra_authentication:
+        from azure.identity.aio import ManagedIdentityCredential  # noqa: PLC0415 - load the optional SDK only for explicitly selected database authentication
+
+        credential = ManagedIdentityCredential(
+            client_id=str(settings.postgres_managed_identity_client_id)
+        )
+    database = create_database(
+        settings=settings.database_config(), credential=credential
+    )
+{%- endif %}
+{%- if cache == 'redis' %}
+    redis = Redis.from_url(
+        settings.cache_url(),
+        socket_timeout=_REDIS_TIMEOUT_SECONDS,
+        socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
+        max_connections=_REDIS_MAX_CONNECTIONS,
+    )
+{%- endif %}
+{%- if data != 'none' or cache != 'none' or auth != 'none' or ai_service != 'none' %}
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Own selected resources for this application's serving lifetime."""
+        async with AsyncExitStack() as stack:
+{%- if data == 'postgresql' %}
+            if credential is not None:
+                stack.push_async_callback(credential.close)
+            await stack.enter_async_context(database.lifespan(app))
+            app.state.database = database
+            stack.callback(delattr, app.state, "database")
+{%- endif %}
+{%- if cache == 'redis' %}
+            stack.push_async_callback(redis.aclose)
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+            config = settings.identity_config()
+            validator = await stack.enter_async_context(
+                open_entra_bearer(config=config)
+            )
+            app.state.bearer_guard = BearerGuard(
+                config=config,
+                validator=validator,
+                scopes=settings.auth_scopes,
+                roles=settings.auth_roles,
+            )
+            stack.callback(delattr, app.state, "bearer_guard")
+{%- endif %}
+{%- if ai_service == 'text' %}
+            token_provider: AsyncTokenProvider | None = None
+            if settings.ai_entra_authentication:
+                from azure.identity.aio import (  # noqa: PLC0415 - selected authentication only; no ambient credential discovery
+                    ManagedIdentityCredential,
+                    get_bearer_token_provider,
+                )
+
+                ai_credential = ManagedIdentityCredential(
+                    client_id=str(settings.ai_managed_identity_client_id)
+                )
+                stack.push_async_callback(ai_credential.close)
+                token_provider = get_bearer_token_provider(
+                    ai_credential, "https://ai.azure.com/.default"
+                )
+            app.state.text_generator = create_text_generator(
+                config=settings.text_config(), token_provider=token_provider
+            )
+            stack.callback(delattr, app.state, "text_generator")
+{%- endif %}
+            yield
+{%- endif %}
+
+    app = create_app(
+        config=settings.runtime_config(),
+        probes={% if data == 'postgresql' %}(database.probe,){% else %}(){% endif %},
+{%- if data != 'none' or cache != 'none' or auth != 'none' or ai_service != 'none' %}
+        lifespan=lifespan,
+{%- endif %}
+{%- if cache == 'redis' %}
+        rate_limit_store=RedisRateLimitStore(
+            client=redis, prefix=_RATE_LIMIT_NAMESPACE
+        ),
+{%- endif %}
+    )
+{%- if auth == 'entra-bearer' %}
+    install_identity_handlers(app=app)
+
+    @app.get("/technical/identity")
+    async def identity(request: Request) -> dict[str, str]:
+        """Return verified technical identifiers; bearer errors propagate safely."""
+        guard: BearerGuard = request.app.state.bearer_guard
+        principal: Principal = await guard(request)
+        return {"tenant_id": principal.tenant_id, "subject_id": principal.subject_id}
+{% endif %}
+    return app
+
+
+app = build_app()

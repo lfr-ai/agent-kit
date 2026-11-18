@@ -225,11 +225,10 @@ def _trim(text: str, start: int, end: int) -> tuple[int, int]:
 
 
 def _sections(text: str) -> list[tuple[int, str]]:
-    """Return heading paths for Markdown ATX headings.
+    """Return ``(offset, title path)`` for Markdown ATX headings in source order.
 
-    Returns:
-        list[tuple[int, str]]: Source-ordered pairs of heading start offset and
-        hierarchical title path joined by ``" > "``; empty if no headings match.
+    Title paths join the heading hierarchy with ``" > "``; empty if no
+    headings match.
     """
     stack: list[tuple[int, str]] = []
     result: list[tuple[int, str]] = []

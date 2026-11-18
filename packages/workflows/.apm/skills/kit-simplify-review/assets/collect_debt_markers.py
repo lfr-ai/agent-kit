@@ -14,7 +14,6 @@ deterministic ledger table, and reports malformed or expired markers as
 import argparse
 from dataclasses import dataclass
 import datetime as dt
-from enum import StrEnum
 import fnmatch
 from pathlib import Path
 import re
@@ -69,20 +68,20 @@ _SELF_TEST_MARKER_LINES = (2, 3, 4)
 class Entry:
     """One collected debt marker.
 
-    Args:
+    Attributes:
         path: File that holds the marker.
         line: One-based line number.
         marker: Marker keyword that matched.
-        owner: Declared owner, or an empty string.
-        revisit: Declared revisit date or trigger, or an empty string.
+        owner: Declared owner, or ``None`` when the marker declares none.
+        revisit: Declared revisit date or trigger, or ``None`` when absent.
         reason: Free-text reason after the colon.
     """
 
     path: Path
     line: int
     marker: str
-    owner: str
-    revisit: str
+    owner: str | None
+    revisit: str | None
     reason: str
 
 
@@ -90,7 +89,7 @@ class Entry:
 class Options:
     """Scan configuration.
 
-    Args:
+    Attributes:
         markers: Marker keywords, matched as whole words after a comment leader.
         extensions: File suffixes to scan; empty means every file.
         excludes: Glob patterns matched against each path part to skip.
@@ -117,11 +116,9 @@ def _pattern(markers: tuple[str, ...]) -> re.Pattern[str]:
 
 
 def _metadata(raw: str) -> dict[str, str]:
-    """Parse ``key=value`` pairs separated by commas or semicolons.
+    """Return ``key=value`` pairs split on commas or semicolons, by casefolded key.
 
-    Returns:
-        Values keyed by casefolded key; later duplicates win and items without ``=`` are
-        skipped.
+    Later duplicates win and items without ``=`` are skipped.
     """
     pairs: dict[str, str] = {}
     for item in re.split(r"[,;]", raw):
@@ -160,8 +157,8 @@ def scan_text(path: Path, text: str, markers: tuple[str, ...]) -> list[Entry]:
                 path=path,
                 line=number,
                 marker=match.group("marker"),
-                owner=meta.get("owner", ""),
-                revisit=meta.get("revisit", ""),
+                owner=meta.get("owner"),
+                revisit=meta.get("revisit"),
                 reason=reason,
             )
         )
@@ -232,7 +229,7 @@ def problems(entries: list[Entry], options: Options) -> list[str]:
 
 def _revisit_problem(entry: Entry, where: str, as_of: dt.date | None) -> str | None:
     """Report an invalid or expired ISO revisit date, if any."""
-    if not _ISO_DATE.match(entry.revisit):
+    if entry.revisit is None or not _ISO_DATE.match(entry.revisit):
         return None
     try:
         revisit = dt.date.fromisoformat(entry.revisit)
@@ -246,9 +243,9 @@ def _revisit_problem(entry: Entry, where: str, as_of: dt.date | None) -> str | N
     return None
 
 
-def _cell(value: str) -> str:
-    """Escape a value for a Markdown table cell."""
-    return value.replace("|", r"\|") or "-"
+def _cell(value: str | None) -> str:
+    """Escape a value for a Markdown table cell; ``-`` marks an absent or empty value."""
+    return value.replace("|", r"\|") if value else "-"
 
 
 def render_ledger(entries: list[Entry], *, title: str) -> str:
@@ -289,15 +286,14 @@ def render_ledger(entries: list[Entry], *, title: str) -> str:
 def collect(paths: list[Path], options: Options) -> list[Entry]:
     """Scan explicit paths and return every marker in path and line order.
 
+    An unreadable target propagates ``OSError``.
+
     Args:
         paths (list[Path]): Files or directories to scan.
         options (Options): Scan configuration.
 
     Returns:
         Collected entries.
-
-    Raises:
-        OSError: A target cannot be read.
     """
     entries: list[Entry] = []
     for path in discover(paths, options):
@@ -306,33 +302,18 @@ def collect(paths: list[Path], options: Options) -> list[Entry]:
     return entries
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    MISSING_FINDING = "missing finding: {expected}"
-    INVALID_DATE_ACCEPTED = "invalid date must be reported"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(self, issue: SelfTestIssue, *, expected: str | None = None) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            expected (str | None): Observed expected for the failing case.
-        """
-        super().__init__(issue.value.format(expected=expected))
+def _ledger_failures(entries: list[Entry]) -> list[str]:
+    """Return regressions in marker discovery and ledger rendering."""
+    if tuple(entry.line for entry in entries) != _SELF_TEST_MARKER_LINES:
+        return [f"collected marker lines differ: {entries!r}"]
+    ledger = render_ledger(entries, title="Debt ledger")
+    if r"retry once \| then give up" not in ledger or "@orders-team" not in ledger:
+        return [f"ledger lost an escaped reason or owner:\n{ledger}"]
+    return []
 
 
-def self_test() -> None:
-    """Exercise collection, rendering and every finding type.
-
-    Raises:
-        AssertionError: Behavior differs from the documented contract.
-        SelfTestError: A date or finding check fails.
-    """
+def self_test() -> list[str]:
+    """Exercise collection, rendering and every finding type; return failures."""
     with TemporaryDirectory(prefix="debt-ledger-") as raw:
         root = Path(raw)
         (root / "src").mkdir()
@@ -349,17 +330,16 @@ def self_test() -> None:
         )
         options = Options(as_of=_SELF_TEST_AS_OF, require_owner=True)
         entries = collect([root], options)
-        if tuple(entry.line for entry in entries) != _SELF_TEST_MARKER_LINES:
-            raise AssertionError(entries)
-        ledger = render_ledger(entries, title="Debt ledger")
-        if r"retry once \| then give up" not in ledger or "@orders-team" not in ledger:
-            raise AssertionError(ledger)
-        found = " ".join(problems(entries, options))
-        for expected in ("expired on 2026-01-31", "has no owner", "no ': reason'"):
-            if expected not in found:
-                raise SelfTestError(SelfTestIssue.MISSING_FINDING, expected=expected)
-        if "invalid revisit date" not in found:
-            raise SelfTestError(SelfTestIssue.INVALID_DATE_ACCEPTED)
+    failures = _ledger_failures(entries)
+    found = " ".join(problems(entries, options))
+    failures.extend(
+        f"missing finding: {expected}"
+        for expected in ("expired on 2026-01-31", "has no owner", "no ': reason'")
+        if expected not in found
+    )
+    if "invalid revisit date" not in found:
+        failures.append("invalid date must be reported")
+    return failures
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -411,9 +391,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("collect_debt_markers self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"collect_debt_markers self-test {verdict}.\n")
+        return int(bool(failures))
     if not args.paths:
         parser.print_usage(sys.stderr)
         return _EXIT_USAGE

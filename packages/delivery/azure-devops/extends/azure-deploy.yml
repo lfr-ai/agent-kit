@@ -1,0 +1,140 @@
+# Environment-gated Azure deployment: per environment, in list order (for example dev, test, prod),
+# a preview stage (what-if or saved Terraform plan) then a deploy stage that applies that artifact.
+# Approvals and checks live on each Azure DevOps environment and service connection, are evaluated
+# before the deploy stage starts and cannot be changed from YAML; see docs/deploy.md.
+# Preview and deploy stages both run only for non-pull-request builds of deployBranch, because a
+# what-if or plan runs consumer code with the deploy identity. Pull requests are validated by the
+# backend-less bicep-check.yml or terraform-check.yml pipelines instead. That is defence in depth:
+# keep the Branch control, Approvals, Exclusive lock and Required template checks on every environment
+# and the Branch control and Required template checks on every azure-<env> service connection.
+parameters:
+  # Items: name and serviceConnection, plus resourceGroup (Bicep) or tfstateStorageAccount
+  # (Terraform); optional parametersFile and healthUrl. Names: 1-32 lowercase letters, digits,
+  # '-' or '_'.
+  - name: environments
+    type: object
+  - name: iac
+    type: string
+    default: bicep
+    values:
+      - bicep
+      - terraform
+  - name: workingDirectory
+    type: string
+    default: infra
+  # Optional registry/repository@sha256 digest promoted unchanged through every environment.
+  - name: image
+    type: string
+    default: ""
+  - name: tfstateContainer
+    type: string
+    default: tfstate
+  - name: bicepVersion
+    type: string
+    default: 0.48.1
+  - name: terraformVersion
+    type: string
+    default: 1.16.7
+  - name: terraformSha256
+    type: string
+    default: 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b
+  # hosted uses a Microsoft-hosted vmImage agent; any other value names a self-hosted or Managed
+  # DevOps Pool, for example one with private network access to staging and prod.
+  - name: pool
+    type: string
+    default: hosted
+  - name: vmImage
+    type: string
+    default: ubuntu-24.04
+  - name: timeoutMinutes
+    type: number
+    default: 60
+  # Full ref allowed to reach preview and deploy stages, for example refs/heads/main.
+  - name: deployBranch
+    type: string
+    default: refs/heads/main
+
+stages:
+  - ${{ each environment in parameters.environments }}:
+      - stage: preview_${{ replace(environment.name, '-', '_') }}
+        displayName: Preview ${{ environment.name }}
+        # Same gate as deploy: skipped (not failed) for pull requests and other branches.
+        condition: >-
+          and(succeeded(),
+          eq(variables['Build.SourceBranch'], '${{ parameters.deployBranch }}'),
+          ne(variables['Build.Reason'], 'PullRequest'))
+        pool:
+          ${{ if eq(parameters.pool, 'hosted') }}:
+            vmImage: ${{ parameters.vmImage }}
+          ${{ else }}:
+            name: ${{ parameters.pool }}
+        jobs:
+          - job: preview
+            displayName: Preview ${{ environment.name }}
+            timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+            workspace:
+              clean: all
+            steps:
+              - checkout: self
+                persistCredentials: false
+
+              - template: ../steps/azure-deploy.yml
+                parameters:
+                  mode: preview
+                  environment: ${{ environment.name }}
+                  serviceConnection: ${{ environment.serviceConnection }}
+                  iac: ${{ parameters.iac }}
+                  workingDirectory: ${{ parameters.workingDirectory }}
+                  parametersFile: ${{ environment.parametersFile }}
+                  resourceGroup: ${{ environment.resourceGroup }}
+                  image: ${{ parameters.image }}
+                  tfstateStorageAccount: ${{ environment.tfstateStorageAccount }}
+                  tfstateContainer: ${{ parameters.tfstateContainer }}
+                  bicepVersion: ${{ parameters.bicepVersion }}
+                  terraformVersion: ${{ parameters.terraformVersion }}
+                  terraformSha256: ${{ parameters.terraformSha256 }}
+                  deployBranch: ${{ parameters.deployBranch }}
+
+      - stage: deploy_${{ replace(environment.name, '-', '_') }}
+        displayName: Deploy ${{ environment.name }}
+        # Skipped (not failed) for pull requests and other branches; later stages then skip too.
+        condition: >-
+          and(succeeded(),
+          eq(variables['Build.SourceBranch'], '${{ parameters.deployBranch }}'),
+          ne(variables['Build.Reason'], 'PullRequest'))
+        pool:
+          ${{ if eq(parameters.pool, 'hosted') }}:
+            vmImage: ${{ parameters.vmImage }}
+          ${{ else }}:
+            name: ${{ parameters.pool }}
+        jobs:
+          - deployment: deploy
+            displayName: Deploy ${{ environment.name }}
+            environment: ${{ environment.name }}
+            timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+            workspace:
+              clean: all
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - checkout: self
+                      persistCredentials: false
+
+                    - template: ../steps/azure-deploy.yml
+                      parameters:
+                        mode: deploy
+                        environment: ${{ environment.name }}
+                        serviceConnection: ${{ environment.serviceConnection }}
+                        iac: ${{ parameters.iac }}
+                        workingDirectory: ${{ parameters.workingDirectory }}
+                        parametersFile: ${{ environment.parametersFile }}
+                        resourceGroup: ${{ environment.resourceGroup }}
+                        image: ${{ parameters.image }}
+                        healthUrl: ${{ environment.healthUrl }}
+                        tfstateStorageAccount: ${{ environment.tfstateStorageAccount }}
+                        tfstateContainer: ${{ parameters.tfstateContainer }}
+                        bicepVersion: ${{ parameters.bicepVersion }}
+                        terraformVersion: ${{ parameters.terraformVersion }}
+                        terraformSha256: ${{ parameters.terraformSha256 }}
+                        deployBranch: ${{ parameters.deployBranch }}

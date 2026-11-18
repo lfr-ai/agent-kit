@@ -52,6 +52,7 @@ archive(document, force=True)
 or, when the flag selects between two behaviors with different contracts:
 
 ```python
+@unique
 class ArchiveMode(StrEnum):
     SOFT = "soft"
     HARD = "hard"
@@ -65,7 +66,7 @@ def archive(document: Document, *, mode: ArchiveMode = ArchiveMode.SOFT) -> None
 - Services receive collaborators through `__init__`, keyword-only, typed against
   a `Protocol` port rather than a concrete adapter.
 - Do not construct collaborators inside `__init__`; the composition root does it.
-- Document each initializer argument in an `Args:` section.
+- Explain each initializer argument in concise prose or a useful `Args:` section.
 
 ```python
 class InvoiceService:
@@ -75,8 +76,8 @@ class InvoiceService:
         """Bind the service to its ports.
 
         Args:
-            repository: Port that persists issued invoices.
-            clock: Source of the issue timestamp; injected for deterministic tests.
+            repository (InvoiceRepository): Port that persists issued invoices.
+            clock (Clock): Source of the issue timestamp; injected for deterministic tests.
         """
         self._repository = repository
         self._clock = clock

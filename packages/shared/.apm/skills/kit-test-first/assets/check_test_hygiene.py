@@ -107,11 +107,7 @@ def _import_time_statements(body: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
 
 
 def _import_time_blocks(node: ast.stmt) -> list[Sequence[ast.stmt]]:
-    """Return nested statement blocks that run when ``node`` runs at import time.
-
-    Returns:
-        Statement blocks in source order; empty for a simple statement.
-    """
+    """Return blocks run with ``node`` at import time; empty for a simple statement."""
     if isinstance(node, ast.If):
         return [node.orelse] if _is_type_checking(node) else [node.body, node.orelse]
     if isinstance(node, ast.Try | ast.TryStar):
@@ -151,9 +147,7 @@ def _heavy_imports(tree: ast.Module, path: str, heavy: frozenset[str]) -> list[F
 def _aliases(tree: ast.Module) -> tuple[set[str], set[str], set[str], set[str]]:
     """Return local names bound to time, time.sleep, asyncio and asyncio.sleep.
 
-    Returns:
-        Names bound to ``time``, ``time.sleep``, ``asyncio`` and ``asyncio.sleep``, in
-        that order.
+    The four name sets follow that order.
     """
     time_modules: set[str] = set()
     time_sleeps: set[str] = set()
@@ -240,7 +234,7 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
         options (Options): Rule switches.
 
     Returns:
-        Findings for this module.
+        list[Finding]: Findings for this module.
     """
     try:
         tree = ast.parse(text, filename=path)
@@ -281,7 +275,7 @@ def check_files(
         options (Options): Rule switches.
 
     Returns:
-        Findings sorted by path, line and message.
+        list[Finding]: Findings sorted by path, line and message.
     """
     findings: list[Finding] = []
     for path, text in sources:

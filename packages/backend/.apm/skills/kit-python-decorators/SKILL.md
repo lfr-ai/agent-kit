@@ -1,6 +1,6 @@
 ---
 name: kit-python-decorators
-description: Use when repeated Python cross-cutting behavior warrants a typed decorator.
+description: Use when typing Python decorators for repeated cross-cutting behavior.
 license: MIT
 ---
 

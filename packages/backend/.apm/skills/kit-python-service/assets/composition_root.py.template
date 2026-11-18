@@ -18,7 +18,7 @@ from shop.application.invoicing import (
     OrderReader,
     SystemClock,
 )
-from shop.infrastructure.database import Database, SqlInvoiceRepository, SqlOrderReader
+from shop.infrastructure.database import Database, SQLInvoiceRepository, SQLOrderReader
 from shop.logging_setup import configure_logging
 from shop.settings import Settings
 
@@ -64,7 +64,7 @@ def build_container(
         overrides (Overrides | None): Adapters to use instead of the production ones.
 
     Yields:
-        The wired container. Resources opened here are closed in reverse order
+        Container: The wired container. Resources opened here are closed in reverse order
         when the context exits, even if start-up fails halfway.
     """
     chosen = overrides or Overrides()
@@ -78,9 +78,9 @@ def build_container(
                 )
             )
             if orders is None:
-                orders = SqlOrderReader(database=database)
+                orders = SQLOrderReader(database=database)
             if invoices is None:
-                invoices = SqlInvoiceRepository(database=database)
+                invoices = SQLInvoiceRepository(database=database)
         container = Container(
             settings=settings,
             invoicing=InvoiceService(
@@ -92,10 +92,10 @@ def build_container(
 
 
 def main(run: Callable[[Container], int]) -> int:
-    """Process entry point: load settings, configure logging, wire, and run.
+    """Load settings, configure logging, wire the graph and return ``run``'s exit code.
 
-    ``run`` serves requests with the container, for example an HTTP server start
-    function or a CLI dispatcher; its exit code is returned.
+    ``run`` is the transport entry point, for example an HTTP server start
+    function or a CLI dispatcher.
     """
     settings = Settings.from_environ()
     configure_logging(level=settings.log_level, json_lines=settings.json_logs)

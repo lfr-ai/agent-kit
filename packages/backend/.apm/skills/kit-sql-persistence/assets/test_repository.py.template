@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Final
 import uuid
 
 import pytest
@@ -25,13 +26,13 @@ from shop.core.orders import (
     OrderNotFoundError,
     OrderStatus,
 )
-from shop.infrastructure.persistence.orders import SqlAlchemyOrderRepository
-from shop.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from shop.infrastructure.persistence.orders import SQLAlchemyOrderRepository
+from shop.infrastructure.persistence.unit_of_work import SQLAlchemyUnitOfWork
 
 pytestmark = pytest.mark.asyncio
 
-CUSTOMER = uuid.UUID(int=1)
-START = datetime(2026, 1, 1, tzinfo=UTC)
+CUSTOMER: Final[uuid.UUID] = uuid.UUID(int=1)
+START: Final[datetime] = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def make_order(*, offset_minutes: int = 0) -> Order:
@@ -70,7 +71,7 @@ def count_statements(engine: AsyncEngine) -> Iterator[list[str]]:
 
 
 async def test_add_then_get_round_trips_every_field(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
     order = make_order()
 
     await repository.add(order)
@@ -82,7 +83,7 @@ async def test_add_then_get_round_trips_every_field(session: AsyncSession) -> No
 
 
 async def test_add_rejects_duplicate_identifier(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
     order = make_order()
     await repository.add(order)
     session.expunge_all()
@@ -92,14 +93,14 @@ async def test_add_rejects_duplicate_identifier(session: AsyncSession) -> None:
 
 
 async def test_get_unknown_order_raises_not_found(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
 
     with pytest.raises(OrderNotFoundError):
         await repository.get(uuid.uuid4())
 
 
 async def test_save_rejects_stale_version(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
     order = make_order()
     await repository.add(order)
     stored = await repository.get(order.id)
@@ -109,7 +110,7 @@ async def test_save_rejects_stale_version(session: AsyncSession) -> None:
 
 
 async def test_keyset_pages_cover_all_rows_once(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
     orders = [make_order(offset_minutes=minute) for minute in range(5)]
     for order in orders:
         await repository.add(order)
@@ -127,7 +128,7 @@ async def test_keyset_pages_cover_all_rows_once(session: AsyncSession) -> None:
 
 
 async def test_list_rejects_out_of_range_limit(session: AsyncSession) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
 
     with pytest.raises(ValueError, match="limit"):
         await repository.list_for_customer(CUSTOMER, limit=0)
@@ -136,7 +137,7 @@ async def test_list_rejects_out_of_range_limit(session: AsyncSession) -> None:
 async def test_list_query_count_does_not_grow_with_rows(
     engine: AsyncEngine, session: AsyncSession
 ) -> None:
-    repository = SqlAlchemyOrderRepository(session=session)
+    repository = SQLAlchemyOrderRepository(session=session)
     for minute in range(5):
         await repository.add(make_order(offset_minutes=minute))
     session.expunge_all()
@@ -153,10 +154,10 @@ async def test_unit_of_work_without_commit_persists_nothing(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     order = make_order()
-    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+    async with SQLAlchemyUnitOfWork(session_factory=session_factory) as uow:
         await uow.orders.add(order)
 
-    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+    async with SQLAlchemyUnitOfWork(session_factory=session_factory) as uow:
         with pytest.raises(OrderNotFoundError):
             await uow.orders.get(order.id)
 
@@ -165,9 +166,9 @@ async def test_unit_of_work_commit_persists_changes(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     order = make_order()
-    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+    async with SQLAlchemyUnitOfWork(session_factory=session_factory) as uow:
         await uow.orders.add(order)
         await uow.commit()
 
-    async with SqlAlchemyUnitOfWork(session_factory=session_factory) as uow:
+    async with SQLAlchemyUnitOfWork(session_factory=session_factory) as uow:
         assert (await uow.orders.get(order.id)).id == order.id

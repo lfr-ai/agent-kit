@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_kit.application.services.catalog_service import (
+from agent_kit.application.catalog import (
     CatalogService,
     CompositionCollisionError,
 )
 from agent_kit.core.models import CompositionPlan, PlannedFile
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-import agent_kit.infrastructure.output_adapter as output_module
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+import agent_kit.infrastructure.output as output_module
+from agent_kit.infrastructure.output import OutputAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

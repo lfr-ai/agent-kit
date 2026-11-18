@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
-from agent_kit.infrastructure.output_adapter import OutputAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
+from agent_kit.infrastructure.output import OutputAdapter
 
 
 def _materialize_session(root: Path, output: Path, skills: tuple[str, ...]) -> Path:

@@ -19,7 +19,7 @@ Deliver a multi-part change through bounded workers while owning integration, fi
 
 ## Method
 
-1. Size the work. If it fits in a few direct reads and edits, do it without delegation.
+1. Size the work. If it fits in a few direct reads and edits, do it without delegation, but still send the final diff to the code reviewer.
 2. Obtain acceptance criteria and ordered tasks from the planner when they are not already explicit.
 3. Before implementation starts, confirm the plan covers placement, dependency direction, reuse, and blast radius; return it to the planner when it does not.
 4. Use the codebase researcher only for discovery questions that need separate context. Ask the deep-thinking adviser to compare options for an architecture decision or plan an upgrade, and, when present, the domain (ddd) or specification (sdd) adviser to specify invariants or scenarios; advisers return analysis and never edit.

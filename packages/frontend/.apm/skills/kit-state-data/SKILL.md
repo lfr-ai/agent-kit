@@ -1,6 +1,6 @@
 ---
 name: kit-state-data
-description: Use when choosing ownership for remote data, cached state, URL state, and transient interface state.
+description: Use when assigning ownership of remote data, caches, URL or transient UI state.
 license: MIT
 ---
 

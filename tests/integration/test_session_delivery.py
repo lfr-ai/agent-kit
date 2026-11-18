@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import (
+from agent_kit.application.catalog import (
     CatalogService,
     UnavailableSkillsError,
 )
-from agent_kit.application.services.provenance_service import ProvenanceService
+from agent_kit.application.provenance import ProvenanceService
 from agent_kit.composition.root import compose_workspace
-import agent_kit.infrastructure.catalog_adapter as catalog_module
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+import agent_kit.infrastructure.catalog as catalog_module
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 
 def test_session_delivery_has_verifiable_integrity(

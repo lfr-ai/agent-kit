@@ -16,7 +16,7 @@ finding exists, 2 when inputs cannot be read, and 0 otherwise.
 
 import argparse
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, unique
 import json
 from pathlib import Path
 import re
@@ -151,16 +151,10 @@ def _drop_trailing_commas(text: str) -> str:
 
 
 def parse_taskfile(text: str) -> Taskfile:
-    """Read top-level task and include names from Taskfile YAML text.
+    """Return the top-level task names and include namespaces in Taskfile YAML text.
 
     Only block mappings are understood. Keys may be bare, single-quoted or
     double-quoted, and may contain colons such as ``docs:build``.
-
-    Args:
-        text (str): The Taskfile content.
-
-    Returns:
-        The declared task names and include namespaces.
     """
     sections: dict[str, set[str]] = {"tasks": set(), "includes": set()}
     current: str | None = None
@@ -184,11 +178,7 @@ def parse_taskfile(text: str) -> Taskfile:
 
 
 def _yaml_content_lines(text: str) -> list[tuple[int, str]]:
-    """Return ``(indent, line)`` pairs for lines that are not blank or comments.
-
-    Returns:
-        ``(indent, line)`` pairs in file order.
-    """
+    """Return ``(indent, line)`` pairs for non-blank, non-comment lines in order."""
     content: list[tuple[int, str]] = []
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -228,14 +218,10 @@ def _command_words(definition: dict[str, object]) -> list[str] | None:
 
 
 def targets_from_words(words: list[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Separate Task runner targets from flags, variables and pass-through args.
+    """Return Task targets and unverifiable editor-variable arguments from ``words``.
 
-    Args:
-        words (list[str]): The executable followed by its arguments.
-
-    Returns:
-        A pair of resolved target names and arguments containing editor
-        variables that cannot be checked statically.
+    ``words`` is the executable followed by its arguments; flags, flag values,
+    ``NAME=value`` variables and everything after ``--`` are skipped.
     """
     targets: list[str] = []
     dynamic: list[str] = []
@@ -261,6 +247,7 @@ def _label_line(text: str, label: str) -> int:
     return 1
 
 
+@unique
 class TaskInputIssue(StrEnum):
     """Supported task input validation failures and their stable messages."""
 
@@ -292,17 +279,11 @@ class TaskInputTypeError(TypeError):
 
 
 def invocations(text: str) -> list[Invocation]:
-    """Find editor tasks, including platform overrides, that call the Task runner.
+    """Return each editor task, including platform overrides, that calls Task.
 
-    Args:
-        text (str): The ``tasks.json`` content, with or without comments.
-
-    Returns:
-        Each Task runner invocation with its targets and source line.
-
-    Raises:
-        ValueError: The content is not a JSON object with a ``tasks`` list.
-        TypeError: A present JSON container has the wrong Python type.
+    ``text`` is ``tasks.json`` content with or without comments. Content that is
+    not a JSON object with a ``tasks`` list propagates ``ValueError``; a present
+    JSON container of the wrong Python type propagates ``TypeError``.
     """
     found: list[Invocation] = []
     for position, task in enumerate(_task_entries(text), start=1):
@@ -321,9 +302,8 @@ def invocations(text: str) -> list[Invocation]:
 def _task_entries(text: str) -> list[object]:
     """Return the ``tasks`` list of a ``tasks.json`` document.
 
-    Raises:
-        TaskInputError: The document has no ``tasks`` key.
-        TaskInputTypeError: The document or its ``tasks`` value has the wrong type.
+    A missing ``tasks`` key raises ``TaskInputError``; a document or ``tasks`` value
+    of the wrong type raises ``TaskInputTypeError``.
     """
     document = json.loads(strip_jsonc(text))
     if not isinstance(document, dict):
@@ -337,11 +317,7 @@ def _task_entries(text: str) -> list[object]:
 
 
 def _platform_variants(task: dict[str, object]) -> list[dict[str, object]]:
-    """Return the task followed by each platform override merged into it.
-
-    Returns:
-        The task first, then one merged copy per platform override in order.
-    """
+    """Return the task followed by one merged copy per platform override, in order."""
     variants = [task]
     for key in _PLATFORM_KEYS:
         override = task.get(key)
@@ -388,7 +364,7 @@ def check(
             be verified without reading the included Taskfile files.
 
     Returns:
-        Sorted ``path:line: message`` findings.
+        list[str]: Sorted ``path:line: message`` findings.
     """
     findings: set[str] = set()
     for item in invocations(tasks_text):
@@ -414,51 +390,14 @@ def check(
 
 
 def _finding_order(finding: str) -> tuple[int, str]:
-    """Sort findings by line number, then text.
-
-    Returns:
-        The leading line number, or zero when absent, and the finding text.
-    """
+    """Return the leading line number (zero when absent) and the finding text."""
     parts = finding.rsplit(": task ", 1)[0].rsplit(":", 1)
     line = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
     return line, finding
 
 
-class SelfTestIssue(StrEnum):
-    """Bounded regressions exercised by the standalone self-test."""
-
-    TASKFILE_PARSE = "unexpected Taskfile parse: {taskfile}"
-    DECLARED_TARGET_REJECTED = "declared targets must pass"
-    UNEXPECTED_FINDINGS = "unexpected findings: {findings}"
-    DYNAMIC_ARGUMENT_REJECTED = "allowed dynamic arguments must pass"
-
-
-class SelfTestError(AssertionError):
-    """A documented self-test invariant failed."""
-
-    def __init__(
-        self,
-        issue: SelfTestIssue,
-        *,
-        taskfile: Taskfile | None = None,
-        findings: list[str] | None = None,
-    ) -> None:
-        """Describe a self-test regression.
-
-        Args:
-            issue (SelfTestIssue): The invariant that failed.
-            taskfile (Taskfile | None): Observed taskfile for the failing case.
-            findings (list[str] | None): Observed findings for the failing case.
-        """
-        super().__init__(issue.value.format(taskfile=taskfile, findings=findings))
-
-
-def self_test() -> None:
-    """Exercise parsing and checking with in-memory synthetic inputs.
-
-    Raises:
-        SelfTestError: A synthetic case produced an unexpected result.
-    """
+def self_test() -> list[str]:
+    """Return regressions found by parsing and checking in-memory synthetic inputs."""
     taskfile = parse_taskfile(
         'version: "3"\n'
         "includes:\n  docs: ./docs/Taskfile.yml\n"
@@ -469,9 +408,10 @@ def self_test() -> None:
         "  format:check: echo check\n"
         "vars:\n  NAME: value\n"
     )
+    failures: list[str] = []
     expected = frozenset({"default", "verify", "lint:fix", "format:check"})
     if taskfile.tasks != expected or taskfile.includes != frozenset({"docs"}):
-        raise SelfTestError(SelfTestIssue.TASKFILE_PARSE, taskfile=taskfile)
+        failures.append(f"unexpected Taskfile parse: {taskfile}")
     good = (
         '{\n  // comment\n  "version": "2.0.0",\n  "tasks": [\n'
         '    {"label": "Verify", "type": "process", "command": "task",'
@@ -482,7 +422,7 @@ def self_test() -> None:
         '    {"label": "Other", "type": "npm", "script": "build"}\n  ]\n}\n'
     )
     if check(good, taskfile, tasks_path="tasks.json"):
-        raise SelfTestError(SelfTestIssue.DECLARED_TARGET_REJECTED)
+        failures.append("declared targets must pass")
     bad = (
         '{"tasks": [\n{"label": "Missing", "command": "task", "args": ["-d", "x",'
         ' "deploy"]},\n{"label": "Input", "command": "task",'
@@ -492,11 +432,12 @@ def self_test() -> None:
     if len(findings) != _SELF_TEST_BAD_FINDINGS or not findings[0].startswith(
         "tasks.json:2:"
     ):
-        raise SelfTestError(SelfTestIssue.UNEXPECTED_FINDINGS, findings=findings)
+        failures.append(f"unexpected findings: {findings}")
     if check(
         bad.replace("deploy", "verify"), taskfile, tasks_path="t", allow_dynamic=True
     ):
-        raise SelfTestError(SelfTestIssue.DYNAMIC_ARGUMENT_REJECTED)
+        failures.append("allowed dynamic arguments must pass")
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -520,9 +461,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        self_test()
-        sys.stdout.write("Task wiring checker self-test passed.\n")
-        return 0
+        failures = self_test()
+        sys.stderr.writelines(f"{failure}\n" for failure in failures)
+        verdict = "failed" if failures else "passed"
+        sys.stdout.write(f"Task wiring checker self-test {verdict}.\n")
+        return int(bool(failures))
     try:
         tasks_text = args.tasks.read_text(encoding="utf-8")
         taskfile = parse_taskfile(args.taskfile.read_text(encoding="utf-8"))

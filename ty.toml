@@ -1,5 +1,6 @@
 [environment]
 python-version = "3.13"
+extra-paths = ["packages/delivery"]
 
 [src]
 include = ["src", "tests", "scripts", ".agents/guard", "packages"]

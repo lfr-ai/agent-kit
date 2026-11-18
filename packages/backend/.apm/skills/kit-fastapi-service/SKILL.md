@@ -1,6 +1,6 @@
 ---
 name: kit-fastapi-service
-description: Use when wiring or reviewing a FastAPI app factory, lifespan, DI, routers, middleware, errors, or health.
+description: Use when wiring FastAPI app factories, lifespan, DI, routers, middleware, errors or health.
 license: MIT
 ---
 

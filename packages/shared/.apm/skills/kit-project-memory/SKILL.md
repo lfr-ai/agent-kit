@@ -1,6 +1,6 @@
 ---
 name: kit-project-memory
-description: Use when deciding where a project decision, lesson, plan or handoff persists across sessions and hosts.
+description: Use when persisting project decisions, lessons or handoffs across sessions.
 license: MIT
 ---
 

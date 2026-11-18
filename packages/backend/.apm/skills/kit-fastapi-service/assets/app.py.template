@@ -32,7 +32,7 @@ from shop.api.rate_limit import (
     RatePolicy,
     RouteRule,
 )
-from shop.api.settings import HttpSettings
+from shop.api.settings import HTTPSettings
 
 type ContainerFactory = Callable[[], AbstractAsyncContextManager[Container]]
 
@@ -44,14 +44,14 @@ _DRAFT_RATE_LIMIT_HEADERS = ("RateLimit", "RateLimit-Policy")
 
 def create_app(
     *,
-    settings: HttpSettings,
+    settings: HTTPSettings,
     container_factory: ContainerFactory,
     rate_limit_store: RateLimitStore,
 ) -> FastAPI:
     """Build the application, its routes, middleware, and error handling.
 
     Args:
-        settings (HttpSettings): Validated HTTP settings facet.
+        settings (HTTPSettings): Validated HTTP settings facet.
         container_factory (ContainerFactory): Opens the container on startup and closes
             it on shutdown, after in-flight requests finish.
         rate_limit_store (RateLimitStore): Counter backend shared by all workers; the
@@ -84,7 +84,7 @@ def create_app(
 
 
 def _install_middleware(
-    app: FastAPI, *, settings: HttpSettings, rate_limit_store: RateLimitStore
+    app: FastAPI, *, settings: HTTPSettings, rate_limit_store: RateLimitStore
 ) -> None:
     """Add middleware innermost first; the last one added runs first.
 
@@ -93,7 +93,7 @@ def _install_middleware(
 
     Args:
         app (FastAPI): Application receiving the middleware registrations.
-        settings (HttpSettings): Validated compression, body, rate, CORS, host
+        settings (HTTPSettings): Validated compression, body, rate, CORS, host
             and security-header settings.
         rate_limit_store (RateLimitStore): Shared counter backend injected into
             the rate-limit middleware.

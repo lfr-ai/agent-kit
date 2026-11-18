@@ -1,0 +1,47 @@
+"""Synthetic configuration for offline application tests, never real credentials."""
+
+from pathlib import Path
+{%- if data == 'postgresql' %}
+from unittest.mock import AsyncMock
+{%- endif %}
+
+import pytest
+{%- if data == 'postgresql' %}
+from platform_kit_runtime.database import DatabaseReadinessProbe
+{%- endif %}
+
+
+@pytest.fixture(autouse=True)
+def _feature_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Supply synthetic feature settings without contacting providers."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+{%- if data == 'postgresql' %}
+    monkeypatch.setenv("APP_POSTGRES_HOST", "127.0.0.1")
+    monkeypatch.setenv("APP_POSTGRES_DATABASE", "app")
+    monkeypatch.setenv("APP_POSTGRES_USER", "app")
+    monkeypatch.setenv("APP_POSTGRES_PASSWORD", "synthetic-password")
+    monkeypatch.setenv("APP_POSTGRES_ENTRA_AUTHENTICATION", "false")
+    monkeypatch.delenv("APP_POSTGRES_MANAGED_IDENTITY_CLIENT_ID", raising=False)
+    monkeypatch.setattr(DatabaseReadinessProbe, "check", AsyncMock(return_value=True))
+{%- endif %}
+{%- if cache == 'redis' %}
+    monkeypatch.setenv("APP_REDIS_URL", "redis://127.0.0.1:6379/0")
+    monkeypatch.setenv("APP_RATE_LIMIT", '{"limit": 100, "window_seconds": 60}')
+{%- endif %}
+{%- if auth == 'entra-bearer' %}
+    monkeypatch.setenv("APP_AUTH_TENANT_ID", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setenv("APP_AUTH_CLIENT_ID", "22222222-2222-4222-8222-222222222222")
+    monkeypatch.setenv("APP_AUTH_AUDIENCE", "synthetic-api")
+    monkeypatch.setenv("APP_AUTH_ORIGIN", "https://local.example")
+    monkeypatch.setenv("APP_AUTH_SCOPES", '["access"]')
+{%- endif %}
+{%- if ai_service == 'text' %}
+    monkeypatch.setenv("APP_AI_MODEL", "openai/synthetic")
+    monkeypatch.setenv("APP_AI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("APP_AI_ENTRA_AUTHENTICATION", "false")
+    monkeypatch.delenv("APP_AI_MANAGED_IDENTITY_CLIENT_ID", raising=False)
+{%- endif %}
+{%- if data == 'none' and cache == 'none' and auth == 'none' and ai_service == 'none' %}
+    monkeypatch.delenv("APP_RATE_LIMIT", raising=False)
+{%- endif %}

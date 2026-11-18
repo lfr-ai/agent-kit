@@ -1,6 +1,6 @@
 ---
 name: kit-caching
-description: Use when adding or reviewing in-process, Redis-compatible, or HTTP response caching and its invalidation.
+description: Use when designing in-process, Redis-compatible or HTTP caching and invalidation.
 license: MIT
 ---
 

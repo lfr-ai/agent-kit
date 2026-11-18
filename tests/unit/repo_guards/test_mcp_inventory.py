@@ -6,7 +6,7 @@ import re
 
 import yaml
 
-from agent_kit.application.services import catalog_service
+from agent_kit.application.catalog import policy
 from agent_kit.core.executables import mcp_issues
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -62,8 +62,8 @@ def test_allow_list_is_exactly_the_declared_servers() -> None:
 
 
 def test_generated_policy_matches_the_repository_policy() -> None:
-    assert catalog_service._POLICY["mcp"] == _policy()["mcp"]
-    assert list(catalog_service._MCP_ALLOWED) == _allowed()
+    assert policy.POLICY["mcp"] == _policy()["mcp"]
+    assert list(policy.MCP_ALLOWED) == _allowed()
 
 
 def test_every_package_passes_the_closed_schema_with_the_shared_allow_list() -> None:

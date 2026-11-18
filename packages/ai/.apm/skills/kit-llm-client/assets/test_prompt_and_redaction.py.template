@@ -7,7 +7,7 @@ import pytest
 from llm.port import (
     ChatMessage,
     CompletionRequest,
-    LlmInvalidRequestError,
+    LLMInvalidRequestError,
     PromptTemplate,
     Role,
 )
@@ -68,7 +68,7 @@ def test_invalid_requests_are_rejected(kwargs: dict[str, object]) -> None:
         "messages": (ChatMessage(role=Role.USER, content="hi"),),
     }
     fields.update(kwargs)
-    with pytest.raises(LlmInvalidRequestError):
+    with pytest.raises(LLMInvalidRequestError):
         CompletionRequest(**fields)  # type: ignore[arg-type]  # invalid input on purpose
 
 

@@ -39,7 +39,7 @@ def build_invoice(
         payment_reference (str | None): Explicit reference for paid invoices.
 
     Returns:
-        A domain object that satisfies every invariant.
+        Invoice: A domain object that satisfies every invariant.
     """
     if status is InvoiceStatus.PAID and payment_reference is None:
         payment_reference = next_id("pay")
@@ -61,6 +61,6 @@ def build_invoices(count: int, *, customer_id: str = "cus-0001") -> list[Invoice
         customer_id (str): Owning customer shared by all of them.
 
     Returns:
-        Invoices in creation order.
+        list[Invoice]: Invoices in creation order.
     """
     return [build_invoice(customer_id=customer_id) for _ in range(count)]

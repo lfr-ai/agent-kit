@@ -50,19 +50,23 @@ Caddy, Traefik, or a managed Azure edge.
     serve authenticated responses, and prefer versioned asset URLs over
     purges. Application cache semantics belong to `kit-caching`.
 11. Review rate and connection limits, security headers, version disclosure,
-    and admin exposure per [edge hardening](references/edge-hardening.md).
+    and admin exposure per [edge hardening](references/edge-hardening.md),
+    which also covers Azure Front Door WAF tiers and origin lockdown.
     Consumer quotas belong to `kit-api-gateway`; per-user and business
     limits belong to `kit-fastapi-service`.
 12. Adapt a template instead of writing from memory:
     [nginx](assets/nginx.conf.template), [Caddy](assets/Caddyfile.template),
     [Traefik dynamic config](assets/traefik-dynamic.yaml.template),
-    [Envoy](assets/envoy.yaml.template), or Gateway API
+    [Envoy](assets/envoy.yaml.template), Gateway API
     [Gateway](assets/gateway-api/gateway.yaml.template) and
     [HTTPRoute](assets/gateway-api/httproute.yaml.template) (issuer, redirect,
-    and gRPC routes are linked from the Kubernetes reference).
+    and gRPC routes are linked from the Kubernetes reference). Azure Front
+    Door is not a default: add it only for the needs listed in
+    [edge hardening](references/edge-hardening.md#azure-front-door).
 13. Validate statically: `nginx -t`, `caddy validate`, `envoy --mode
-    validate -c envoy.yaml`, `kubectl apply --dry-run=server`, or a
-    non-production Traefik instance, and for nginx run
+    validate -c envoy.yaml`, `kubectl apply --dry-run=server`, `bicep
+    build`/`bicep lint` or `terraform fmt -check`/`terraform validate` for
+    any IaC you author, or a non-production Traefik instance, and for nginx run
     [check_nginx_config.py](assets/check_nginx_config.py):
 
     ```text

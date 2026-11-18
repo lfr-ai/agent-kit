@@ -1,6 +1,6 @@
 ---
 name: kit-parallel-work
-description: Use when dividing independent analysis or edits while retaining clear ownership and integration checks.
+description: Use when splitting independent work with owned paths and integration checks.
 license: MIT
 ---
 

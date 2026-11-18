@@ -79,17 +79,10 @@ class SettleInvoice:
         instead of charging twice. Notification happens after commit and its
         failure never undoes a durable payment.
 
-        Args:
-            command: Parsed input.
-
-        Returns:
-            The settlement outcome.
-
-        Raises:
-            InvoiceNotFoundError: The invoice does not exist.
-            InvoiceError: The invoice is void.
-            PaymentDeclinedError: The provider refused the charge.
-            PaymentUnavailableError: Safe to retry later with the same command.
+        A void invoice raises ``InvoiceError``; a missing invoice propagates
+        ``InvoiceNotFoundError``, a refused charge ``PaymentDeclinedError`` and an
+        outage ``PaymentUnavailableError``, which is safe to retry later with the
+        same command.
         """
         with self._unit_of_work() as unit:
             invoice = unit.invoices.get(command.invoice_id)

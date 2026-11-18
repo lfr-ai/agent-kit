@@ -8,8 +8,8 @@ import string
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.application.catalog import CatalogService
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 _KEY_ALPHABET = string.ascii_lowercase + "-"
 

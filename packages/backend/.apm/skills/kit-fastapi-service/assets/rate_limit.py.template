@@ -25,7 +25,7 @@ import re
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from http import HTTPStatus
 from typing import Protocol, runtime_checkable
 
@@ -58,20 +58,22 @@ class RateLimitStoreMissingError(RuntimeError):
     """A dependency ran without the lifespan that provides the store."""
 
 
+@unique
 class FailureMode(StrEnum):
     """What happens to a request when the store cannot decide."""
 
-    OPEN = "open"
-    CLOSED = "closed"
+    OPEN = auto()
+    CLOSED = auto()
 
 
+@unique
 class RateOutcome(StrEnum):
     """Result reported to the metric hook for every counted request."""
 
-    ALLOWED = "allowed"
-    LIMITED = "limited"
-    FAILED_OPEN = "failed_open"
-    FAILED_CLOSED = "failed_closed"
+    ALLOWED = auto()
+    LIMITED = auto()
+    FAILED_OPEN = auto()
+    FAILED_CLOSED = auto()
 
 
 type RateMetricHook = Callable[[str, RateOutcome], None]
@@ -237,15 +239,10 @@ def client_address_key(scope: Scope) -> str:
 def authenticated_user_key(scope: Scope) -> str:
     """Key by an authenticated user, falling back to the client address.
 
-    Use only when an authentication middleware outside the limiter verified
-    the caller and its user class implements ``identity``; never key by an
-    unverified token claim, which a caller can rotate to escape the limit.
-
-    Args:
-        scope (Scope): ASGI connection scope.
-
-    Returns:
-        A key such as ``sub:user-42`` or ``ip:203.0.113.7``.
+    Keys look like ``sub:user-42`` or ``ip:203.0.113.7``. Use only when an
+    authentication middleware outside the limiter verified the caller and its
+    user class implements ``identity``; never key by an unverified token
+    claim, which a caller can rotate to escape the limit.
     """
     user = scope.get("user")
     if isinstance(user, BaseUser) and user.is_authenticated:
@@ -505,17 +502,7 @@ class RateLimitRejectedError(StarletteHTTPException):
 
 
 def rate_limit_store_from(request: Request) -> RateLimitStore:
-    """Return the store the lifespan placed in the request state.
-
-    Args:
-        request (Request): Current request.
-
-    Returns:
-        The process-wide store.
-
-    Raises:
-        RateLimitStoreMissingError: The lifespan did not provide a store.
-    """
+    """Return the lifespan store; raise ``RateLimitStoreMissingError`` if absent."""
     store = getattr(request.state, "rate_limit_store", None)
     if not isinstance(store, RateLimitStore):
         msg = "no rate_limit_store in lifespan state; enable lifespan"

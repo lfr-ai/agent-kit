@@ -5,11 +5,11 @@ import asyncio
 import pytest
 from pydantic import BaseModel, Field
 
-from llm.fakes import ScriptedLlmClient, completion
+from llm.fakes import ScriptedLLMClient, completion
 from llm.port import (
     ChatMessage,
     CompletionRequest,
-    LlmContentFilteredError,
+    LLMContentFilteredError,
     Role,
     StructuredOutputError,
 )
@@ -31,7 +31,7 @@ _VALID = '{"invoice_id": "42", "total_cents": 1250, "overdue": false}'
 
 
 def test_valid_json_is_parsed_and_schema_is_sent() -> None:
-    client = ScriptedLlmClient([completion(_VALID)])
+    client = ScriptedLLMClient([completion(_VALID)])
 
     summary, _ = asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))
 
@@ -47,7 +47,7 @@ def test_code_fences_are_tolerated() -> None:
 
 
 def test_one_repair_round_shows_errors_without_values() -> None:
-    client = ScriptedLlmClient(
+    client = ScriptedLLMClient(
         [
             completion('{"invoice_id": "42", "total_cents": -5, "overdue": false}'),
             completion(_VALID),
@@ -63,7 +63,7 @@ def test_one_repair_round_shows_errors_without_values() -> None:
 
 
 def test_still_invalid_after_repairs_raises_typed_error() -> None:
-    client = ScriptedLlmClient([completion("not json"), completion("{}")])
+    client = ScriptedLLMClient([completion("not json"), completion("{}")])
 
     with pytest.raises(StructuredOutputError, match="failed validation"):
         asyncio.run(
@@ -73,7 +73,7 @@ def test_still_invalid_after_repairs_raises_typed_error() -> None:
 
 
 def test_truncated_output_is_not_repaired() -> None:
-    client = ScriptedLlmClient(
+    client = ScriptedLLMClient(
         [completion('{"invoice_id": "4', finish_reason="length")]
     )
 
@@ -83,7 +83,7 @@ def test_truncated_output_is_not_repaired() -> None:
 
 
 def test_filtered_output_raises_content_filtered() -> None:
-    client = ScriptedLlmClient([completion("", finish_reason="content_filter")])
+    client = ScriptedLLMClient([completion("", finish_reason="content_filter")])
 
-    with pytest.raises(LlmContentFilteredError):
+    with pytest.raises(LLMContentFilteredError):
         asyncio.run(complete_structured(client, _REQUEST, InvoiceSummary))

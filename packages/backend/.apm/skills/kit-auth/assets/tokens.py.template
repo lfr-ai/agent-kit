@@ -1,7 +1,7 @@
 """Bearer token verification port and a PyJWT adapter with cached JWKS.
 
 Copy into ``src/shop/auth/tokens.py``. Requires ``PyJWT[crypto]``. The adapter
-accepts only the asymmetric algorithms configured in ``JwtPolicy``, checks the
+accepts only the asymmetric algorithms configured in ``JWTPolicy``, checks the
 header before fetching keys, and validates issuer, audience, lifetime, and
 required claims. Key fetching is blocking, so call ``verify`` from a sync
 dependency (FastAPI runs it in a worker thread).
@@ -11,8 +11,8 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from enum import StrEnum, auto, unique
+from typing import Final, Protocol, runtime_checkable
 
 import jwt
 from jwt import PyJWK, PyJWKClient
@@ -30,7 +30,7 @@ from jwt.exceptions import (
 
 from shop.auth.policy import ClaimsError, Principal, principal_from_claims
 
-ASYMMETRIC_ALGORITHMS = frozenset(
+ASYMMETRIC_ALGORITHMS: Final[frozenset[str]] = frozenset(
     {
         "RS256",
         "RS384",
@@ -52,20 +52,21 @@ _MIN_REFRESH_INTERVAL_SECONDS = 60.0
 _REQUIRED_CLAIMS = ("exp", "iat", "iss", "aud", "sub")
 
 
+@unique
 class RejectionReason(StrEnum):
     """Why a token was rejected; safe to log, never shown with the token."""
 
-    MALFORMED = "malformed"
-    UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
-    WRONG_TYPE = "wrong_type"
-    UNKNOWN_KEY = "unknown_key"
-    BAD_SIGNATURE = "bad_signature"
-    EXPIRED = "expired"
-    NOT_YET_VALID = "not_yet_valid"
-    WRONG_ISSUER = "wrong_issuer"
-    WRONG_AUDIENCE = "wrong_audience"
-    MISSING_CLAIM = "missing_claim"
-    KEYS_UNAVAILABLE = "keys_unavailable"
+    MALFORMED = auto()
+    UNSUPPORTED_ALGORITHM = auto()
+    WRONG_TYPE = auto()
+    UNKNOWN_KEY = auto()
+    BAD_SIGNATURE = auto()
+    EXPIRED = auto()
+    NOT_YET_VALID = auto()
+    WRONG_ISSUER = auto()
+    WRONG_AUDIENCE = auto()
+    MISSING_CLAIM = auto()
+    KEYS_UNAVAILABLE = auto()
 
 
 class TokenRejectedError(Exception):
@@ -90,16 +91,9 @@ class TokenVerifier(Protocol):
     """Port: turn a raw bearer token into a verified principal."""
 
     def verify(self, token: str) -> Principal:
-        """Verify a token.
+        """Return a bearer token's principal or raise ``TokenRejectedError``.
 
-        Args:
-            token (str): Raw bearer token.
-
-        Returns:
-            The verified principal.
-
-        Raises:
-            TokenRejectedError: The token is invalid for this API.
+        The token is rejected when it is invalid for this API.
         """
         ...
 
@@ -108,22 +102,15 @@ class SigningKeyResolver(Protocol):
     """Port: find the public key that signed a token."""
 
     def key_for(self, token: str) -> PyJWK:
-        """Return the signing key named by the token's ``kid``.
+        """Return the public signing key named by the token's ``kid``.
 
-        Args:
-            token (str): Raw token whose header names the key.
-
-        Returns:
-            The matching public key.
-
-        Raises:
-            PyJWKClientError: No key matches, or keys cannot be fetched.
+        A missing match or failed key fetch raises ``PyJWKClientError``.
         """
         ...
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class JwtPolicy:
+class JWTPolicy:
     """What this API accepts, configured next to the key source.
 
     Attributes:
@@ -222,14 +209,14 @@ class JwksKeyResolver:
         return next((key for key in keys if key.key_id == kid), None)
 
 
-class PyJwtVerifier:
+class PyJWTVerifier:
     """``TokenVerifier`` adapter for RFC 9068 style JWT access tokens."""
 
-    def __init__(self, *, policy: JwtPolicy, keys: SigningKeyResolver) -> None:
+    def __init__(self, *, policy: JWTPolicy, keys: SigningKeyResolver) -> None:
         """Bind a policy to a key source.
 
         Args:
-            policy (JwtPolicy): Accepted issuer, audience, algorithms, and claims.
+            policy (JWTPolicy): Accepted issuer, audience, algorithms, and claims.
             keys (SigningKeyResolver): Public key resolver for the issuer.
         """
         self._policy = policy

@@ -1,0 +1,39 @@
+# Check-only Bicep gate; installation and module restoration can use network.
+# Lint severity comes from the caller's bicepconfig.json.
+parameters:
+  - name: bicepVersion
+    type: string
+  - name: path
+    type: string
+    default: .
+  - name: vmImage
+    type: string
+    default: ubuntu-24.04
+  - name: timeoutMinutes
+    type: number
+    default: 15
+  - name: extraSteps
+    type: stepList
+    default: []
+
+stages:
+  - stage: bicep
+    displayName: Bicep check
+    jobs:
+      - job: check
+        displayName: bicep ${{ parameters.bicepVersion }}
+        timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+        cancelTimeoutInMinutes: 1
+        pool:
+          vmImage: ${{ parameters.vmImage }}
+        steps:
+          - checkout: self
+            persistCredentials: false
+
+          - template: ../steps/bicep-check.yml
+            parameters:
+              bicepVersion: ${{ parameters.bicepVersion }}
+              path: ${{ parameters.path }}
+
+          - ${{ each step in parameters.extraSteps }}:
+              - ${{ step }}

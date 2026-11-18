@@ -118,7 +118,7 @@ def name_problem(name: str, *, options: Options) -> str | None:
         options (Options): Rule switches.
 
     Returns:
-        A message, or None for an acceptable name.
+        str | None: A message, or None for an acceptable name.
     """
     if name in options.allowed:
         return None
@@ -171,7 +171,7 @@ def check_source(path: str, text: str, *, options: Options) -> list[Finding]:
         options (Options): Rule switches.
 
     Returns:
-        Findings for this module.
+        list[Finding]: Findings for this module.
     """
     try:
         tree = ast.parse(text, filename=path)
@@ -194,7 +194,7 @@ def check_files(
         options (Options): Rule switches.
 
     Returns:
-        Findings sorted by path, line and message.
+        list[Finding]: Findings sorted by path, line and message.
     """
     findings: list[Finding] = []
     for path, text in sources:

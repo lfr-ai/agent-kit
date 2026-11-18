@@ -22,6 +22,9 @@ port; add a Protocol when it isolates a meaningful replaceable dependency.
 
 - Domain policy is testable without network, database or environment access.
 - Import contracts reject a deliberate outward dependency.
+- Every production source root and optional adapter participates in the import
+  graph. Feature subpackages do not replace layers, and public composition
+  facades belong above the adapters they select.
 - Adapter contract tests pin serialization, error translation and transactions.
 - Composition tests resolve the real use case; a matching class name is not DI proof.
 - The installed package works away from its checkout.

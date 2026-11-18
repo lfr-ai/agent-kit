@@ -7,10 +7,29 @@ import sys
 import pytest
 from scripts.build_profiles import ProfileBuildError, check, main, write
 
+from scripts import build_profiles
+
+_NATIVE_REFERENCES = [
+    {
+        "git": "https://github.com/lfr-ai/agent-kit.git",
+        "path": f"profiles/native/{runtime}",
+        "ref": "v0.1.0",
+        "targets": [runtime],
+    }
+    for runtime in ("copilot", "claude")
+]
+
 
 def test_profiles_are_compact_meta_packages_for_the_catalog_closure(
     source_root: Path,
 ) -> None:
+    catalog_path = source_root / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["profiles"]["starter-backend"] = {
+        "extends": ["backend"],
+        "bundles": [],
+    }
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     for bundle, name, url in (
         ("shared", "context7", "https://mcp.context7.com/mcp/oauth"),
         ("backend", "postman", "https://mcp.postman.com/minimal"),
@@ -31,6 +50,8 @@ def test_profiles_are_compact_meta_packages_for_the_catalog_closure(
 
     assert check(source_root) == []
     assert not (source_root / "profiles/toolkit").exists()
+    assert (source_root / "profiles/starters/backend/apm.yml").is_file()
+    assert not (source_root / "profiles/starter-backend").exists()
     manifest_path = source_root / "profiles/backend/apm.yml"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["name"] == "agent-kit-profile-backend"
@@ -40,6 +61,7 @@ def test_profiles_are_compact_meta_packages_for_the_catalog_closure(
     assert manifest["dependencies"]["apm"] == [
         "lfr-ai/agent-kit/packages/shared#v0.1.0",
         "lfr-ai/agent-kit/packages/backend#v0.1.0",
+        *_NATIVE_REFERENCES,
     ]
     assert {server["name"] for server in manifest["dependencies"]["mcp"]} == {
         "context7",
@@ -70,6 +92,30 @@ def test_profile_generation_refuses_independent_edits(source_root: Path) -> None
         write(source_root)
 
     assert generated.read_text(encoding="utf-8") == "independent edit"
+
+
+def test_profile_generation_recovers_already_published_canonical_output(
+    source_root: Path,
+) -> None:
+    write(source_root)
+    manifest_path = source_root / "packages/backend/apm.yml"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["dependencies"]["mcp"] = [
+        {
+            "name": "postman",
+            "registry": False,
+            "transport": "http",
+            "url": "https://mcp.postman.com/minimal",
+        }
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    planned = build_profiles._planned_profiles(source_root)
+    generated = source_root / "profiles/backend/apm.yml"
+    generated.write_bytes(planned["profiles/backend/apm.yml"])
+
+    write(source_root)
+
+    assert check(source_root) == []
 
 
 def test_profile_cli_rejects_linked_root_before_resolving(
@@ -115,6 +161,7 @@ def test_profile_generation_tracks_catalog_selection_changes(source_root: Path) 
         (source_root / "profiles/backend/apm.yml").read_text(encoding="utf-8")
     )
     assert generated["dependencies"]["apm"] == [
-        "lfr-ai/agent-kit/packages/backend#v0.1.0"
+        "lfr-ai/agent-kit/packages/backend#v0.1.0",
+        *_NATIVE_REFERENCES,
     ]
     assert check(source_root) == []

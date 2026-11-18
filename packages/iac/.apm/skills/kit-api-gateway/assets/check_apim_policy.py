@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from xml.parsers import expat
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ _SECRET_PATTERNS = (
     ),
 )
 _POLICY_SUFFIXES = (".xml", ".xml.template")
-RULES = (
+RULES: Final[tuple[str, ...]] = (
     "missing-base",
     "cors-wildcard",
     "missing-rate-limit",
@@ -119,7 +119,7 @@ RULES = (
 )
 
 
-class PolicyXmlError(ValueError):
+class PolicyXMLError(ValueError):
     """The file is not a well-formed, DOCTYPE-free policy document."""
 
     def __init__(self, *, line: int, problem: str) -> None:
@@ -135,12 +135,12 @@ class PolicyXmlError(ValueError):
 class InvalidPolicyFileError(ValueError):
     """A named file could not be parsed as a policy document."""
 
-    def __init__(self, *, path: Path, error: PolicyXmlError) -> None:
+    def __init__(self, *, path: Path, error: PolicyXMLError) -> None:
         """Name the file and the parse problem.
 
         Args:
             path (Path): The file that failed to parse.
-            error (PolicyXmlError): The underlying parse error.
+            error (PolicyXMLError): The underlying parse error.
         """
         super().__init__(f"{path.as_posix()}: {error}")
 
@@ -281,13 +281,9 @@ class _TreeBuilder:
             self._stack[-1].text.append(text)
 
     def root(self) -> Node:
-        """Return the document element.
-
-        Raises:
-            PolicyXmlError: If no element was parsed.
-        """
+        """Return the document element; raise ``PolicyXMLError`` if none was parsed."""
         if self._root is None:
-            raise PolicyXmlError(line=1, problem="no root element")
+            raise PolicyXMLError(line=1, problem="no root element")
         return self._root
 
 
@@ -297,23 +293,16 @@ def _reject_doctype(
     """Refuse documents that declare a DOCTYPE and could define entities.
 
     Raises:
-        PolicyXmlError: Always.
+        PolicyXMLError: Always.
     """
-    raise PolicyXmlError(line=1, problem=f"DOCTYPE '{name}' is not allowed")
+    raise PolicyXMLError(line=1, problem=f"DOCTYPE '{name}' is not allowed")
 
 
 def parse(text: str) -> Node:
-    """Parse policy XML into a ``Node`` tree.
+    """Return the policy root ``Node``; raise ``PolicyXMLError`` for invalid XML.
 
-    Args:
-        text (str): Complete policy document.
-
-    Returns:
-        The ``policies`` or ``fragment`` root element.
-
-    Raises:
-        PolicyXmlError: If the XML is malformed, declares a DOCTYPE, or has
-            another root element.
+    Invalid XML is malformed, declares a DOCTYPE, or has a root element other
+    than ``policies`` or ``fragment``.
     """
     parser = expat.ParserCreate()
     parser.buffer_text = True
@@ -325,12 +314,12 @@ def parse(text: str) -> Node:
     try:
         parser.Parse(text, _LAST_CHUNK)
     except expat.ExpatError as error:
-        raise PolicyXmlError(
+        raise PolicyXMLError(
             line=error.lineno, problem=expat.ErrorString(error.code)
         ) from error
     root = builder.root()
     if root.tag not in _ROOTS:
-        raise PolicyXmlError(
+        raise PolicyXMLError(
             line=root.line,
             problem=f"root element is <{root.tag}>, expected <policies> or <fragment>",
         )
@@ -390,11 +379,11 @@ def _cors_findings(path: Path, root: Node) -> list[Finding]:
 
 
 def _fragments(root: Node) -> set[str]:
-    """Return the ids of included policy fragments."""
+    """Return the ids of included policy fragments that name one."""
     return {
-        node.attrs.get("fragment-id", "")
+        node.attrs["fragment-id"]
         for node in root.walk()
-        if node.tag == "include-fragment"
+        if node.tag == "include-fragment" and "fragment-id" in node.attrs
     }
 
 
@@ -569,6 +558,8 @@ def _on_error_findings(path: Path, root: Node, scope: str) -> list[Finding]:
 def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
     """Check one policy document and return its findings in line order.
 
+    Malformed XML or a non-policy document propagates ``PolicyXMLError``.
+
     Args:
         path (Path): Path reported in findings and used for scope detection.
         text (str): Policy XML.
@@ -576,9 +567,6 @@ def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
 
     Returns:
         Findings sorted by line, rule, and message, without disabled rules.
-
-    Raises:
-        PolicyXmlError: If the XML is malformed or not a policy document.
     """
     root = parse(text)
     scope = scope_for(path, options.scope)
@@ -596,17 +584,10 @@ def scan_text(path: Path, text: str, options: Options) -> list[Finding]:
 
 
 def collect_files(paths: Iterable[Path]) -> list[Path]:
-    """Expand directories into sorted policy files.
+    """Expand paths into sorted policy files; raise ``MissingPathError`` if absent.
 
-    Args:
-        paths (Iterable[Path]): Files or directories. Directories contribute files
-            ending in ``.xml`` or ``.xml.template``.
-
-    Returns:
-        Sorted, de-duplicated file list.
-
-    Raises:
-        MissingPathError: If a path does not exist.
+    Directories contribute files ending in ``.xml`` or ``.xml.template``; the
+    result is de-duplicated.
     """
     files: set[Path] = set()
     for path in paths:
@@ -693,7 +674,7 @@ def self_test() -> list[str]:
     for bad in ("<!DOCTYPE p [<!ENTITY a 'x'>]><policies />", "<policies>", "<p />"):
         try:
             parse(bad)
-        except PolicyXmlError:
+        except PolicyXMLError:
             continue
         failures.append(f"invalid document was accepted: {bad!r}")
     return failures
@@ -787,7 +768,7 @@ def _scan_files(files: Sequence[Path], options: Options) -> list[Finding]:
     for path in files:
         try:
             findings.extend(scan_text(path, path.read_text(encoding="utf-8"), options))
-        except PolicyXmlError as error:
+        except PolicyXMLError as error:
             raise InvalidPolicyFileError(path=path, error=error) from error
     return findings
 

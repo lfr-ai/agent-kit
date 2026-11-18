@@ -24,9 +24,8 @@ _JSON_INDENT = 2
 def _object(text: str) -> dict[str, object]:
     """Read a JSON object, never silently accept an absent report.
 
-    Returns:
-        dict[str, object]: Decoded top-level JSON object preserving its keys
-        and nested JSON values; no report-specific fields are validated here.
+    Any other top-level value raises ``ValueError``; keys and nested values are
+    preserved and report-specific fields are not validated here.
     """
     value: object = json.loads(text)
     if not isinstance(value, dict):

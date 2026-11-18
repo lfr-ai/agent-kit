@@ -16,7 +16,7 @@ keep provider choice a configuration decision.
 - A typed error hierarchy split into transient errors (timeout, unavailable,
   rate limited, circuit open) and permanent errors (invalid request, context
   too long, content filtered, authentication, budget, structured output).
-- `LlmClient`: one async `complete` method that adapters, policy wrappers and
+- `LLMClient`: one async `complete` method that adapters, policy wrappers and
   fakes all implement.
 
 Application code imports only the port. It never imports a provider SDK, never

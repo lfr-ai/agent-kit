@@ -1,6 +1,6 @@
 ---
 name: kit-domain-model
-description: Use when modeling domain entities, value objects, and invariants independently of transport and persistence.
+description: Use when modeling domain entities, value objects and transport-independent invariants.
 license: MIT
 ---
 
@@ -92,7 +92,7 @@ Prints `path:line: message` per unbound port and exits 1 on findings.
 
 ## References
 
-- [Domain modeling guide](guide.md) and [checklist](references/guide.md)
+- [Domain modeling path](references/modeling-path.md) and [checklist](references/guide.md)
 - [Aggregates and invariants](references/aggregates-invariants.md)
 - [Value objects](references/value-objects.md)
 - [Domain events](references/domain-events.md)

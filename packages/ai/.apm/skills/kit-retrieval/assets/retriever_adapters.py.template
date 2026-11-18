@@ -56,16 +56,11 @@ class InMemoryIndex:
         self._tombstones: set[tuple[str, str]] = set()
 
     def candidates(self, query: Query) -> list[Chunk]:
-        """Return chunks the principal may read that match exact filters.
+        """Return chunks the query principal may read that match its exact filters.
 
         Filtering happens here, before any scoring, so invisible chunks never
         influence ranks, scores, or corpus statistics returned to the caller.
-
-        Args:
-            query (Query): Request whose principal and filters apply.
-
-        Returns:
-            Visible chunks in stable id order.
+        Chunks follow stable id order.
         """
         return [
             chunk
@@ -77,17 +72,9 @@ class InMemoryIndex:
         ]
 
     async def upsert(self, chunks: Sequence[Chunk]) -> int:
-        """Insert or replace chunks by id.
+        """Upsert chunks by id; raise ``SourceDeletedError`` for a deleted source.
 
-        Args:
-            chunks (Sequence[Chunk]): Chunks to write.
-
-        Returns:
-            Number of chunks written.
-
-        Raises:
-            SourceDeletedError: If any chunk belongs to a deleted source; no
-                chunk of the batch is written.
+        The result is the number written; on error no chunk of the batch is written.
         """
         deleted = sorted(
             {
@@ -182,16 +169,10 @@ class LexicalRetriever:
         return "bm25"
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Score visible candidates with BM25.
+        """Score visible candidates with BM25; return positive hits in rank order.
 
         Corpus statistics are computed over visible candidates only, so a
         caller cannot infer hidden documents from score shifts.
-
-        Args:
-            query (Query): Request to execute.
-
-        Returns:
-            Hits with a positive score in rank order.
         """
         candidates = self._index.candidates(query)
         terms = set(tokenize(query.text))
@@ -251,14 +232,7 @@ class HashingEmbedder:
         return self._dimensions
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed each text as an L2-normalized hashed bag of words.
-
-        Args:
-            texts (Sequence[str]): Inputs to embed.
-
-        Returns:
-            One vector per input.
-        """
+        """Embed each text as an L2-normalized hashed bag of words."""
         vectors: list[list[float]] = []
         for text in texts:
             vector = [0.0] * self._dimensions
@@ -381,15 +355,10 @@ class HybridRetriever:
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
         """Fuse every strategy's ranking, rerank, and re-check visibility.
 
-        A failing strategy fails the whole call: silently degrading to one
-        strategy hides recall regressions. Wrap strategies explicitly if a
-        degraded mode is an accepted product decision.
-
-        Args:
-            query (Query): Request to execute.
-
-        Returns:
-            Fused, visible hits in rank order.
+        Visible hits are returned in rank order. A failing strategy fails the
+        whole call: silently degrading to one strategy hides recall regressions.
+        Wrap strategies explicitly if a degraded mode is an accepted product
+        decision.
         """
         widened = replace(query, top_k=min(query.top_k * self._multiplier, MAX_TOP_K))
         results = await asyncio.gather(

@@ -17,6 +17,7 @@ ignores:
   - ".claude/**"
   - ".github/agents/**"
   - ".github/instructions/**"
+  - "profiles/native/**"
   # Templates contain placeholders rather than finished Markdown documents.
   - "**/*.template.md"
   # Deployed by APM with pinned hashes; restyle only together with an APM refresh.

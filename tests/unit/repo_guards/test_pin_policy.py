@@ -1,5 +1,6 @@
 """Version-pin policy for tooling, automation, containers, and agent integrations."""
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
 import runpy
 
@@ -24,6 +25,20 @@ def _scan(root: Path, files: dict[str, str]) -> list[str]:
 
 def test_repository_has_no_floating_versions() -> None:
     assert _CHECKER["scan"](_ROOT) == []
+
+
+def test_unreadable_source_directory_is_not_a_clean_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny_walk(
+        self: Path, *, on_error: Callable[[OSError], None]
+    ) -> Iterator[tuple[Path, list[str], list[str]]]:
+        on_error(PermissionError("synthetic source directory denial"))
+        return iter(())
+
+    monkeypatch.setattr(Path, "walk", deny_walk)
+
+    assert _CHECKER["main"](["--root", str(tmp_path)]) == 2
     assert verify_module._CHECKS["pins"][1].endswith("check_pins.py")
 
 
@@ -199,3 +214,71 @@ def test_unreadable_input_exits_two(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("not = [valid", encoding="utf-8")
 
     assert _CHECKER["main"](["--root", str(tmp_path)]) == 2
+
+
+@pytest.mark.parametrize(
+    ("relative", "content", "expected"),
+    [
+        ("pyproject.toml", '[dependency-groups]\ndev = ["ruff>=0.17"]\n', "=="),
+        ("tox.ini", "[tox]\nrequires =\n    tox>=4\n", "=="),
+        (".pre-commit-config.yaml", "repos:\n  - repo: x\n    rev: v1\n", "mutable"),
+        ("package.json", '{"dependencies": {"tool": "^1.0.0"}}', "pin exactly"),
+        ("Taskfile.yml", "tasks:\n  check:\n    cmds:\n      - uv sync\n", "--locked"),
+        (
+            "actions/check/action.yml",
+            "runs:\n  steps:\n    - run: npm install\n",
+            "npm ci",
+        ),
+        (
+            ".github/workflows/check.yml",
+            "jobs:\n  check:\n    steps:\n      - run: uvx ruff\n",
+            "runner",
+        ),
+        ("pipelines/check.yaml", "steps:\n  - bash: uv sync\n", "--locked"),
+        (".devcontainer/devcontainer.json", '{"image": "python:3.13"}', "digest"),
+        (
+            ".mcp.json",
+            '{"mcpServers": {"x": {"command": "npx", "args": ["tool"]}}}',
+            "exact",
+        ),
+    ],
+)
+def test_nested_package_execution_surfaces_are_checked(
+    tmp_path: Path, relative: str, content: str, expected: str
+) -> None:
+    assert any(
+        expected in message
+        for message in _scan(tmp_path, {f"packages/example/{relative}": content})
+    )
+
+
+@pytest.mark.parametrize(
+    "directory", [".git", ".venv", "node_modules", "build", "apm_modules", ".terraform"]
+)
+def test_nested_generated_dependencies_are_not_scanned(
+    tmp_path: Path, directory: str
+) -> None:
+    assert (
+        _scan(
+            tmp_path,
+            {
+                f"packages/example/{directory}/pyproject.toml": '[dependency-groups]\ndev = ["ruff"]\n'
+            },
+        )
+        == []
+    )
+
+
+def test_nested_compatibility_requirements_are_not_execution_selectors(
+    tmp_path: Path,
+) -> None:
+    assert (
+        _scan(
+            tmp_path,
+            {
+                "packages/library/pyproject.toml": '[project]\nrequires-python = ">=3.13"\n'
+                'dependencies = ["httpx>=0.28,<1"]\n[tool.uv]\nrequired-version = ">=0.12,<0.14"\n',
+            },
+        )
+        == []
+    )

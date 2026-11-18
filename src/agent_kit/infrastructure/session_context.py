@@ -1,11 +1,12 @@
 """Read-only session context-entry checks without executing project commands."""
 
 from pathlib import Path
+from typing import Final
 
 from agent_kit.core.guards import require_object, require_text
 from agent_kit.core.models import SessionContext
 
-_ENTRY_FILES = ("AGENTS.md", "PROJECT.md", "llms.txt")
+ENTRY_FILES: Final[tuple[str, ...]] = ("AGENTS.md", "PROJECT.md", "llms.txt")
 
 
 class InvalidContextDirectoryError(ValueError):
@@ -27,20 +28,11 @@ class UnavailableContextWorkspaceError(ValueError):
 def session_context(payload: object) -> SessionContext:
     """Inspect only the existence of the approved workspace entry files.
 
-    A payload or ``cwd`` of the wrong type raises ``InputTypeError``.
-
-    Args:
-        payload (object): Decoded hook input; an object with an optional ``cwd``.
-
-    Returns:
-        SessionContext: Workspace from ``payload["cwd"]``, or the process's
-        current directory when omitted or ``None``. Missing filenames follow
-        ``AGENTS.md``, ``PROJECT.md``, ``llms.txt`` order; empty if all exist.
-        File contents are never read.
-
-    Raises:
-        InvalidContextDirectoryError: ``cwd`` is empty or not absolute.
-        UnavailableContextWorkspaceError: The workspace is not a directory.
+    The workspace is ``payload["cwd"]``, or the current directory when it is
+    omitted or ``None``; file contents are never read. Missing names follow
+    ``AGENTS.md``, ``PROJECT.md``, ``llms.txt`` order and are empty when all exist.
+    An empty or relative ``cwd`` raises ``InvalidContextDirectoryError``, and a
+    workspace that is not a directory raises ``UnavailableContextWorkspaceError``.
     """
     supplied = require_object(payload, location="session context input").get("cwd")
     if supplied is None:
@@ -54,5 +46,5 @@ def session_context(payload: object) -> SessionContext:
         raise UnavailableContextWorkspaceError
     return SessionContext(
         workspace=str(root),
-        missing=tuple(name for name in _ENTRY_FILES if not (root / name).is_file()),
+        missing=tuple(name for name in ENTRY_FILES if not (root / name).is_file()),
     )

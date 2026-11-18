@@ -1,6 +1,6 @@
 ---
 name: kit-codebase-audit
-description: Use when auditing a whole repository and producing a ranked, evidenced findings report without fixing.
+description: Use when auditing a repository for ranked, evidenced findings without fixing.
 license: MIT
 ---
 
@@ -28,7 +28,8 @@ and `kit-duplication-review`; this procedure covers the whole repository.
    to the project during an audit; run new tools from a disposable, pinned
    environment approved by the operator.
 4. **Run the tools first, read code second.** Capture machine-readable output in
-   one audit directory, using the commands and
+   one explicit absolute temporary/session directory outside the checkout
+   (`$AUDIT_DIR`), using the commands and
    [Ruff audit config](assets/ruff-audit.toml.template) and
    [pyproject audit snippets](assets/pyproject-audit.toml.template) listed in the
    guide: Ruff with complexity (`C90`, `PLR`) and selected families, a type
@@ -39,7 +40,7 @@ and `kit-duplication-review`; this procedure covers the whole repository.
    [findings summarizer](assets/summarize_findings.py):
 
    ```text
-   python assets/summarize_findings.py audit/ruff.json audit/osv.sarif audit/ty.json --root "$PWD" --output audit/tool-findings.md
+   python assets/summarize_findings.py $AUDIT_DIR/ruff.json $AUDIT_DIR/osv.sarif $AUDIT_DIR/ty.json --root "$PWD" --output $AUDIT_DIR/tool-findings.md
    ```
 
    It accepts SARIF, Ruff JSON and GitLab Code Quality JSON, groups by tool and

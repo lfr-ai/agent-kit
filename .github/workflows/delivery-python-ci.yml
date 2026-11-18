@@ -1,0 +1,58 @@
+name: Delivery Python CI
+
+# Contract: the caller locks go-task-bin in its dev group and supplies a check-only Task gate.
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version for actions/setup-python.
+        type: string
+        required: true
+      uv-version:
+        description: Exact uv version.
+        type: string
+        required: true
+      task:
+        description: Task name to run (the project's check-only gate).
+        type: string
+        default: verify
+      base-url:
+        description: URL of a deployed environment, exported as BASE_URL for the smoke and e2e tasks.
+        type: string
+        default: ""
+      working-directory:
+        description: Directory containing pyproject.toml, uv.lock and Taskfile.yml.
+        type: string
+        default: .
+      runs-on:
+        description: Linux runner label (Bash 4.4 or newer, as on every hosted Linux image).
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        description: Job timeout.
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: task ${{ inputs.task }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/packages/delivery/actions/python-check
+        with:
+          python-version: ${{ inputs.python-version }}
+          uv-version: ${{ inputs.uv-version }}
+          task: ${{ inputs.task }}
+          working-directory: ${{ inputs.working-directory }}
+          base-url: ${{ inputs.base-url }}

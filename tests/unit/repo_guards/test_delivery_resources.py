@@ -10,7 +10,7 @@ import shutil
 import sys
 
 import pytest
-from scripts.check_resources import _reachable
+from scripts.checks.resources import _reachable
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -222,6 +222,32 @@ def test_dora_template_parses_and_computes_metrics(
     assert report["rework_rate"] == pytest.approx(0.5)
     assert main(arguments) == 0
     assert "change fail rate: 50.00 %" in capsys.readouterr().out
+
+
+def test_dora_template_ignores_records_missing_environment_or_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = tmp_path / "dora_metrics.py"
+    shutil.copyfile(_DORA, script)
+    records = [
+        {
+            "environment": "production",
+            "created_at": "2026-10-01T10:00:00Z",
+            "status_at": "2026-10-01T10:00:00Z",
+        },
+        {
+            "created_at": "2026-10-02T10:00:00Z",
+            "status": "success",
+            "status_at": "2026-10-02T10:00:00Z",
+        },
+    ]
+    export = _write(tmp_path, "deployments.json", json.dumps(records))
+    main = _main(script)
+    arguments = [str(export), "--since", "2026-10-01", "--until", "2026-10-08"]
+    assert main([*arguments, "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["deployments"] == 1
+    assert report["successful_deployments"] == 0
 
 
 def test_dora_template_rejects_naive_timestamps(tmp_path: Path) -> None:

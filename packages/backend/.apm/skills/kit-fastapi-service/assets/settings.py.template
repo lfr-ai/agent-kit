@@ -1,6 +1,6 @@
 """HTTP transport settings facet with secure defaults and unsafe-combination checks.
 
-Copy into ``src/shop/api/settings.py``. Nest ``HttpSettings`` in the project's
+Copy into ``src/shop/api/settings.py``. Nest ``HTTPSettings`` in the project's
 settings class (see the ``kit-config`` skill) so environment variables such as
 ``SHOP_HTTP__CORS_ORIGINS`` load it once at start-up; the app factory receives
 the validated facet and never reads the environment.
@@ -32,7 +32,7 @@ class RouteLimit(BaseModel):
     window_seconds: int = Field(ge=1)
 
 
-class HttpSettings(BaseModel):
+class HTTPSettings(BaseModel):
     """Validated HTTP settings consumed by ``create_app``."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -67,12 +67,8 @@ class HttpSettings(BaseModel):
     def _reject_unsafe_combinations(self) -> Self:
         """Reject wildcard hosts and origins and colliding rate limit names.
 
-        Returns:
-            The validated settings.
-
-        Raises:
-            ValueError: An origin or host list is unsafe or malformed, or two
-                route limits share a name.
+        An unsafe or malformed origin or host list, or two route limits sharing a
+        name, raises ``ValueError``; valid settings are returned.
         """
         if not self.trusted_hosts or "*" in self.trusted_hosts:
             msg = "trusted_hosts must list explicit host names"

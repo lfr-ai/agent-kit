@@ -1,0 +1,71 @@
+# Manual deployment of one environment through the toolkit's preview-then-deploy template.
+# Run .azuredevops/pipelines/image.yml for the same environment first and paste its digest.
+# First deploy of an environment: set registryBootstrap to create the registry without the app,
+# then build the image and deploy again with its digest.
+# Variable group {{ project_name }}-<environment> supplies
+{%- if iac == 'bicep' %} AZURE_RESOURCE_GROUP (existing resource group).
+{%- else %} TFSTATE_STORAGE_ACCOUNT (state account).
+{%- endif %}
+trigger: none
+pr: none
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values: [dev, test, staging, prod]
+  - name: image
+    displayName: Image digest from the image pipeline (<registry>.azurecr.io/<repository>@sha256:<digest>)
+    type: string
+    default: none
+  - name: registryBootstrap
+    displayName: First deploy only - create the registry and platform without the app
+    type: boolean
+    default: false
+  # Staging and prod are private: select a self-hosted or Managed DevOps Pool with network access.
+  - name: pool
+    displayName: Agent pool (hosted uses Microsoft-hosted ubuntu-24.04)
+    type: string
+    default: hosted
+
+variables:
+  - group: {{ project_name }}-{% raw %}${{ parameters.environment }}{% endraw %}
+
+resources:
+  repositories:
+    - repository: delivery
+      type: github
+      name: lfr-ai/agent-kit
+      endpoint: agent-kit-github
+      ref: {{ kit_commit }} # reviewed toolkit commit
+
+extends:
+  template: packages/delivery/azure-devops/extends/azure-deploy.yml@delivery
+  parameters:
+    iac: {{ iac }}
+    workingDirectory: infra
+    deployBranch: refs/heads/main
+{%- if iac == 'terraform' %}
+    terraformVersion: "1.16.7"
+    terraformSha256: 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b
+{%- else %}
+    bicepVersion: "0.48.1"
+{%- endif %}
+{%- raw %}
+    pool: ${{ parameters.pool }}
+    # The registry is per environment, so one run deploys one environment with its own image.
+    ${{ if parameters.registryBootstrap }}:
+      image: ""
+    ${{ else }}:
+      image: ${{ parameters.image }}
+    environments:
+      - name: ${{ parameters.environment }}
+        # Workload identity federation service connection per environment: azure-<environment>.
+        serviceConnection: azure-${{ parameters.environment }}
+{%- endraw %}
+{%- if iac == 'bicep' %}
+        resourceGroup: $(AZURE_RESOURCE_GROUP)
+{%- else %}
+        tfstateStorageAccount: $(TFSTATE_STORAGE_ACCOUNT)
+{%- endif %}

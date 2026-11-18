@@ -9,7 +9,7 @@ import hashlib
 import string
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import StrEnum, auto, unique
 from typing import Protocol
 
 _PROMPT_FINGERPRINT_HEX_CHARS = 16
@@ -19,23 +19,23 @@ _MAX_OUTPUT_TOKENS = 32_000
 _MAX_SAMPLING_TEMPERATURE = 2.0
 
 
-class LlmError(Exception):
+class LLMError(Exception):
     """Base class for model-call failures callers can handle."""
 
 
-class LlmTransientError(LlmError):
+class LLMTransientError(LLMError):
     """Retrying the same request later may succeed."""
 
 
-class LlmTimeoutError(LlmTransientError):
+class LLMTimeoutError(LLMTransientError):
     """The provider did not answer within the deadline."""
 
 
-class LlmUnavailableError(LlmTransientError):
+class LLMUnavailableError(LLMTransientError):
     """Connection failure or provider-side outage."""
 
 
-class LlmRateLimitedError(LlmTransientError):
+class LLMRateLimitedError(LLMTransientError):
     """The provider throttled the request.
 
     Attributes:
@@ -53,44 +53,45 @@ class LlmRateLimitedError(LlmTransientError):
         self.retry_after_s = retry_after_s
 
 
-class LlmPermanentError(LlmError):
+class LLMPermanentError(LLMError):
     """Retrying the same request cannot succeed."""
 
 
-class LlmInvalidRequestError(LlmPermanentError):
+class LLMInvalidRequestError(LLMPermanentError):
     """The request was malformed or used unsupported parameters."""
 
 
-class LlmContextTooLongError(LlmPermanentError):
+class LLMContextTooLongError(LLMPermanentError):
     """Input plus requested output exceed the model's context window."""
 
 
-class LlmContentFilteredError(LlmPermanentError):
+class LLMContentFilteredError(LLMPermanentError):
     """The provider refused or filtered the content."""
 
 
-class LlmAuthError(LlmPermanentError):
+class LLMAuthError(LLMPermanentError):
     """Credentials are missing, invalid, or lack permission."""
 
 
-class LlmBudgetExceededError(LlmPermanentError):
+class LLMBudgetExceededError(LLMPermanentError):
     """The call would exceed a token or spend budget."""
 
 
-class LlmCircuitOpenError(LlmTransientError):
+class LLMCircuitOpenError(LLMTransientError):
     """Calls are short-circuited after repeated provider failures."""
 
 
-class StructuredOutputError(LlmPermanentError):
+class StructuredOutputError(LLMPermanentError):
     """The model output did not satisfy the requested schema."""
 
 
+@unique
 class Role(StrEnum):
     """Chat message roles understood by every adapter."""
 
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
+    SYSTEM = auto()
+    USER = auto()
+    ASSISTANT = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -129,17 +130,10 @@ class PromptTemplate:
         return digest.hexdigest()[:_PROMPT_FINGERPRINT_HEX_CHARS]
 
     def render(self, variables: Mapping[str, str]) -> tuple[ChatMessage, ...]:
-        """Fill placeholders; missing or extra variables are errors.
+        """Fill placeholders into system and user messages, or raise ``ValueError``.
 
-        Args:
-            variables (Mapping[str, str]): Placeholder values; untrusted text stays in
-                the user message.
-
-        Returns:
-            System and user messages.
-
-        Raises:
-            ValueError: If a placeholder is missing or a variable is unused.
+        A missing placeholder or unused variable is an error; untrusted text stays
+        in the user message.
         """
         template = string.Template(self.user)
         expected = set(template.get_identifiers())
@@ -167,9 +161,9 @@ class CompletionRequest:
         temperature: Sampling temperature; 0 reduces but does not remove variance.
         timeout_s: Deadline for one attempt.
         json_schema: Optional JSON Schema the provider should follow.
-        prompt_name: Prompt template name, for audit.
-        prompt_version: Prompt template version, for audit.
-        request_id: Caller correlation id.
+        prompt_name: Prompt template name, for audit; ``None`` when not templated.
+        prompt_version: Prompt template version, for audit; ``None`` when unknown.
+        request_id: Caller correlation id; ``None`` when the caller has none.
     """
 
     operation: str
@@ -179,20 +173,20 @@ class CompletionRequest:
     temperature: float = 0.0
     timeout_s: float = _DEFAULT_TIMEOUT_SECONDS
     json_schema: Mapping[str, object] | None = None
-    prompt_name: str = ""
-    prompt_version: str = ""
-    request_id: str = ""
+    prompt_name: str | None = None
+    prompt_version: str | None = None
+    request_id: str | None = None
 
     def __post_init__(self) -> None:
         """Reject requests no provider should receive."""
         if not self.messages:
-            raise LlmInvalidRequestError("messages are required")
+            raise LLMInvalidRequestError("messages are required")
         if not 1 <= self.max_output_tokens <= _MAX_OUTPUT_TOKENS:
-            raise LlmInvalidRequestError("max_output_tokens out of range")
+            raise LLMInvalidRequestError("max_output_tokens out of range")
         if not 0.0 <= self.temperature <= _MAX_SAMPLING_TEMPERATURE:
-            raise LlmInvalidRequestError("temperature out of range")
+            raise LLMInvalidRequestError("temperature out of range")
         if self.timeout_s <= 0:
-            raise LlmInvalidRequestError("timeout_s must be positive")
+            raise LLMInvalidRequestError("timeout_s must be positive")
 
     @property
     def input_chars(self) -> int:
@@ -243,9 +237,9 @@ class Completion:
     metadata: Mapping[str, str] = field(default_factory=dict)
 
 
-class LlmClient(Protocol):
+class LLMClient(Protocol):
     """Port every adapter, policy wrapper and fake implements."""
 
     async def complete(self, request: CompletionRequest) -> Completion:
-        """Return a completion or raise an ``LlmError`` subclass."""
+        """Return a completion or raise an ``LLMError`` subclass."""
         ...

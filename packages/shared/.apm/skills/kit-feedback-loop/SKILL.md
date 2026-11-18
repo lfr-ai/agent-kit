@@ -1,6 +1,6 @@
 ---
 name: kit-feedback-loop
-description: Use when a task's edits are done, to self-review against rules and criteria and decide to iterate or stop.
+description: Use when self-reviewing edits against rules and criteria to iterate or stop.
 license: MIT
 ---
 

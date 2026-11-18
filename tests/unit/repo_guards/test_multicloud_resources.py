@@ -7,7 +7,7 @@ import runpy
 import sys
 
 import pytest
-from scripts.check_resources import _reachable
+from scripts.checks.resources import _reachable
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]

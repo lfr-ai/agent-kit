@@ -39,9 +39,10 @@ Language-neutral principles that apply beyond Python:
 - **Same concept, same spelling across boundaries**: a field called
   `payment_reference` in the domain should not become `paymentRef` in storage
   and `reference_id` in the API without a documented mapping.
-- **Abbreviations**: use only well-known ones (`id`, `url`, `http`), spell
-  them consistently, and in `CapWords` treat them as words (`HttpClient`) or as
-  all-caps (`HTTPClient`) - pick one per codebase.
+- **Abbreviations**: use only well-known ones (`id`, `url`, `http`) and spell
+  them consistently. In `CapWords` follow the language's style guide: Python
+  (PEP 8) keeps acronyms uppercase (`HTTPClient`); TypeScript, Java and C# guides
+  treat them as words (`HttpClient`).
 - **Booleans** read as predicates: `is_payable`, `has_reference`, `allow_extra`.
 
 ## Names that tools depend on

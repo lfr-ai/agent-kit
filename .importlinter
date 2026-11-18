@@ -1,5 +1,7 @@
 [importlinter]
-root_package = agent_kit
+root_packages =
+    agent_kit
+    platform_kit_runtime
 include_external_packages = True
 
 [importlinter:contract:layers]
@@ -27,3 +29,66 @@ forbidden_modules =
     yaml
     apm_cli
     subprocess
+
+[importlinter:contract:application]
+name = Application avoids parsing, process and filesystem-mutation packages
+type = forbidden
+source_modules =
+    agent_kit.application
+forbidden_modules =
+    yaml
+    subprocess
+    shutil
+
+[importlinter:contract:runtime-layers]
+name = Runtime dependencies point inward
+type = layers
+layers =
+    platform_kit_runtime.composition | platform_kit_runtime.ai | platform_kit_runtime.identity | platform_kit_runtime.database | platform_kit_runtime.documents | platform_kit_runtime.retrieval | platform_kit_runtime.telemetry | platform_kit_runtime.middleware
+    platform_kit_runtime.presentation | platform_kit_runtime.infrastructure | platform_kit_runtime.config
+    platform_kit_runtime.application
+    platform_kit_runtime.core
+
+[importlinter:contract:runtime-infrastructure]
+name = Runtime adapters depend on ports, not presentation or services
+type = forbidden
+source_modules =
+    platform_kit_runtime.infrastructure
+forbidden_modules =
+    platform_kit_runtime.presentation
+    platform_kit_runtime.application
+
+[importlinter:contract:runtime-presentation]
+name = Runtime presentation never selects infrastructure
+type = forbidden
+source_modules =
+    platform_kit_runtime.presentation
+forbidden_modules =
+    platform_kit_runtime.infrastructure
+
+[importlinter:contract:runtime-frameworks]
+name = Runtime core and application avoid boundary frameworks
+type = forbidden
+source_modules =
+    platform_kit_runtime.core
+    platform_kit_runtime.application
+forbidden_modules =
+    fastapi
+    starlette
+    pydantic
+    httpx
+    sqlalchemy
+    asyncpg
+    azure
+    redis
+    opentelemetry
+    litellm
+    msal
+    jwt
+
+[importlinter:contract:package-independence]
+name = Agent tooling and application runtime are independent
+type = independence
+modules =
+    agent_kit
+    platform_kit_runtime

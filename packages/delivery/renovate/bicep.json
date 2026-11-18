@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Bicep: resource apiVersions (native manager) and Azure Verified Module versions, which the native manager does not resolve. AVM Bicep modules are published to mcr.microsoft.com/bicep, so the docker datasource lists their tags.",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "AVM references such as br/public:avm/res/storage/storage-account:0.14.3.",
+      "managerFilePatterns": ["/\\.bicep(?:param)?$/"],
+      "matchStrings": [
+        "br/public:(?<depName>avm/(?:res|ptn|utl)/[a-z0-9-]+(?:/[a-z0-9-]+)+):(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "mcr.microsoft.com/bicep/{{{depName}}}",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "AVM modules are 0.x: every minor can break, so each bump is its own labelled PR.",
+      "matchPackageNames": ["mcr.microsoft.com/bicep/avm/**"],
+      "addLabels": ["bicep"],
+      "separateMinorPatch": true
+    }
+  ]
+}

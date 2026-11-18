@@ -20,9 +20,13 @@ plus a lockfile hash, a full commit SHA, or an image digest cannot.
 | CI tool installers | Exact `version:` inputs (uv, Bun, downloaded CLIs), never `latest` | Dependabot or manual |
 | MCP stdio servers | `package@x.y.z` or an image digest; remote servers over HTTPS | Manual review |
 
-Published library dependencies are the one deliberate range: exact pins in
+Published library dependencies deliberately use ranges: exact pins in
 package metadata force conflicts on consumers and block their security updates.
 Pin the project's own environment through its lockfile instead.
+Compatibility declarations such as Python `requires-python`, uv
+`required-version`, and Terraform `required_version` also remain ranges: they
+reject unsupported runtimes, but do not download or select a release. Pin the
+actual CI installer, lockfile, provider selection and downloaded artifact.
 
 ## Commands
 
@@ -43,7 +47,9 @@ python check_pins.py --self-test
 
 It reads `pyproject.toml`, `tox.ini`, `.pre-commit-config.yaml`, `package.json`,
 Dockerfiles, dev container files, workflows, local actions, `Taskfile.yml` and MCP
-manifests. Wire it into the verification gate and an always-running pre-commit
+manifests, including nested reusable packages and Azure pipeline templates.
+Generated dependency, build and Terraform provider directories are excluded;
+authored package sources are not. Wire it into the verification gate and an always-running pre-commit
 hook, and add negative tests for each rule the repository depends on.
 
 ## Limits

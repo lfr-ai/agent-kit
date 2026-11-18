@@ -1,6 +1,6 @@
 ---
 name: kit-llm-client
-description: Use when integrating a language-model provider behind a bounded, validated, privacy-aware application boundary.
+description: Use when integrating LLM providers behind bounded, validated, privacy-aware clients.
 license: MIT
 ---
 

@@ -13,8 +13,9 @@ historical CLI behavior.
 | Catalog budgets | Bounded discovery metadata and profile size | Detail belongs in on-demand resources |
 | Source and generated-output hashes | Detectable drift and unowned files | Hashes are not signatures or authorization |
 | Advisory session hook | Honest context-entry health signal | Provides no tool filtering or access control |
+| Advisory edit feedback hook | Lint and convention findings reach the agent in the same turn | Adds latency per edit; hosts may skip it, so CI stays the gate |
 | Opt-in MCP | No implicit server startup or credentials | Consumers review integrations explicitly |
-| Rendered native roles | Shared role bodies with host-correct metadata | Native role outputs are repository-owned, not in consumer profiles |
+| Rendered native roles | Shared role bodies with host-correct metadata | Target-scoped role packages are generated per host |
 
 ## Authoring source and consumer delivery
 
@@ -57,10 +58,10 @@ role projections have a separate source selection and native ownership ledger.
 These checks detect drift; they do not prove that a capability behaves well in
 a live model session.
 
-The generated consumer profiles resolve APM source packages, not native Copilot
-or Claude role files. Role definitions remain authored as skill assets and are
-rendered for this repository's own native setup. Do not interpret the role
-assets or local native projections as consumer-installed roles.
+Each generated consumer profile also pins the target-scoped role packages
+`profiles/native/copilot` and `profiles/native/claude`, rendered from the same
+role assets as this repository's own projections. APM installs each package only
+for its host target.
 
 ## Bounded discovery and budgets
 
@@ -99,6 +100,11 @@ installation mechanism, policy validator, or permission boundary. Native
 registration and interpreter selection are checked separately; file tests do
 not certify a live IDE session.
 
+The edit feedback hook runs [edit_feedback.py](../../scripts/edit_feedback.py)
+after edit tools and returns ruff and convention findings for the edited file
+as context. Feedback during the edit is cheaper than a failed gate later, but
+the hook only advises: it never blocks, and `task verify` stays authoritative.
+
 ## Native role rendering
 
 Role definitions are authored once as JSON assets inside skills
@@ -107,9 +113,9 @@ host-specific Copilot and Claude role metadata and records ownership in its
 native ledger. Host tool names, delegation and visibility flags differ, so
 these projections are not interchangeable.
 
-These are repository-owned outputs. The consumer profile manifests do not
-include native role projections, and the APM source-package smoke does not claim
-role discovery in a consuming IDE.
+The repository projections and the generated `profiles/native/` packages share
+the role source. `task apm:smoke` checks that APM delivers the native packages
+to a disposable consumer; it does not claim role discovery in a live IDE.
 
 ## Verification boundaries
 

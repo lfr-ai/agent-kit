@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_kit.application.services.catalog_service import CompositionError
+from agent_kit.application.catalog import CompositionError
 from agent_kit.composition.root import (
     compose_workspace,
+    plan_composition,
     validate_source,
     verify_provenance,
 )
@@ -20,6 +21,19 @@ def test_source_and_composition_workflows_use_real_adapters(
     assert validate_source(source_root).valid
     assert compose_workspace(source_root, "backend", (), (), output) == output.resolve()
     assert verify_provenance(output).valid
+
+
+def test_planned_composition_matches_published_workspace(
+    source_root: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "composed"
+    plan = plan_composition(source_root, "backend", (), ())
+
+    compose_workspace(source_root, "backend", (), (), output)
+
+    assert plan.files
+    for item in plan.files:
+        assert (output / item.relative_path).read_bytes() == item.content
 
 
 def test_invalid_source_prevents_composition_and_output(

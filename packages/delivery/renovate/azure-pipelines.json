@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Azure DevOps pipelines: enable the beta manager, track tag-pinned GitHub template repositories, use major-only task versions.",
+  "azure-pipelines": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Azure Pipelines tasks are referenced by major version, for example AzureCLI@2.",
+      "matchDatasources": ["azure-pipelines-tasks"],
+      "extractVersion": "^(?<version>\\d+)"
+    }
+  ]
+}

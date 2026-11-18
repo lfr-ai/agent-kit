@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from agent_kit.core.errors import UnreadableDocumentError
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

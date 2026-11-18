@@ -9,13 +9,13 @@ import enum
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
-from typing import Self
+from enum import StrEnum, auto
+from typing import Final, Self
 
 from shop.core.events import DomainEvent, OrderConfirmed, OrderLineAdded, OrderOpened
 from shop.core.values import Money, OrderId
 
-MAX_LINES = 100
+MAX_LINES: Final[int] = 100
 
 
 class OrderError(Exception):
@@ -34,9 +34,9 @@ class OrderLimitError(OrderError):
 class OrderStatus(StrEnum):
     """Lifecycle state of an order."""
 
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    CANCELLED = "cancelled"
+    DRAFT = auto()
+    CONFIRMED = auto()
+    CANCELLED = auto()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -191,7 +191,7 @@ class Order:
         return total
 
     def add_line(self, *, sku: str, quantity: int, unit_price: Money, now: datetime) -> None:
-        """Add a line to a draft order.
+        """Add a line to a draft order or raise ``OrderStateError``.
 
         Args:
             sku (str): Non-blank product identifier not already on this order.
@@ -200,7 +200,6 @@ class Order:
             now (datetime): Occurrence time attached to the line-added event.
 
         Raises:
-            OrderStateError: If the order is not a draft.
             OrderLimitError: If the SKU is already present or the line limit is reached.
             ValueError: If the line itself is invalid or uses another currency.
         """
@@ -220,8 +219,7 @@ class Order:
     def confirm(self, *, now: datetime) -> None:
         """Confirm a non-empty draft and record ``OrderConfirmed``.
 
-        Raises:
-            OrderStateError: If the order is not a draft or has no lines.
+        An order that is not a draft or has no lines raises ``OrderStateError``.
         """
         self._require_draft("confirm")
         if not self._lines:

@@ -2,8 +2,8 @@ from pathlib import Path
 import tokenize
 
 import pytest
-import scripts.check_suppressions as suppressions
-from scripts.check_suppressions import inspect_text
+from scripts.checks import suppressions
+from scripts.checks.suppressions import inspect_text
 
 _TRAILING_CASES = (
     "noqa: S603, B010",
@@ -260,6 +260,10 @@ def test_reason_separators_are_accepted(separator: str) -> None:
         pytest.param(".ts", "// @ts-ignore", id="typescript"),
         pytest.param(".ts", "/* eslint-disable no-console */", id="typescript-block"),
         pytest.param(".md", "<!-- markdownlint-disable MD013 -->", id="markdown"),
+        # HTML also closes comments with ``--!>``.
+        pytest.param(
+            ".md", "<!-- markdownlint-disable MD013 --!>", id="markdown-bang-close"
+        ),
         pytest.param(".yaml", "# yamllint disable rule:line-length", id="yaml"),
         pytest.param(".sh", "# shellcheck disable=SC2086", id="shell"),
         pytest.param(
@@ -302,6 +306,11 @@ def test_suppression_examples_in_code_or_docs_are_not_active(
             ".md",
             "<!-- markdownlint-disable MD013 --> <!-- long generated table -->",
             id="markdown",
+        ),
+        pytest.param(
+            ".md",
+            "<!-- markdownlint-disable MD013 --!> <!-- long generated table --!>",
+            id="markdown-bang-close",
         ),
         pytest.param(
             ".yaml",

@@ -1,0 +1,23 @@
+version: "3"
+
+vars:
+  PYTHON: '{{.PYTHON | default "python"}}'
+
+tasks:
+  verify:
+    desc: Check package contracts and catalog offline (Python 3.13+ and PyYAML required)
+    requires:
+      vars: [WORKFLOW_ROOT]
+    cmds:
+      - '"{{.PYTHON}}" -B "{{.TASKFILE_DIR}}/check.py" --workflow-root "{{.WORKFLOW_ROOT}}"'
+  catalog:
+    desc: Regenerate the delivery catalog from its sources
+    requires:
+      vars: [WORKFLOW_ROOT]
+    cmds:
+      - '"{{.PYTHON}}" -B "{{.TASKFILE_DIR}}/check.py" --workflow-root "{{.WORKFLOW_ROOT}}" --write-catalog'
+  shellcheck:
+    desc: Lint Azure template scripts using an already installed shellcheck
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '"{{.PYTHON}}" -B -m delivery_tools.check_ado_scripts'

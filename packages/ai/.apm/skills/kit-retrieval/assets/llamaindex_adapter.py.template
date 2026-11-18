@@ -56,16 +56,10 @@ class LlamaIndexRetrieverAdapter:
         return self._name
 
     async def retrieve(self, query: Query) -> list[ScoredChunk]:
-        """Run the framework retriever and convert its nodes.
+        """Run the framework retriever and convert its nodes in framework order.
 
-        Args:
-            query (Query): Request to execute.
-
-        Returns:
-            Visible, attributable hits in framework order.
-
-        Raises:
-            RetrievalUnavailableError: If the framework raises a transport error.
+        Only visible, attributable hits are returned; a framework transport error
+        raises ``RetrievalUnavailableError``.
         """
         try:
             nodes: list[NodeWithScore] = await self._factory(query).aretrieve(

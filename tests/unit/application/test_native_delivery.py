@@ -9,12 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_kit.application.services.catalog_service import CatalogService
-from agent_kit.application.services.native_delivery import (
+from agent_kit.application.catalog import CatalogService
+from agent_kit.application.native_delivery import (
     render_native_agents,
     validate_native_assets,
 )
-from agent_kit.infrastructure.catalog_adapter import FileCatalogAdapter
+from agent_kit.core.primitives import NativeRuntime
+from agent_kit.infrastructure.catalog import FileCatalogAdapter
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CANONICAL_ASSETS = {
@@ -98,6 +99,12 @@ def test_canonical_picker_roster_and_worker_links_are_deliberate() -> None:
     assert referenced == {
         name for name, role in roles.items() if role["kind"] == "worker"
     }
+
+
+def test_enum_targets_preserve_rendered_artifacts() -> None:
+    assert render_native_agents(
+        _CANONICAL_ASSETS, tuple(NativeRuntime)
+    ) == render_native_agents(_CANONICAL_ASSETS, ("copilot", "claude"))
 
 
 def test_canonical_frontmatter_matches_tier_and_kind() -> None:
