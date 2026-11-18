@@ -69,5 +69,5 @@ include = ["/src", "/README.md", "/docs", "/LICENSE", "/pyproject.toml"]
 [dependency-groups]
 dev = [
     "httpx==0.28.1",
-    "pytest==9.1.1",
+    "pytest==9.2.0",
 ]
